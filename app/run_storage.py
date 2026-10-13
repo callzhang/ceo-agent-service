@@ -619,11 +619,247 @@ RUN_TRIGGER_DDL = (
 )
 
 
-def create_run_schema(db: sqlite3.Connection) -> None:
-    db.execute(
-        RUN_TABLE_DDL.replace("create table runs", "create table if not exists runs", 1)
+TASK_AGENT_RUN_COLUMNS = (
+    "id",
+    "summary_input_id",
+    "codex_session_id",
+    "decision_json",
+    "audit_summary",
+    "memory_recall_used",
+    "created_at",
+    "status",
+    "error",
+    "finished_at",
+    "updated_at",
+    "projection_json",
+)
+TASK_AGENT_RUN_RETIRED = {
+    "decision_json": "{}",
+    "audit_summary": "",
+    "memory_recall_used": 0,
+}
+TASK_AGENT_RUN_SQL = """select cast(legacy_key as integer) as id, summary_input_id,
+    session_id as codex_session_id, '{}' as decision_json, '' as audit_summary,
+    0 as memory_recall_used, created_at, status, error, finished_at, updated_at,
+    projection_json from runs where record_type='task_agent_runs'"""
+RUN_DEFAULT_SQL["task_agent_runs"] = dict(
+    session_id="''",
+    status="'completed'",
+    error="''",
+    finished_at="''",
+    updated_at="''",
+    created_at="current_timestamp",
+    projection_json="'{}'",
+)
+MEETING_RUN_COLUMNS = (
+    "id", "job_id", "codex_session_id", "codex_transcript_start_line",
+    "codex_transcript_end_line", "decision_json", "audit_tool_events_json",
+    "audit_summary", "status", "error", "created_at", "finished_at", "updated_at",
+)
+MEETING_RUN_RETIRED = {
+    "decision_json": "{}", "audit_tool_events_json": "[]", "audit_summary": "",
+}
+MEETING_RUN_SQL = """select cast(r.legacy_key as integer) as id,
+    case when p.record_type='meeting_alignment_jobs' and r.job_id is null
+         then cast(p.legacy_key as integer)
+         when p.id is null then r.job_id end as job_id,
+    r.session_id as codex_session_id,
+    r.transcript_start as codex_transcript_start_line,
+    r.transcript_end as codex_transcript_end_line,
+    '{}' as decision_json, '[]' as audit_tool_events_json, '' as audit_summary,
+    r.status, r.error, r.created_at, r.finished_at, r.updated_at
+    from runs r left join tasks p on p.id=r.task_id
+    where r.record_type='meeting_alignment_runs'"""
+RUN_DEFAULT_SQL["meeting_alignment_runs"] = dict(
+    session_id="''", transcript_start="0", transcript_end="0", error="''",
+    created_at="current_timestamp", finished_at="''", updated_at="''",
+)
+OKR_RUN_COLUMNS = (
+    "id", "request_id", "codex_session_id", "codex_transcript_start_line",
+    "codex_transcript_end_line", "envelope_json", "audit_tool_events_json",
+    "audit_summary", "created_at",
+)
+OKR_RUN_RETIRED = {
+    "envelope_json": "{}", "audit_tool_events_json": "[]", "audit_summary": "",
+}
+OKR_RUN_SQL = """select cast(legacy_key as integer) as id, request_id,
+    session_id as codex_session_id, transcript_start as codex_transcript_start_line,
+    transcript_end as codex_transcript_end_line, '{}' as envelope_json,
+    '[]' as audit_tool_events_json, '' as audit_summary, created_at
+    from runs where record_type='okr_review_runs'"""
+RUN_DEFAULT_SQL["okr_review_runs"] = dict(
+    session_id="''", transcript_start="0", transcript_end="0",
+    created_at="current_timestamp",
+)
+# Keep the 4A declaration and inverse usable for their original release. 4B
+# extends the actual domain fields and only the source-declared task parent FKs.
+TASK_RUN_TABLE_DDL = RUN_TABLE_DDL.replace(
+    "'agent_run_state_events'))",
+    "'agent_run_state_events','task_agent_runs','meeting_alignment_runs','okr_review_runs'))", 1
+).replace("references reply_tasks(id)", "references tasks(id)")
+TASK_RUN_TABLE_DDL = TASK_RUN_TABLE_DDL.replace(
+    "    phase text,",
+    "    phase text,\n    summary_input_id integer,\n    error text,\n    projection_json text,\n    job_id integer,\n    request_id integer,",
+    1,
+)
+TASK_RUN_TABLE_DDL = (
+    TASK_RUN_TABLE_DDL.rstrip().removesuffix(")")
+    + """,
+    check(record_type<>'task_agent_runs' or (
+        summary_input_id is not null and session_id is not null and status is not null
+        and error is not null and finished_at is not null and updated_at is not null
+        and projection_json is not null and task_id is null and parent_id is null)),
+    check(record_type<>'meeting_alignment_runs' or (
+        task_id is not null and session_id is not null and transcript_start is not null
+        and transcript_end is not null and status is not null and error is not null
+        and finished_at is not null and updated_at is not null)),
+    check(record_type<>'okr_review_runs' or (
+        request_id is not null and session_id is not null and transcript_start is not null
+        and transcript_end is not null))
+)"""
+)
+_TASK_DOMAIN_FIELDS = {
+    "summary_input_id",
+    "session_id",
+    "created_at",
+    "status",
+    "error",
+    "finished_at",
+    "updated_at",
+    "projection_json",
+}
+_MEETING_DOMAIN_FIELDS = {
+    "task_id", "job_id", "session_id", "transcript_start", "transcript_end",
+    "status", "error", "created_at", "finished_at", "updated_at",
+}
+_OKR_DOMAIN_FIELDS = {
+    "request_id", "session_id", "transcript_start", "transcript_end", "created_at",
+}
+_CORE_RUN_FIELDS = {
+    COLUMN_MAP[record_type].get(column, column)
+    for record_type, columns in SOURCE_COLUMNS.items()
+    for column in columns
+    if column != "id" and column not in RETIRED_COLUMNS
+}
+TASK_RUN_TABLE_DDL = (
+    TASK_RUN_TABLE_DDL.rstrip().removesuffix(")")
+    + ","
+    + ",".join(
+        f"check(record_type<>'{record_type}' or ("
+        + " and ".join(field + " is null" for field in sorted(
+            (_CORE_RUN_FIELDS | _TASK_DOMAIN_FIELDS | _MEETING_DOMAIN_FIELDS | _OKR_DOMAIN_FIELDS) - fields
+        ))
+        + "))"
+        for record_type, fields in (
+            ("task_agent_runs", _TASK_DOMAIN_FIELDS),
+            ("meeting_alignment_runs", _MEETING_DOMAIN_FIELDS),
+            ("okr_review_runs", _OKR_DOMAIN_FIELDS),
+        )
     )
-    for sql in (*RUN_INDEX_DDL, *RUN_TRIGGER_DDL):
+    + ",check(record_type in ('task_agent_runs','meeting_alignment_runs','okr_review_runs') or (summary_input_id is null and error is null and projection_json is null and job_id is null and request_id is null)))"
+)
+TASK_RUN_INDEX_DDL = (
+    *RUN_INDEX_DDL,
+    "create index idx_task_agent_runs_input on runs(summary_input_id,cast(legacy_key as integer)) where record_type='task_agent_runs'",
+    "create unique index idx_task_agent_runs_active_input on runs(summary_input_id) where record_type='task_agent_runs' and status='running'",
+    "create index idx_meeting_alignment_runs_job on runs(task_id,cast(legacy_key as integer)) where record_type='meeting_alignment_runs'",
+    "create index idx_meeting_alignment_runs_created on runs(created_at,cast(legacy_key as integer)) where record_type='meeting_alignment_runs'",
+    "create unique index idx_meeting_alignment_runs_active_job on runs(task_id) where record_type='meeting_alignment_runs' and status='running'",
+)
+TASK_RUN_TRIGGER_DDL = (
+    *RUN_TRIGGER_DDL,
+    *tuple(
+        f"create trigger trg_runs_reply_task_{suffix} before {event} on runs when new.record_type='agent_runs' and new.task_id is not null and exists(select 1 from tasks where id=new.task_id and record_type<>'reply_tasks') begin select raise(abort,'run task must be a reply task'); end"
+        for event, suffix in (("insert", "insert"), ("update of task_id", "update"))
+    ),
+    *tuple(
+        f"create trigger trg_runs_meeting_task_{suffix} before {event} on runs when new.record_type='meeting_alignment_runs' and (exists(select 1 from tasks where id=new.task_id and (record_type<>'meeting_alignment_jobs' or new.job_id is not null)) or (not exists(select 1 from tasks where id=new.task_id) and new.job_id is null)) begin select raise(abort,'meeting run parent mapping mismatch'); end"
+        for event, suffix in (("insert", "insert"), ("update of task_id,job_id", "update"))
+    ),
+)
+
+
+SCHEDULED_RUN_COLUMNS = ("id", "event_id", "scheduled_task_id", "trigger_kind",
+    "scheduled_for", "dispatch_status", "skip_or_error_reason", "execution_kind",
+    "execution_id", "lease_owner", "lease_expires_at", "created_at", "dispatched_at",
+    "first_scheduled_for", "occurrence_count", "result_summary", "snapshot_id")
+WORKBENCH_EVENT_COLUMNS = ("id", "turn_id", "sequence", "event_type", "payload_json", "created_at")
+SCHEDULED_RUN_SQL = "select cast(legacy_key as integer) as id," + ",".join(SCHEDULED_RUN_COLUMNS[1:]) + " from runs where record_type='scheduled_task_runs'"
+WORKBENCH_EVENT_SQL = """select cast(r.legacy_key as integer) as id,
+    (select t.legacy_key from tasks t where t.id=r.task_id) as turn_id,
+    r.sequence,r.event_type,r.payload_json,r.created_at
+    from runs r where r.record_type='workbench_events'"""
+RUN_DEFAULT_SQL.update({
+    "scheduled_task_runs": dict(dispatch_status="'pending'", skip_or_error_reason="''",
+        execution_kind="''", execution_id="''", lease_owner="''", created_at="current_timestamp",
+        first_scheduled_for="''", occurrence_count="1", result_summary="''"),
+    "workbench_events": dict(created_at="current_timestamp"),
+})
+_WORKBENCH_RUN_FIELDS = {
+    "scheduled_task_runs": set(SCHEDULED_RUN_COLUMNS[1:]),
+    "workbench_events": {"task_id", "sequence", "event_type", "payload_json", "created_at"},
+}
+_EXISTING_RUN_FIELDS = _CORE_RUN_FIELDS | _TASK_DOMAIN_FIELDS | _MEETING_DOMAIN_FIELDS | _OKR_DOMAIN_FIELDS
+_WORKBENCH_RUN_NEW_FIELDS = tuple(dict.fromkeys(
+    c for c in (*SCHEDULED_RUN_COLUMNS[1:], "sequence", "event_type", "payload_json")
+    if c not in _EXISTING_RUN_FIELDS
+))
+WORKBENCH_RUN_TABLE_DDL = TASK_RUN_TABLE_DDL.replace(
+    "'okr_review_runs'))", "'okr_review_runs','scheduled_task_runs','workbench_events'))", 1,
+).replace(
+    "    check(record_type<>'agent_runs' or legacy_key",
+    "    " + ",\n    ".join(c + (" integer" if c in ("scheduled_task_id", "snapshot_id", "occurrence_count", "sequence") else " text") for c in _WORKBENCH_RUN_NEW_FIELDS)
+    + ",\n    foreign key(scheduled_task_id) references scheduled_tasks(id),"
+    + "\n    foreign key(snapshot_id) references scheduled_task_config_versions(id),"
+    + "\n    check(record_type<>'agent_runs' or legacy_key", 1,
+).removesuffix(")") + "," + ",".join(
+    "check(record_type<>'" + kind + "' or ("
+    + " and ".join(c + " is not null" for c in sorted(fields - {"lease_expires_at", "dispatched_at", "snapshot_id"})) + "))"
+    for kind, fields in _WORKBENCH_RUN_FIELDS.items()
+) + "," + ",".join(
+    "check(record_type<>'" + kind + "' or ("
+    + " and ".join(c + " is null" for c in sorted(
+        (_EXISTING_RUN_FIELDS | set(_WORKBENCH_RUN_NEW_FIELDS)) - fields)) + "))"
+    for kind, fields in _WORKBENCH_RUN_FIELDS.items()
+) + ",check(record_type in ('scheduled_task_runs','workbench_events') or (" + " and ".join(
+    c + " is null" for c in _WORKBENCH_RUN_NEW_FIELDS
+) + "))" + ",check(record_type<>'scheduled_task_runs' or (trigger_kind in ('scheduled','manual') and dispatch_status in ('pending','dispatched','skipped','failed'))))"
+WORKBENCH_RUN_INDEX_DDL = (
+    *TASK_RUN_INDEX_DDL,
+    "create unique index idx_scheduled_task_runs_event on runs(event_id) where record_type='scheduled_task_runs'",
+    "create unique index idx_scheduled_task_runs_scheduled_instant on runs(scheduled_task_id,scheduled_for) where record_type='scheduled_task_runs' and trigger_kind='scheduled'",
+    "create index idx_scheduled_task_runs_dispatch on runs(dispatch_status,lease_expires_at,scheduled_for,cast(legacy_key as integer)) where record_type='scheduled_task_runs'",
+    "create index idx_scheduled_task_runs_claim on runs(dispatch_status,scheduled_for,cast(legacy_key as integer)) where record_type='scheduled_task_runs'",
+    "create index idx_scheduled_task_runs_latest on runs(scheduled_task_id,cast(legacy_key as integer) desc) where record_type='scheduled_task_runs'",
+    "create index idx_scheduled_task_runs_reply_execution on runs(cast(execution_id as integer),scheduled_task_id,cast(legacy_key as integer)) where record_type='scheduled_task_runs' and execution_kind='reply_task'",
+    "create unique index idx_workbench_events_sequence on runs(task_id,sequence) where record_type='workbench_events'",
+    "create index idx_workbench_events_turn_id_id on runs(task_id,cast(legacy_key as integer)) where record_type='workbench_events'",
+    "create index idx_workbench_events_id_turn_id on runs(cast(legacy_key as integer),task_id) where record_type='workbench_events'",
+    "create index idx_workbench_events_event_type on runs(event_type) where record_type='workbench_events'",
+)
+WORKBENCH_RUN_TRIGGER_DDL = (
+    *TASK_RUN_TRIGGER_DDL,
+    *tuple(
+        f"create trigger trg_runs_workbench_turn_{suffix} before {event} on runs when new.record_type='workbench_events' and exists(select 1 from tasks where id=new.task_id and record_type<>'workbench_turns') begin select raise(abort,'event task must be a workbench turn'); end"
+        for event,suffix in (("insert","insert"),("update of task_id","update"))
+    ),
+)
+
+
+def create_run_schema(
+    db: sqlite3.Connection, *, include_task_runs: bool = False, include_workbench: bool = False
+) -> None:
+    db.execute(
+        (WORKBENCH_RUN_TABLE_DDL if include_workbench else TASK_RUN_TABLE_DDL if include_task_runs else RUN_TABLE_DDL).replace(
+            "create table runs", "create table if not exists runs", 1
+        )
+    )
+    for sql in (
+        (*WORKBENCH_RUN_INDEX_DDL, *WORKBENCH_RUN_TRIGGER_DDL)
+        if include_workbench else (*TASK_RUN_INDEX_DDL, *TASK_RUN_TRIGGER_DDL)
+        if include_task_runs
+        else (*RUN_INDEX_DDL, *RUN_TRIGGER_DDL)
+    ):
         if sql.startswith("create unique index "):
             sql = sql.replace(
                 "create unique index ", "create unique index if not exists ", 1
@@ -635,11 +871,11 @@ def create_run_schema(db: sqlite3.Connection) -> None:
         db.execute(sql)
 
 
-@lru_cache(maxsize=1)
-def _declared_run_objects() -> dict[str, str]:
-    """Use SQLite's own canonical declarations without changing SQL literals."""
+@lru_cache(maxsize=3)
+def _declared_run_objects(include_task_runs: bool, include_workbench: bool = False) -> dict[str, str]:
+    """Read SQLite's canonical declarations without changing SQL literals."""
     with closing(sqlite3.connect(":memory:")) as reference:
-        create_run_schema(reference)
+        create_run_schema(reference, include_task_runs=include_task_runs, include_workbench=include_workbench)
         return dict(
             reference.execute(
                 "select name,sql from sqlite_master where tbl_name='runs' and sql is not null"
@@ -648,7 +884,11 @@ def _declared_run_objects() -> dict[str, str]:
 
 
 def run_schema_is_current(
-    db: sqlite3.Connection, *, allow_missing_objects: bool = False
+    db: sqlite3.Connection,
+    *,
+    allow_missing_objects: bool = False,
+    include_task_runs: bool = False,
+    include_workbench: bool = False,
 ) -> bool:
     """Match the current core layout and its declared indexes/triggers.
 
@@ -661,6 +901,8 @@ def run_schema_is_current(
         RETIRED_RUN_TABLES,
     ).fetchone():
         return False
+    if include_workbench and db.execute("select 1 from sqlite_master where name in ('scheduled_task_runs','workbench_events')").fetchone():
+        return False
     objects = {
         row[0]: str(row[1] or "")
         for row in db.execute(
@@ -668,7 +910,7 @@ def run_schema_is_current(
         )
     }
 
-    expected = _declared_run_objects()
+    expected = _declared_run_objects(include_task_runs, include_workbench)
     if objects.get("runs", "").strip() != expected["runs"].strip():
         return False
     for name, sql in expected.items():
@@ -804,7 +1046,7 @@ def _install_child_guards(db: sqlite3.Connection, table: str) -> None:
 def install_run_child_guards(db: sqlite3.Connection) -> None:
     """Retain each old declared FK's logical-run parent namespace."""
     for row in db.execute(
-        "select name from sqlite_master where type='table' and name<>'runs'"
+        "select name from sqlite_master where type='table' and name not in ('runs','actions')"
     ).fetchall():
         _install_child_guards(db, row[0])
 

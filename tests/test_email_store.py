@@ -1334,7 +1334,7 @@ def test_lists_only_nonterminal_legacy_unsubscribe_attempt_bindings_read_only(
     create_task("non-email", lifecycle_version=legacy, channel="dingtalk")
     with sqlite3.connect(database) as db:
         db.executemany(
-            "update reply_tasks set status=? where id=?",
+            "update tasks set status=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (
                 ("processing", processing_id),
                 ("done", done_id),
@@ -1549,13 +1549,13 @@ def test_legacy_terminalization_leaves_nonmatching_tasks_unchanged(
     if terminal_status is not None:
         with sqlite3.connect(database) as db:
             db.execute(
-                "update reply_tasks set status=? where id=?",
+                "update tasks set status=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
                 (terminal_status, task.id),
             )
     before = tuple(
         _fetchall(
             database,
-            "select * from reply_tasks where id=?",
+            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
             (task.id,),
         )[0]
     )
@@ -1572,7 +1572,7 @@ def test_legacy_terminalization_leaves_nonmatching_tasks_unchanged(
     after = tuple(
         _fetchall(
             database,
-            "select * from reply_tasks where id=?",
+            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
             (task.id,),
         )[0]
     )
@@ -1591,7 +1591,7 @@ def test_legacy_terminalization_race_fails_closed_without_modifying_replacement(
     with sqlite3.connect(database) as db:
         if race == "generation":
             db.execute(
-                "update reply_tasks set execution_generation=? where id=?",
+                "update tasks set execution_generation=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
                 ("replacement-generation", original.id),
             )
         else:
@@ -1604,13 +1604,15 @@ def test_legacy_terminalization_race_fails_closed_without_modifying_replacement(
                 sort_keys=True,
             )
             db.execute(
-                "update reply_task_inputs set trigger_message_json=? where id=(select current_input_id from reply_tasks where id=?)",
+                "update tasks set trigger_message_json=? where record_type='reply_task_inputs' "
+                "and id=(select current_input_id from tasks where record_type='reply_tasks' "
+                "and cast(legacy_key as integer)=?)",
                 (replacement_payload, original.id),
             )
     before = tuple(
         _fetchall(
             database,
-            "select * from reply_tasks where id=?",
+            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
             (original.id,),
         )[0]
     )
@@ -1627,7 +1629,7 @@ def test_legacy_terminalization_race_fails_closed_without_modifying_replacement(
     after = tuple(
         _fetchall(
             database,
-            "select * from reply_tasks where id=?",
+            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
             (original.id,),
         )[0]
     )
@@ -1651,7 +1653,7 @@ def test_pending_legacy_attempt_does_not_terminalize_processing_replacement(
     before = tuple(
         _fetchall(
             database,
-            "select * from reply_tasks where id=?",
+            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
             (pending.id,),
         )[0]
     )
@@ -1668,7 +1670,7 @@ def test_pending_legacy_attempt_does_not_terminalize_processing_replacement(
     after = tuple(
         _fetchall(
             database,
-            "select * from reply_tasks where id=?",
+            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
             (pending.id,),
         )[0]
     )
@@ -1938,7 +1940,7 @@ def test_a_failed_unsubscribe_task_without_a_receipt_carries_its_own_error(
     )
     with sqlite3.connect(database) as db:
         db.execute(
-            "update reply_tasks set status='failed', error=? where id=?",
+            "update tasks set status='failed', error=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             ("email_unsubscribe_browser_timeout", task.id),
         )
 
@@ -2212,7 +2214,10 @@ def test_terminal_unsubscribe_probe_hydrates_only_valid_terminal_tasks(tmp_path,
         execution_generation="test-generation",
     )
     with sqlite3.connect(database) as db:
-        db.execute("update reply_tasks set status=? where id=?", (status, task.id))
+        db.execute(
+            "update tasks set status=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            (status, task.id),
+        )
     rows = store.list_terminal_unsubscribe_tasks_missing_receipts()
     if status == "failed":
         assert rows == []
@@ -4583,19 +4588,54 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
         }
 
 
+@pytest.mark.parametrize("unrelated_count", [0, 2000])
 def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
-    tmp_path: Path,
+    tmp_path: Path, unrelated_count: int,
 ) -> None:
     database = tmp_path / "unsubscribe-lineage-query-plan.sqlite3"
-    EmailStore(database)
-    AutoReplyStore(database)
+    from app.task_storage import insert_task
+    from app.run_storage import insert_run
+
+    email_store = EmailStore(database)
+    authorization = _unsubscribe_authorization(email_store)
+    claim = email_store.claim_email_unsubscribe_write(**authorization, owner=_UNSUBSCRIBE_OWNER_A)
+    assert claim is not None
+    task_store = AutoReplyStore(database)
+    task = task_store.ensure_reply_task(
+        channel="email", conversation_id="lineage-thread", conversation_title="Email",
+        single_chat=True, trigger_message_id=str(authorization["action_identity"]),
+        trigger_sender="sender", trigger_text="exact unsubscribe source",
+        trigger_create_time="2026-10-12T00:00:00Z",
+    )
+    with task_store._connect() as db:
+        audit_id = insert_run(db, "agent_runs", {
+            "task_id": task.id, "role": "audit", "execution_generation": task.execution_generation,
+        }).lastrowid
+        db.execute("update email_unsubscribe_effects set audit_agent_run_id=? where action_identity=?",
+                   (audit_id, authorization["action_identity"]))
+        for index in range(unrelated_count):
+            parent = insert_task(db, "reply_tasks", {
+                "conversation_id": f"unrelated-{index}", "trigger_message_id": str(index),
+                "status": "done", "conversation_title": "Unrelated", "single_chat": 1,
+                "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
+            }).lastrowid
+            canonical = insert_task(db, "reply_task_inputs", {
+                "legacy_key": 100000 + index, "parent_id": parent, "channel": "dingtalk",
+                "conversation_id": f"unrelated-input-{index}", "conversation_title": "Unrelated",
+                "single_chat": 1, "trigger_message_id": str(index),
+                "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
+                "business_object_key": "",
+                "trigger_text": "irrelevant body " * 200,
+            }).lastrowid
+            db.execute("update tasks set current_input_id=? where id=?", (canonical, parent))
+    parameters = (authorization["action_identity"], claim["effect_digest"])
     with sqlite3.connect(database) as db:
         details = [
             str(row[3])
             for row in db.execute(
                 "explain query plan "
                 + email_store_module._AUDITED_UNSUBSCRIBE_LINEAGE_SQL,
-                ("email-action:test", "a" * 64),
+                parameters,
             )
         ]
 
@@ -4607,9 +4647,25 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
     assert any(
         "SEARCH runs USING INTEGER PRIMARY KEY" in detail for detail in details
     )
-    assert any("SEARCH parent USING INTEGER PRIMARY KEY" in detail for detail in details)
-    assert any("SEARCH canonical USING INTEGER PRIMARY KEY" in detail for detail in details)
-    assert not any("SCAN runs" in detail or "SCAN parent" in detail or "SCAN canonical" in detail for detail in details)
+    assert sum("SEARCH t USING INDEX idx_tasks_public_id" in detail for detail in details) == 2
+    assert any("SEARCH i USING INTEGER PRIMARY KEY" in detail for detail in details)
+    assert not any("SCAN runs" in detail or "SCAN t" in detail or "SCAN i" in detail for detail in details)
+    steps = 0
+
+    def progress():
+        nonlocal steps
+        steps += 10
+        return int(steps >= 500)
+
+    with task_store._connect() as db:
+        db.set_progress_handler(progress, 10)
+        rows = db.execute(email_store_module._AUDITED_UNSUBSCRIBE_LINEAGE_SQL, parameters).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["audit_run_id"] == audit_id
+    assert rows[0]["task_id"] == task.id
+    assert rows[0]["trigger_message_id"] == authorization["action_identity"]
+    assert rows[0]["task_execution_generation"] == task.execution_generation
+    assert steps < 500
 
 
 def test_current_schema_missing_required_foreign_key_is_domain_corruption(
@@ -10514,10 +10570,11 @@ def test_category_enablement_snapshot_refuses_concurrent_category_edit(tmp_path:
 
 
 def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) -> None:
-    from app.store import AutoReplyStore
+    from tests.test_task_storage import source_database
 
     database = tmp_path / "v36.sqlite3"
-    AutoReplyStore(database)
+    # This Email migration preceded the core source-to-typed task migration.
+    source_database(database).close()
     email_store_module.EmailStore(database)
     stale = json.dumps(
         {
@@ -10534,35 +10591,47 @@ def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) 
             "insert or ignore into email_schema_migrations(version, applied_at) "
             "values (35, '2026-09-01 00:00:00')"
         )
+        db.execute("update reply_tasks set channel='email' where id=1")
         db.execute(
-            """
-            insert into reply_task_inputs (
-                reply_task_id, channel, conversation_id, conversation_title,
-                single_chat, trigger_message_id, trigger_create_time,
-                trigger_sender, trigger_text, trigger_message_json, oa_url,
-                business_object_key
-            ) values (1, 'email', 'email-thread:1', 'Email unsubscribe', 0,
-                      'email-action:1', '2026-09-01 00:00:00', 'sender@example.com',
-                      'Immutable ActionPlan authorizes unsubscribe.', ?, '',
-                      'message:email:email-thread:1:email-action:1')
-            """,
+            "update reply_task_inputs set channel='email', trigger_message_json=? "
+            "where id=2 and reply_task_id=1",
             (stale,),
         )
+        source_parent = db.execute("select * from reply_tasks where id=1").fetchone()
+        source_inputs = db.execute(
+            "select * from reply_task_inputs order by id"
+        ).fetchall()
+        source_columns = [row[1] for row in db.execute("pragma table_info(reply_task_inputs)")]
+        source_marker = db.execute(
+            "select * from service_state where key='store_schema_version'"
+        ).fetchone()
 
     email_store_module.EmailStore(database)
 
     with sqlite3.connect(database) as db:
-        payload = json.loads(
-            db.execute(
-                "select trigger_message_json from reply_task_inputs where channel='email'"
-            ).fetchone()[0]
-        )
+        migrated_parent = db.execute("select * from reply_tasks where id=1").fetchone()
+        migrated_inputs = db.execute(
+            "select * from reply_task_inputs order by id"
+        ).fetchall()
+        migrated_marker = db.execute(
+            "select * from service_state where key='store_schema_version'"
+        ).fetchone()
         versions = [
             row[0]
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
         ]
+    assert migrated_marker == source_marker
+    assert migrated_marker[1] == "2026-10-11.2"
+    assert migrated_parent == source_parent
+    assert migrated_inputs[0] == source_inputs[0]
+    assert [row[source_columns.index("id")] for row in migrated_inputs] == [1, 2]
+    json_index = source_columns.index("trigger_message_json")
+    assert migrated_inputs[1][:json_index] == source_inputs[1][:json_index]
+    assert migrated_inputs[1][json_index + 1:] == source_inputs[1][json_index + 1:]
+    payload = json.loads(migrated_inputs[1][json_index])
+    assert payload["schema"] == "email-agent-task-v1"
     assert "unsubscribe_network_policy_reference" not in payload
     assert "unsubscribe_network_policy_origin_references" not in payload
     assert payload["action_type"] == "unsubscribe"

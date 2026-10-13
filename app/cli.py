@@ -1,3 +1,4 @@
+from app.task_storage import REPLY_TASK_SQL
 import argparse
 import errno
 import json
@@ -352,10 +353,12 @@ def build_parser() -> argparse.ArgumentParser:
         "consume",
         "process-work-items",
         "retry-work-summary-input",
+        "reconcile-confirmed-meeting-delivery",
         "retry-failed-email-unsubscribe",
         "release-failed-email-unsubscribe",
         "cancel-failed-email-unsubscribe",
         "reconcile-email-actions",
+        "retry-source-verified-email-action",
         "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
         "backfill-task-memory-context",
@@ -547,6 +550,9 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--limit", type=_positive_int)
         if command == "retry-work-summary-input":
             subparser.add_argument("--input-id", type=_positive_int, required=True)
+        if command == "reconcile-confirmed-meeting-delivery":
+            subparser.add_argument("--job-id", type=_positive_int, required=True)
+            subparser.add_argument("--apply", action="store_true")
         if command == "cancel-failed-email-unsubscribe":
             subparser.add_argument("--task-id", type=_positive_int, required=True)
             subparser.add_argument("--action-identity", type=_non_blank, required=True)
@@ -578,6 +584,10 @@ def build_parser() -> argparse.ArgumentParser:
                 default=60.0,
                 help="wall-clock allowance for one message, connect included",
             )
+        if command == "retry-source-verified-email-action":
+            subparser.add_argument("--account", type=_non_blank, required=True)
+            subparser.add_argument("--action-id", type=_non_blank, required=True)
+            subparser.add_argument("--apply", action="store_true")
         if command == "reconcile-failed-agent-message":
             subparser.add_argument("--send-run-id", type=_positive_int, required=True)
             subparser.add_argument("--readback-run-id", type=_positive_int, required=True)
@@ -2946,8 +2956,8 @@ def _quality_required_channels(db_path: Path) -> set[str]:
     channels = {"dingtalk"}
     with sqlite3.connect(str(db_path)) as db:
         rows = db.execute(
-            """
-            select distinct lower(channel) from reply_tasks
+            f"""
+            select distinct lower(channel) from ({REPLY_TASK_SQL})
             where lower(status) in ('pending', 'processing') and trim(channel) != ''
             union
             select distinct lower(channel) from reply_attempts
@@ -4945,6 +4955,28 @@ def main() -> None:
         process_work_items_command(settings)
     elif args.command == "retry-work-summary-input":
         retry_work_summary_input_command(settings, input_id=args.input_id)
+    elif args.command == "reconcile-confirmed-meeting-delivery":
+        from app.meeting_alignment import reconcile_confirmed_meeting_delivery
+        if args.apply and settings.dry_run:
+            raise SystemExit("--apply refused: dry-run is on")
+        if args.apply:
+            report = reconcile_confirmed_meeting_delivery(
+                AutoReplyStore(settings.db_path), DwsClient(), args.job_id, apply=True,
+            )
+        else:
+            import sqlite3
+            from contextvars import ContextVar
+            # Preview must not initialize or migrate the production schema.
+            db = sqlite3.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True)
+            db.row_factory = sqlite3.Row
+            try:
+                inspected_store = AutoReplyStore.__new__(AutoReplyStore)
+                inspected_store.path = settings.db_path
+                inspected_store._read_snapshot_connection = ContextVar("meeting_recovery_preview", default=db)
+                report = reconcile_confirmed_meeting_delivery(inspected_store, DwsClient(), args.job_id)
+            finally:
+                db.close()
+        print(json.dumps(report, ensure_ascii=False), flush=True)
     elif args.command == "retry-failed-email-unsubscribe":
         retry_failed_email_unsubscribe_command(settings)
     elif args.command == "release-failed-email-unsubscribe":
@@ -4966,6 +4998,26 @@ def main() -> None:
         print(json.dumps({
             "task_id": decision["task_id"], "decision": decision["decision"], "applied": args.apply,
         }), flush=True)
+    elif args.command == "retry-source-verified-email-action":
+        if args.apply and settings.dry_run:
+            raise SystemExit("--apply refused: dry-run is on")
+        from app.email_action_reconcile import (
+            ExistingReadOnlyEmailStore,
+            build_gmail_read_only_provider_factory,
+            release_source_verified_retry,
+        )
+        from app.email_store import EmailStore
+
+        store = (
+            EmailStore(settings.db_path) if args.apply
+            else ExistingReadOnlyEmailStore(settings.db_path)
+        )
+        result = release_source_verified_retry(
+            store, account_id=args.account, action_id=args.action_id,
+            provider_factory=build_gmail_read_only_provider_factory(store, args.account, os.environ),
+            apply=args.apply,
+        )
+        print(json.dumps(result, ensure_ascii=False))
     elif args.command == "reconcile-email-actions":
         if args.apply and settings.dry_run:
             raise SystemExit(

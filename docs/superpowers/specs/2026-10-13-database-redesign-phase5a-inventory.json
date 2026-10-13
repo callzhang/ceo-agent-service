@@ -1,0 +1,686 @@
+{
+  "production_commit": "3e0d962487ada4d12c73e2fc43826439ea9ada50",
+  "development_base": "92259970ea9066a9e99757cf57d528308709ae29",
+  "store_version": "2026-10-12.1",
+  "tables": {
+    "review_candidates": {
+      "count": 533,
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "task_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          2,
+          "execution_generation",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "consumer_run_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          4,
+          "stage_index",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          5,
+          "proposal_revision",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          6,
+          "predecessor_review_id",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          7,
+          "candidate_digest",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          8,
+          "candidate_json",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          9,
+          "invalidated_at",
+          "TEXT",
+          1,
+          "''",
+          0
+        ],
+        [
+          10,
+          "invalidation_reason",
+          "TEXT",
+          1,
+          "''",
+          0
+        ],
+        [
+          11,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "candidate_reviews",
+          "predecessor_review_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          1,
+          0,
+          "runs",
+          "consumer_run_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          2,
+          0,
+          "tasks",
+          "task_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_review_candidates_task",
+          "tbl_name": "review_candidates",
+          "sql": "CREATE INDEX idx_review_candidates_task on review_candidates(task_id,execution_generation,id)"
+        },
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_review_candidates_1",
+          "tbl_name": "review_candidates",
+          "sql": null
+        },
+        {
+          "type": "table",
+          "name": "review_candidates",
+          "tbl_name": "review_candidates",
+          "sql": "CREATE TABLE review_candidates (\n id integer primary key, task_id integer not null references tasks(id),\n execution_generation text not null, consumer_run_id integer not null unique references runs(id),\n stage_index integer not null, proposal_revision integer not null,\n predecessor_review_id integer references candidate_reviews(id),\n candidate_digest text not null, candidate_json text not null,\n invalidated_at text not null default '', invalidation_reason text not null default '',\n created_at text not null default current_timestamp\n)"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_review_candidates_consumer_run_id_insert",
+          "tbl_name": "review_candidates",
+          "sql": "CREATE TRIGGER trg_runs_child_review_candidates_consumer_run_id_insert before insert on \"review_candidates\" when new.\"consumer_run_id\" is not null and exists(select 1 from runs where id=new.\"consumer_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_review_candidates_consumer_run_id_update",
+          "tbl_name": "review_candidates",
+          "sql": "CREATE TRIGGER trg_runs_child_review_candidates_consumer_run_id_update before update of \"consumer_run_id\" on \"review_candidates\" when new.\"consumer_run_id\" is not null and exists(select 1 from runs where id=new.\"consumer_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_tasks_child_review_candidates_task_id_insert",
+          "tbl_name": "review_candidates",
+          "sql": "CREATE TRIGGER trg_tasks_child_review_candidates_task_id_insert before insert on \"review_candidates\" when new.\"task_id\" is not null and exists(select 1 from tasks where id=new.\"task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_tasks_child_review_candidates_task_id_update",
+          "tbl_name": "review_candidates",
+          "sql": "CREATE TRIGGER trg_tasks_child_review_candidates_task_id_update before update of \"task_id\" on \"review_candidates\" when new.\"task_id\" is not null and exists(select 1 from tasks where id=new.\"task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        }
+      ]
+    },
+    "candidate_reviews": {
+      "count": 525,
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "candidate_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          2,
+          "audit_run_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "decision",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          4,
+          "candidate_digest",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          5,
+          "result_json",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          6,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "runs",
+          "audit_run_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          1,
+          0,
+          "review_candidates",
+          "candidate_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_candidate_reviews_candidate",
+          "tbl_name": "candidate_reviews",
+          "sql": "CREATE INDEX idx_candidate_reviews_candidate on candidate_reviews(candidate_id,id)"
+        },
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_candidate_reviews_1",
+          "tbl_name": "candidate_reviews",
+          "sql": null
+        },
+        {
+          "type": "table",
+          "name": "candidate_reviews",
+          "tbl_name": "candidate_reviews",
+          "sql": "CREATE TABLE candidate_reviews (\n id integer primary key, candidate_id integer not null references review_candidates(id),\n audit_run_id integer not null unique references runs(id),\n decision text not null check(decision in ('approve','return','reject')),\n candidate_digest text not null, result_json text not null,\n created_at text not null default current_timestamp\n)"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_candidate_reviews_audit_run_id_insert",
+          "tbl_name": "candidate_reviews",
+          "sql": "CREATE TRIGGER trg_runs_child_candidate_reviews_audit_run_id_insert before insert on \"candidate_reviews\" when new.\"audit_run_id\" is not null and exists(select 1 from runs where id=new.\"audit_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_candidate_reviews_audit_run_id_update",
+          "tbl_name": "candidate_reviews",
+          "sql": "CREATE TRIGGER trg_runs_child_candidate_reviews_audit_run_id_update before update of \"audit_run_id\" on \"candidate_reviews\" when new.\"audit_run_id\" is not null and exists(select 1 from runs where id=new.\"audit_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        }
+      ]
+    },
+    "candidate_selections": {
+      "count": 0,
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "candidate_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          2,
+          "review_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "option_key",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          4,
+          "branch_json",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          5,
+          "status",
+          "TEXT",
+          1,
+          "'selected'",
+          0
+        ],
+        [
+          6,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "candidate_reviews",
+          "review_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          1,
+          0,
+          "review_candidates",
+          "candidate_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_candidate_selections_1",
+          "tbl_name": "candidate_selections",
+          "sql": null
+        },
+        {
+          "type": "table",
+          "name": "candidate_selections",
+          "tbl_name": "candidate_selections",
+          "sql": "CREATE TABLE candidate_selections (\n id integer primary key, candidate_id integer not null unique references review_candidates(id),\n review_id integer not null references candidate_reviews(id), option_key text not null,\n branch_json text not null, status text not null default 'selected',\n created_at text not null default current_timestamp\n)"
+        }
+      ]
+    },
+    "candidate_supplements": {
+      "count": 3,
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "candidate_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          2,
+          "instruction",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "review_candidates",
+          "candidate_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "table",
+          "name": "candidate_supplements",
+          "tbl_name": "candidate_supplements",
+          "sql": "CREATE TABLE candidate_supplements (\n id integer primary key, candidate_id integer not null references review_candidates(id),\n instruction text not null, created_at text not null default current_timestamp\n)"
+        }
+      ]
+    },
+    "candidate_executions": {
+      "count": 141,
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "candidate_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          2,
+          "review_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "selection_id",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          4,
+          "status",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          5,
+          "lease_owner",
+          "TEXT",
+          1,
+          "''",
+          0
+        ],
+        [
+          6,
+          "lease_expires_at",
+          "TEXT",
+          1,
+          "''",
+          0
+        ],
+        [
+          7,
+          "result_json",
+          "TEXT",
+          1,
+          "'{}'",
+          0
+        ],
+        [
+          8,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ],
+        [
+          9,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "candidate_selections",
+          "selection_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          1,
+          0,
+          "candidate_reviews",
+          "review_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          2,
+          0,
+          "review_candidates",
+          "candidate_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_candidate_executions_1",
+          "tbl_name": "candidate_executions",
+          "sql": null
+        },
+        {
+          "type": "table",
+          "name": "candidate_executions",
+          "tbl_name": "candidate_executions",
+          "sql": "CREATE TABLE candidate_executions (\n id integer primary key, candidate_id integer not null unique references review_candidates(id),\n review_id integer not null references candidate_reviews(id), selection_id integer references candidate_selections(id),\n status text not null check(status in ('running','done','skipped','failed','retry','uncertain')),\n lease_owner text not null default '', lease_expires_at text not null default '',\n result_json text not null default '{}', created_at text not null default current_timestamp,\n updated_at text not null default current_timestamp\n)"
+        }
+      ]
+    },
+    "candidate_action_attempts": {
+      "count": 136,
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "execution_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          2,
+          "action_index",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "external_action_key",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          4,
+          "status",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          5,
+          "result_json",
+          "TEXT",
+          1,
+          "'{}'",
+          0
+        ],
+        [
+          6,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ],
+        [
+          7,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "candidate_executions",
+          "execution_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_candidate_action_key",
+          "tbl_name": "candidate_action_attempts",
+          "sql": "CREATE INDEX idx_candidate_action_key on candidate_action_attempts(external_action_key)"
+        },
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_candidate_action_attempts_1",
+          "tbl_name": "candidate_action_attempts",
+          "sql": null
+        },
+        {
+          "type": "table",
+          "name": "candidate_action_attempts",
+          "tbl_name": "candidate_action_attempts",
+          "sql": "CREATE TABLE candidate_action_attempts (\n id integer primary key, execution_id integer not null references candidate_executions(id),\n action_index integer not null, external_action_key text not null,\n status text not null check(status in ('dispatched','verified','confirmed_no_effect','uncertain','failed')),\n result_json text not null default '{}', created_at text not null default current_timestamp,\n updated_at text not null default current_timestamp,\n unique(execution_id,action_index)\n)"
+        }
+      ]
+    }
+  },
+  "external_inbound_foreign_keys": []
+}

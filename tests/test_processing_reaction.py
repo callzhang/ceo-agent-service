@@ -53,7 +53,7 @@ def test_pending_retry_retains_and_terminal_removes(setup):
     progress.sync()
     assert provider.calls[-1] == ('add', 'm1')
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done'")
+        db.execute("update tasks set status='done' where record_type='reply_tasks'")
     progress.sync()
     assert provider.calls[-1] == ('remove', 'm1')
 
@@ -62,7 +62,7 @@ def test_replaced_trigger_cleans_old_message(setup):
     store, provider, progress = setup
     progress.start('c1', 'm1')
     with store._connect() as db:
-        db.execute("update reply_tasks set trigger_message_id='m2'")
+        db.execute("update tasks set trigger_message_id='m2' where record_type='reply_tasks'")
     progress.sync()
     assert provider.calls[-1] == ('remove', 'm1')
     progress.start('c1', 'm2')
@@ -92,7 +92,7 @@ def test_interrupted_add_intent_resumes(setup):
 def test_terminal_input_does_not_add(setup):
     store, provider, progress = setup
     with store._connect() as db:
-        db.execute("update reply_tasks set status='failed'")
+        db.execute("update tasks set status='failed' where record_type='reply_tasks'")
     progress.start('c1', 'm1')
     assert provider.calls == []
 

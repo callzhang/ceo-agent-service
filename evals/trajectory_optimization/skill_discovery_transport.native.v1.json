@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "metadata_only_synthetic": true,
+  "fixtures": [
+    {
+      "id": "oversized-content-only-v1",
+      "source_serialized_chars": 189691,
+      "mcp_result_mode": "content-only, no structuredContent",
+      "acceptance": "both full deliveries clipped; stress boundary, not accepted",
+      "runs": [
+        {
+          "arm": "baseline",
+          "session_id": "01a1314d-8651-7fb1-9a65-0ea37c348282",
+          "model_visible_chars": 123022,
+          "clipped": true,
+          "all_metadata_exact": false,
+          "returned_match_exact": false,
+          "source_rows": 343,
+          "source_sha256": "f2ff758826ec4f7c63178e08b50b021e2ab7a7f3783a8e27fcf80c2a7a3d935d",
+          "events_sha256": "1251eca04ef29f98f09e8db0898d1f2b6ead4596b9e3397b0aadb358079fe3e8",
+          "native_sha256": "7b415ee0b68b4e5ea2d1aad57be47be6bada09eeae740063e19e7cebaab88d2b",
+          "output_schema_mode": "MCP content-only; no structuredContent"
+        },
+        {
+          "arm": "candidate",
+          "session_id": "01a1314d-ad95-7df0-bbf9-2b35e37662b8",
+          "model_visible_chars": 116423,
+          "clipped": true,
+          "all_metadata_exact": false,
+          "returned_match_exact": false,
+          "source_rows": 343,
+          "source_sha256": "f2ff758826ec4f7c63178e08b50b021e2ab7a7f3783a8e27fcf80c2a7a3d935d",
+          "events_sha256": "fbff2e7415696b195a678f2594c213a6cbc0dbbdb3b8d76f5499b8dfbaa1fafc",
+          "native_sha256": "6c4e4562e15b5a335165e1556c4b03e686b4e0e580ec781946a3e4a14d04734b",
+          "output_schema_mode": "MCP content-only; no structuredContent"
+        }
+      ]
+    },
+    {
+      "id": "historical-size-structured-v2",
+      "source_serialized_chars": 132410,
+      "mcp_result_mode": "content and structuredContent, matching original result mode",
+      "acceptance": "baseline clipped; candidate full metadata round trip; both requested lookup facts and reconstructed paths semantically exact",
+      "runs": [
+        {
+          "arm": "baseline",
+          "session_id": "01a13150-0e67-7303-86ad-eae4191ed10f",
+          "model_visible_chars": 127489,
+          "clipped": true,
+          "all_metadata_exact": false,
+          "original_mcp_all_metadata_exact": true,
+          "returned_match_exact": true,
+          "source_rows": 343,
+          "source_sha256": "c58387deae6a1ecfb55b46ead081fd9958a34e6f75688175d3a762ff0e1795a6",
+          "events_sha256": "f7d50e2827b95a815daf8b182eff79577ee55d4a28589724ad5f5e848400b768",
+          "native_sha256": "bda5419054c24dbb12ce2d6c6d66b4dac6adb00bac6e264f76e58554befad7db",
+          "returned_path_field": "path",
+          "returned_metadata_semantically_exact": true,
+          "result_shape_note": "Prompt specifies matches and absolute-path triples, but does not prescribe path versus absolute_path field spelling. Original output preserved; raw_dictionary equality differs from semantic path fidelity."
+        },
+        {
+          "arm": "candidate",
+          "session_id": "01a13150-28c1-7e63-8552-fa35f5ac9065",
+          "model_visible_chars": 86338,
+          "clipped": false,
+          "all_metadata_exact": true,
+          "original_mcp_all_metadata_exact": true,
+          "returned_match_exact": false,
+          "source_rows": 343,
+          "source_sha256": "c58387deae6a1ecfb55b46ead081fd9958a34e6f75688175d3a762ff0e1795a6",
+          "events_sha256": "e0624f4d97f563c8e2cfbc41aa8167fd52a6c94cf3c6ec7b398e2504fc29d780",
+          "native_sha256": "3e313828b9b5f4e76b112d6b68aee15e292daf4a2b5225c9a474ffdb93d50c3c",
+          "returned_path_field": "absolute_path",
+          "returned_metadata_semantically_exact": true,
+          "result_shape_note": "Prompt specifies matches and absolute-path triples, but does not prescribe path versus absolute_path field spelling. Original output preserved; raw_dictionary equality differs from semantic path fidelity."
+        }
+      ]
+    }
+  ],
+  "limits": "Synthetic delivery/metadata lookup only. No private directory replay, complete Consumer/Audit business contract or production provider acceptance.",
+  "independent_review": "All four event/native/source hashes, original complete MCP data, paired inputs and argv, model-visible projections and lookup facts independently verified. Native controls on-request/read-only, one read_skill tool call per run. Scoped draft only."
+}

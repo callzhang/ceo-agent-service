@@ -13,7 +13,6 @@ from app.business_skills import (
     BusinessSkillValidationError,
     codex_skill_config_override,
     default_skill_catalog,
-    expand_skill_dependencies,
     frozen_task_skill_materials,
     install_bundled_business_skills,
     installed_runtime_skill_paths,
@@ -591,49 +590,7 @@ def _skill_with_body(root: Path, name: str, body: str) -> None:
     )
 
 
-def test_dependencies_are_followed_to_the_end_not_cut_at_a_depth(tmp_path: Path):
-    root = tmp_path / "skills"
-    _skill_with_body(root, "task", "Delegate reading to reader.")
-    _skill_with_body(root, "reader", "Scanned pages go through ocr.")
-    _skill_with_body(root, "ocr", "Convert output with pdf.")
-    _skill_with_body(root, "pdf", "Leaf.")
-    _skill_with_body(root, "unrelated", "Nobody points here.")
-
-    closed = set(expand_skill_dependencies(["task"], target_root=root))
-
-    assert closed == {"task", "reader", "ocr", "pdf"}
-
-
-def test_dependency_cycles_terminate(tmp_path: Path):
-    root = tmp_path / "skills"
-    _skill_with_body(root, "alpha", "See beta.")
-    _skill_with_body(root, "beta", "See alpha.")
-
-    assert set(expand_skill_dependencies(["alpha"], target_root=root)) == {"alpha", "beta"}
-
-
-def test_dws_command_resolves_to_its_dingtalk_skill_only_when_installed(tmp_path: Path):
-    root = tmp_path / "skills"
-    _skill_with_body(
-        root, "task", "Run `dws doc read` then `dws nonexistent list`."
-    )
-    _skill_with_body(root, "dingtalk-doc", "Leaf.")
-
-    closed = set(expand_skill_dependencies(["task"], target_root=root))
-
-    assert "dingtalk-doc" in closed
-    assert "dingtalk-nonexistent" not in closed
-
-
-def test_a_skill_name_inside_a_longer_name_is_not_a_reference(tmp_path: Path):
-    root = tmp_path / "skills"
-    _skill_with_body(root, "task", "Use dingtalk-docs-export for this.")
-    _skill_with_body(root, "dingtalk-doc", "Leaf.")
-
-    assert set(expand_skill_dependencies(["task"], target_root=root)) == {"task"}
-
-
-def test_exclusion_override_keeps_the_whole_dependency_closure(tmp_path: Path):
+def test_exclusion_override_keeps_explicit_selection_without_loading_references(tmp_path: Path):
     root = tmp_path / "skills"
     _skill_with_body(root, "task", "Read attachments with ocr.")
     _skill_with_body(root, "ocr", "Leaf.")
@@ -644,7 +601,7 @@ def test_exclusion_override_keeps_the_whole_dependency_closure(tmp_path: Path):
     )
 
     assert '/sora/SKILL.md",enabled=false}' in override
-    assert '/ocr/SKILL.md",enabled=true}' in override
+    assert '/ocr/SKILL.md",enabled=false}' in override
     assert '/task/SKILL.md",enabled=true}' in override
 
 
@@ -718,12 +675,11 @@ def _compact_catalog_records(protocol):
     import io
 
     body = protocol.split('## Installed CEO business Skill catalog\n', 1)[1].split('\n\n## Required Skill protocol', 1)[0]
-    roots_body, entries_body = body.split('\n\nName\tRead path\tDescription', 1)
+    roots_body, entries_body = body.split('\n\nName\tRoot\tRelative path\tDescription', 1)
     entries_body = entries_body.removeprefix('\n')
     roots = dict(csv.reader(io.StringIO(roots_body.split('Root\tPath', 1)[1].removeprefix('\n')), delimiter='\t'))
     entries = []
-    for name, read_path, description in csv.reader(io.StringIO(entries_body), delimiter='\t'):
-        alias, relative = read_path.split(':', 1)
+    for name, alias, relative, description in csv.reader(io.StringIO(entries_body), delimiter='\t'):
         entries.append((name, Path(roots[alias]) / relative, description))
     return roots, entries
 

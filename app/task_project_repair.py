@@ -1,6 +1,8 @@
 """Auditable, idempotent repair planning for task project metadata."""
 
 from __future__ import annotations
+from app.task_storage import WORK_SUMMARY_INPUT_SQL
+from app.run_storage import TASK_AGENT_RUN_SQL
 
 import hashlib
 import json
@@ -299,7 +301,7 @@ def _latest_agent_refs(db: sqlite3.Connection) -> list[tuple[int, str, object]]:
     from app.native_standalone import latest_task_ref
 
     rows = db.execute(
-        "select id, created_at from task_agent_runs "
+        f"select id, created_at from ({TASK_AGENT_RUN_SQL}) "
         "where status='completed' order by id desc"
     ).fetchall()
     return [
@@ -374,7 +376,7 @@ def _archive_candidates(
         all_historical = True
         for update in updates:
             input_row = db.execute(
-                "select source_created_at, payload_json from work_summary_inputs "
+                f"select source_created_at, payload_json from ({WORK_SUMMARY_INPUT_SQL}) "
                 "where source_type='local_file' and source_ref=? limit 1",
                 (update["source_ref"],),
             ).fetchone()
@@ -449,7 +451,7 @@ def _database_fingerprint(db: sqlite3.Connection) -> str:
             "select count(*), coalesce(max(id), 0) from follow_up_drafts"
         ).fetchone(),
         "source_inputs": db.execute(
-            "select count(*), coalesce(max(id), 0) from work_summary_inputs"
+            f"select count(*), coalesce(max(id), 0) from ({WORK_SUMMARY_INPUT_SQL})"
         ).fetchone(),
         "business_updates": db.execute(
             "select count(*), coalesce(max(id), 0) from work_updates "

@@ -2612,7 +2612,7 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
 
     with sqlite3.connect(fixture.database) as db:
         db.execute(
-            "update reply_tasks set channel='legacy-email' where id=?",
+            "update tasks set channel='legacy-email' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (fixture.task.id,),
         )
     legacy_event = _audited_observability_event(fixture)
@@ -2764,7 +2764,7 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
         db.execute("delete from email_unsubscribe_effects")
         db.execute("delete from email_unsubscribe_claims")
         db.execute(
-            "update reply_tasks set status='processing' where id=?",
+            "update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (fixture.task.id,),
         )
         db.execute(
@@ -2775,7 +2775,11 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
     rows, total = fixture.store.list_unsubscribe_classifications(limit=20, offset=0)
     assert total == 1
     assert [row['id'] for row in rows] == [fixture.classification_id]
+    assert fixture.store.email_processing_progress(now=datetime.now(timezone.utc))[
+        "unsubscribe_queue"
+    ] == {"pending": 0, "processing": 1}
     with sqlite3.connect(fixture.database) as db:
+        assert db.execute("select 1 from sqlite_master where name='reply_tasks'").fetchone() is None
         assert db.execute("select 1 from sqlite_master where name='agent_runs'").fetchone() is None
         assert db.execute("select 1 from sqlite_master where name='runs'").fetchone() is not None
 
@@ -2817,7 +2821,7 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
             (fixture.action_identity,),
         )
         db.execute(
-            "update reply_tasks set status='processing' where id=?",
+            "update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (fixture.task.id,),
         )
         db.execute(
@@ -2909,21 +2913,23 @@ def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
             # This fixture is settled: retained source facts, rather than a
             # retired JSON cache, are the authoritative lineage binding.
             db.execute(
-                "update reply_task_inputs set input_provenance_json=json_set("
+                "update tasks set input_provenance_json=json_set("
                 "input_provenance_json, '$.source.account_id', ?, "
                 "'$.source.action_plan_id', ?, '$.source.classification_id', ?) "
-                "where id=(select current_input_id from reply_tasks where id=?)",
+                "where record_type='reply_task_inputs' and id=(select current_input_id "
+                "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
                 (payload["account_id"], payload["action_plan_id"], payload["classification_id"], fixture.task.id),
             )
         elif mismatch == "conversation":
             db.execute(
-                "update reply_tasks set conversation_id='wrong-conversation' where id=?",
+                "update tasks set conversation_id='wrong-conversation' "
+                "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
                 (fixture.task.id,),
             )
         elif mismatch == "generation":
             db.execute(
                 "update runs set execution_generation='wrong-generation' "
-                "where id=?",
+                "where record_type='agent_runs' and cast(legacy_key as integer)=?",
                 (fixture.audit.id,),
             )
         elif mismatch == "effect":

@@ -25,6 +25,8 @@ from app.workbench.runtime import (
     RuntimeResult,
     _release_runtime_owner,
 )
+from app.task_storage import WORKBENCH_TURN_SQL
+from app.run_storage import WORKBENCH_EVENT_SQL
 from app.workbench.store import WorkbenchStore
 
 
@@ -486,10 +488,10 @@ def test_white_box_runtime_result_and_tool_payload_require_native_source(
     assert "不可用" in tool_event.payload["summary"]
     with store._connect() as db:
         event_row = db.execute(
-            "select payload_json from workbench_events where id=?", (tool_event.id,)
+            f"select payload_json from ({WORKBENCH_EVENT_SQL}) as workbench_events where id=?", (tool_event.id,)
         ).fetchone()
         final_row = db.execute(
-            "select final_text from workbench_turns where id=?", (turn.id,)
+            f"select final_text from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?", (turn.id,)
         ).fetchone()
     assert "api_token=local-value" not in event_row["payload_json"]
     assert final_row["final_text"] == ""
@@ -516,12 +518,12 @@ def test_failed_runtime_keeps_service_code_without_copying_native_diagnostic(tmp
     assert "PRIVATE_TOKEN" not in persisted.error_detail
     with store._connect() as db:
         row = db.execute(
-            "select error_code,error_detail from workbench_turns where id=?", (turn.id,)
+            f"select error_code,error_detail from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?", (turn.id,)
         ).fetchone()
     assert row["error_code"] == "provider_process_failed"
     assert "PRIVATE_TOKEN" not in row["error_detail"]
     with store._connect() as db:
-        db.execute("update workbench_turns set error_detail='' where id=?", (turn.id,))
+        db.execute("update tasks set error_detail='' where record_type='workbench_turns' and legacy_key=?", (turn.id,))
     assert store.get_turn(turn.id).error_detail
     executor.close()
 
@@ -916,11 +918,7 @@ def test_runtime_recovery_fails_corrupt_blank_legacy_proposer(tmp_path: Path):
             (confirmation.id,),
         )
         db.execute(
-            """
-            update workbench_turns
-            set status='waiting_confirmation', runtime_quiesced_run_id=''
-            where id=?
-            """,
+            "\n            update tasks\n            set status='waiting_confirmation', runtime_quiesced_run_id=''\n            where record_type='workbench_turns' and legacy_key=?\n            ",
             (turn.id,),
         )
     calls = []
@@ -965,7 +963,7 @@ def test_scheduler_never_executes_persisted_legacy_confirmation_intent(
             (confirmation.id,),
         )
         db.execute(
-            "update workbench_turns set runtime_quiesced_run_id='' where id=?",
+            "update tasks set runtime_quiesced_run_id='' where record_type='workbench_turns' and legacy_key=?",
             (turn.id,),
         )
     store.mark_confirmation_proposer_quiesced(
@@ -1222,11 +1220,7 @@ def test_explicit_recovery_reconciles_legacy_resultless_confirmed_states_without
             (confirmation.id,),
         )
         db.execute(
-            """
-            update workbench_turns
-            set status=?, lease_owner=?, lease_expires_at=?, completed_at=?
-            where id=?
-            """,
+            "\n            update tasks\n            set status=?, lease_owner=?, lease_expires_at=?, completed_at=?\n            where record_type='workbench_turns' and legacy_key=?\n            ",
             (
                 status.value,
                 "dead-worker" if status is TurnStatus.RUNNING else "",
@@ -1290,7 +1284,7 @@ def test_claim_and_run_once_defend_against_unreconciled_confirmed_action(
             "update workbench_confirmations set status='confirmed' where id=?",
             (confirmation.id,),
         )
-        db.execute("update workbench_turns set status='queued' where id=?", (turn.id,))
+        db.execute("update tasks set status='queued' where record_type='workbench_turns' and legacy_key=?", (turn.id,))
 
     assert store.claim_next_turn(owner="other-worker") is None
     assert executor.run_once() == []

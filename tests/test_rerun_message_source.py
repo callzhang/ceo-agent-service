@@ -5,6 +5,7 @@ import pytest
 from app.audit_web import handle_rerun_attempt_post
 from app.dws_client import DingTalkConversation, DingTalkMessage, DwsClient, DwsError
 from app.store import AgentRole, AutoReplyStore, ManualRerunConflict
+from app.task_storage import task_physical_id
 
 
 def source_message():
@@ -111,7 +112,10 @@ def test_refused_history_does_not_fetch_source_or_enqueue(tmp_path, monkeypatch)
     store = AutoReplyStore(tmp_path / "refused.sqlite3")
     task, attempt_id = settled_task(store)
     with store._connect() as db:
-        db.execute("update reply_tasks set status='processing' where id=?", (task.id,))
+        db.execute(
+            "update tasks set status='processing' where record_type='reply_tasks' and id=?",
+            (task_physical_id(db, "reply_tasks", task.id),),
+        )
     run = store.claim_agent_run(
         task.id, task.execution_generation, role=AgentRole.AUDIT,
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
@@ -190,7 +194,10 @@ def test_current_generation_refusal_is_checked_in_enqueue_transaction(tmp_path):
     task, attempt_id = settled_task(store)
     source = source_message()
     with store._connect() as db:
-        db.execute("update reply_tasks set status='processing' where id=?", (task.id,))
+        db.execute(
+            "update tasks set status='processing' where record_type='reply_tasks' and id=?",
+            (task_physical_id(db, "reply_tasks", task.id),),
+        )
     run = store.claim_agent_run(
         task.id, task.execution_generation, role=AgentRole.AUDIT,
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,

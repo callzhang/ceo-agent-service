@@ -1,5 +1,6 @@
 """Explicit maintenance for authorized, effect-free interrupted reply work."""
 from __future__ import annotations
+from app.scheduled_config_storage import publication_scheduled_source
 
 from dataclasses import dataclass
 import json
@@ -14,6 +15,8 @@ from app.database_backup import create_database_backup
 from app.reply_task_deferral import _legacy_event_may_have_effect
 from app.repository_updater import UpgradePreconditionError
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
+from app.task_schema_release import publication_meeting_sources, publication_task_sources
+from app.action_schema_release import publication_candidate_source
 
 
 @dataclass(frozen=True)
@@ -27,14 +30,18 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
     """Read all in-flight work; only the explicitly named reply tasks may run."""
     with sqlite3.connect(database_path.resolve().as_uri() + '?mode=ro', uri=True) as db:
         db.row_factory = sqlite3.Row
-        processing = {row[0] for row in db.execute("select id from reply_tasks where status='processing'")}
+        reply_source, work_source = publication_task_sources(db)
+        candidate_source = publication_candidate_source(db)
+        scheduled_source = publication_scheduled_source(db)
+        meeting_jobs, _ = publication_meeting_sources(db)
+        processing = {row[0] for row in db.execute(f"select id from ({reply_source}) where status='processing'")}
         if not processing.issubset(set(task_ids)):
             raise UpgradePreconditionError('maintenance has unapproved processing reply tasks')
         for query in (
-            "select 1 from work_summary_inputs where status='processing' limit 1",
-            "select 1 from meeting_alignment_jobs where status in ('processing','sending','summarizing') limit 1",
+            f"select 1 from ({work_source}) where status='processing' limit 1",
+            f"select 1 from ({meeting_jobs}) where status in ('processing','sending','summarizing') limit 1",
             "select 1 from email_actions where status not in ('pending','done','skipped','failed','needs_human') limit 1",
-            "select 1 from scheduled_task_runs where dispatch_status='pending' and lease_owner<>'' "
+            f"select 1 from ({scheduled_source}) where dispatch_status='pending' and lease_owner<>'' "
             "and julianday(lease_expires_at)>julianday('now') limit 1",
             f"select 1 from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where status in ('starting','running') and (agent_run_id is null or agent_run_id not in (select id from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id in (" + ','.join('?' for _ in task_ids) + "))) limit 1",
         ):
@@ -43,7 +50,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
                 raise UpgradePreconditionError('maintenance has other in-flight work')
         bindings = []
         for task_id in task_ids:
-            task = db.execute('select * from reply_tasks where id=?', (task_id,)).fetchone()
+            task = db.execute(f'select * from ({reply_source}) where id=?', (task_id,)).fetchone()
             if task is None or task['status'] not in ('pending','processing'):
                 raise UpgradePreconditionError('maintenance task is not recoverable')
             latest = db.execute(f'select role,status from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=? order by id desc limit 1', (task_id,)).fetchone()
@@ -51,7 +58,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
                 raise UpgradePreconditionError('maintenance needs a recoverable Consumer run')
             bindings.append((task_id, task['business_object_key'], task['execution_generation'], task['input_version']))
             checks = (
-                ('review_candidates', 'task_id'),
+                (f'({candidate_source})', 'task_id'),
                 ('external_action_results', 'business_object_key'),
             )
             for table, column in checks:

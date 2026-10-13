@@ -1,5 +1,6 @@
 """Explicitly retire one obsolete task-class question; never decide its business."""
 
+from app.task_storage import REPLY_TASK_SQL
 import argparse
 import hashlib
 import json
@@ -16,6 +17,10 @@ from app.config import worker_db_path
 from app.database_backup import backup_is_complete
 from app.store import AutoReplyStore
 from app.run_storage import AGENT_RUN_SQL
+
+from app.action_storage import (
+    REVIEW_CANDIDATE_SQL,
+)
 
 
 class _RuleOption(BaseModel):
@@ -55,7 +60,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
                r.role, r.status as run_status,
                t.status as task_status, t.execution_generation as task_generation
         from reply_attempts a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id
-        join reply_tasks t on t.id=r.reply_task_id
+        join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
         join business_object_tasks current_object
           on current_object.business_object_key=t.business_object_key
          and current_object.reply_task_id=t.id
@@ -64,7 +69,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
           and not exists(select 1 from reply_attempts newer
             where newer.channel=a.channel and newer.conversation_id=a.conversation_id
               and newer.trigger_message_id=a.trigger_message_id and newer.id>a.id)
-          and not exists(select 1 from review_candidates c where c.task_id=t.id)
+          and not exists(select 1 from ({REVIEW_CANDIDATE_SQL}) c where c.task_id=t.id)
     """, (attempt_id,)).fetchone()
     if row is None or not (
         row["send_status"] == "needs_human" and row["reviewed_at"] is None

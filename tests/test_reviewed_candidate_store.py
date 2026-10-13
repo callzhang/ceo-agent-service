@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.run_storage import AGENT_RUN_SQL, insert_run
+from app.action_storage import CANDIDATE_EXECUTION_SQL, update_action
 from app.store import AgentRole, AutoReplyStore, STORE_SCHEMA_VERSION_KEY
 from app import store as store_module
 
@@ -273,6 +274,43 @@ def _reviewed(store: AutoReplyStore, *, options=True):
     return task, candidate, review, body
 
 
+def test_actions_schema_retires_candidate_tables_and_preserves_public_ids(tmp_path):
+    from app.action_storage import ACTION_TYPES, action_physical_id
+
+    store = AutoReplyStore(tmp_path / "actions.sqlite3")
+    task, candidate, review, _ = _reviewed(store)
+    selected = store.select_candidate_option(candidate["id"], review["id"], "execute")
+    execution = store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
+    attempt = store.begin_candidate_action(execution["id"], "worker", 0, "actions-receipt")
+    store.record_candidate_external_action(
+        execution["id"], "worker", 0, "actions-receipt", "send",
+        {"user_id": "x"}, {"receipt": "provider substitute"},
+    )
+    store.finish_candidate_execution(execution["id"], "worker", "done", {})
+    supplement = store.record_candidate_supplement(candidate["id"], "new business fact")
+    records = {
+        "review_candidates": candidate, "candidate_reviews": review,
+        "candidate_selections": selected, "candidate_supplements": supplement,
+        "candidate_executions": execution, "candidate_action_attempts": attempt,
+    }
+    with store._connect() as db:
+        names = {row[0] for row in db.execute(
+            "select name from sqlite_master where type in ('table','view')"
+        )}
+        assert "actions" in names
+        assert not names.intersection(ACTION_TYPES)
+        physical = {kind: action_physical_id(db, kind, row["id"]) for kind, row in records.items()}
+        assert None not in physical.values()
+        assert len(set(physical.values())) == len(records)
+        assert any(physical[kind] != row["id"] for kind, row in records.items())
+        assert not db.execute("pragma foreign_key_check").fetchall()
+    reopened = AutoReplyStore(store.path)
+    assert reopened.get_candidate_execution(candidate["id"])["status"] == "done"
+    assert reopened.list_candidate_action_attempts(execution["id"])[0]["id"] == attempt["id"]
+    assert reopened.list_verified_candidate_actions(task.id)[0]["provider_result_json"] == '{"receipt":"provider substitute"}'
+    assert reopened.list_human_decision_evidence(task.id)[-1]["instruction"] == "new business fact"
+
+
 def test_review_binding_and_restart(tmp_path: Path):
     path = tmp_path / "candidate.sqlite3"
     store = AutoReplyStore(path)
@@ -344,10 +382,12 @@ def test_provider_receipt_survives_candidate_invalidation_after_dispatch(tmp_pat
     claim = store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
     store.begin_candidate_action(claim["id"], "worker", 0, "effect-key")
     with store._connect() as db:
-        db.execute("""update review_candidates set invalidated_at=current_timestamp,
-            invalidation_reason='new source fact' where id=?""", (candidate["id"],))
-        db.execute("""update reply_tasks set execution_generation='next-generation',
-            status='pending' where id=?""", (task.id,))
+        update_action(db, "review_candidates", candidate["id"], {
+            "invalidated_at": db.execute("select current_timestamp").fetchone()[0],
+            "invalidation_reason": "new source fact",
+        })
+        db.execute("""update tasks set execution_generation='next-generation',
+            status='pending' where record_type='reply_tasks' and id=?""", (task.id,))
     with pytest.raises(ValueError, match="generation mismatch"):
         store.begin_candidate_action(claim["id"], "worker", 0, "effect-key")
     receipt = store.record_candidate_external_action(
@@ -413,14 +453,14 @@ def test_historical_hard_refusal_blocks_execution_without_erasing_review(tmp_pat
         preserved = db.execute(f'select status,structured_error_json from ({AGENT_RUN_SQL}) where reply_task_id=? and proposal_revision=99', (task.id,)).fetchone()
         assert preserved["status"] == "failed"
         assert json.loads(preserved["structured_error_json"]) == error
-        assert db.execute("select count(*) from candidate_executions").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({CANDIDATE_EXECUTION_SQL})").fetchone()[0] == 0
 
 
 def test_generation_rotation_prevents_old_approved_plan(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     task, candidate, review, _ = _reviewed(store, options=False)
     with store._connect() as db:
-        db.execute("update reply_tasks set execution_generation='new-generation' where id=?", (task.id,))
+        db.execute("update tasks set execution_generation='new-generation' where record_type='reply_tasks' and id=?", (task.id,))
     assert store.current_reviewed_candidate(task.id, task.execution_generation) is None
     with pytest.raises(ValueError, match="generation mismatch"):
         store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
@@ -502,7 +542,7 @@ def test_selection_wakes_same_generation_without_rewriting_question(tmp_path: Pa
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     task, candidate, review, _ = _reviewed(store)
     with store._connect() as db:
-        db.execute("update reply_tasks set status='needs_human' where id=?", (task.id,))
+        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and id=?", (task.id,))
     with pytest.raises(ValueError, match="choice is missing"):
         store.wake_selected_candidate_execution(candidate["id"], review["id"])
     store.select_candidate_option(candidate["id"], review["id"], "execute")
@@ -520,7 +560,7 @@ def test_preserved_human_evidence_survives_invalidation_and_generation_change(tm
     store.select_candidate_option(candidate["id"], review["id"], "execute")
     store.record_candidate_supplement(candidate["id"], "Applicant changed the due date")
     with store._connect() as db:
-        db.execute("update reply_tasks set execution_generation='new-facts-generation' where id=?", (task.id,))
+        db.execute("update tasks set execution_generation='new-facts-generation' where record_type='reply_tasks' and id=?", (task.id,))
 
     events = store.list_human_decision_evidence(task.id)
     assert [event["kind"] for event in events] == ["selection", "supplement"]

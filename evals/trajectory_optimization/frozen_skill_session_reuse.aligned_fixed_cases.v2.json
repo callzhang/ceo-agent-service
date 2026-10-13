@@ -1,0 +1,1926 @@
+{
+  "version": 2,
+  "main": "1cca085b",
+  "candidate": "9179e9df",
+  "original_case_list_sha256": "debdc439cd4b073c5c0ea463171016c2ce06ab7e0e9b48c6bc7d15a25acb52fb",
+  "case_manifest": {
+    "version": 2,
+    "origin": "evals/task_scoped_prompts/v1.json",
+    "fixed_runtime_time": "2026-10-08T10:00:00-07:00",
+    "cases": [
+      {
+        "id": "calendar-cross-midnight",
+        "role": "consumer",
+        "domain": "calendar",
+        "skill_name": "ceo-calendar-invite",
+        "task": "Review the live invitation cal-cross-midnight and the relevant local schedule, then return the complete typed Consumer result for the action, if any.",
+        "trigger": {
+          "channel": "scheduled",
+          "conversation_id": "eval-calendar-conversation",
+          "conversation_title": "Synthetic calendar review",
+          "message_id": "trigger-calendar-cross-midnight",
+          "sender": "Synthetic calendar source",
+          "text": "A new invitation requires review. Exact event id: cal-cross-midnight.",
+          "create_time": "2026-10-08T09:55:00-07:00",
+          "raw_payload": {
+            "event_id": "cal-cross-midnight",
+            "principal_timezone": "America/Los_Angeles",
+            "invitation_timezone": "Asia/Shanghai",
+            "participant_timezones": [
+              {
+                "participant_id": "principal",
+                "timezone": "America/Los_Angeles",
+                "source_ref": "synthetic-principal-profile",
+                "applies_on": "2026-10-09"
+              }
+            ]
+          }
+        },
+        "phases": {
+          "cold": {
+            "calendar_events": [
+              {
+                "event_id": "cal-cross-midnight",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-10T13:30:00+08:00",
+                "end_time": "2026-10-10T14:30:00+08:00",
+                "timezone": "Asia/Shanghai",
+                "organizer": {
+                  "user_id": "organizer-cross",
+                  "verified": true
+                },
+                "principal_response_status": "needsAction",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+              },
+              {
+                "event_id": "cal-block-after",
+                "title": "Blocked",
+                "start_time": "2026-10-10T00:00:00-07:00",
+                "end_time": "2026-10-10T00:30:00-07:00",
+                "timezone": "America/Los_Angeles",
+                "organizer": {
+                  "user_id": "principal",
+                  "verified": true
+                },
+                "principal_response_status": "accepted",
+                "description": "Personal blocked time."
+              }
+            ]
+          },
+          "resume": {
+            "calendar_events": [
+              {
+                "event_id": "cal-cross-midnight",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-10T13:30:00+08:00",
+                "end_time": "2026-10-10T14:30:00+08:00",
+                "timezone": "Asia/Shanghai",
+                "organizer": {
+                  "user_id": "organizer-cross",
+                  "verified": true
+                },
+                "principal_response_status": "accepted",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+              },
+              {
+                "event_id": "cal-block-after",
+                "title": "Blocked",
+                "start_time": "2026-10-10T00:00:00-07:00",
+                "end_time": "2026-10-10T00:30:00-07:00",
+                "timezone": "America/Los_Angeles",
+                "organizer": {
+                  "user_id": "principal",
+                  "verified": true
+                },
+                "principal_response_status": "accepted",
+                "description": "Personal blocked time."
+              }
+            ]
+          }
+        },
+        "criteria": {
+          "required_tool_calls": [
+            "read_task_skill",
+            "read_dingtalk_calendar_event",
+            "list_dingtalk_calendar_events"
+          ],
+          "cold": [
+            "treat 2026-10-10 13:30 Asia/Shanghai as 2026-10-09 22:30 America/Los_Angeles with UTC-07:00",
+            "recognize that the invitation ends at 23:30 and the Blocked event begins at 00:00, so there is no overlap",
+            "propose exactly one accepted response for cal-cross-midnight and no response change for cal-block-after"
+          ],
+          "resume": [
+            "reread live state in the same native session",
+            "recognize that cal-cross-midnight is already accepted",
+            "return no_action with no duplicate calendar response while preserving the attendance-value meaning"
+          ]
+        },
+        "skill": "ceo-calendar-invite",
+        "facts": "Review the live invitation cal-cross-midnight and the relevant local schedule, then return the complete typed Consumer result for the action, if any.\nA new invitation requires review. Exact event id: cal-cross-midnight.",
+        "body": "Review the live invitation and relevant calendar interval. Compare actual instants in named timezones, retaining date changes. Attend meetings that require the principal decision and do not conflict; decline an invitation conflicting with active Blocked time. Keep responses targeted to the exact invitation; read organizer identity before any organizer notification. Already accepted invitations require no duplicate response."
+      },
+      {
+        "id": "calendar-real-overlap",
+        "role": "consumer",
+        "domain": "calendar",
+        "skill_name": "ceo-calendar-invite",
+        "task": "Review the live invitation cal-real-overlap and the relevant local schedule, then return the complete typed Consumer result for the action, if any.",
+        "trigger": {
+          "channel": "scheduled",
+          "conversation_id": "eval-calendar-overlap-conversation",
+          "conversation_title": "Synthetic calendar review",
+          "message_id": "trigger-calendar-real-overlap",
+          "sender": "Synthetic calendar source",
+          "text": "A new invitation requires review. Exact event id: cal-real-overlap.",
+          "create_time": "2026-10-08T09:56:00-07:00",
+          "raw_payload": {
+            "event_id": "cal-real-overlap",
+            "principal_timezone": "America/Los_Angeles",
+            "invitation_timezone": "Asia/Shanghai",
+            "participant_timezones": [
+              {
+                "participant_id": "principal",
+                "timezone": "America/Los_Angeles",
+                "source_ref": "synthetic-principal-profile",
+                "applies_on": "2026-10-09"
+              }
+            ]
+          }
+        },
+        "phases": {
+          "cold": {
+            "calendar_events": [
+              {
+                "event_id": "cal-real-overlap",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-10T13:30:00+08:00",
+                "end_time": "2026-10-10T14:30:00+08:00",
+                "timezone": "Asia/Shanghai",
+                "organizer": {
+                  "user_id": "organizer-overlap",
+                  "verified": true
+                },
+                "principal_response_status": "needsAction",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+              },
+              {
+                "event_id": "cal-block-overlap",
+                "title": "Blocked",
+                "start_time": "2026-10-09T23:00:00-07:00",
+                "end_time": "2026-10-10T00:30:00-07:00",
+                "timezone": "America/Los_Angeles",
+                "organizer": {
+                  "user_id": "principal",
+                  "verified": true
+                },
+                "principal_response_status": "accepted",
+                "description": "Personal blocked time."
+              }
+            ]
+          }
+        },
+        "criteria": {
+          "required_tool_calls": [
+            "read_task_skill",
+            "read_dingtalk_calendar_event",
+            "list_dingtalk_calendar_events"
+          ],
+          "cold": [
+            "use the correct 2026-10-09 22:30-23:30 America/Los_Angeles interval",
+            "recognize the 23:00-23:30 overlap with the active Blocked event",
+            "do not accept cal-real-overlap",
+            "propose a declined response for cal-real-overlap; any organizer notification must target organizer-overlap"
+          ]
+        },
+        "skill": "ceo-calendar-invite",
+        "facts": "Review the live invitation cal-real-overlap and the relevant local schedule, then return the complete typed Consumer result for the action, if any.\nA new invitation requires review. Exact event id: cal-real-overlap.",
+        "body": "Review the live invitation and relevant calendar interval. Compare actual instants in named timezones, retaining date changes. Attend meetings that require the principal decision and do not conflict; decline an invitation conflicting with active Blocked time. Keep responses targeted to the exact invitation; read organizer identity before any organizer notification. Already accepted invitations require no duplicate response."
+      },
+      {
+        "id": "mail-already-handled",
+        "role": "consumer",
+        "domain": "mail",
+        "skill_name": "ceo-mail-review",
+        "task": "Review the complete mail thread in eval-mail-conversation and return the complete typed Consumer result for any remaining action.",
+        "trigger": {
+          "channel": "dingtalk",
+          "conversation_id": "eval-mail-conversation",
+          "conversation_title": "Synthetic mail review",
+          "message_id": "trigger-mail-review",
+          "sender": "Synthetic mail card",
+          "text": "Mail card: Renewal confirmation. Open the complete thread before deciding.",
+          "create_time": "2026-10-08T09:57:00-07:00",
+          "raw_payload": {
+            "mail_thread_id": "mail-thread-1",
+            "preview_truncated": true
+          }
+        },
+        "phases": {
+          "cold": {
+            "messages": [
+              {
+                "message_id": "mail-original",
+                "sender": "Synthetic vendor",
+                "create_time": "2026-10-08T08:00:00-07:00",
+                "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+              },
+              {
+                "message_id": "mail-principal-sent",
+                "sender": "Principal",
+                "create_time": "2026-10-08T07:30:00-07:00",
+                "text": "Approved subject to the recorded legal terms."
+              }
+            ]
+          }
+        },
+        "criteria": {
+          "required_tool_calls": [
+            "read_task_skill",
+            "read_dingtalk_messages"
+          ],
+          "cold": [
+            "use the complete thread rather than the truncated card",
+            "recognize the renewal is already approved and the provider confirmation requests no reply",
+            "return no_action with no duplicate chat or mail action"
+          ]
+        },
+        "skill": "ceo-mail-review",
+        "facts": "Review the complete mail thread in eval-mail-conversation and return the complete typed Consumer result for any remaining action.\nMail card: Renewal confirmation. Open the complete thread before deciding.",
+        "body": "Read the full mail thread, distinguishing a truncated card from complete source. An already approved confirmation with no requested reply requires no duplicate reply or approval."
+      },
+      {
+        "id": "document-material-conflicts",
+        "role": "consumer",
+        "domain": "document",
+        "skill_name": "ceo-document-review",
+        "task": "Review document doc-review-1 for material factual consistency and prepare the complete typed Consumer result for replying to the source request.",
+        "trigger": {
+          "channel": "dingtalk",
+          "conversation_id": "eval-document-conversation",
+          "conversation_title": "Synthetic document review",
+          "message_id": "trigger-document-review",
+          "sender": "Synthetic document owner",
+          "text": "Please review doc-review-1 before approval and reply with the material issues.",
+          "create_time": "2026-10-08T09:58:00-07:00",
+          "raw_payload": {
+            "document_id": "doc-review-1"
+          }
+        },
+        "phases": {
+          "cold": {
+            "document": {
+              "document_id": "doc-review-1",
+              "revision": "rev-7",
+              "title": "Synthetic rollout proposal",
+              "content": "Executive summary: Phase 1 covers 120 stores and launches on October 15.\nRollout table: Phase 1 covers 80 stores and launches on October 22.\nBudget summary: total requested budget is USD 500,000.\nBudget lines: platform USD 300,000; operations USD 200,000; contingency USD 120,000."
+            }
+          }
+        },
+        "criteria": {
+          "required_tool_calls": [
+            "read_task_skill",
+            "read_dingtalk_document"
+          ],
+          "cold": [
+            "identify the 120 versus 80 store conflict",
+            "identify the October 15 versus October 22 launch conflict",
+            "identify that USD 300,000 + 200,000 + 120,000 equals USD 620,000 rather than the stated USD 500,000",
+            "propose one source-conversation reply bound to eval-document-conversation and trigger-document-review that asks for reconciliation before approval",
+            "do not claim the document is approved or edit the document"
+          ]
+        },
+        "skill": "ceo-document-review",
+        "facts": "Review document doc-review-1 for material factual consistency and prepare the complete typed Consumer result for replying to the source request.\nPlease review doc-review-1 before approval and reply with the material issues.",
+        "body": "Read the live full document and compare factual claims, dates and sums across sections. Material conflicts must be reconciled before approval; prepare one source-bound reply describing material issues. Do not edit or approve a conflicting source. Audit reviews the actual candidate against source and returns concrete feedback for missed conflicts."
+      },
+      {
+        "id": "work-tracking-existing-remediation",
+        "role": "consumer",
+        "domain": "work_tracking",
+        "skill_name": "ceo-work-tracking",
+        "task": "Review document doc-project-1 and return the complete typed Consumer result for replying with the project risk and next action, if any.",
+        "trigger": {
+          "channel": "dingtalk",
+          "conversation_id": "eval-project-conversation",
+          "conversation_title": "Synthetic project update",
+          "message_id": "trigger-project-review",
+          "sender": "Synthetic project source",
+          "text": "Please review doc-project-1 and reply with whether the project needs attention and the next action.",
+          "create_time": "2026-10-08T09:59:00-07:00",
+          "raw_payload": {
+            "document_id": "doc-project-1",
+            "project_anchor_id": "project-orion"
+          }
+        },
+        "phases": {
+          "cold": {
+            "document": {
+              "document_id": "doc-project-1",
+              "revision": "rev-3",
+              "title": "Project Orion status",
+              "content": "Project Orion customer cutover is scheduled for October 20. The authentication callback blocker remains unresolved and now threatens that cutover. Program Lead owns rollout coordination. Existing Task task-auth-1 already requires the Integration Owner to verify the callback configuration and report the result by October 12; it is open and directly addresses this blocker. No source states that task-auth-1 is complete."
+            }
+          }
+        },
+        "criteria": {
+          "required_tool_calls": [
+            "read_task_skill",
+            "read_dingtalk_document"
+          ],
+          "cold": [
+            "identify a material unresolved authentication blocker threatening the October 20 cutover",
+            "use existing Task task-auth-1 as the next action rather than inventing or claiming a duplicate Task",
+            "do not claim task-auth-1 is complete",
+            "propose one source-conversation reply bound to eval-project-conversation and trigger-project-review with the risk and existing next action"
+          ]
+        },
+        "skill": "ceo-work-tracking",
+        "facts": "Review document doc-project-1 and return the complete typed Consumer result for replying with the project risk and next action, if any.\nPlease review doc-project-1 and reply with whether the project needs attention and the next action.",
+        "body": "Read project definition and status together with existing tasks and explicit owners. Identify unresolved material blockers threatening delivery. Use an existing open task that directly addresses a blocker as the next action; do not duplicate or falsely complete it. Reply to the source with material risk and existing next action."
+      },
+      {
+        "id": "audit-document-feedback",
+        "role": "audit",
+        "domain": "document",
+        "skill_name": "ceo-document-review",
+        "task": "Review the complete candidate against the live synthetic document and return the complete typed Audit result.",
+        "trigger": {
+          "channel": "dingtalk",
+          "conversation_id": "eval-audit-document-conversation",
+          "conversation_title": "Synthetic Audit review",
+          "message_id": "trigger-audit-document-review",
+          "sender": "Synthetic document owner",
+          "text": "Please review doc-audit-1 before approval.",
+          "create_time": "2026-10-08T10:00:00-07:00",
+          "raw_payload": {
+            "document_id": "doc-audit-1"
+          }
+        },
+        "phases": {
+          "cold": {
+            "document": {
+              "document_id": "doc-audit-1",
+              "revision": "rev-11",
+              "title": "Synthetic capacity proposal",
+              "content": "Executive summary: capacity is 120 units and launch is October 15.\nImplementation table: capacity is 80 units and launch is October 22.\nApproval status: not approved; factual conflicts must be reconciled first."
+            },
+            "candidate": {
+              "summary": "The document is internally consistent and ready for approval.",
+              "reply_body": "No material issues found. The proposal is ready for approval."
+            }
+          }
+        },
+        "criteria": {
+          "required_tool_calls": [
+            "read_task_skill",
+            "read_dingtalk_document"
+          ],
+          "cold": [
+            "preserve the exact proposal_revision and candidate_digest",
+            "return outcome reject with non-null Audit feedback requiring substantive replacement of the false external reply payload; exact capacity/date conflicts required",
+            "state that the candidate missed the 120 versus 80 capacity conflict and October 15 versus October 22 date conflict",
+            "request a replacement candidate grounded in the live document",
+            "do not execute or approve any action"
+          ]
+        },
+        "skill": "ceo-document-review",
+        "facts": "Review the complete candidate against the live synthetic document and return the complete typed Audit result.\nPlease review doc-audit-1 before approval.",
+        "body": "Read the live full document and compare factual claims, dates and sums across sections. Material conflicts must be reconciled before approval; prepare one source-bound reply describing material issues. Do not edit or approve a conflicting source. Audit reviews the actual candidate against source and returns concrete feedback for missed conflicts."
+      }
+    ],
+    "scope": "Original fixed facts/criteria, anonymous synthetic policy Skill bodies and Profile; canonical role tools, stubbed actual tool results; no actual saved Profile, production writes or external actions.",
+    "baseline": "1cca085b",
+    "candidate": "9179e9df",
+    "changed_between_arms": [
+      "Common Consumer selects/reads versus selects/applies",
+      "Frozen discovery mandatory read versus complete-source reuse bound to selected Skill revision_id/sha256"
+    ],
+    "oracle_change": {
+      "case": "audit-document-feedback",
+      "original": "return-only",
+      "current": "reject with substantive external reply payload replacement and exact conflict feedback",
+      "authority": "Current unchanged consumer_agent.py:245-247, reviewed_candidates.py:19-47 and agent_orchestrator.py:423-435/522-535",
+      "policy_change": false
+    }
+  },
+  "runs": [
+    {
+      "case": "calendar-cross-midnight",
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c2-6337-7d41-8b5b-9308217940c2",
+      "previous_session_id": null,
+      "source_sha256": "8aca44010e9c8fc71fdb87cf056e79691a90303cd987d2354783b518c4480c77",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "proposal",
+        "summary": "邀请“Customer launch decision”需要主理人参与客户发布例外与上线决策。会议时间为 2026-10-09 22:30–23:30（America/Los_Angeles），与本地日历中的 Blocked 时段 2026-10-10 00:00–00:30 不冲突；当前邀请状态为 needsAction，因此建议接受该邀请。",
+        "proposal": {
+          "objective": "接受确切邀请 cal-cross-midnight，以便主理人参加客户发布决策会议。",
+          "actions": [
+            {
+              "description": "接受日历邀请 Customer launch decision。",
+              "action_identity": "calendar-response-accept-cal-cross-midnight",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-cross-midnight"
+              },
+              "payload": {
+                "response_status": "accepted"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "确切邀请的 event_id 为 cal-cross-midnight，标题为 Customer launch decision，当前主理人响应状态为 needsAction。",
+              "references": [
+                "read_dingtalk_calendar_event:event_id=cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "邀请时间为 2026-10-10 13:30–14:30（Asia/Shanghai），对应 2026-10-09 22:30–23:30（America/Los_Angeles），跨越日期但不改变会议时长。",
+              "references": [
+                "read_dingtalk_calendar_event:event_id=cal-cross-midnight",
+                "trigger-calendar-cross-midnight:participant_timezone=America/Los_Angeles"
+              ]
+            },
+            {
+              "assertion": "主理人的本地日历中存在 Blocked 时段 2026-10-10 00:00–00:30（America/Los_Angeles），晚于会议结束时间 30 分钟，因此不存在时间冲突。",
+              "references": [
+                "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-11T00:00:00-07:00"
+              ]
+            },
+            {
+              "assertion": "邀请描述说明客户需要主理人在会议期间作出发布例外及上线与否的决策。",
+              "references": [
+                "read_dingtalk_calendar_event:event_id=cal-cross-midnight"
+              ]
+            }
+          ],
+          "authored_judgment": "该会议要求主理人作出决策，且经明确时区换算后与本地 Blocked 时段不冲突。按照 ceo-calendar-invite 规则，应参加不冲突且需要主理人决策的会议；由于当前状态为 needsAction，应对该确切邀请提交 accepted 响应。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-56-02-01a132c2-6337-7d41-8b5b-9308217940c2.jsonl",
+      "native_range": [
+        6,
+        62
+      ],
+      "native_phase_sha256": "0ccc6c342455c8d1360817b51e77fb77ecc80cd1b68e23fe58702db532d39002",
+      "task_sha256": "b61c7e15d04d3a9b4eab133924263f8c35d7eba5d9476c2aeb0df5ba70a28089",
+      "task_chars": 3023,
+      "service_developer_sha256": "c71c66357747a68da5f7c2ec8a1c919c88151e10ece0a5bdc31791f277315d10",
+      "initial_native_developer_sha256": "a39779370100d78d5c1382eae27c7f0aec9b4e3a9b6964ce28e1e6cc794c92c9",
+      "source_body_sha256": "88ea13f65b7b34acb2182834ac4128e925134eaa9b47ae529e803c5a13259779",
+      "source_body_chars": 586,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_system_action_contract",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/calendar-cross-midnight"
+        }
+      ],
+      "command_sha256": "ac830d0a61430de5ac0a41a518acff9bff901fbf6c56dce0ec5a288b8c77e1a7"
+    },
+    {
+      "case": "calendar-cross-midnight",
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c2-ad5e-71a3-b4af-d1a81edd481f",
+      "previous_session_id": null,
+      "source_sha256": "8aca44010e9c8fc71fdb87cf056e79691a90303cd987d2354783b518c4480c77",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "proposal",
+        "summary": "The invitation `cal-cross-midnight` should be accepted. It occurs on 2026-10-10 from 13:30 to 14:30 in Asia/Shanghai, which converts to 2026-10-09 from 22:30 to 23:30 in America/Los_Angeles. The principal's returned local schedule contains blocked time from 00:00 to 00:30 on 2026-10-10, so there is no overlap. The invitation is currently needsAction, and its description states that the principal's launch exception and go/no-go decision are needed.",
+        "proposal": {
+          "objective": "Accept the exact invitation cal-cross-midnight because it requires the principal's decision and does not conflict with the principal's local schedule.",
+          "actions": [
+            {
+              "description": "Accept the invitation for the Customer launch decision meeting.",
+              "action_identity": "calendar-response:cal-cross-midnight:accepted",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-cross-midnight"
+              },
+              "payload": {
+                "response_status": "accepted"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "The exact invitation event is cal-cross-midnight, titled Customer launch decision, with start 2026-10-10T13:30:00+08:00, end 2026-10-10T14:30:00+08:00, and timezone Asia/Shanghai.",
+              "references": [
+                "dingtalk-calendar-event:cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "The invitation converts to 2026-10-09T22:30:00-07:00 through 2026-10-09T23:30:00-07:00 in the principal's America/Los_Angeles timezone, crossing to the previous local calendar date.",
+              "references": [
+                "dingtalk-calendar-event:cal-cross-midnight",
+                "canonical-time-facts:execution_time"
+              ]
+            },
+            {
+              "assertion": "The invitation's principal_response_status is needsAction.",
+              "references": [
+                "dingtalk-calendar-event:cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "The principal's returned local schedule includes Blocked from 2026-10-10T00:00:00-07:00 through 2026-10-10T00:30:00-07:00, which does not overlap the invitation's converted local interval.",
+              "references": [
+                "dingtalk-calendar-schedule:2026-10-09T22:30:00-07:00/2026-10-09T23:30:00-07:00"
+              ]
+            },
+            {
+              "assertion": "The invitation description states that the customer needs the principal's launch exception and go/no-go decision during the meeting.",
+              "references": [
+                "dingtalk-calendar-event:cal-cross-midnight"
+              ]
+            }
+          ],
+          "authored_judgment": "Because the invitation requires the principal's decision, remains unanswered, and has no overlap with the principal's blocked local time after exact UTC-based conversion, the applicable calendar-invite rule supports accepting this invitation."
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-56-21-01a132c2-ad5e-71a3-b4af-d1a81edd481f.jsonl",
+      "native_range": [
+        6,
+        56
+      ],
+      "native_phase_sha256": "684b461619f5ac1d44e2f2fc5a44ed7dccf3dff71fa42f81fb88ea2328bc8596",
+      "task_sha256": "4acee47690a41cee98dbc67dd20c0c856b87e6a510f16c8d3d5200a14a56f718",
+      "task_chars": 3138,
+      "service_developer_sha256": "f23fc7d78f14ff728261de7b309ff465c1fa60679f3c8452b1721e6df8f13aa0",
+      "initial_native_developer_sha256": "7e7579bf24c936909d0fb63b06b3e024c7a36db74e8d178e08e8a798e1076186",
+      "source_body_sha256": "88ea13f65b7b34acb2182834ac4128e925134eaa9b47ae529e803c5a13259779",
+      "source_body_chars": 586,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/calendar-cross-midnight"
+        }
+      ],
+      "command_sha256": "97ef3b1f3f3a2ce5e1a3ea636950f33f070d7b775fb1076788b4d28df590d9bf"
+    },
+    {
+      "case": "calendar-cross-midnight",
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c2-6337-7d41-8b5b-9308217940c2",
+      "previous_session_id": "01a132c2-6337-7d41-8b5b-9308217940c2",
+      "source_sha256": "8aca44010e9c8fc71fdb87cf056e79691a90303cd987d2354783b518c4480c77",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "no_action",
+        "summary": "邀请 cal-cross-midnight 已由主理人接受，无需重复响应。会议时间为 2026-10-09 22:30–23:30（America/Los_Angeles），本地 Blocked 时段为 2026-10-10 00:00–00:30，会议结束后才开始，因此不存在日程冲突。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-56-02-01a132c2-6337-7d41-8b5b-9308217940c2.jsonl",
+      "native_range": [
+        65,
+        100
+      ],
+      "native_phase_sha256": "4c16d2f17bd7abec1db683d97120d75a1749cd675149c4d7858185f501e835aa",
+      "task_sha256": "b61c7e15d04d3a9b4eab133924263f8c35d7eba5d9476c2aeb0df5ba70a28089",
+      "task_chars": 3023,
+      "service_developer_sha256": "c71c66357747a68da5f7c2ec8a1c919c88151e10ece0a5bdc31791f277315d10",
+      "initial_native_developer_sha256": "a39779370100d78d5c1382eae27c7f0aec9b4e3a9b6964ce28e1e6cc794c92c9",
+      "source_body_sha256": "88ea13f65b7b34acb2182834ac4128e925134eaa9b47ae529e803c5a13259779",
+      "source_body_chars": 586,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_system_action_contract",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/calendar-cross-midnight"
+        },
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/calendar-cross-midnight"
+        }
+      ],
+      "command_sha256": "d73428651c58eae2c30b190f5fbebf8b53eea28ef9c554e605ea9bf87ed3640d"
+    },
+    {
+      "case": "calendar-cross-midnight",
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c2-ad5e-71a3-b4af-d1a81edd481f",
+      "previous_session_id": "01a132c2-ad5e-71a3-b4af-d1a81edd481f",
+      "source_sha256": "8aca44010e9c8fc71fdb87cf056e79691a90303cd987d2354783b518c4480c77",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "no_action",
+        "summary": "No action is required. The exact invitation cal-cross-midnight is already accepted, so the calendar-invite skill requires avoiding a duplicate response. The invitation runs from 2026-10-10 13:30 to 14:30 in Asia/Shanghai, which is 2026-10-09 22:30 to 23:30 in America/Los_Angeles after preserving the cross-midnight date change. The returned local schedule shows blocked time from 2026-10-10 00:00 to 00:30 in America/Los_Angeles, which does not overlap the invitation.",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-56-21-01a132c2-ad5e-71a3-b4af-d1a81edd481f.jsonl",
+      "native_range": [
+        59,
+        84
+      ],
+      "native_phase_sha256": "6e3221c4a1f967e133fdf8c5c57770f963de75ee93a530e145d551454d0ad07d",
+      "task_sha256": "4acee47690a41cee98dbc67dd20c0c856b87e6a510f16c8d3d5200a14a56f718",
+      "task_chars": 3138,
+      "service_developer_sha256": "f23fc7d78f14ff728261de7b309ff465c1fa60679f3c8452b1721e6df8f13aa0",
+      "initial_native_developer_sha256": "7e7579bf24c936909d0fb63b06b3e024c7a36db74e8d178e08e8a798e1076186",
+      "source_body_sha256": "88ea13f65b7b34acb2182834ac4128e925134eaa9b47ae529e803c5a13259779",
+      "source_body_chars": 586,
+      "skill_reads": 0,
+      "complete_reads": true,
+      "tool_names": [
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/calendar-cross-midnight"
+        },
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/calendar-cross-midnight"
+        }
+      ],
+      "command_sha256": "a68a4128381f0f0efa41feb2036ff0781fd69ce83199d51b8d7fa68742c34d5a"
+    },
+    {
+      "case": "calendar-real-overlap",
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c3-55c4-7213-9608-ae8073b60f04",
+      "previous_session_id": null,
+      "source_sha256": "2456ab63c3b0f159ef98f6e5f7ba9bdedd9df3f55d9198dbd17bb61c3bbac229",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "proposal",
+        "summary": "已审核邀请 cal-real-overlap：会议时间为 2026-10-10 05:30–06:30（America/Los_Angeles），主日历中没有与其重叠的 Active Blocked 时间；会议要求主理人在场作出客户发布例外及 go/no-go 决策，因此建议接受邀请。",
+        "proposal": {
+          "objective": "接受确切邀请 cal-real-overlap，以便主理人参加客户发布决策会议并作出所需的发布例外及 go/no-go 决策。",
+          "actions": [
+            {
+              "description": "接受日历邀请“Customer launch decision”。",
+              "action_identity": "calendar-response:cal-real-overlap:accepted",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "accepted"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "确切邀请 cal-real-overlap 的时间是 2026-10-10 13:30–14:30（Asia/Shanghai），换算为主理人时区 America/Los_Angeles 是 2026-10-10 05:30–06:30；邀请当前状态为 needsAction。",
+              "references": [
+                "cal-real-overlap",
+                "trigger-calendar-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请说明客户需要主理人在会议期间作出发布例外及 go/no-go 决策。",
+              "references": [
+                "cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "主日历中的 Blocked 时间为 2026-10-09 23:00–2026-10-10 00:30（America/Los_Angeles），早于邀请开始时间，因此与邀请没有重叠。",
+              "references": [
+                "cal-block-overlap",
+                "cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请组织者身份为已验证的 organizer-overlap。",
+              "references": [
+                "cal-real-overlap"
+              ]
+            }
+          ],
+          "authored_judgment": "根据任务技能，会议要求主理人作出当前业务决策，且实际时间不与主日历中的 Active Blocked 时间冲突，因此接受该确切邀请；当前尚未接受，故不存在重复响应。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-57-04-01a132c3-55c4-7213-9608-ae8073b60f04.jsonl",
+      "native_range": [
+        6,
+        54
+      ],
+      "native_phase_sha256": "5616050e049b30b4e28faa083818c3a80bd1f72603761e4a51140333e52dbfb5",
+      "task_sha256": "f20103e4bc15f66d92ddb5ac99a0a56d45e141202672588759b4b8708e1e31e6",
+      "task_chars": 3021,
+      "service_developer_sha256": "c71c66357747a68da5f7c2ec8a1c919c88151e10ece0a5bdc31791f277315d10",
+      "initial_native_developer_sha256": "a39779370100d78d5c1382eae27c7f0aec9b4e3a9b6964ce28e1e6cc794c92c9",
+      "source_body_sha256": "88ea13f65b7b34acb2182834ac4128e925134eaa9b47ae529e803c5a13259779",
+      "source_body_chars": 586,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/calendar-real-overlap"
+        }
+      ],
+      "command_sha256": "45f57f4fde65c97a24e8b633727faa501f229d5505a6c0a0e17349e2c00c7867"
+    },
+    {
+      "case": "calendar-real-overlap",
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c3-98bd-7103-a7ff-1ad6be5dffe2",
+      "previous_session_id": null,
+      "source_sha256": "2456ab63c3b0f159ef98f6e5f7ba9bdedd9df3f55d9198dbd17bb61c3bbac229",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "proposal",
+        "summary": "邀请 cal-real-overlap 与本地已接受的 Blocked 时段发生实际重叠，应拒绝该邀请。Customer launch decision 为 2026-10-10 13:30–14:30（Asia/Shanghai），即 2026-10-10 05:30–06:30 UTC、2026-10-09 22:30–23:30（America/Los_Angeles）；Blocked 时段为 2026-10-09 23:00–2026-10-10 00:30（America/Los_Angeles），对应 2026-10-10 06:00–07:30 UTC，重叠 30 分钟。当前邀请状态为 needsAction，因此需要对该精确邀请提交 declined 响应。",
+        "proposal": {
+          "objective": "拒绝与 principal 已接受的 Blocked 时段发生实际重叠的日历邀请 cal-real-overlap。",
+          "actions": [
+            {
+              "description": "将日历邀请 cal-real-overlap 的 principal 响应状态设为 declined，因为该邀请与已接受的 Blocked 时段重叠。",
+              "action_identity": "decline-calendar-event-cal-real-overlap-blocked-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "当前待审邀请的精确 event_id 为 cal-real-overlap，标题为 Customer launch decision，时间为 2026-10-10 13:30–14:30（Asia/Shanghai），principal_response_status 为 needsAction。",
+              "references": [
+                "trigger-calendar-real-overlap",
+                "read_dingtalk_calendar_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "该邀请对应 2026-10-10 05:30–06:30 UTC，即 2026-10-09 22:30–23:30（America/Los_Angeles）。",
+              "references": [
+                "read_dingtalk_calendar_event:cal-real-overlap",
+                "canonical-time-facts:2026-10-08T17:00:00Z"
+              ]
+            },
+            {
+              "assertion": "本地日程包含已接受的 Blocked 事件，时间为 2026-10-09 23:00–2026-10-10 00:30（America/Los_Angeles），与该邀请重叠 2026-10-09 23:00–23:30（America/Los_Angeles）。",
+              "references": [
+                "list_dingtalk_calendar_events:2026-10-09T21:30:00-07:00/2026-10-10T00:30:00-07:00"
+              ]
+            },
+            {
+              "assertion": "冻结的 ceo-calendar-invite Skill 要求参加需要 principal 决策且不冲突的会议，并拒绝与 active Blocked 时间冲突的邀请。",
+              "references": [
+                "task-skill:ceo-calendar-invite:revision-41"
+              ]
+            }
+          ],
+          "authored_judgment": "邀请内容说明客户需要 principal 在会议期间作出 launch exception 和 go/no-go 决策，但该邀请与已接受的 Blocked 时段有 30 分钟实际重叠。根据冻结 Skill 的冲突处理规则，当前邀请应被拒绝；这是对指定 event_id 的单一日历响应，不涉及其他会议或通知。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-57-21-01a132c3-98bd-7103-a7ff-1ad6be5dffe2.jsonl",
+      "native_range": [
+        6,
+        61
+      ],
+      "native_phase_sha256": "ce3aff9fe8f04452110386920451659efb62e20d1a9d6f1a8b8de0c29cafe060",
+      "task_sha256": "18c2b32347e4cd38b6853de0b97d33fe263b1ca1f3a0713f2bbd77165703a4b8",
+      "task_chars": 3136,
+      "service_developer_sha256": "f23fc7d78f14ff728261de7b309ff465c1fa60679f3c8452b1721e6df8f13aa0",
+      "initial_native_developer_sha256": "7e7579bf24c936909d0fb63b06b3e024c7a36db74e8d178e08e8a798e1076186",
+      "source_body_sha256": "88ea13f65b7b34acb2182834ac4128e925134eaa9b47ae529e803c5a13259779",
+      "source_body_chars": 586,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_skill",
+        "read_task_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "tool_errors": [
+        "read_skill"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/calendar-real-overlap"
+        }
+      ],
+      "command_sha256": "51d79f20ce2a8346f9d0bb9659e7ddc3329f3e582818fcef61401e278d587df2"
+    },
+    {
+      "case": "mail-already-handled",
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c3-e80f-7aa0-abd5-7311c2d850ee",
+      "previous_session_id": null,
+      "source_sha256": "66ef1f80f49e8c2e3a7b4aab19d42a0a21236945730c765b74296c575d45020b",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "no_action",
+        "summary": "完整邮件线程已读取。供应商确认续约已获批准，并记录在回执 renew-77 下；邮件明确说明这是仅供确认的通知，不需要回复。主理人此前已表示同意，但当前没有新的回复请求或待执行批准动作，因此无需采取外部行动，也不得重复回复或批准。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-57-42-01a132c3-e80f-7aa0-abd5-7311c2d850ee.jsonl",
+      "native_range": [
+        6,
+        40
+      ],
+      "native_phase_sha256": "99be7f6b1b31e1ab683d64128a5fbf61312e014da9416d4fc4912c1d877f460d",
+      "task_sha256": "558d602fdc09bf27bbab4000eeb572e37920445244377c8c49fcc77e6112ccbc",
+      "task_chars": 2672,
+      "service_developer_sha256": "c71c66357747a68da5f7c2ec8a1c919c88151e10ece0a5bdc31791f277315d10",
+      "initial_native_developer_sha256": "a39779370100d78d5c1382eae27c7f0aec9b4e3a9b6964ce28e1e6cc794c92c9",
+      "source_body_sha256": "039d48982fd33e7fb633af844409b4afdc79a6fd1b04130f3fa2242f957b5450",
+      "source_body_chars": 329,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_dingtalk_messages"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/mail-already-handled"
+        }
+      ],
+      "command_sha256": "577dbf8d57290063c61f84a1f1824a3b257ad41fc10612706c36220ec19cd3a8"
+    },
+    {
+      "case": "mail-already-handled",
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c4-188f-7710-8378-2a7787497a70",
+      "previous_session_id": null,
+      "source_sha256": "66ef1f80f49e8c2e3a7b4aab19d42a0a21236945730c765b74296c575d45020b",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "no_action",
+        "summary": "已读取 eval-mail-conversation 的完整邮件线程。邮件确认续期已获批准并记录在 receipt renew-77 下，且明确说明这是仅确认消息、无需回复；根据 ceo-mail-review 规则，不应重复回复或再次发起审批，因此当前没有剩余外部动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-57-54-01a132c4-188f-7710-8378-2a7787497a70.jsonl",
+      "native_range": [
+        6,
+        38
+      ],
+      "native_phase_sha256": "ddfa4e78f78e4ceafc19a102c0da11b002976f6cb32a3eea76dff743fb45297a",
+      "task_sha256": "aab7df82536f40ee1ce0883e7ad4bacf6f352f0aad930a2f3c821a3af7ed1569",
+      "task_chars": 2787,
+      "service_developer_sha256": "f23fc7d78f14ff728261de7b309ff465c1fa60679f3c8452b1721e6df8f13aa0",
+      "initial_native_developer_sha256": "7e7579bf24c936909d0fb63b06b3e024c7a36db74e8d178e08e8a798e1076186",
+      "source_body_sha256": "039d48982fd33e7fb633af844409b4afdc79a6fd1b04130f3fa2242f957b5450",
+      "source_body_chars": 329,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_dingtalk_messages"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/mail-already-handled"
+        }
+      ],
+      "command_sha256": "8a093ed6e54deb550da2538352f7bfd291a6ade4f7ac1d25caf727d68ac3b88a"
+    },
+    {
+      "case": "document-material-conflicts",
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c4-63ad-7e43-8ddb-4370c95775d9",
+      "previous_session_id": null,
+      "source_sha256": "666fc7e4d5ccd33d02751f370d6bf11976395092d037443c47f46d8e6897b2b3",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "proposal",
+        "summary": "已读取文档 doc-review-1 的完整内容（revision rev-7）。发现三项重大事实一致性问题：Phase 1 的门店数在执行摘要与 Rollout table 之间为 120 对 80；上线日期为 10 月 15 日对 10 月 22 日；预算摘要为 USD 500,000，但预算明细合计为 USD 620,000（300,000 + 200,000 + 120,000）。应在冲突消解前暂停批准，并向文档来源方回复这些问题。",
+        "proposal": {
+          "objective": "向原始文档请求来源方回复已核实的重大事实不一致，并在冲突消解前暂停文档批准。",
+          "actions": [
+            {
+              "description": "回复原始文档审阅触发消息，说明文档中已核实的门店数、上线日期和预算合计冲突，并要求来源方在批准前完成澄清或修订。",
+              "action_identity": "reply-document-review-material-conflicts-doc-review-1-rev-7",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-document-conversation",
+                "message_id": "trigger-document-review"
+              },
+              "payload": {
+                "content": "已完成对文档 doc-review-1（revision rev-7）的完整审阅，发现以下重大事实不一致，请在批准前澄清或修订：\n\n1. Phase 1 覆盖门店数冲突：Executive summary 写明 120 家，Rollout table 写明 80 家。\n2. 上线日期冲突：Executive summary 写明 10 月 15 日，Rollout table 写明 10 月 22 日。\n3. 预算合计冲突：Budget summary 写明 USD 500,000；Budget lines 为 platform USD 300,000、operations USD 200,000、contingency USD 120,000，明细合计 USD 620,000。\n\n由于上述冲突会影响 rollout 范围、时间安排和预算审批，当前不建议批准该文档。请确认每项冲突的正确值，并更新相关章节后再提交审批。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "文档 doc-review-1 的当前读取成功且完整，revision 为 rev-7。",
+              "references": [
+                "doc-review-1",
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "Executive summary 声明 Phase 1 覆盖 120 家门店，启动日期为 10 月 15 日。",
+              "references": [
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "Rollout table 声明 Phase 1 覆盖 80 家门店，启动日期为 10 月 22 日。",
+              "references": [
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "Budget summary 声明总预算为 USD 500,000。",
+              "references": [
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "Budget lines 列出 platform USD 300,000、operations USD 200,000 和 contingency USD 120,000，合计为 USD 620,000。",
+              "references": [
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "原始触发消息要求审阅 doc-review-1，并回复其中的重大问题。",
+              "references": [
+                "trigger-document-review"
+              ]
+            }
+          ],
+          "authored_judgment": "门店数、上线日期和预算合计均属于影响 rollout 范围、执行时间或审批金额的核心事实。文档内部存在直接冲突，当前无法在不引入未被源材料支持的判断下确定正确值，因此应先向来源方列明冲突并暂停批准。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-58-13-01a132c4-63ad-7e43-8ddb-4370c95775d9.jsonl",
+      "native_range": [
+        6,
+        47
+      ],
+      "native_phase_sha256": "3a5a13e52177adb592256de417aa8f2d279e6ce59daa82fe959a89d3c309e831",
+      "task_sha256": "81d0ee61778ba48103fb77e8f2705f2fb425a32c3be3d14c5b4922d276d5e3cc",
+      "task_chars": 2689,
+      "service_developer_sha256": "c71c66357747a68da5f7c2ec8a1c919c88151e10ece0a5bdc31791f277315d10",
+      "initial_native_developer_sha256": "a39779370100d78d5c1382eae27c7f0aec9b4e3a9b6964ce28e1e6cc794c92c9",
+      "source_body_sha256": "1eb204d8fe78042fa960939760e88e76b9708c2e553a3afefcee7f3204901853",
+      "source_body_chars": 507,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/document-material-conflicts"
+        }
+      ],
+      "command_sha256": "8d7dcf7d7030500a6440f12ef4d7e07dc13aa31a146b1b5eb8c7347119f4fe9d"
+    },
+    {
+      "case": "document-material-conflicts",
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c4-a776-76b3-b923-499b21a8e6fa",
+      "previous_session_id": null,
+      "source_sha256": "666fc7e4d5ccd33d02751f370d6bf11976395092d037443c47f46d8e6897b2b3",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "proposal",
+        "summary": "Reviewed document doc-review-1 revision rev-7. The document contains material factual inconsistencies that must be reconciled before approval: Phase 1 scope and launch date conflict across sections, and the listed budget lines exceed the stated total.",
+        "proposal": {
+          "objective": "Reply to the document source request with the material factual consistency issues identified in doc-review-1 and state that the document has not been edited or approved.",
+          "actions": [
+            {
+              "description": "Reply to the authoritative source request with the complete, source-bound list of material factual inconsistencies found in doc-review-1 revision rev-7.",
+              "action_identity": "doc-review-1-material-factual-issues-reply",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-document-conversation",
+                "message_id": "trigger-document-review"
+              },
+              "payload": {
+                "content": "Material factual inconsistencies identified in doc-review-1 (revision rev-7):\n\n1. Phase 1 scope and launch date conflict: the Executive summary states that Phase 1 covers 120 stores and launches on October 15, while the Rollout table states that Phase 1 covers 80 stores and launches on October 22.\n2. Budget reconciliation conflict: the Budget summary states a total requested budget of USD 500,000, but the listed budget lines total USD 620,000 (platform USD 300,000 + operations USD 200,000 + contingency USD 120,000), creating a USD 120,000 difference.\n\nPlease reconcile these figures and dates before approval. The document has not been edited or approved."
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "The live document doc-review-1 was read completely at revision rev-7.",
+              "references": [
+                "doc-review-1",
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "The Executive summary states that Phase 1 covers 120 stores and launches on October 15.",
+              "references": [
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "The Rollout table states that Phase 1 covers 80 stores and launches on October 22.",
+              "references": [
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "The Budget summary states a total requested budget of USD 500,000.",
+              "references": [
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "The listed budget lines are platform USD 300,000, operations USD 200,000, and contingency USD 120,000, totaling USD 620,000 and differing from the stated total by USD 120,000.",
+              "references": [
+                "doc-review-1:rev-7"
+              ]
+            },
+            {
+              "assertion": "The authoritative request asks for review before approval and a reply containing the material issues.",
+              "references": [
+                "trigger-document-review"
+              ]
+            }
+          ],
+          "authored_judgment": "The conflicting scope, dates, and budget totals are material factual inconsistencies. Approval should wait until the document owner reconciles them. The proposed reply reports only the verified discrepancies and does not modify or approve the source."
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-58-31-01a132c4-a776-76b3-b923-499b21a8e6fa.jsonl",
+      "native_range": [
+        6,
+        52
+      ],
+      "native_phase_sha256": "0c11eca7e8cc59eb14ec8b243635461713fd2cdf4b7d1dee4eeb8ed9310e5625",
+      "task_sha256": "f7313b98f13db0e00bc1555fe547cb24fc410ad5379791c448c24a08b9abde6e",
+      "task_chars": 2804,
+      "service_developer_sha256": "f23fc7d78f14ff728261de7b309ff465c1fa60679f3c8452b1721e6df8f13aa0",
+      "initial_native_developer_sha256": "7e7579bf24c936909d0fb63b06b3e024c7a36db74e8d178e08e8a798e1076186",
+      "source_body_sha256": "1eb204d8fe78042fa960939760e88e76b9708c2e553a3afefcee7f3204901853",
+      "source_body_chars": 507,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_skill",
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "tool_errors": [
+        "read_skill"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/document-material-conflicts"
+        }
+      ],
+      "command_sha256": "f2deafc8d6ab63e1ba90ea0c8223e4c544536166b3ef8587501496dff609ba81"
+    },
+    {
+      "case": "work-tracking-existing-remediation",
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c5-54b6-7e51-a26a-e5e2b09b18cd",
+      "previous_session_id": null,
+      "source_sha256": "56630695d1172cad7c5622f7000694986af1eb388386d6d768865abb9f8a7bb4",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "proposal",
+        "summary": "Project Orion needs attention: the unresolved authentication callback blocker threatens the October 20 customer cutover. The existing open task task-auth-1 directly addresses the blocker and should be used as the next action; it requires the Integration Owner to verify the callback configuration and report the result by October 12. The Program Lead owns rollout coordination. No source confirms that task-auth-1 is complete.",
+        "proposal": {
+          "objective": "Reply to the authoritative project-review trigger with the material project risk and the existing next action.",
+          "actions": [
+            {
+              "description": "Reply to the project-review trigger with the authentication callback blocker, its impact on the October 20 cutover, and the existing open task that directly addresses it.",
+              "action_identity": "reply-project-risk-next-action-trigger-project-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-project-conversation",
+                "message_id": "trigger-project-review"
+              },
+              "payload": {
+                "content": "Project Orion needs attention: the unresolved authentication callback blocker threatens the October 20 customer cutover. Next action: use the existing open task task-auth-1, which requires the Integration Owner to verify the callback configuration and report the result by October 12. The Program Lead owns rollout coordination. No source confirms that task-auth-1 is complete."
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Project Orion customer cutover is scheduled for October 20.",
+              "references": [
+                "doc-project-1"
+              ]
+            },
+            {
+              "assertion": "The authentication callback blocker remains unresolved and threatens the scheduled cutover.",
+              "references": [
+                "doc-project-1"
+              ]
+            },
+            {
+              "assertion": "Program Lead owns rollout coordination.",
+              "references": [
+                "doc-project-1"
+              ]
+            },
+            {
+              "assertion": "Existing task task-auth-1 is open, directly addresses the authentication callback blocker, requires the Integration Owner to verify the callback configuration and report the result by October 12, and is not confirmed complete.",
+              "references": [
+                "doc-project-1"
+              ]
+            },
+            {
+              "assertion": "The authoritative request asks for a reply stating whether the project needs attention and the next action.",
+              "references": [
+                "trigger-project-review"
+              ]
+            }
+          ],
+          "authored_judgment": "The unresolved callback blocker is a material delivery risk because it threatens the October 20 customer cutover. Under the selected ceo-work-tracking rule, task-auth-1 is the appropriate next action because it is already open and directly addresses the blocker; the proposal must not create a duplicate task or claim completion."
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-59-15-01a132c5-54b6-7e51-a26a-e5e2b09b18cd.jsonl",
+      "native_range": [
+        6,
+        45
+      ],
+      "native_phase_sha256": "6a8a3a0467444d718b38694c57ddf52390190e710fde8050f6a96fdd3085cec0",
+      "task_sha256": "93f47fc503d0250e5934c419e4a5a34f3c95e68e4a2f3e2a43ca4c6c0b0ed1f6",
+      "task_chars": 2734,
+      "service_developer_sha256": "c71c66357747a68da5f7c2ec8a1c919c88151e10ece0a5bdc31791f277315d10",
+      "initial_native_developer_sha256": "a39779370100d78d5c1382eae27c7f0aec9b4e3a9b6964ce28e1e6cc794c92c9",
+      "source_body_sha256": "ded3a006a8e933bd998892981435f5bc3e5a9ccf5a438136838d284d2dd3ed6c",
+      "source_body_chars": 485,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/work-tracking-existing-remediation"
+        }
+      ],
+      "command_sha256": "c9dccecbb2051a9c15fde20aa3e428fb3d0994e121d3ce5f9156c806219c1434"
+    },
+    {
+      "case": "work-tracking-existing-remediation",
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c5-9659-72a0-a453-3aefb64cb0b7",
+      "previous_session_id": null,
+      "source_sha256": "56630695d1172cad7c5622f7000694986af1eb388386d6d768865abb9f8a7bb4",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "proposal",
+        "summary": "Project Orion needs attention. The unresolved authentication callback blocker threatens the customer cutover scheduled for October 20. The existing open task task-auth-1 is the next action: the Integration Owner must verify the callback configuration and report the result by October 12. The Program Lead owns rollout coordination, and no source states that task-auth-1 is complete.",
+        "proposal": {
+          "objective": "Reply to the authoritative trigger with Project Orion's material delivery risk and the existing next action.",
+          "actions": [
+            {
+              "description": "Reply to the authoritative project-review trigger with the verified Project Orion risk and existing next action.",
+              "action_identity": "reply-project-orion-risk-next-action-trigger-project-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-project-conversation",
+                "message_id": "trigger-project-review"
+              },
+              "payload": {
+                "content": "Project Orion needs attention. The unresolved authentication callback blocker threatens the customer cutover scheduled for October 20. The existing open task task-auth-1 is the next action: the Integration Owner must verify the callback configuration and report the result by October 12. The Program Lead owns rollout coordination, and no source states that task-auth-1 is complete."
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Project Orion customer cutover is scheduled for October 20.",
+              "references": [
+                "doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "The authentication callback blocker remains unresolved and threatens the October 20 cutover.",
+              "references": [
+                "doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "Program Lead owns rollout coordination.",
+              "references": [
+                "doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "Existing task task-auth-1 requires the Integration Owner to verify the callback configuration and report the result by October 12.",
+              "references": [
+                "doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "Task task-auth-1 is open, and no source states that it is complete.",
+              "references": [
+                "doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "The reply target is conversation eval-project-conversation and authoritative message trigger-project-review.",
+              "references": [
+                "trigger-project-review"
+              ]
+            }
+          ],
+          "authored_judgment": "The unresolved authentication callback blocker is a material delivery risk because it threatens the scheduled customer cutover. Per the selected ceo-work-tracking Skill, the correct next action is the existing open task task-auth-1 because it directly addresses the blocker; no duplicate task or completion claim is warranted."
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "high",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-59-32-01a132c5-9659-72a0-a453-3aefb64cb0b7.jsonl",
+      "native_range": [
+        6,
+        51
+      ],
+      "native_phase_sha256": "9f7e603efdc04a7d54a84286113d6c2945750c60f4adb76e6b060e8a29cf1053",
+      "task_sha256": "a78a20ecec3c9cd12f376e0930890d6423020d064dc38bb9964acbd859207aa0",
+      "task_chars": 2849,
+      "service_developer_sha256": "f23fc7d78f14ff728261de7b309ff465c1fa60679f3c8452b1721e6df8f13aa0",
+      "initial_native_developer_sha256": "7e7579bf24c936909d0fb63b06b3e024c7a36db74e8d178e08e8a798e1076186",
+      "source_body_sha256": "ded3a006a8e933bd998892981435f5bc3e5a9ccf5a438136838d284d2dd3ed6c",
+      "source_body_chars": 485,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/work-tracking-existing-remediation"
+        }
+      ],
+      "command_sha256": "3481a7a54314158e2a1bf24f11787b5b80f20451d35c42c94868434ad915591d"
+    },
+    {
+      "case": "audit-document-feedback",
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c5-e407-7d70-bf16-d6f75e482e8d",
+      "previous_session_id": null,
+      "source_sha256": "1dd0f8e7992390db8d5d241810c6d0e7a18cea1fab8ee0c9768d3e0f14c5d518",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "return",
+        "summary": "The candidate must be revised because the live document contains material factual conflicts and explicitly states that approval is not permitted until they are reconciled.",
+        "proposal_revision": 0,
+        "candidate_digest": "e6070b43a2e1020d826902cd5c5b5a4441ac6c5002039934827fb0f7a4d11794",
+        "evidence_refs": [
+          "doc-audit-1:rev-11",
+          "ceo-document-review:revision-41"
+        ],
+        "feedback": {
+          "rule": "The ceo-document-review skill requires reading the complete live document, reconciling material conflicts before approval, and preparing a source-bound reply describing material issues. A conflicting source must not be approved.",
+          "observation": "The live document doc-audit-1 at revision rev-11 states capacity is 120 units and launch is October 15 in the executive summary, but capacity is 80 units and launch is October 22 in the implementation table. It also states: approval status is not approved and factual conflicts must be reconciled first. The current candidate proposes the reply body \"No material issues found. The proposal is ready for approval.\" and claims the document is internally consistent, which contradicts the verified document.",
+          "requested_revision": "Regenerate the complete candidate so that it identifies both capacity and launch-date conflicts, does not represent the document as ready for approval, and prepares a source-bound reply describing the material issues. Because the intended external outcome changes, use a new action_identity for the revised reply."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "high",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T17-59-52-01a132c5-e407-7d70-bf16-d6f75e482e8d.jsonl",
+      "native_range": [
+        6,
+        40
+      ],
+      "native_phase_sha256": "eb38faf19316623168a550b424aedfeaa590586396d67a386df99143ebbdfcfa",
+      "task_sha256": "e57061b05d3371ca87ad4c8db3ce5ddf538cb9b5b7ad9a345c59c9836c823413",
+      "task_chars": 4456,
+      "service_developer_sha256": "28ae13c1ffca541c011e7e7fa21f2ecf2363b7146d18b57bbde589ba19d05a8e",
+      "initial_native_developer_sha256": "e53e2b65746c9ea6b126689b47fe55f664022b6f0de31c9c9bc61d9d27dec305",
+      "source_body_sha256": "1eb204d8fe78042fa960939760e88e76b9708c2e553a3afefcee7f3204901853",
+      "source_body_chars": 507,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/audit-document-feedback"
+        }
+      ],
+      "command_sha256": "74032951eb1c8145ef333c04251d9e135b16fce3e7da3f24a6de1065a178fd64"
+    },
+    {
+      "case": "audit-document-feedback",
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a132c6-2091-71d2-84b9-491de2ba2671",
+      "previous_session_id": null,
+      "source_sha256": "1dd0f8e7992390db8d5d241810c6d0e7a18cea1fab8ee0c9768d3e0f14c5d518",
+      "canonical_valid": true,
+      "binding_valid": true,
+      "result": {
+        "outcome": "return",
+        "summary": "The candidate cannot be approved because the live document contains material conflicts that the proposed reply overlooks. The document reports capacity as 120 units with an October 15 launch in the executive summary, but 80 units with an October 22 launch in the implementation table, and explicitly states that approval is blocked until the conflicts are reconciled.",
+        "proposal_revision": 0,
+        "candidate_digest": "e6070b43a2e1020d826902cd5c5b5a4441ac6c5002039934827fb0f7a4d11794",
+        "evidence_refs": [
+          "doc-audit-1@rev-11",
+          "ceo-document-review@revision-41"
+        ],
+        "feedback": {
+          "rule": "ceo-document-review: read the live full document, compare factual claims across sections, and reconcile material conflicts before approval; prepare a source-bound reply describing material issues.",
+          "observation": "The live document at doc-audit-1@rev-11 contains material conflicts: the executive summary states capacity is 120 units and launch is October 15, while the implementation table states capacity is 80 units and launch is October 22. It also states that approval has not occurred and conflicts must be reconciled first. The current candidate's JSON path candidate.proposal.actions[0].payload.body has the string value \"No material issues found. The proposal is ready for approval.\", which is factually incompatible with those current source facts. The candidate's summary at candidate.summary likewise asserts that the document is ready for approval.",
+          "requested_revision": "Revise the candidate so the prepared reply identifies both capacity and launch-date conflicts, states that approval is blocked pending reconciliation, and does not claim that no material issues exist or that the proposal is ready for approval. Preserve the current trigger target unless the source-bound reply target itself changes."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T18-00-07-01a132c6-2091-71d2-84b9-491de2ba2671.jsonl",
+      "native_range": [
+        6,
+        36
+      ],
+      "native_phase_sha256": "1102c4aec7176b769cba87e7dcefa56a16a28c7552557e2ba974b18bcde227d1",
+      "task_sha256": "2652e9fa39bfa574aab525e4576993cf18283d433962d30c574f2ef19711cf86",
+      "task_chars": 4571,
+      "service_developer_sha256": "28ae13c1ffca541c011e7e7fa21f2ecf2363b7146d18b57bbde589ba19d05a8e",
+      "initial_native_developer_sha256": "e53e2b65746c9ea6b126689b47fe55f664022b6f0de31c9c9bc61d9d27dec305",
+      "source_body_sha256": "1eb204d8fe78042fa960939760e88e76b9708c2e553a3afefcee7f3204901853",
+      "source_body_chars": 507,
+      "skill_reads": 1,
+      "complete_reads": true,
+      "tool_names": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "tool_errors": [],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-frozen-aligned-fixed-bestwrjo/audit-document-feedback"
+        }
+      ],
+      "command_sha256": "74032951eb1c8145ef333c04251d9e135b16fce3e7da3f24a6de1065a178fd64"
+    }
+  ],
+  "scope": "Independently reviewed anonymous fixed cohort. Synthetic Skill bodies/Profile, native OAuth, original seven-tool catalog, schema disabled. No real provider actions or saved private configuration replay. This does not establish production acceptance or a causal quality improvement.",
+  "independent_review": {
+    "reviewer": "native_catalog_review",
+    "consumer_cases": "Candidate material judgments pass across calendar, mail, document and work tracking; baseline real-overlap incorrectly accepts after wrong timezone conversion.",
+    "reuse": "Calendar baseline reads 1/1; candidate reads 1/0. Zero resume reads means reuse of complete cold content, not a new complete read.",
+    "tool_errors": "Two candidate read_skill calls target engineering AGENTS outside Skill roots; preserved. No claim of zero tool errors.",
+    "controls": "Baseline main Developer reads; candidate applies. Actual role controls and provider facts match. Audit Developer identical; discovery Task text differs. Runner received an auxiliary branch during run; original case paths unchanged."
+  },
+  "audit_oracle_review": {
+    "original_v1": "return-only; preserved original failures",
+    "run_manifest_v2": "reject-only; both outputs return; strict label not met",
+    "reviewed_v3": {
+      "allowed_outcomes": [
+        "return",
+        "reject"
+      ],
+      "required": [
+        "Exact candidate digest and revision",
+        "Concrete capacity/date conflicts from actual document",
+        "Requested revision changes the factually wrong approval reply",
+        "No approval or external execution"
+      ],
+      "basis": [
+        "app/consumer_agent.py:245-247",
+        "app/reviewed_candidates.py:19-47",
+        "app/agent_orchestrator.py:423-435,522-535"
+      ],
+      "boundary": "Both verdicts feed revisions. A reject requires substantive changed candidate before continuation; this cohort does not itself execute a corrected document revision. No Audit policy change."
+    },
+    "paired_results": "Both satisfy reviewed feedback criteria. Original v1/v2 verdict labels are not retroactively marked passed."
+  },
+  "harness_hashes": {
+    "runner.py": "43e888e9dd917a44e0d1ac9f14961143665608f0c3d97cb66fe4fb3c4d3465bc",
+    "server.py": "949d147aae5f6dc7b6d52d6053f9c0942dc6cf1c650d239d0a3c89259e6da979",
+    "all.py": "0c964341b045d0d9bd9aaea25b80fb23ea5d8350d3da58f5d65de1c100602c65",
+    "verify.py": "e2883c17107d24c89ad884c8c5d053c315833a12d7d9332e392c07e6fd02e6cc",
+    "cases.v1.json": "b8bd1fa13ec9795dffc149486d4154a063e6f1495e989bae4857ee5f78e73777",
+    "original-cases.v1.json": "debdc439cd4b073c5c0ea463171016c2ce06ab7e0e9b48c6bc7d15a25acb52fb"
+  }
+}

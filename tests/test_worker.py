@@ -56,6 +56,7 @@ from app.dws_client import (
 )
 from app.outbound_postfix import compose_outbound_postfix
 from app.store import AgentRole, AutoReplyStore
+from app.task_storage import REPLY_TASK_SQL
 from app.skill_features import FeatureRegistry
 from app.runtime_environment import central_python
 from app.worker import (
@@ -5930,7 +5931,7 @@ def test_consume_once_stops_retryable_orchestration_at_limit(
     assert json.loads(prior_run.structured_error_json)["session_continuable"] is False
     assert prior_run.codex_session_id == "retry-session"
     with worker.store._connect() as db:
-        db.execute("update reply_tasks set available_at='' where id=?", (pending.id,))
+        db.execute("update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (pending.id,))
     assert worker.consume_once(max_tasks=1) == 0
     retried = worker.store.list_reply_tasks(limit=1, statuses=["failed"])[0]
     assert retried.execution_generation == generation
@@ -6690,7 +6691,7 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (claimed[0].id,),
         )
         db.execute(
@@ -6748,7 +6749,7 @@ def test_stale_wechat_read_only_decision_requeues_with_precise_reason(
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task.id,),
         )
     worker = DingTalkAutoReplyWorker(
@@ -6790,7 +6791,7 @@ def test_stale_processing_without_agent_run_is_recovered_after_short_window(
     [task] = store.claim_reply_tasks(limit=1)
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-11 minutes') where id=?",
+            "update tasks set locked_at=datetime('now', '-11 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task.id,),
         )
     worker = DingTalkAutoReplyWorker(
@@ -6840,7 +6841,7 @@ def test_consume_once_does_not_requeue_stale_task_with_live_agent_lease(
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (claimed[0].id,),
         )
     worker = DingTalkAutoReplyWorker(
@@ -6888,7 +6889,7 @@ def test_stale_processing_recovery_requeues_live_run_after_total_processing_limi
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-61 minutes') where id=?",
+            "update tasks set locked_at=datetime('now', '-61 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task.id,),
         )
     worker = DingTalkAutoReplyWorker(
@@ -7072,7 +7073,7 @@ def test_consume_once_codex_provider_auth_failure_fails_without_auth_recovery(
     assert worker.store.count_reply_tasks(status="failed") == 1
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
         attempts, error, available_at = db.execute(
-            "select attempts, error, available_at from reply_tasks"
+            f"select attempts, error, available_at from ({REPLY_TASK_SQL})"
         ).fetchone()
     assert attempts == 1
     assert error.startswith("codex_provider_auth_failed:")
@@ -7120,7 +7121,7 @@ def test_consume_once_native_codex_missing_auth_header_fails_without_recovery(
     assert worker.store.count_reply_tasks(status="failed") == 1
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
         attempts, error, available_at = db.execute(
-            "select attempts, error, available_at from reply_tasks"
+            f"select attempts, error, available_at from ({REPLY_TASK_SQL})"
         ).fetchone()
     assert attempts == 1
     assert error.startswith("codex_provider_auth_failed:")
@@ -7186,7 +7187,7 @@ def test_consume_once_chatgpt_codex_forbidden_fails_without_auth_recovery(
     assert worker.store.count_reply_tasks(status="failed") == 1
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
         attempts, error, available_at = db.execute(
-            "select attempts, error, available_at from reply_tasks"
+            f"select attempts, error, available_at from ({REPLY_TASK_SQL})"
         ).fetchone()
     assert attempts == 1
     assert error.startswith("codex_provider_auth_failed:")
@@ -7229,7 +7230,7 @@ def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
     assert worker.store.count_reply_tasks(status="failed") == 0
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
         attempts, error, available_at = db.execute(
-            "select attempts, error, available_at from reply_tasks"
+            f"select attempts, error, available_at from ({REPLY_TASK_SQL})"
         ).fetchone()
     assert attempts == 0
     assert error.startswith("codex_provider_unavailable:")
@@ -7361,7 +7362,7 @@ def test_consume_once_native_codex_transport_fallback_auth_failure_is_terminal(
     assert worker.consume_once(max_tasks=1) == 0
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
         status, error, available_at = db.execute(
-            "select status, error, available_at from reply_tasks"
+            f"select status, error, available_at from ({REPLY_TASK_SQL})"
         ).fetchone()
     assert status == "failed"
     assert error.startswith("codex_provider_auth_failed:")
@@ -12082,7 +12083,7 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(tmp_path: Path, monke
     pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
+            "update tasks set available_at='2026-05-13 17:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (pending.id,),
         )
 
@@ -12492,7 +12493,7 @@ def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
     )
     with sqlite3.connect(db_path) as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (claimed.id,),
         )
     script_no_action(worker)
@@ -12664,7 +12665,7 @@ def test_queued_stop_with_error_becomes_terminal_at_retry_limit(
 
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
+            "update tasks set available_at='2026-05-13 17:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (pending.id,),
         )
 
@@ -12799,8 +12800,8 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
     )
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-31 minutes') "
-            "where id=?",
+            "update tasks set locked_at=datetime('now', '-31 minutes') "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task.id,),
         )
         db.execute(
@@ -12898,8 +12899,8 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
     )
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-31 minutes') "
-            "where id=?",
+            "update tasks set locked_at=datetime('now', '-31 minutes') "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task.id,),
         )
         db.execute(

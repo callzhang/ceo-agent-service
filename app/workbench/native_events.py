@@ -27,6 +27,7 @@ from app.native_trajectory import (
 from app.workbench.codex_runtime import _native_tool_failed
 from app.workbench.models import WorkbenchEvent, WorkbenchTurn
 from app.run_storage import RUNTIME_ATTEMPT_SQL
+from app.task_storage import WORKBENCH_TURN_SQL, task_id_expression
 
 AGENT_EVENTS = {"text_delta", "thinking_summary", "tool_started", "tool_completed", "file_changed"}
 UNAVAILABLE = "原生 Agent 记录不可用。"
@@ -95,7 +96,7 @@ def terminal_cached_turn_ids(db: sqlite3.Connection, db_path: Path) -> list[str]
         return []
     placeholders = ",".join("?" for _ in ids)
     return [row["id"] for row in db.execute(
-        f"select id from workbench_turns where id in ({placeholders}) "
+        f"select id from ({WORKBENCH_TURN_SQL}) as workbench_turns where id in ({placeholders}) "
         "and status in ('completed','stopped','failed','waiting_confirmation')", ids
     )]
 
@@ -169,7 +170,7 @@ def hydrate_events(
         return events
     placeholders = ",".join("?" for _ in turn_ids)
     statuses = {row["id"]: row["status"] for row in db.execute(
-        f"select id,status from workbench_turns where id in ({placeholders})", turn_ids
+        f"select id,status from ({WORKBENCH_TURN_SQL}) as workbench_turns where id in ({placeholders})", turn_ids
     )}
     path = str(db_path.resolve())
     pending: dict[str, list[WorkbenchEvent]] = {}
@@ -186,7 +187,7 @@ def hydrate_events(
         native = _native_events_for_turn(db, turn_id)
         tools, messages, reasoning, files = native if native is not None else (None, None, None, None)
         count = db.execute(
-            "select count(*) from workbench_events where turn_id=? and event_type='tool_completed'",
+            f"select count(*) from runs where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')} and event_type='tool_completed'",
             (turn_id,),
         ).fetchone()[0]
         if tools is not None and len(tools) != count:
@@ -194,8 +195,8 @@ def hydrate_events(
         text_ends: dict[int, int] = {}
         whole_turn_last_text_id = 0
         for row in db.execute(
-            "select id,json_extract(payload_json,'$.native_ordinal') as ordinal "
-            "from workbench_events where turn_id=? and event_type='text_delta' order by id",
+            "select cast(legacy_key as integer) as id,json_extract(payload_json,'$.native_ordinal') as ordinal "
+            f"from runs where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')} and event_type='text_delta' order by cast(legacy_key as integer)",
             (turn_id,),
         ):
             if isinstance(row["ordinal"], int):

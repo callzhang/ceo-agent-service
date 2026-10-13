@@ -5,6 +5,7 @@ never constructs AutoReplyStore and cannot initialize or migrate a database.
 """
 
 from __future__ import annotations
+from app.task_storage import REPLY_TASK_SQL
 
 import argparse
 import hashlib
@@ -16,6 +17,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
+
+from app.action_storage import (
+    CANDIDATE_ACTION_ATTEMPT_SQL,
+    CANDIDATE_EXECUTION_SQL,
+    REVIEW_CANDIDATE_SQL,
+)
 
 
 _RECEIPT_DDL = """
@@ -121,7 +128,7 @@ def _snapshot(
     db: sqlite3.Connection, task_id: int, now: datetime, *,
     ignored_receipt_id: int | None = None,
 ) -> dict[str, Any]:
-    task = db.execute('select * from reply_tasks where id=?', (task_id,)).fetchone()
+    task = db.execute(f'select * from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()
     if task is None:
         raise ValueError('reply task does not exist')
     run = db.execute(f"""select * from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?
@@ -155,7 +162,7 @@ def _snapshot(
         where r.reply_task_id=? and a.status in ('starting','running') limit 1""", (task_id,)).fetchone():
         blocked.append('active_native_runtime')
     if db.execute(f"""select 1 from ({RUNTIME_ATTEMPT_SQL}) a
-        join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id join reply_tasks t on t.id=r.reply_task_id
+        join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
         where t.business_object_key=? and a.first_effect_started_at<>'' limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('runtime_effect_started')
@@ -166,12 +173,12 @@ def _snapshot(
             blocked.append('active_dispatcher_owner')
     if task['status'] == 'processing' and not claims:
         blocked.append('unproven_processing_owner')
-    if db.execute("""select 1 from review_candidates c join reply_tasks t on t.id=c.task_id
+    if db.execute(f"""select 1 from ({REVIEW_CANDIDATE_SQL}) c join ({REPLY_TASK_SQL}) t on t.id=c.task_id
         where t.business_object_key=? and c.execution_generation=t.execution_generation limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('current_candidate_or_selection')
-    if db.execute("""select 1 from candidate_executions e join review_candidates c on c.id=e.candidate_id
-        join reply_tasks t on t.id=c.task_id where t.business_object_key=? limit 1""",
+    if db.execute(f"""select 1 from ({CANDIDATE_EXECUTION_SQL}) e join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id
+        join ({REPLY_TASK_SQL}) t on t.id=c.task_id where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('candidate_execution')
     if db.execute('select 1 from external_action_results where business_object_key=? limit 1',
@@ -183,7 +190,7 @@ def _snapshot(
         blocked.append('sent_reply_projection')
     from app.native_trajectory import read_run_event_evidence
     for event_run in db.execute(f"""select r.* from ({AGENT_RUN_SQL}) r
-        join reply_tasks t on t.id=r.reply_task_id where t.business_object_key=?""",
+        join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id where t.business_object_key=?""",
         (task['business_object_key'],)).fetchall():
         events, available = read_run_event_evidence(db, event_run)
         if any(_legacy_event_may_have_effect(json.dumps(event)) for event in events):
@@ -191,18 +198,18 @@ def _snapshot(
         if not available:
             blocked.append('native_event_source_unavailable')
     if db.execute(f"""select 1 from agent_effect_intents e join ({AGENT_RUN_SQL}) r on r.id=e.agent_run_id
-        join reply_tasks t on t.id=r.reply_task_id
+        join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
         where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('prepared_or_dispatched_effect')
     if db.execute(f"""select 1 from agent_execution_receipts receipt
-        join ({AGENT_RUN_SQL}) r on r.id=receipt.agent_run_id join reply_tasks t on t.id=r.reply_task_id
+        join ({AGENT_RUN_SQL}) r on r.id=receipt.agent_run_id join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
         where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('prior_execution_receipt')
-    if db.execute("""select 1 from candidate_action_attempts a
-        join candidate_executions e on e.id=a.execution_id
-        join review_candidates c on c.id=e.candidate_id join reply_tasks t on t.id=c.task_id
+    if db.execute(f"""select 1 from ({CANDIDATE_ACTION_ATTEMPT_SQL}) a
+        join ({CANDIDATE_EXECUTION_SQL}) e on e.id=a.execution_id
+        join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id join ({REPLY_TASK_SQL}) t on t.id=c.task_id
         where t.business_object_key=? limit 1""", (task['business_object_key'],)).fetchone():
         blocked.append('candidate_action_attempt')
     return {
@@ -290,8 +297,8 @@ def apply_deferral(
             until = _stamp(instant + timedelta(seconds=duration_seconds))
             if snap['available_at'] and snap['available_at'] >= until:
                 raise ValueError('existing deferral is later')
-            db.execute("""update reply_tasks set status='pending', available_at=?,
-                locked_at=null, updated_at=? where id=? and status in ('pending','processing')""",
+            db.execute("""update tasks set status='pending', available_at=?,
+                locked_at=null, updated_at=? where record_type='reply_tasks' and id=? and status in ('pending','processing')""",
                 (until, _stamp(instant), task_id))
             db.execute("""insert into reply_task_deferral_receipts
                 (request_id,task_id,business_object_key,execution_generation,input_version,
@@ -342,7 +349,7 @@ def resume_deferral(
                 row['latest_failed_run_id'],row['latest_failed_run_fingerprint'],
                 'pending',row['deferred_until']):
                 raise ValueError('deferral state changed')
-            db.execute("update reply_tasks set available_at=?,updated_at=? where id=? and status='pending'",
+            db.execute("update tasks set available_at=?,updated_at=? where record_type='reply_tasks' and id=? and status='pending'",
                        (row['original_available_at'],_stamp(instant),task_id))
             db.execute("""update reply_task_deferral_receipts set status='resumed',
                 resume_request_id=?,resumed_at=? where id=? and status='paused'""",

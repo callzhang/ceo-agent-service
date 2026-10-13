@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "baseline_ref": "678df76e0265c31b07e9f38339961f1f5cafcd35",
+  "candidate_ref": "b8c8c882eda8e5fae68b95b09753d0be8724a304",
+  "route": "codex_oauth",
+  "model": "gpt-5.6-luna",
+  "reasoning": "medium",
+  "raw_evidence": "/private/tmp/ceo-task-catalog-current-rgsbwkqo",
+  "turns": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13051-5fa4-7bb0-be59-5e490a56056d",
+      "prompt_sha256": "b5fc1372b8522deed2c58e2c9d0b815dc40d5e441cb8cf942fabe30656020f4b",
+      "skill_config_selected": false,
+      "actual_native_input_exact": true,
+      "prompt_chars": 32096,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T06-33-21-01a13051-5fa4-7bb0-be59-5e490a56056d.jsonl",
+      "events_sha256": "02819d3f3faa72695abfe0853a48114967852eb2d07914fd3e362293256d5a1d",
+      "decision_sha256": "a052aad751cc17e9ff18609179c1a93ef02d5762f81d8d481e6907a6a53bd1bd",
+      "business_valid": true,
+      "db_quick_check": "ok"
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13051-cd83-7123-8051-42f458e058fc",
+      "prompt_sha256": "b5fc1372b8522deed2c58e2c9d0b815dc40d5e441cb8cf942fabe30656020f4b",
+      "skill_config_selected": true,
+      "actual_native_input_exact": true,
+      "prompt_chars": 32096,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T06-33-49-01a13051-cd83-7123-8051-42f458e058fc.jsonl",
+      "events_sha256": "bc028d69184e2857c477cd96f79cf8db187c0a1ad83ccf633cf0c4fa9cb7076c",
+      "decision_sha256": "ea7f990e27b0bb774992a9e7752ac96b90c0dc72d463a1e29c894ec10577c3c5",
+      "business_valid": true,
+      "db_quick_check": "ok"
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13051-5fa4-7bb0-be59-5e490a56056d",
+      "prompt_sha256": "2935148621930bc24cce667cd633547d39db986595bc121fd7a3deb46c704c8b",
+      "skill_config_selected": false,
+      "actual_native_input_exact": true,
+      "prompt_chars": 35600,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T06-33-21-01a13051-5fa4-7bb0-be59-5e490a56056d.jsonl",
+      "events_sha256": "4cd6423620f6896aeaac02809c6f3db792b4bd82a778f897a98dc5559d1baf9d",
+      "decision_sha256": "699eac685fdc3c0b12be4699cb0ea44310c184864ef3e0386d3fc727c39f4fa2",
+      "business_valid": true,
+      "db_quick_check": "ok"
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13051-cd83-7123-8051-42f458e058fc",
+      "prompt_sha256": "2935148621930bc24cce667cd633547d39db986595bc121fd7a3deb46c704c8b",
+      "skill_config_selected": true,
+      "actual_native_input_exact": true,
+      "prompt_chars": 35600,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T06-33-49-01a13051-cd83-7123-8051-42f458e058fc.jsonl",
+      "events_sha256": "aac52da52a16b39db46fdb44ea6b4240d45afa73ed10c7eee1f97a11d4a58efd",
+      "decision_sha256": "9fb6b9bebf5f8dff0593f6e17fd45c8425b536efc98850c73f9975399c6c0509",
+      "business_valid": true,
+      "db_quick_check": "ok"
+    }
+  ],
+  "boundary": "Anonymous manual native fixture; complete installed Skill inline; only local fake Memory; no real writes or full scheduler/retrieval acceptance. Both risk applications clone same current baseline cold DB. No general judgment-quality claim.",
+  "cold_applications": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "applied": true,
+      "projects": 1,
+      "tasks": 0,
+      "attention_count": 0,
+      "attention_categories": []
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "applied": true,
+      "projects": 1,
+      "tasks": 0,
+      "attention_count": 0,
+      "attention_categories": []
+    }
+  ],
+  "risk_applications": [
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "applied": true,
+      "projects": 1,
+      "tasks": 1,
+      "attention_count": 1,
+      "attention_categories": [
+        "push"
+      ]
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "applied": true,
+      "projects": 1,
+      "tasks": 1,
+      "attention_count": 1,
+      "attention_categories": [
+        "push"
+      ]
+    }
+  ]
+}

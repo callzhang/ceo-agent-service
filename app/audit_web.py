@@ -1,4 +1,6 @@
+from app.run_storage import SCHEDULED_RUN_SQL
 
+from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.store import REPLY_TASK_CURRENT_SQL
 from app.work_summary_payload import decode_work_summary_payload
 import json
@@ -179,6 +181,12 @@ from app.task_retrieval import (
 )
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 from app.run_storage import AGENT_RUN_SQL
+
+from app.action_storage import (
+    REVIEW_CANDIDATE_SQL,
+    CANDIDATE_REVIEW_SQL,
+    CANDIDATE_SELECTION_SQL,
+)
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
@@ -2571,10 +2579,19 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
     snapshots: list[dict[str, object]] = []
     with store._connect() as db:
         for name, table, status_column, updated_column, error_column in specs:
-            if not _sqlite_table_exists(db, table):
+            if not _sqlite_table_exists(db, "tasks" if table in ("reply_tasks", "work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests") else table):
                 continue
             if table == "reply_tasks":
                 snapshots.append(_reply_task_queue_snapshot(db))
+                continue
+            if table == "work_summary_inputs":
+                snapshots.append(_work_summary_input_queue_snapshot(db))
+                continue
+            if table == "meeting_alignment_jobs":
+                snapshots.append(_meeting_job_queue_snapshot(db))
+                continue
+            if table == "okr_review_requests":
+                snapshots.append(_okr_review_queue_snapshot(db))
                 continue
             if table == "reply_attempts":
                 snapshots.append(_reply_attempt_queue_snapshot(db))
@@ -2602,9 +2619,74 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
             db, "email_classifications"
         ):
             snapshots.append(_email_action_queue_snapshot(db))
-        if _sqlite_table_exists(db, "reply_tasks"):
+        if _sqlite_table_exists(db, "tasks"):
             snapshots.append(_email_unsubscribe_task_queue_snapshot(db))
     return snapshots
+
+
+
+def _work_summary_input_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
+    """Count only typed work-summary rows without reading their payloads."""
+    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
+        "from tasks where record_type='work_summary_inputs' "
+        "group by lower(coalesce(status,''))").fetchall()
+    counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
+    latest = db.execute("select updated_at from tasks where record_type='work_summary_inputs' "
+        "order by updated_at desc limit 1").fetchone()
+    failed = db.execute("select error from tasks where record_type='work_summary_inputs' "
+        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
+        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    return {
+        "name": "Work items",
+        "table": "work_summary_inputs",
+        "counts": counts,
+        "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
+        "processing": _queue_count_for(counts, {"processing", "running", "sending"}),
+        "failed": _queue_count_for(counts, {"failed", "error"}),
+        "retryable": 0,
+        "latest_updated_at": "" if latest is None else str(latest[0] or ""),
+        "latest_error": "" if failed is None else str(failed[0] or ""),
+    }
+
+
+def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
+    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
+        "from tasks where record_type='meeting_alignment_jobs' "
+        "group by lower(coalesce(status,''))").fetchall()
+    counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
+    latest = db.execute("select updated_at from tasks where record_type='meeting_alignment_jobs' "
+        "order by updated_at desc limit 1").fetchone()
+    failed = db.execute("select error from tasks where record_type='meeting_alignment_jobs' "
+        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
+        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    return {
+        "name": "Meeting jobs", "table": "meeting_alignment_jobs", "counts": counts,
+        "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
+        "processing": _queue_count_for(counts, {"processing", "running", "sending"}),
+        "failed": _queue_count_for(counts, {"failed", "error"}), "retryable": 0,
+        "latest_updated_at": "" if latest is None else str(latest[0] or ""),
+        "latest_error": "" if failed is None else str(failed[0] or ""),
+    }
+
+
+def _okr_review_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
+    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
+        "from tasks where record_type='okr_review_requests' "
+        "group by lower(coalesce(status,''))").fetchall()
+    counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
+    latest = db.execute("select updated_at from tasks where record_type='okr_review_requests' "
+        "order by updated_at desc limit 1").fetchone()
+    failed = db.execute("select error from tasks where record_type='okr_review_requests' "
+        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
+        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    return {
+        "name": "OKR reviews", "table": "okr_review_requests", "counts": counts,
+        "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
+        "processing": _queue_count_for(counts, {"processing", "running", "sending"}),
+        "failed": _queue_count_for(counts, {"failed", "error"}), "retryable": 0,
+        "latest_updated_at": "" if latest is None else str(latest[0] or ""),
+        "latest_error": "" if failed is None else str(failed[0] or ""),
+    }
 
 
 def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
@@ -2654,10 +2736,10 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize only the current task projection for each business object."""
 
     current_projection = """
-        from reply_tasks as tasks
+        from tasks as tasks
         left join business_object_tasks as current_business_object
           on current_business_object.business_object_key=tasks.business_object_key
-        where (
+        where tasks.record_type='reply_tasks' and (
             trim(tasks.business_object_key)=''
             or current_business_object.reply_task_id is null
             or current_business_object.reply_task_id=tasks.id
@@ -2995,7 +3077,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                     when a.channel='wechat' and lower(a.send_status)='failed'
                      and exists (
                         select 1 from wechat_deliveries d
-                        join reply_tasks t on t.id=d.reply_task_id
+                        join ({REPLY_TASK_SQL}) t on t.id=d.reply_task_id
                         where t.channel=a.channel and t.conversation_id=a.conversation_id
                           and d.conversation_id=a.conversation_id
                           and t.trigger_message_id=a.trigger_message_id
@@ -3009,7 +3091,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'recovered'
                     when lower(a.send_status) in ('failed', 'blocked')
                      and exists (
-                        select 1 from reply_tasks t
+                        select 1 from ({REPLY_TASK_SQL}) t
                         where t.channel=a.channel
                           and t.conversation_id=a.conversation_id
                           and t.trigger_message_id=a.trigger_message_id
@@ -3017,7 +3099,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                     ) then 'needs_human'
                     when lower(a.send_status) in ('failed', 'blocked')
                      and exists (
-                        select 1 from reply_tasks t
+                        select 1 from ({REPLY_TASK_SQL}) t
                         where t.channel=a.channel
                           and t.conversation_id=a.conversation_id
                           and t.trigger_message_id=a.trigger_message_id
@@ -3026,7 +3108,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                     when lower(a.send_status)='failed'
                      and (
                         exists (
-                            select 1 from reply_tasks t
+                            select 1 from ({REPLY_TASK_SQL}) t
                             where t.channel=a.channel
                               and t.conversation_id=a.conversation_id
                               and t.trigger_message_id=a.trigger_message_id
@@ -3040,7 +3122,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                         or exists (
                             select 1
                             from business_object_tasks current_business_object
-                            join reply_tasks current_task
+                            join ({REPLY_TASK_SQL}) current_task
                               on current_task.id=current_business_object.reply_task_id
                             where current_business_object.business_object_key=(
                                 'message:' || a.channel || ':' ||
@@ -3067,7 +3149,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             where not exists (
                   select 1
                   from ({AGENT_RUN_SQL}) as source_run
-                  join reply_tasks as source_task
+                  join ({REPLY_TASK_SQL}) as source_task
                     on source_task.id=source_run.reply_task_id
                   where source_run.id=a.agent_run_id
                     and source_run.execution_generation<>
@@ -3075,7 +3157,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
               )
               and not exists (
                   select 1
-                  from reply_tasks as historical_task
+                  from ({REPLY_TASK_SQL}) as historical_task
                   join business_object_tasks as current_business_object
                     on current_business_object.business_object_key=
                        historical_task.business_object_key
@@ -3133,7 +3215,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Keep deliberate user rejection out of the operational failure count."""
     rows = db.execute(
-        """
+        f"""
         select
             case
                 when lower(wechat_deliveries.status)='failed'
@@ -3154,7 +3236,7 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
                 else ''
             end) as latest_error
         from wechat_deliveries
-        join reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
+        join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
         where wechat_deliveries.execution_generation=
               reply_tasks.execution_generation
         group by 1
@@ -3172,9 +3254,9 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
     latest_error = "" if failed_row is None else str(failed_row["latest_error"] or "")
     _, _, latest_error = latest_error.partition(chr(31))
     latest_row = db.execute(
-        """select max(wechat_deliveries.updated_at) as value
+        f"""select max(wechat_deliveries.updated_at) as value
            from wechat_deliveries
-           join reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
+           join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
            where wechat_deliveries.execution_generation=
                  reply_tasks.execution_generation"""
     ).fetchone()
@@ -3299,14 +3381,44 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     ]
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
+    pending_oa_rows: list[dict[str, str]] = []
     with store._connect() as db:
+        state = db.execute(
+            "select cursor_json,last_success_at,last_error from daily_scan_state where scanner_name='oa_pending'"
+        ).fetchone() if _sqlite_table_exists(db, "daily_scan_state") else None
+        pending_keys = json.loads(state["cursor_json"]).get(
+            "pending_business_object_keys", []
+        ) if state is not None else []
+        for key in pending_keys:
+            task = db.execute(
+                f"select id,conversation_title,trigger_text,updated_at,error,status "
+                f"from ({REPLY_TASK_CURRENT_SQL}) where business_object_key=? "
+                "order by id desc limit 1", (key,),
+            ).fetchone()
+            if task is not None:
+                pending_oa_rows.append({
+                    "category": "OA approval", "id": str(task["id"]),
+                    "status": "pending", "context": str(task["conversation_title"]),
+                    "summary": str(task["trigger_text"]),
+                    "updated_at": str(task["updated_at"]),
+                    "error": str(task["error"] or
+                        "Current principal OA node is still pending; no completed approval or return readback."),
+                })
+            else:
+                pending_oa_rows.append({
+                    "category": "OA approval", "id": key, "status": "pending",
+                    "context": "OA approval", "summary": key,
+                    "updated_at": str(state["last_success_at"]),
+                    "error": str(state["last_error"] or
+                        "Verified principal OA node is pending and has not entered local processing."),
+                })
         db.create_function(
             "decode_work_summary_payload",
             1,
             decode_work_summary_payload,
             deterministic=True,
         )
-        if _sqlite_table_exists(db, "reply_tasks"):
+        if _sqlite_table_exists(db, "tasks"):
             reply_task_sql = f"""
                 select reply_tasks.id, reply_tasks.channel,
                        reply_tasks.conversation_id, reply_tasks.trigger_message_id,
@@ -3324,7 +3436,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 -- Select IDs through the compact status index before reading
                 -- message payloads; lower(status) alone scans the whole table.
                 where reply_tasks.id in (
-                    select id from reply_tasks where lower(status) = 'failed'
+                    select cast(legacy_key as integer) from tasks indexed by idx_reply_tasks_status where record_type='reply_tasks' and lower(status) = 'failed'
                 )
                   and (
                     current_business_object.reply_task_id is null
@@ -3332,18 +3444,18 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   )
                   -- Failed for a reason outside this service: History keeps it,
                   -- Attention does not (Derek 2026-09-25).
-                  and not """ + external_task_error_sql() + """
+                  and not """ + external_task_error_sql() + f"""
                   -- A later successful run of the same scheduled task is the
                   -- authoritative recovery for an older scheduled reply task.
                   and not exists (
                       select 1
-                      from scheduled_task_runs as stale_run
+                      from ({SCHEDULED_RUN_SQL}) as stale_run
                      where stale_run.execution_kind='reply_task'
                        and cast(stale_run.execution_id as integer)=reply_tasks.id
                        and exists (
                            select 1
-                           from scheduled_task_runs as later_run
-                           join reply_tasks as later_task
+                           from ({SCHEDULED_RUN_SQL}) as later_run
+                           join ({REPLY_TASK_SQL}) as later_task
                              on later_run.execution_kind='reply_task'
                             and cast(later_run.execution_id as integer)=later_task.id
                             and lower(later_task.status) in ('done', 'skipped')
@@ -3382,11 +3494,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:
-            if not _sqlite_table_exists(db, table):
+            if not _sqlite_table_exists(db, "tasks" if table in ("work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests") else table):
                 continue
+            source_table = (f"({WORK_SUMMARY_INPUT_SQL})" if table == "work_summary_inputs"
+                            else f"({MEETING_JOB_SQL})" if table == "meeting_alignment_jobs"
+                            else f"({OKR_REQUEST_SQL})" if table == "okr_review_requests" else table)
             status_placeholders = ",".join("?" for _ in statuses)
             current_generation_filter = (
-                "and exists (select 1 from reply_tasks "
+                f"and exists (select 1 from ({REPLY_TASK_SQL}) as reply_tasks "
                 "where reply_tasks.id=wechat_deliveries.reply_task_id "
                 "and reply_tasks.execution_generation="
                 "wechat_deliveries.execution_generation)"
@@ -3398,14 +3513,21 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 current_generation_filter = (
                     f"and not {external_task_error_sql(error_column)}"
                 )
+            candidate_sql = (
+                f"select cast(legacy_key as integer) from tasks "
+                f"where record_type='work_summary_inputs' "
+                f"and lower({status_column}) in ({status_placeholders})"
+                if table == "work_summary_inputs"
+                else f"select id from {source_table} "
+                     f"where lower({status_column}) in ({status_placeholders})"
+            )
             sql = f"""
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
-                from {table}
+                from {source_table}
                 where id in (
-                    select id from {table}
-                    where lower({status_column}) in ({status_placeholders})
+                    {candidate_sql}
                 )
                   {current_generation_filter}
                 order by
@@ -3522,7 +3644,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 )
         if (
             _sqlite_table_exists(db, "meeting_memory_write_events")
-            and _sqlite_table_exists(db, "meeting_alignment_jobs")
+            and _sqlite_table_exists(db, "tasks")
         ):
             meeting_memory_sql = """
                 select events.id, events.status,
@@ -3530,7 +3652,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        coalesce(nullif(jobs.title, ''), jobs.meeting_id) as summary,
                        events.updated_at, events.error
                 from meeting_memory_write_events as events
-                join meeting_alignment_jobs as jobs on jobs.id=events.meeting_job_id
+                join tasks as jobs on jobs.id=events.meeting_job_id
+                    and jobs.record_type='meeting_alignment_jobs'
                 where lower(events.status)='failed'
                 order by events.updated_at desc, events.id desc
             """
@@ -3556,14 +3679,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 )
         if (
             _sqlite_table_exists(db, "task_memory_write_events")
-            and _sqlite_table_exists(db, "reply_tasks")
+            and _sqlite_table_exists(db, "tasks")
         ):
-            task_memory_sql = """
+            task_memory_sql = f"""
                 select events.id, events.status, events.reply_task_id,
                        tasks.channel, tasks.conversation_title,
                        events.updated_at, events.error
                 from task_memory_write_events as events
-                join reply_tasks as tasks on tasks.id=events.reply_task_id
+                join ({REPLY_TASK_SQL}) as tasks on tasks.id=events.reply_task_id
                 where lower(events.status)='failed'
                 order by events.updated_at desc, events.id desc
             """
@@ -3614,7 +3737,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     error_event.conversation_id='work_summary_input'
                     and exists (
                       select 1
-                      from work_summary_inputs as completed_input
+                      from ({WORK_SUMMARY_INPUT_SQL}) as completed_input
                       where cast(completed_input.id as text)=error_event.message_id
                         and lower(completed_input.status) in ('done', 'skipped')
                     )
@@ -3629,22 +3752,24 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   )
                   and not exists (
                     select 1
-                    from scheduled_task_runs as stale_run
-                   where (
-                         stale_run.event_id=error_event.message_id
-                         or (
-                             stale_run.id=cast(substr(
-                                 error_event.conversation_id,
-                                 length('scheduled-task-run:') + 1
-                             ) as integer)
-                             and error_event.conversation_id=
-                                 'scheduled-task-run:' || cast(stale_run.id as text)
-                         )
-                   )
-                     and exists (
+                    from (
+                        select event_run.id, event_run.scheduled_task_id
+                        from ({SCHEDULED_RUN_SQL}) as event_run
+                        where event_run.event_id=error_event.message_id
+                        union all
+                        select identity_run.id, identity_run.scheduled_task_id
+                        from ({SCHEDULED_RUN_SQL}) as identity_run
+                        where identity_run.id=cast(substr(
+                            error_event.conversation_id,
+                            length('scheduled-task-run:') + 1
+                        ) as integer)
+                          and error_event.conversation_id=
+                              'scheduled-task-run:' || cast(identity_run.id as text)
+                    ) as stale_run
+                    where exists (
                          select 1
-                         from scheduled_task_runs as later_run
-                         join reply_tasks as later_task
+                         from ({SCHEDULED_RUN_SQL}) as later_run
+                         join ({REPLY_TASK_SQL}) as later_task
                            on later_run.execution_kind='reply_task'
                           and cast(later_run.execution_id as integer)=later_task.id
                           and lower(later_task.status) in ('done', 'skipped')
@@ -3702,6 +3827,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 "error": attempt["send_error"],
             }
         )
+    pending_oa_ids = {row["id"] for row in pending_oa_rows}
+    rows = [row for row in rows
+            if not (row["category"] == "Reply task" and row["id"] in pending_oa_ids)]
+    rows.extend(pending_oa_rows)
     rows.sort(key=lambda row: row["updated_at"], reverse=True)
     return rows if limit is None else rows[:limit]
 
@@ -3710,26 +3839,26 @@ def _human_decision_attention_rows(
     store: AutoReplyStore, *, limit: int | None = None
 ) -> list[dict[str, str]]:
     """Show only current, unselected Audit-approved persisted questions."""
-    sql = """
+    sql = f"""
         select attempts.id, attempts.conversation_title, attempts.updated_at,
                c.candidate_json
         from reply_attempts attempts
-        join candidate_reviews review on review.audit_run_id=attempts.agent_run_id
+        join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=attempts.agent_run_id
           and review.decision='approve'
-        join review_candidates c on c.id=review.candidate_id
+        join ({REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id
           and c.candidate_digest=review.candidate_digest and c.invalidated_at=''
-        join reply_tasks task on task.id=c.task_id
+        join ({REPLY_TASK_SQL}) task on task.id=c.task_id
           and task.execution_generation=c.execution_generation
           and task.status='needs_human'
         join business_object_tasks current_object
           on current_object.business_object_key=task.business_object_key
           and current_object.reply_task_id=task.id
-        left join candidate_selections choice on choice.candidate_id=c.id
+        left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
         where attempts.send_status='needs_human'
           and attempts.reviewed_at is null
           and trim(coalesce(attempts.resolved_at,''))=''
           and choice.id is null
-          and c.id=(select max(newest.id) from review_candidates newest
+          and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
               where newest.task_id=task.id
                 and newest.execution_generation=task.execution_generation)
           and attempts.id=(select max(latest.id) from reply_attempts latest

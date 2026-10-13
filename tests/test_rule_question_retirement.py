@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 
 from app.run_storage import AGENT_RUN_SQL, insert_run
+from app.action_storage import ACTION_PROJECTIONS, insert_action
 from app.audit_web import _reply_attempt_queue_snapshot, handle_rerun_attempt_post
 from app.quality_gate import scan_hourly_quality
 from app.store import AutoReplyStore
@@ -69,8 +70,13 @@ def seed(store, *, native_home):
         ]}},
     )) + "\n")
     with store._connect() as db:
-        task_id = db.execute("select id from reply_tasks").fetchone()[0]
-        db.execute("update reply_tasks set status='done' where id=?", (task_id,))
+        task_id = db.execute(
+            "select id from tasks where record_type='reply_tasks'"
+        ).fetchone()[0]
+        db.execute(
+            "update tasks set status='done' where record_type='reply_tasks' and id=?",
+            (task_id,),
+        )
         run_id = insert_run(db, 'agent_runs', {
             'task_id': task_id, 'execution_generation': 'old-contract',
             'role': 'consumer', 'status': 'completed', 'session_id': session_id,
@@ -150,7 +156,8 @@ def test_explicit_retirement_records_provenance_preserves_history_and_is_idempot
         assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (run_id,)).fetchone()[0] == ""
         for table in ("candidate_reviews", "candidate_selections", "candidate_executions",
                       "candidate_action_attempts", "external_action_results", "sent_replies"):
-            assert db.execute(f"select count(*) from {table}").fetchone()[0] == 0
+            source = f'({ACTION_PROJECTIONS[table]})' if table in ACTION_PROJECTIONS else table
+            assert db.execute(f"select count(*) from {source}").fetchone()[0] == 0
         assert json.loads(db.execute("select value from service_state where key=?",
                           (f"rule_question_retirement:{attempt_id}",)).fetchone()[0]) == receipt
 
@@ -169,13 +176,23 @@ def test_retirement_refuses_current_or_unproven_questions(tmp_path, change, isol
         elif change in {"retryable", "authorization_required"}:
             result["error"][change] = True
         elif change == "generation":
-            db.execute("update reply_tasks set execution_generation='new'")
+            db.execute(
+                "update tasks set execution_generation='new' "
+                "where record_type='reply_tasks' and id=?",
+                (task_id,),
+            )
         elif change == "active":
-            db.execute("update reply_tasks set status='needs_human'")
+            db.execute(
+                "update tasks set status='needs_human' "
+                "where record_type='reply_tasks' and id=?",
+                (task_id,),
+            )
         elif change == "candidate":
-            db.execute("insert into review_candidates(task_id, execution_generation, consumer_run_id, "
-                       "candidate_json, candidate_digest, stage_index, proposal_revision) values (?, 'old-contract', ?, '{}', 'digest',0,0)",
-                       (task_id, run_id))
+            insert_action(db, 'review_candidates', {
+                'task_id': task_id, 'execution_generation': 'old-contract',
+                'consumer_run_id': run_id, 'candidate_json': '{}',
+                'candidate_digest': 'digest', 'stage_index': 0, 'proposal_revision': 0,
+            })
         elif change == "newer":
             db.execute("insert into reply_attempts(channel, conversation_id, conversation_title, "
                        "trigger_message_id, trigger_sender, trigger_text, action, sensitivity_kind, "

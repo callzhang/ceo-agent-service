@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "production_commit": "3e0d962487ada4d12c73e2fc43826439ea9ada50",
+  "clean_checkout": true,
+  "pid": [
+    "90772"
+  ],
+  "deployment": {
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-12.sqlite3",
+    "branch_name": "",
+    "commit_message": "",
+    "error": "",
+    "expected_fingerprint": "f53336dc21557e9f9037bb7864c751899675c9348b646b7cddd4ffeedab54e15",
+    "installed_commit": "3e0d962487ada4d12c73e2fc43826439ea9ada50",
+    "operation_id": "deploy-aa1f5e7c-6e26-452a-b3d1-28f0a65517a9",
+    "original_commit": "06c08020773978b613d3a94dc4b9642e4b0cc2ef",
+    "status": "succeeded",
+    "target_commit": "3e0d962487ada4d12c73e2fc43826439ea9ada50",
+    "updated_at": "2026-10-13T06:36:59.349727+00:00"
+  },
+  "backup": {
+    "exists": true,
+    "bytes": 471347200
+  },
+  "http_readbacks": [
+    {
+      "path": "/healthz",
+      "http_status": 200,
+      "ok": true
+    },
+    {
+      "path": "/api/workers/status",
+      "http_status": 200,
+      "summary": {
+        "queue_count": 13,
+        "pending": 3,
+        "processing": 2,
+        "failed": 3,
+        "retryable": 0,
+        "attention": 2
+      }
+    },
+    {
+      "path": "/api/console/attention",
+      "http_status": 200,
+      "meta": {
+        "snapshot_at": "2026-10-13T06:37:39.876137Z",
+        "page": null,
+        "page_size": null,
+        "total": 2,
+        "next_cursor": "",
+        "has_more": false
+      }
+    },
+    {
+      "path": "/api/console/history?page_size=1&include_chart=false",
+      "http_status": 200,
+      "meta": {
+        "snapshot_at": "2026-10-13T06:37:45.914004Z",
+        "page": 1,
+        "page_size": 1,
+        "total": 34870,
+        "next_cursor": "2",
+        "has_more": true
+      }
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer",
+      "http_status": 200,
+      "role": null,
+      "mode": null
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=audit",
+      "http_status": 200,
+      "role": null,
+      "mode": null
+    }
+  ],
+  "scope": "Operational installed-code and endpoint readback only; no new actual OA model/business replay.",
+  "installed_oa_full_wrapper": true,
+  "task_projection_retained": true
+}

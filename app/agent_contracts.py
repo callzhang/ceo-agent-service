@@ -139,6 +139,12 @@ _OA_ACTION_TARGET_FIELDS = {
     "comment": ("process_instance_id",),
 }
 
+DINGTALK_MESSAGE_IDENTIFIER_FIELDS = (
+    "conversation_id", "message_id", "source_message_id", "open_dingtalk_id",
+    "user_id", "recipient_open_dingtalk_id", "sender_open_dingtalk_id",
+    "verified_participant_open_dingtalk_id",
+)
+
 
 def _proposed_action_json_schema(schema: dict[str, object]) -> None:
     schema["allOf"] = [
@@ -164,6 +170,14 @@ def _proposed_action_json_schema(schema: dict[str, object]) -> None:
         }
         for field in ("process_instance_id", "task_id", "target_activity_id", "to_actioner_id")
     ]
+    schema["allOf"].append({
+        "if": {"properties": {"capability": {"const": "dingtalk-chat"}},
+               "required": ["capability"]},
+        "then": {"properties": {"target": {"properties": {
+            field: {"type": ["string", "null"], "pattern": r"\S"}
+            for field in DINGTALK_MESSAGE_IDENTIFIER_FIELDS
+        }}}},
+    })
 
 
 class ProposedAction(BaseModel):

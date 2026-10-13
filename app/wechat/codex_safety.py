@@ -47,6 +47,7 @@ AGENT_CLI_READ_TOOLS = (
     "read_dingtalk_document_info",
     "read_dingtalk_document_permissions",
     "read_dingtalk_drive_info",
+    "read_dingtalk_drive_file",
     "list_dingtalk_sheets",
     "read_dingtalk_sheet_info",
     "read_dingtalk_sheet_range",
@@ -254,11 +255,15 @@ def make_role_agent_command(
         ),
         "-c",
         'mcp_servers.agent_cli.default_tools_approval_mode="approve"',
-        # Preserve long frozen and installed Skill bodies in native model-visible history.
+        # Preserve long source bodies in native model-visible history.
         "-c",
         "mcp_servers.agent_cli.tools.read_task_skill.output_token_limit=30000",
         "-c",
         "mcp_servers.agent_cli.tools.read_skill.output_token_limit=30000",
+        "-c",
+        "mcp_servers.agent_cli.tools.read_dingtalk_document_full.output_token_limit=30000",
+        "-c",
+        "mcp_servers.agent_cli.tools.read_dingtalk_messages.output_token_limit=30000",
         "-c",
         'approval_policy="never"',
     ]

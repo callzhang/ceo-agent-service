@@ -1,5 +1,90 @@
 # Current Runtime Mechanism
 
+OA Attention is a business-pending projection: the scanner captures the exact
+principal-owned RUNNING nodes from the authenticated pending list and source
+details. A completed comment or internal `done`/`no_action` does not remove
+such a node. Only a subsequent verified scan proving it is no longer pending
+removes it. Partial scans and source-read failures retain previous pending
+nodes; non-OA pending/processing/needs_human status alone remains excluded.
+
+Source feedback callback identities are opaque historical evidence, not newly
+generated outbound tokens. The validation copy removes only configured-origin
+pairs with matching identities and valid query fields; authored/outgoing token,
+credential, domain and signature checks are unchanged. Canonical source values
+and source digests are not rewritten.
+
+`reconcile-confirmed-meeting-delivery --job-id ...` previews an existing primary
+delivery receipt using provider readback without sending. `--apply` restores
+only the exact prepared body and original receipt under a transaction CAS,
+then resumes the existing calendar-only tail. It requires an unchanged failed,
+unlocked job, immutable same-target binding, no active dispatch claim and no
+sensitive split preparation. Revised unsent prose is not presented as sent;
+unconfirmed receipts, changed targets or split actions are not reconciled.
+
+Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
+body-free TSV metadata with separate Root and Relative path columns. Joining
+the referenced root directory with the relative component reconstructs the
+absolute source path; no combined alias expression is presented as a read argument.
+The full name, description
+and reconstructed absolute read path of every authorized source are retained,
+including distinct paths sharing a name. The response includes its path joining
+and table quoting instructions. Named/path reads, source authorization and
+ambiguity checks are unchanged; no output budget or role policy is changed.
+
+Email unsubscribe page judgement explicitly selects an empty task Skill catalog
+through the existing native per-path Skill configuration. Unspecified standard
+turns retain the native default catalog, while an explicit selection (including
+empty) filters the catalog through the existing per-path helper. Existing
+always-on/plugin entries may remain visible; empty does not mean zero native Skills.
+The page states, verbatim evidence contract, route, approval, sandbox and
+unsubscribe execution rules are unchanged. Native global memory and AGENTS
+instructions remain CLI-owned and are not represented as service prompt text.
+
+The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
+and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Member parsing
+also uses bounded reads against one aggregate budget, with actual compressed
+stream termination checked instead of trusting the ZIP directory's size alone;
+only stored and deflated OOXML members are accepted. This termination check is
+covered with the configured Python 3.12 runtime and CI. Downloads open
+the resulting regular file once with `O_NOFOLLOW` and read from that validated
+descriptor; link replacement cannot redirect the read. Every attachment format
+returns a SHA-256 digest of the downloaded bytes. PDF and presentation previews
+report actual text/page truncation, and the complete serialized tool response
+must fit below the 1 MiB MCP text-block boundary using the same indented
+`pydantic_core.to_json` serialization as the pinned FastMCP SDK, including JSON
+escaping, structural whitespace and duplicated text. An oversized response fails rather than presenting partial
+business evidence as complete. Scanned PDF OCR paths and process-owned temporary
+directory cleanup remain unchanged; failed extraction/serialization removes the
+new material file. These limits do not grant shell access to DWS credentials.
+
+`retry-source-verified-email-action --account ... --action-id ...` examines one
+current failed move/trash action through the existing read-only IMAP wrapper.
+Preview opens SQLite read-only without schema initialization. Only an exact
+message still in its source can be released with `--apply`; missing, ambiguous,
+already moved or changed identities are not retried. The transaction checks the
+current plan, parameters, config version, failure snapshot, dependencies and
+active sibling claims. It schedules one attempt using `next_attempt_at`, keeps
+the failed status and immutable attempt history, and does not reset the counter.
+The normal worker consumes that schedule before calling the provider; another
+failure does not renew this explicit allowance. Dry-run refuses `--apply`.
+Schema 51 records the source-readback digest and exact next attempt number in
+the immutable `email_direct_retry_requests` relation. Provider-factory failures
+and interrupted-worker recovery also consume this one-attempt allowance rather
+than renewing it. Deployment requires a verified backup and the matched 50-to-51
+publication inverse; rollback removes only an empty request relation and refuses
+to discard any recorded recovery authorization. Readback exceptions close the
+session opened by the examination worker before propagating the error.
+Duplicate-key inserts, including SQLite `INSERT OR REPLACE`, are rejected by
+the authorization relation alongside updates and deletes.
+Authorization includes a canonical non-secret snapshot of the IMAP account identity,
+transport, credential reference and move mode captured by the read-only factory.
+The release transaction and both normal-worker claim paths compare it against
+the current account configuration; a changed configuration cannot consume that
+old authorization.
+Missing captured configuration evidence is rejected rather than inferred from
+the current database. A changed configuration is also shown and counted as
+blocked, not as automatically retriable; authorization and failure history remain.
+
 Audit field-error feedback must cite the exact JSON path, literal value and type
 from the current digest-bound candidate. Prior revision feedback is not evidence
 of the current field value. Quoted numeric identifiers remain strings; an
@@ -429,6 +514,8 @@ Codex Consumer 可在绑定工作区进行原生代码执行；Audit 只读。�
 
 Consumer 的业务结果与 wire JSON Schema 和解析器一致：`proposal`、`no_action`、`failed` 的 `decision_options` 为空，`requested_input`、`needs_human_reason`、`decision_basis` 不得有值；这些字段只属于 `needs_human`。普通方案的事实证据写在 `proposal.sourced_facts`，无需动作的依据写在 `summary`，不借用人工问题字段。
 
+新增 Consumer 输出在 Wire 解析入口校验 `dingtalk-chat` 的消息标识字段（conversation_id、message_id、source_message_id、open_dingtalk_id、user_id、recipient_open_dingtalk_id、sender_open_dingtalk_id、verified_participant_open_dingtalk_id）：提供的非 null 值必须是含非空白字符的字符串；不把数字转换成字符串。普通 proposal 和人工选项中的可执行 plan 均适用，输出 JSON Schema 同步声明该约束。历史保存结果的 Pydantic 域模型读取保持原样；这不表示旧数字标识仍符合新的输出 Schema，也不改变历史执行或恢复行为。其他 capability 的 target 继续支持通用 JSON 值。
+
 Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
 群消息列表中的 `conversationMessagesList[*].messages[*].openMessageId` 是历史消息身份，
 不能据此判定 Consumer 发送了消息或阻止后续安全恢复。检测只读取 provider 的
@@ -607,6 +694,8 @@ Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，�
 
 Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
 
+Audit Task 在完整候选旁附上服务从同一候选 JSON 确定性生成的标量字段证据：JSON Pointer 路径、精确字面值和 JSON 类型。字段类型反馈必须和该证据及候选相符；该索引不是额外来源事实，也不改变审核决策规则。
+
 人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
 
 选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。不再提供 applies_to=task_class、可复用规则、Skill 更新复选框或此决策处理器的 Skill 写入副作用。
@@ -735,7 +824,9 @@ project_link_proposal、attention_proposal。历史运行只保存原生执行�
 Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision.schema.json`，
 该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
 要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
-语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。
+语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。Task 任务正文不重复附加完整 schema；Codex 使用上述原生通道，Claude／Friday 由现有运行适配器将同一份完整 schema 拼入单条消息。Skill、事实、业务规则和会话绑定保持不变。
+Task 业务指导以每轮完整加载的当前 ceo-work-tracking Skill 为主，不再在包装正文重复展开已由 Skill 承载的规则。包装只保留未被当前安装 Skill 完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。此阶段仍注入完整 Skill，不新增读取工具、权限或路线；固定对照见 docs/task-guidance-dedup-evidence.md。
+
 
 ProjectSelector 使用既有 anchor_id 或零基 project_decision_index 二选一；后者指向顶层
 Project 决定，不是 Task 列表。Task 用 project 与 project_link_evidence 明确归属，复用真正已有
@@ -807,6 +898,7 @@ Project；原有关系即使 anchor 后来退休也仅作历史证明保留。�
 检索先读取正式 Project 当前资料/证据，再相关 Tasks；同来源旧身份强制保留，预算先给它们。
 零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
 证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
+Task 语义上下文用无损紧凑 JSON 序列化，省去排版缩进；字段、顺序、原文字符串、引用偏移和检索选择保持不变。
 source_documents 提供精确版本的共享正文一次，source_signals 保留所有 ID/元数据并指向正文；
 当前 WorkItem 正文也只出现一次，immutable 输入不改。历史长文在 2048 字符预算内保留首尾及关键
 引文，visible_ranges/full_length/truncated 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。
@@ -815,9 +907,8 @@ source_metrics 是正文字符观测，不是总 prompt token 保证；检索排
 Task Agent 共享 task-agent:work-tracking:v1 逻辑 session，各 route 保留各自原生 session，
 native CLI 自行 compact；每个 WorkItem 仍独立 workload/run。process-work-items 领取前持有 SQLite
 共享会话锁，运行时续租并在提交前核验；失锁本轮不提交，普通既有重试策略不变。
-旧 task:<run_id> session 历史保留。prompt 只用新加载的 CI Skill revision 4，旧 scheduled
-skill_protocol 不注入；scheduled prompt 仅保留专项业务范围，旧 payload/history 不改。
-全局 Skill 尚未发布。只读工具行为由 prompt 引导，不是技术上禁用 CLI/MCP 写入的权限边界。
+旧 task:<run_id> session 历史保留。prompt 使用当前选定 Skill 根目录中的 ceo-work-tracking 正文，不固定历史 revision；旧 scheduled
+skill_protocol 不注入，scheduled prompt 仅保留专项业务范围，旧 payload/history 不改。只读工具行为由 prompt 引导，不是技术上禁用 CLI/MCP 写入的权限边界。
 
 完成只由新信息驱动。独立 completion Agent、周期性任务完成检查已删除，旧三类 completion-check
 输入到 Agent 前 skipped，枚举仅保历史；todo_changes/follow_up_changes/search_trace 没有当前应用路径。
@@ -1011,7 +1102,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 参数、命令、工具输出和从原生记录提取的结果均按需读取。中断运行按原生 `task_started` / `task_complete`
 边界恢复证据，既有投递核对和恢复契约保持不变。
 
-Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
+Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点，返回受限正文和当前 MCP 进程临时目录路径；扫描 PDF 可交给选中的 OCR Skill，MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`。任务工具直接向模型声明；已验证的成功读取使用具名直接调用，但 Agent 仍可能尝试 CodeMode 并在调用错误后恢复，声明方式不保证没有额外步骤。其他工具继续使用 CodeMode；既有角色工具选择、functions 排除、沙箱、会话和路线不变。超长直接调用结果仍可能被原生运行时截断，不能以完整原始回执替代模型实际可见内容的验证。
 
@@ -2248,7 +2339,7 @@ OA 评论出现未知效果后，System 只读原实例的正式 detail；摘要
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
 
-精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。会议来源预装配不能代替冻结 Skill 中的业务要求；在具备按需读取能力并验证规则完整性前，不把这些正文替换为名称提示。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。会议来源预装配不能代替冻结 Skill 中的业务要求；在具备按需读取能力并验证规则完整性前，不把这些正文替换为名称提示。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
@@ -2304,7 +2395,7 @@ Provider 明确返回 `success=false` 的主消息或敏感消息记录真实失
 
 ### 历史反馈链接的来源读取（2026-10-07）
 
-Consumer 捕获的历史消息以反馈 token 和 attempt ID 识别上下评分链接是否属于同一对。旧链接中的触发/回复预览各自仍接受敏感值检查，但文字差异不使当前任务失败；Markdown 来源解析保留 URL 原文，以便只在结果检查副本中移除经过检查的链接。两个链接仍分别验证配置的 host/path、query 字段和评分。当前待发送正文保持完整 query 的严格配对，来源原文、候选 digest 和执行前来源比较不受影响。
+Consumer 捕获的历史来源文本可能合并多条消息；校验器按反馈 token 与 attempt ID 分组，并要求每组各自包含通过配置 host/path、query 字段和评分验证的上下反馈链接。旧链接的触发/回复预览各自仍接受敏感值检查，但文字差异不使当前任务失败；Markdown 来源解析保留 URL 原文，以便只在结果检查副本中移除经过检查的链接。当前待发送正文保持完整 query 的严格配对，来源原文、候选 digest 和执行前来源比较不受影响。
 
 ## Storage retention (2026-10-09)
 
@@ -2446,3 +2537,167 @@ DDL helper在一次性内存库中生成。缺失对象可补齐，已有对象�
 workload查provider引用时沿用范围索引并在范围内按原public ID排序；不扫描整个
 provider历史，不改成物理ID排序。取消重复TEXT唯一索引，没有增加覆盖索引。
 此规则限定本期三个实际整数ID类型，后续UUID类型需采用实际TEXT身份约束。
+
+### Task 原生 Skill 目录
+
+Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex adapter，使用 CLI 原生 `skills.config` 限制目录。目录只启用明确选择的 Skill 和既有默认 Memory 插件，不再从正文的名称提及或 `dws` 命令推断递归依赖；相关依赖继续由 Agent 按需读取。未选中 Skill 的文件和既有读取权限不变。Consumer/Audit 使用空选择时，生成的配置与变更前逐字符相同。Task 完整 Skill 正文、动态事实、输出 schema、业务校验、session 与路线选择保持原有行为；Claude/Friday 的单消息装配不受该 Codex 配置影响。Codex 自带系统 Skill 仍由 CLI 决定，不将目录配置数量冒充实际显示数量。验证见 `docs/task-native-skill-catalog-validation.md`。
+
+## Unified reply and work-input storage (Store 2026-10-11.3)
+
+第四期4B首单元将回复任务、输入版本与工作汇总输入存入物理 `tasks`，Task Agent 运行存入 `runs`。
+逻辑类型使用准确原表名；公共 ID 保留原整数命名空间，`legacy_key` 记录旧 ID。reply task 的公共 ID
+等于物理 ID；输入和工作输入通过类型与公共 ID 查找物理记录。`current_input_id`、`claimed_input_id`
+与输入的父引用使用物理外键，DTO 继续返回准确原公共输入 ID。Task run 的 `summary_input_id`
+仍是原公共工作输入 ID，原来源没有该外键，不新增外键。
+
+保留的输入 TEXT、BLOB 与 WSI1 编码保持原字节。终态正文精简规则、状态与尝试次数、执行代、领取 CAS、
+业务结果、原生运行定位和执行回执保持原语义。Task run 的三项已退休空过程缓存不再物理保存；历史正文
+依然从原生 trajectory 读取，缺失明确报告不可用。没有新增业务字段、旧表视图或长期双写。
+
+此单元配对发布使用已验证的 `2026-10-11.2→2026-10-11.3`。副本正迁和逆迁比较原记录、源 DDL、
+索引、触发器、序列及版本；逆迁保留 replacement 期间的新输入、结果与回执，以及已分配后删除的 ID
+水位。部署静默检查明确读取旧12或新13布局，并支持普通元组与 sqlite3.Row 连接。
+Meeting、OKR与weekly结构由下面的同版本内部子单元处理；scheduled/Workbench仍待4C。
+
+这是当前开发分支的行为说明，生产上线状态和验收边界见 `docs/database-redesign-phase4b-validation.md`。
+
+旧 `2026-10-10.2→2026-10-11.1` 输入 publication 与其无运行调用的迁移／inverse helper 已退休；当前二次启动不运行旧全局补造逻辑。损坏或混合的当前 typed schema 明确拒绝，既有修复缺失辅助索引的入口保持原边界。回退使用本次捕获的准确源布局和对应旧代码，保留 replacement 新事实。
+
+
+## Unified Meeting storage (Store 2026-10-11.3)
+
+4B会议子单元将原meeting_alignment_jobs的23项源字段保存为tasks[meeting_alignment_jobs]的准确scalar；会议运行使用runs[meeting_alignment_runs]，只退休三项已为空的过程缓存。已采用的决定、最终消息、发送结果与日历结果仍是业务状态；原生trajectory继续提供过程正文，缺失时明确不可用。源run.updated_at默认空字符串，正常begin/record入口仍显式写SQLite当前时间。
+
+DAO、Dispatcher、runtime父定位与恢复、History、搜索、Console及静默检查保留原公共job/run ID和排序。投递key、Dispatcher source_id、generation、owner/expiry和claim token的原谓词不变；Memory event、delivery claim和run的父FK指向物理tasks ID，DTO回投原公共ID。ready_to_send仍不代表sent；已有发送结果与后续calendar状态保持原业务语义。
+
+已知历史run2298的job4908不存在，迁移保留这一真实缺失关系并消耗保留物理ID水位，不创建业务父记录、不指向其他类型巧合同号行。正常run只保存物理父FK，公共父ID由typed parent还原；只有历史孤儿保留实际source job_id。配对逆迁还原原公共身份与同一FK发现，保留replacement新事实。当前开发代码已完成会议调用切换与独立复核；全B的最终生产源副本、旧代码回退验证、CI和发布仍以B验收文档为准。
+
+
+## Unified OKR and weekly analysis storage (Store 2026-10-11.3)
+
+4B的完整存储核心将九张源表合入tasks/runs。OKR request保留16个原scalar字段、conversation/trigger自然唯一键和原无枚举CHECK的status。失败请求的重复输入只刷新原允许的source JSON、pending状态、错误、session和更新时间，不改写其原标题或trigger正文。领取、恢复、Dispatcher租约与Console使用原公共request ID；对应任务的物理ID可不同。
+
+OKR run保留原公共request_id、session、transcript range与created_at，只退休三个空过程缓存。源没有request外键或run状态、错误、完成/更新时间；共享列保持NULL，task_id不补成FK。items的request_id同样没有声明FK，保留原public scalar；多个run及原允许的缺失request关系均不合并或补造父行。精确native读取继续使用structured workload的公共request ID和原session/range。
+
+weekly analysis job的11个原字段、running/completed/failed CHECK和week_end/manager/source_digest自然键保持。cache hit与cache miss复用同一公共job ID，owner/expiry CAS及superseded错误和时间保持；runtime workload包含原公共job ID。周报全局lease及last_success/last_attempt仍在service_state。逆迁保留原序列水位和replacement新写入/删除后的分配水位。当前代码处于隔离分支；完整B验收与生产状态以验收文档为准。
+
+
+Email task visibility in Store13: unsubscribe classification lists, classification detail/in-flight progress, verified entry URL lineage and summary queue counts detect the physical tasks/runs tables. They read public task/run IDs through the typed projections and resolve canonical inputs through the physical current_input_id reference. A standalone EmailStore without the shared task tables retains its existing behavior. Existing receipt/lineage/URL validation and redaction rules remain; this change fixes the physical-table presence check and adds no policy.
+
+
+## Phase4C core storage (Store 2026-10-12.1)
+
+隔离候选的核心 schema 将 scheduled_task_runs 和 workbench_events 存入 runs，
+workbench_tasks 和 workbench_turns 存入 tasks；record_type 保留来源身份。Workbench
+公共 TEXT ID 按原值保留，内部父引用使用物理整数 ID；原任务/run ID 不重写。
+scheduled/Workbench CRUD 与 reader 切换已完成并通过独立规格及质量复核。
+生产是否启用本期结构，以本期验收文档中的实际部署读回为准。
+
+构造器支持精确已验证 source13 到本期候选的事务迁移；无标记/未知来源包含任一退休源表
+时，在初始化修改之前拒绝。C 源 tasks/runs 的完整对象清单也必须符合已捕获的声明，
+不能静默删除额外源触发器或索引。当前 schema 已有的缺失对象修复规则保持不变。
+
+本期只取消全空的 Workbench final_text 与搜索 summary_text、fts_text、embedding_json、
+embedding_model、embedding_updated_at；非空或 NULL 值在迁移修改之前拒绝。用户输入、
+恢复上下文、错误详情、原始事件 payload、附件/工件/confirmation 结果保留；三个子表仍在
+原表，父外键映射保留原 NO ACTION 语义。七列搜索元数据与 title-only external-content
+FTS 保留，native 检索排序算法不变。Workbench DTO/native/RAM 的呈现已通过相关调用测试。
+
+配对回退通过当前数据逆迁，保留迁移后业务事实，而非用旧数据库文件覆盖。原 DDL、
+marker/timestamp、分配水位、TEXT 源表与保留子表的 rowid，以及原 FTS shadow 状态由
+本次发布的临时内存证据准确恢复；新/变更/删除搜索元数据只调整相应差异。
+不持久保存另一份 trajectory 或索引快照。实际副本迁移、逆迁、新事实保留、旧代码
+启动及五种离线发布失败阶段已通过6b43a93b来源验证。最终验收还需绑定最新生产来源，
+通过完整CI、正常部署和线上读回；详见 database-redesign-phase4c-validation.md。
+
+
+## Phase4C scheduled callers
+
+候选的定时触发 DAO、dispatcher、恢复、Attempt/History、运行路由引用读取已切换到
+runs 中 record_type=scheduled_task_runs 的记录。查询返回原公共 scheduled ID；写入按
+record_type 和公共 legacy key 精确定位。execution_id 继续保留原 TEXT 值与 execution_kind
+含义，服务命令不会被制造为回复任务。History 对外的 source 标签仍是 scheduled_task_runs。
+
+原事件唯一、定时自然键、overlap 的 first/last/count、领取 CAS、租约、派发事务和
+回复关联规则不变。配置版本和冻结 snapshot_json 留在 scheduled_task_config_versions，
+snapshot_id 保留原 FK；当前初始化不再建立退休 scheduled 表，现有配置默认值修正使用
+typed 父引用。历史 Attempt 和 skipped 快照不因运行路由改名而重写。
+
+正常 deploy 等待读者明确支持已验证的2026-10-11.2 / 2026-10-11.3 来源
+和2026-10-12.1候选。来源判断读取实际 schema；旧标记同时含 C runs 声明与旧表时拒绝，
+包括没有 scheduled 行的混合库。真正历史来源和当前候选沿用原忙碌/租约谓词，
+只读检查不修改行、schema 或数据库 bytes。Workbench CRUD/native/API 仍是后续单元，
+本段不表示完整 C 已发布。
+
+
+Phase4C 的初始化修复边界：旧分散 Workbench0.7/0.8/0.9表缺列后自动补
+resume_context、task_sequence、turn控制和附件client_request_id/content_sha256的路径
+已退休。当前变更只支持准确source13正迁和完整current14声明；缺失必要列的库拒绝，
+不通过补默认值猜测原数据。已有缺失索引/触发器修复继续支持。源13迁移须保留
+原user_text、私有恢复上下文、task_sequence、控制状态、附件标识/hash/path/文件bytes；
+原本同时间戳但不同UUID的turn按原sequence排序。测试覆盖真实来源保留、当前不完整
+声明的非修改拒绝与并发索引修复，不以半旧半新的schema冒充来源。
+
+
+## Phase4C Workbench callers
+
+Workbench task/turn 的CRUD、全局client_request幂等、task_sequence、单active turn、
+claim/lease/stop/control/recovery保留原合同。读者从typed tasks投影公共TEXT ID，
+写者按record_type+legacy_key定位；附件/工件/确认表存储物理父整数，DTO仍返回公共
+task/turn ID。事件在runs中按公共numeric legacy cursor分页和配对，物理run ID、
+turn sequence及native ordinal各自保持原含义；先按物理父筛选再投影cursor以使用索引。
+
+不再写入物理final_text；已有native/RAM与Codex/Claude/Friday读取继续提供正文。
+本单元不改API/UI契约、工具权限、确认政策或新的保留期限。准确source13迁移保留
+pending confirmation，原有业务recovery是独立调用，不作为迁移副作用。
+相关停止/完成竞态、late write、quiescence和恢复行为仍由原机制管理。
+
+旧列补齐测试已换成真实source13值保留和当前不完整schema非修改拒绝；索引修复
+继续以两次并发构造、原外键及附件bytes验证。缺失辅助对象的既有初始化路径仍会
+执行conversation-session回填并更新schema marker时间；它不承诺所有业务行逐字不变。
+最终发布仍须最新来源绑定、完整CI、正常部署与线上读回；本段不表示已部署。
+
+
+Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<公共整数ID>
+分别定位候选，再应用原同日程较新dispatched且回复done/skipped的恢复谓词。
+两路以UNION ALL组合，事件身份和conversation身份互相矛盾时仍沿用原“任一路匹配”
+语义；不新增身份收紧政策。定位使用既有event/public-ID索引，不新增schema/index/helper。
+原2,000VM步预算和只读合同保留；采样进度回调数不表示精确总指令数。
+
+
+Phase4C 查询性能边界：数字ID投影显式包含已有部分索引的类型条件，SQLite可使用
+idx_tasks_public_id完成按公共ID查找；TEXT投影不加入此条件。Work Attention先从
+work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选输入正文；无关类型
+增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
+现有物理任务ID；meeting_memory_write_events仍保存物理父FK，对外还原公共ID，
+已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
+
+Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
+
+
+### Full document native output delivery
+
+Consumer/Audit Codex commands use the existing per-tool native output budget of30,000 for `agent_cli.read_dingtalk_document_full`, on cold and continued turns. The server's complete result can otherwise be clipped in the native model-visible output. This preserves the selected JSONML/revision result without substituting Markdown, changing all-tool budgets or adding prompt rules. The source may still exceed that finite budget; server complete=true alone is not proof of complete model visibility. Regression/native evidence is recorded in `docs/document-native-output-validation.md`.
+
+Consumer 通用 Skill 约定只规定独立选择并应用适用 Skill；每轮 Task 发现入口统一决定何时读取，避免通用层的读取措辞与冻结来源复用条件冲突。安装来源和未选择 Skill 的既有读取入口不变，不新增缓存或读取回执。
+
+
+Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000，用于完整交付已请求的消息字段；该设置冷启动和续会话均保留。不提高全局输出限额，不改变消息查询参数、窗口工具、正文或分流/审核规则；长目录与文件读取保持各自现有单工具设置。
+
+OA pending scans carry the complete scheduled Consumer wrapper, including exact frozen Skill materials, into the claimed reply input. Consumer and Audit read those original bodies through read_task_skill; the scanner must not use the Task extraction projection that omits skill_materials. Task extraction sources retain their existing body-free scheduled context. This changes input delivery only, not Skill contents, task classification, audit policy, routes or sessions; old inputs are not rebuilt.
+
+
+### 第五期A：候选与执行存储合并
+
+Store `2026-10-13.1` 将候选、审查、选择、补充、执行和动作尝试六种已有事实存入一张 `actions` 表。
+原公开 ID 保留各自类型的整数空间；真实外键使用统一物理 ID，页面和业务 API 仍返回原公开 ID。
+候选的 predecessor review、selection 的 candidate/review、execution 的 candidate/review/selection
+及 attempt 的 execution 关系分别保留。读取使用明确类型投影；写入使用有限字段定义；没有旧物理表、
+兼容 view 或双写。`actions` 自己声明任务、运行及动作类型引用约束，不重复安装通用 child trigger。
+独立 `external_action_results` 在这段仍保留，后续迁入独立 receipt 类型；无候选回执不会被制造归属。
+完整十表目标还包括其余 actions、business、emails、provenance、configs、provider_state、schedules 和 state。
+
+这个发布单元只接受准确的前版 Store `2026-10-12.1`。迁移前核对六表声明、字段及引用；迁移和 schema
+版本更新在同一事务内完成。配对逆迁从当前 `actions` 重建源表并恢复原版本记录，保留发布后的新增、更新、
+删除事实，不还原陈旧数据库备份。正常发布和回退后的重新启动在新进程验证，不能以同进程已初始化路径
+缓存代替实际启动验收。此段描述本发布代码契约；是否上线以正式部署回执为准。

@@ -7,6 +7,7 @@ import pytest
 import app.audit_web as audit_web
 from app.attempt_projection import project_attempt_status
 from app.store import AutoReplyStore
+from app.task_storage import task_physical_id
 from app.web_api.attempts import build_attempt_detail
 from tests.test_console_web_api import _client
 
@@ -48,7 +49,10 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
         sensitivity_kind="normal", send_status=attempt_status, channel="wechat",
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        db.execute(
+            "update tasks set status='done' where record_type='reply_tasks' and id=?",
+            (task_physical_id(db, "reply_tasks", task.id),),
+        )
         db.execute(
             "update wechat_deliveries set status=?, error='wechat_ui_not_ready', "
             "pre_action_failure=1, execution_generation=?, conversation_id=? where id=?",
@@ -59,10 +63,10 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
                 "insert into wechat_deliveries (reply_task_id, execution_generation, account_id, "
                 "target_type, target_id, conversation_id, reply_text, status) "
                 "values (?, 'initial', 'acct-1', 'direct', 'wechat-current', 'wechat-current', 'Yes.', 'sent')",
-                (task.id,),
+                (task_physical_id(db, "reply_tasks", task.id),),
             )
         original_deliveries = [tuple(row) for row in db.execute("select * from wechat_deliveries")]
-        original_tasks = [tuple(row) for row in db.execute("select * from reply_tasks")]
+        original_tasks = [tuple(row) for row in db.execute("select * from tasks")]
         original_attempts = [tuple(row) for row in db.execute("select * from reply_attempts")]
 
     with _client(tmp_path) as client:
@@ -87,7 +91,7 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
     assert sum(series.values()) == 1
     with store._connect() as db:
         assert [tuple(row) for row in db.execute("select * from wechat_deliveries")] == original_deliveries
-        assert [tuple(row) for row in db.execute("select * from reply_tasks")] == original_tasks
+        assert [tuple(row) for row in db.execute("select * from tasks")] == original_tasks
         assert [tuple(row) for row in db.execute("select * from reply_attempts")] == original_attempts
 
 
@@ -113,7 +117,10 @@ def test_old_pending_wechat_attempt_still_projects_closed_task_as_done(tmp_path)
         action="send_reply", sensitivity_kind="normal", send_status="pending",
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        db.execute(
+            "update tasks set status='done' where record_type='reply_tasks' and id=?",
+            (task_physical_id(db, "reply_tasks", task.id),),
+        )
     status, detail = build_attempt_detail(store, attempt_id)
     assert status == 200
     assert detail["status"]["raw"] == "done"

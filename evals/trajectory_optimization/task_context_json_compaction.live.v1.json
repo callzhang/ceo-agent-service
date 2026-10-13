@@ -1,0 +1,640 @@
+{
+  "version": 1,
+  "pr": "https://github.com/callzhang/ceo-agent-service/pull/66",
+  "installed_commit": "4b38ab8b55568666770f32b0cb385eb4d11db512",
+  "before": {
+    "health": {
+      "http_status": 200,
+      "bytes": 25,
+      "sha256": "bc52835b52615a0e4f6f33c29818d581d367702a21d0210f20dbaaec4b5a8104",
+      "result": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "workers": {
+      "http_status": 200,
+      "bytes": 12451,
+      "sha256": "437d54a541ffce66ca0ce66a3b5935ea8a87088410d5e217491b89cafed9d866",
+      "keys": [
+        "service",
+        "components",
+        "connectors",
+        "email",
+        "meeting_memory_health",
+        "queues",
+        "dispatcher_queues",
+        "attention_rows",
+        "human_decision_rows",
+        "database",
+        "summary",
+        "wechat",
+        "system_health"
+      ],
+      "service": {
+        "ok": true,
+        "state": "running",
+        "pid": "50120"
+      },
+      "dispatcher_queues": [
+        {
+          "name": "scheduled",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "scheduled_execution",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "reply",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "meeting",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "work_summary",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "okr_review",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "task_todo_sync_outbox",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "business_task_todo_sync_outbox",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "task_memory_write",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        }
+      ],
+      "queues": [
+        {
+          "name": "Reply tasks",
+          "table": "reply_tasks (current business-object projection)",
+          "counts": {
+            "done": 7017,
+            "failed": 2,
+            "needs_human": 1,
+            "skipped": 107
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 2,
+          "retryable": 0
+        },
+        {
+          "name": "Reply attempts",
+          "table": "reply_attempts (current trigger state)",
+          "counts": {
+            "calendar": 14,
+            "commented": 27,
+            "completed": 1110,
+            "decision_selected": 4,
+            "failed": 2,
+            "needs_human": 1,
+            "reacted": 367,
+            "recovered": 67,
+            "sent": 1721,
+            "skipped": 3727
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 2,
+          "retryable": 0
+        },
+        {
+          "name": "Work items",
+          "table": "work_summary_inputs",
+          "counts": {
+            "done": 4686,
+            "skipped": 4402
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email classifications",
+          "table": "email_agent_classification_tasks",
+          "counts": {
+            "done": 1352
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Follow-ups",
+          "table": "follow_up_drafts",
+          "counts": {
+            "cancelled": 20,
+            "completed": 162,
+            "sent": 1085,
+            "skipped": 1210
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting jobs",
+          "table": "meeting_alignment_jobs",
+          "counts": {
+            "no_action": 85,
+            "sent": 549,
+            "skipped": 59
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "OKR reviews",
+          "table": "okr_review_requests",
+          "counts": {
+            "done": 19,
+            "skipped": 1
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Memory writes",
+          "table": "memory_write_events",
+          "counts": {
+            "skipped": 164,
+            "written": 312
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting Memory writes",
+          "table": "meeting_memory_write_events",
+          "counts": {
+            "done": 549
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "DingTalk Todos",
+          "table": "work_todo_dingtalk_links",
+          "counts": {
+            "active": 540,
+            "cancelled": 5,
+            "done": 330
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "WeChat deliveries",
+          "table": "wechat_deliveries (delivery outcome)",
+          "counts": {
+            "sent": 54,
+            "skipped": 5,
+            "superseded": 66
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email provider actions",
+          "table": "email_actions",
+          "counts": {
+            "done": 9688,
+            "pending": 3,
+            "skipped": 2
+          },
+          "pending": 3,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "table": "reply_tasks (channel=email, unsubscribe)",
+          "counts": {
+            "done": 1017,
+            "skipped": 57
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        }
+      ]
+    },
+    "attention": {
+      "http_status": 200,
+      "bytes": 3649,
+      "sha256": "7e917e1f2480d6665a13f28b307cc1ce30958c73ec25a47d9a39ccb295d4b808",
+      "count": 3
+    },
+    "history": {
+      "http_status": 200,
+      "bytes": 8702,
+      "sha256": "46d29ecf76c2fc3f4bc439a71d9d980d24e796638439141571bb9d31b62177fd"
+    },
+    "prompt_history": {
+      "http_status": 200,
+      "bytes": 73113,
+      "sha256": "7e623e0645fbd9c65f9a7414cc65d7d3a0b4c50e27836cccfbe557436f49ec8f",
+      "item_sha256": "e7cf075296fab982e241c6a6419f9dc947dc917ca1eb4af72a3b7f9ac2c952d8",
+      "input_hashes": {
+        "developer_instructions": "8f5c66a83a06dd6ac0f647db05e7e4c873432041202fc498bc0afb0cc811a42d",
+        "task_prompt": "443c58bfe2422dff7e06feeaf88285ce2dd2f95f5e12e139d72df3f7f8363965",
+        "submitted_input": "443c58bfe2422dff7e06feeaf88285ce2dd2f95f5e12e139d72df3f7f8363965"
+      },
+      "status": "available",
+      "submission_state": "invoked"
+    },
+    "prompt_public": {
+      "http_status": 200,
+      "bytes": 42572,
+      "sha256": "68ac25dc535753485035279a433fe8f4261ff025ebbaae9312c3fb9a4097ee2a",
+      "item_sha256": "75a888386b3f700b5862852c950f305ae36e4fd540653e5815f148d3a25293ac",
+      "input_hashes": {
+        "developer_instructions": "f44d9f94bd7041f217a2107b4d9ddc2ce5fc61322c0124fe1426049e015f24be",
+        "task_prompt": "3bbbc850f1364ac32529a6f5d5a80b663d1d86aa347ed705056a66dc224b2cc7",
+        "submitted_input": "3bbbc850f1364ac32529a6f5d5a80b663d1d86aa347ed705056a66dc224b2cc7"
+      },
+      "status": "available",
+      "submission_state": "preview"
+    }
+  },
+  "after": {
+    "health": {
+      "http_status": 200,
+      "bytes": 25,
+      "sha256": "bc52835b52615a0e4f6f33c29818d581d367702a21d0210f20dbaaec4b5a8104",
+      "result": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "workers": {
+      "http_status": 200,
+      "bytes": 12443,
+      "sha256": "e51819300d1338a15dd4bd7c2f8cb3b923a7fe6a4001588e1311fbeb69c3c0ec",
+      "keys": [
+        "service",
+        "components",
+        "connectors",
+        "email",
+        "meeting_memory_health",
+        "queues",
+        "dispatcher_queues",
+        "attention_rows",
+        "human_decision_rows",
+        "database",
+        "summary",
+        "wechat",
+        "system_health"
+      ],
+      "service": {
+        "ok": true,
+        "state": "running",
+        "pid": "6793"
+      },
+      "dispatcher_queues": [
+        {
+          "name": "scheduled",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "scheduled_execution",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "reply",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "meeting",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "work_summary",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "okr_review",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "task_todo_sync_outbox",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "business_task_todo_sync_outbox",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "task_memory_write",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        }
+      ],
+      "queues": [
+        {
+          "name": "Reply tasks",
+          "table": "reply_tasks (current business-object projection)",
+          "counts": {
+            "done": 7017,
+            "failed": 2,
+            "needs_human": 1,
+            "skipped": 107
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 2,
+          "retryable": 0
+        },
+        {
+          "name": "Reply attempts",
+          "table": "reply_attempts (current trigger state)",
+          "counts": {
+            "calendar": 14,
+            "commented": 27,
+            "completed": 1110,
+            "decision_selected": 4,
+            "failed": 2,
+            "needs_human": 1,
+            "reacted": 367,
+            "recovered": 67,
+            "sent": 1721,
+            "skipped": 3727
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 2,
+          "retryable": 0
+        },
+        {
+          "name": "Work items",
+          "table": "work_summary_inputs",
+          "counts": {
+            "done": 4686,
+            "skipped": 4402
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email classifications",
+          "table": "email_agent_classification_tasks",
+          "counts": {
+            "done": 1352
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Follow-ups",
+          "table": "follow_up_drafts",
+          "counts": {
+            "cancelled": 20,
+            "completed": 162,
+            "sent": 1085,
+            "skipped": 1210
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting jobs",
+          "table": "meeting_alignment_jobs",
+          "counts": {
+            "no_action": 85,
+            "sent": 549,
+            "skipped": 59
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "OKR reviews",
+          "table": "okr_review_requests",
+          "counts": {
+            "done": 19,
+            "skipped": 1
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Memory writes",
+          "table": "memory_write_events",
+          "counts": {
+            "skipped": 164,
+            "written": 312
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting Memory writes",
+          "table": "meeting_memory_write_events",
+          "counts": {
+            "done": 549
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "DingTalk Todos",
+          "table": "work_todo_dingtalk_links",
+          "counts": {
+            "active": 540,
+            "cancelled": 5,
+            "done": 330
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "WeChat deliveries",
+          "table": "wechat_deliveries (delivery outcome)",
+          "counts": {
+            "sent": 54,
+            "skipped": 5,
+            "superseded": 66
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email provider actions",
+          "table": "email_actions",
+          "counts": {
+            "done": 9690,
+            "pending": 3,
+            "skipped": 2
+          },
+          "pending": 3,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "table": "reply_tasks (channel=email, unsubscribe)",
+          "counts": {
+            "done": 1017,
+            "skipped": 57
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        }
+      ]
+    },
+    "attention": {
+      "http_status": 200,
+      "bytes": 3649,
+      "sha256": "7e917e1f2480d6665a13f28b307cc1ce30958c73ec25a47d9a39ccb295d4b808",
+      "count": 3
+    },
+    "history": {
+      "http_status": 200,
+      "bytes": 8847,
+      "sha256": "16712bde7fc5f4e8e161b7cde0a136468888f4a0d57ae75dd3ec90520399b5fb"
+    },
+    "prompt_history": {
+      "http_status": 200,
+      "bytes": 73113,
+      "sha256": "37c603a110a3545a7258f4fbbc89d85e8a3ea5ebeb6c5bac474a81d9e8957173",
+      "item_sha256": "e7cf075296fab982e241c6a6419f9dc947dc917ca1eb4af72a3b7f9ac2c952d8",
+      "input_hashes": {
+        "developer_instructions": "8f5c66a83a06dd6ac0f647db05e7e4c873432041202fc498bc0afb0cc811a42d",
+        "task_prompt": "443c58bfe2422dff7e06feeaf88285ce2dd2f95f5e12e139d72df3f7f8363965",
+        "submitted_input": "443c58bfe2422dff7e06feeaf88285ce2dd2f95f5e12e139d72df3f7f8363965"
+      },
+      "status": "available",
+      "submission_state": "invoked"
+    },
+    "prompt_public": {
+      "http_status": 200,
+      "bytes": 42572,
+      "sha256": "6ea6f13c640866079123ab439d6ff73706a5e201720091b7a8115e8a1c521697",
+      "item_sha256": "2135fe41c5d61187c513c511581a290591e3fa50bffe177e0f7722ed37a3d538",
+      "input_hashes": {
+        "developer_instructions": "1adf2896a4fe5b0f85e47269e7bd2c53aacb98e3ba0f5505b5f982d2d3d6ee39",
+        "task_prompt": "3bbbc850f1364ac32529a6f5d5a80b663d1d86aa347ed705056a66dc224b2cc7",
+        "submitted_input": "3bbbc850f1364ac32529a6f5d5a80b663d1d86aa347ed705056a66dc224b2cc7"
+      },
+      "status": "available",
+      "submission_state": "preview"
+    }
+  },
+  "deployment": {
+    "operation_id": "deploy-f007adb4-c0f2-4f7d-868f-2ef55667c062",
+    "status": "succeeded",
+    "original_commit": "6ab876e938d1e0986b0ca6d4985f57e2364b043a",
+    "target_commit": "4b38ab8b55568666770f32b0cb385eb4d11db512",
+    "installed_commit": "4b38ab8b55568666770f32b0cb385eb4d11db512",
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-12.sqlite3",
+    "updated_at": "2026-10-12T19:47:54.746211+00:00",
+    "backup_exists": true,
+    "backup_verified_receipt": true,
+    "backup_bytes": 421232640
+  },
+  "installed_source_sha256": "03e9cdd56c6a74f4ac289c59b204c3307237f732c5990630b3e5b9273f28caca",
+  "historical_input_unchanged": true,
+  "new_actual_task_input_observed": false,
+  "scope": "Formal deployment and production readback only. Existing Reply failures2 and needs_human1/Attention3 remain, with no count increase. Dispatcher active work0. Email action pending3 remains; done count advanced. No new Task business run or outcome is inferred from healthy service, source installation or synthetic acceptance.",
+  "automatic_ci": {
+    "pull_request_run": 38298197915,
+    "main_run": 38299950067,
+    "status": "failed",
+    "failed_test": "test_task_agent_runtime_prompt_keeps_current_shared_source_body_once",
+    "cause": "Whitespace-dependent assertion; compact JSON preserves decoded fields.",
+    "passed": 12097,
+    "failed": 1,
+    "skipped": 99,
+    "deselected": 44
+  },
+  "test_only_repair": {
+    "focused_passed": 60,
+    "read_only_review": "passed",
+    "production_logic_changed": false,
+    "restart_required": false
+  }
+}

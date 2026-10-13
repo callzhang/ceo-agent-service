@@ -1,5 +1,24 @@
 # Changelog
 
+## Fresh message identifier types
+
+- Reject nonstring or blank DingTalk message identifiers when parsing new Consumer
+  output, including executable human-choice plans. Preserve exact string values
+  and historical Pydantic result reads; update the output schema accordingly.
+
+## Bounded attachment evidence
+
+- Bound downloaded and decompressed attachment material and serialized MCP
+  responses. Read download files through one no-follow descriptor, report PDF
+  and presentation truncation, and include a byte digest for every format while
+  retaining the existing scanned-PDF OCR path.
+
+## Source-verified email recovery
+
+- Add exact, read-only-first recovery of terminal move/trash failures without
+  moving mail in the recovery command, resetting attempt counts or rewriting
+  historical results. Preserve durable failed-state invariants.
+
 ## Audit current-candidate field evidence
 
 - Ground Audit field-error observations in the current candidate JSON, rather
@@ -13,6 +32,14 @@
   into SQLite error handling and worker restarts.
 
 ## Unreleased
+
+- Validate every complete historical feedback callback pair in captured source
+  text that may combine multiple messages, preserving origin, path, query,
+  rating, token and attempt checks. Strict outgoing-body validation is unchanged.
+
+- Include deterministic JSON Pointer paths, exact scalar literals and JSON
+  types derived from the current adopted candidate in Audit's task input, so
+  field-type feedback can be checked against the candidate under review.
 
 - Avoid SQLite writer-lock waits during idle meeting delivery batch polls.
   Probe the existing ready/unlocked/due predicate read-only, retaining the

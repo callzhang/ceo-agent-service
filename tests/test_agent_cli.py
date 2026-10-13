@@ -297,6 +297,65 @@ def test_read_text_file_reads_bounded_temp_material(tmp_path: Path):
     assert result["sha256"]
 
 
+def test_dingtalk_drive_file_downloads_exact_node_and_extracts_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class Dws:
+        def download_drive_file(self, node, *, file_name, space_id, max_bytes):
+            assert (node, file_name, space_id) == ("node-1", "proof.pdf", "space-1")
+            assert max_bytes == agent_cli.MAX_SPREADSHEET_BYTES
+            return b"pdf-bytes"
+
+    monkeypatch.setattr(
+        agent_cli,
+        "read_text_file",
+        lambda path: {"format": "pdf", "content": "settlement evidence", "path": path},
+    )
+    result = agent_cli._download_dingtalk_drive_file(
+        dws=Dws(), node_id="node-1", space_id="space-1",
+        file_name="proof.pdf", material_root=tmp_path,
+    )
+
+    assert result["content"] == "settlement evidence"
+    assert result["node_id"] == "node-1"
+    assert Path(result["path"]).read_bytes() == b"pdf-bytes"
+    assert result.get("ocr_required") is None
+
+
+def test_dingtalk_drive_file_marks_scanned_pdf_for_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class Dws:
+        def download_drive_file(self, *_args, **_kwargs):
+            return b"scan"
+
+    monkeypatch.setattr(
+        agent_cli,
+        "read_text_file",
+        lambda path: {"format": "pdf", "content": "", "path": path},
+    )
+    result = agent_cli._download_dingtalk_drive_file(
+        dws=Dws(), node_id="scan-1", space_id="space-1",
+        file_name="scan.pdf", material_root=tmp_path,
+    )
+
+    assert result["ocr_required"] is True
+    assert Path(result["path"]).is_file()
+
+
+@pytest.mark.parametrize("file_name", ["../proof.pdf", "", ".", "a/b.pdf"])
+def test_dingtalk_drive_file_rejects_unscoped_names(tmp_path: Path, file_name: str):
+    class Dws:
+        def download_drive_file(self, *_args, **_kwargs):
+            pytest.fail("invalid file name reached DWS")
+
+    with pytest.raises(AgentReadOnlyViolationError, match="drive_file_name_invalid"):
+        agent_cli._download_dingtalk_drive_file(
+            dws=Dws(), node_id="node-1", space_id="space-1",
+            file_name=file_name, material_root=tmp_path,
+        )
+
+
 def test_read_text_file_rejects_non_utf8_material(tmp_path: Path):
     material = tmp_path / "material.bin"
     material.write_bytes(b"\xff\xfe")
@@ -431,13 +490,13 @@ def test_read_skill_tool_discovers_metadata_and_reads_exact_name(
     )
 
     discovered = tool()
-    assert discovered == {
-        "skills": [{
-            "name": "business-review",
-            "description": "Review business material: with evidence.",
-            "path": str(skill_path.resolve()),
-        }]
-    }
+    from tests.test_skill_discovery_transport import decode_catalog
+
+    assert decode_catalog(discovered) == [{
+        "name": "business-review",
+        "description": "Review business material: with evidence.",
+        "path": str(skill_path.resolve()),
+    }]
     assert "EXACT BODY" not in json.dumps(discovered)
     assert set(descriptor.inputSchema["properties"]) == {"path", "name"}
     assert "required" not in descriptor.inputSchema
@@ -489,7 +548,9 @@ def test_read_skill_discovery_excludes_skill_symlink_outside_authorized_root(
 
     discovered = tool()
 
-    assert discovered == {"skills": []}
+    from tests.test_skill_discovery_transport import decode_catalog
+
+    assert decode_catalog(discovered) == []
     assert "SECRET SENTINEL" not in json.dumps(discovered)
     with pytest.raises(ValueError, match="unknown"):
         tool(name="secret-skill")

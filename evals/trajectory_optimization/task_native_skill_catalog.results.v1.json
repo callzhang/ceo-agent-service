@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "scope": "native explicit Task Skill catalog",
+  "debug": [
+    {
+      "variant": "baseline",
+      "native_input_characters": 33474,
+      "catalog_entry_count": 169,
+      "input_sha256": "0c2aa1be3cc7c38146477352892559f2dffb11568b43b17b35023b86adc38305",
+      "task_entry_present": true
+    },
+    {
+      "variant": "candidate",
+      "native_input_characters": 16881,
+      "catalog_entry_count": 6,
+      "input_sha256": "d3083fea24338b9742dc8fe02245d26f058ea8fa9b10bc501a546e49ee2f5a38",
+      "task_entry_present": true
+    }
+  ],
+  "limits": [
+    "Task body and facts are identical per phase; native catalog differs by design.",
+    "Corrected fixture exposes three tools; readonly user_get probe has actual completed tool receipt.",
+    "Business fixture runs contain no Memory write call; no durable-memory business acceptance claim.",
+    "Two fixed fixture variants both produce watch in the corrected risk run; superseded unavailable-tool run had push/watch variance.",
+    "No other-provider or production acceptance claim."
+  ],
+  "artifact_root": "/private/tmp/ceo-task-native-catalog-_47_cl8j",
+  "initial_business_runs_have_unavailable_memory_fixture": true,
+  "readonly_probe": {
+    "session_id": "01a12f6e-eb30-7540-9c6d-c31765dc4ba4",
+    "server": "memory_fixture",
+    "tool": "user_get",
+    "completed_without_error": true,
+    "events_sha256": "8bf42065b20587772af4a05382c52eebf4719165ca25f9929ead9242ec9c71b9"
+  },
+  "superseded_unavailable_memory_runs": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f5e-06e9-7113-9e4d-a10f4e6b8e69",
+      "prompt_sha256": "5fcd364e2b6f2d866508b5a9e05cdbe2b24d3f645461f4b83be27f0cba11693e",
+      "skill_config_selected": false,
+      "events_sha256": "a4b139ea0283d68c7401f8980d4b53ce68ab83bc3746a3a299bbd26c74a63ee4",
+      "skill_shortening_warning": true,
+      "tool_names": []
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f5e-06e9-7113-9e4d-a10f4e6b8e69",
+      "prompt_sha256": "a3d010952102787b04f0b0e3a78ba5171b7265a08ad15dbcaf43b26f5bb72f02",
+      "skill_config_selected": false,
+      "events_sha256": "dec36ca54f22b9008944f805e3df409670c67bdf807b1d514c368ce8bc53b979",
+      "skill_shortening_warning": false,
+      "tool_names": []
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f5e-3b04-7da1-a2de-224fdb05a900",
+      "prompt_sha256": "5fcd364e2b6f2d866508b5a9e05cdbe2b24d3f645461f4b83be27f0cba11693e",
+      "skill_config_selected": true,
+      "events_sha256": "8a8bb8b2e971e48053db4a3a4f755303e17370de259735392613d445b1381474",
+      "skill_shortening_warning": false,
+      "tool_names": []
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f5e-3b04-7da1-a2de-224fdb05a900",
+      "prompt_sha256": "a3d010952102787b04f0b0e3a78ba5171b7265a08ad15dbcaf43b26f5bb72f02",
+      "skill_config_selected": true,
+      "events_sha256": "827bbf890b19c5ffdda031dbb0fa53dba2ab52d1005b49aaa68b5f572f971f4c",
+      "skill_shortening_warning": false,
+      "tool_names": []
+    }
+  ],
+  "native_runs": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f70-c09a-7dd2-9a12-edf609e158c5",
+      "prompt_sha256": "377d9d2acb122a73344372f54f4f3b96c865e0d4725e65f596f04c4f95a1f62e",
+      "skill_config_selected": false,
+      "events_sha256": "a084a349ace045b4fe9cf08ca29c2a4340fe4773e792101c57d2728e91cdbd77",
+      "skill_shortening_warning": true,
+      "completed_mcp_calls": []
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f70-c09a-7dd2-9a12-edf609e158c5",
+      "prompt_sha256": "06855a561d3c8f00c42b983f19dace4b3b3ad962cfa0556701a630e63c03caf0",
+      "skill_config_selected": false,
+      "events_sha256": "f8015cb41aa80a1ee694fa09cd3e76e9d6b80c0b9f6bd20863b52d86f4ddc5d9",
+      "skill_shortening_warning": false,
+      "completed_mcp_calls": []
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f71-053a-7a23-9516-2a5f113f9fc6",
+      "prompt_sha256": "377d9d2acb122a73344372f54f4f3b96c865e0d4725e65f596f04c4f95a1f62e",
+      "skill_config_selected": true,
+      "events_sha256": "17b62e4c733a335213122a00b966d49304da8e13a7c481adce80658a16d8345a",
+      "skill_shortening_warning": false,
+      "completed_mcp_calls": []
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f71-053a-7a23-9516-2a5f113f9fc6",
+      "prompt_sha256": "06855a561d3c8f00c42b983f19dace4b3b3ad962cfa0556701a630e63c03caf0",
+      "skill_config_selected": true,
+      "events_sha256": "0687fc095b7fb23975e2a2533e54de209adc62d056064092c19ce9e51512014b",
+      "skill_shortening_warning": false,
+      "completed_mcp_calls": []
+    }
+  ],
+  "verified_cold_application": [
+    {
+      "variant": "baseline",
+      "verified_memory_fixture": true,
+      "application_pass": true
+    },
+    {
+      "variant": "candidate",
+      "verified_memory_fixture": true,
+      "application_pass": true
+    }
+  ],
+  "verified_risk_application": [
+    {
+      "variant": "baseline",
+      "application_pass": true,
+      "project_count": 1,
+      "task_count": 1,
+      "title": "完成验收材料确认并落实客户付款日期",
+      "suggested_owner": "赵华",
+      "category": "watch",
+      "completed_mcp_calls": []
+    },
+    {
+      "variant": "candidate",
+      "application_pass": true,
+      "project_count": 1,
+      "task_count": 1,
+      "title": "完成客户验收材料确认并落实回款日期",
+      "suggested_owner": "赵华",
+      "category": "watch",
+      "completed_mcp_calls": []
+    }
+  ],
+  "superseded_unavailable_memory_cold_application": [
+    {
+      "variant": "baseline",
+      "cold_application_pass": true
+    },
+    {
+      "variant": "candidate",
+      "cold_application_pass": true
+    }
+  ],
+  "superseded_unavailable_memory_risk_application": [
+    {
+      "variant": "baseline",
+      "application_pass": true,
+      "project_count": 1,
+      "task_count": 1,
+      "attention_proposals": 1,
+      "title": "确认客户验收材料并落实回款日期",
+      "suggested_owner": "赵华"
+    },
+    {
+      "variant": "candidate",
+      "application_pass": true,
+      "project_count": 1,
+      "task_count": 1,
+      "attention_proposals": 1,
+      "title": "确认客户验收材料并落实客户回款日期",
+      "suggested_owner": "赵华"
+    }
+  ]
+}
