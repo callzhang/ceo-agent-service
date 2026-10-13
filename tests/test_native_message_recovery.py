@@ -104,8 +104,9 @@ def test_native_missing_receipt_reads_exact_target_after_restart_without_resend(
         import sqlite3
 
         with sqlite3.connect(path) as db:
-            db.execute("update candidate_action_attempts set created_at=?",
-                       ('2026-10-05 00:00:00',))
+            from app.action_storage import CANDIDATE_ACTION_ATTEMPT_SQL, update_action
+            for (public_id,) in db.execute(f"select id from ({CANDIDATE_ACTION_ATTEMPT_SQL})").fetchall():
+                update_action(db, 'candidate_action_attempts', public_id, {'created_at': '2026-10-05 00:00:00'})
 
     reopened = AutoReplyStore(path)
     still_unknown = SystemExecutor(reopened, dws=client).execute(

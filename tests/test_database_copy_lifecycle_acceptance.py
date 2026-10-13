@@ -31,6 +31,8 @@ from app.system_executor import SystemExecutor
 from app.worker import DingTalkAutoReplyWorker
 from test_agent_orchestrator import ScriptedAudit, ScriptedConsumer
 
+from app.action_storage import CANDIDATE_REVIEW_SQL
+
 SOURCE = os.environ.get("CEO_COPY_LIFECYCLE_SOURCE", "")
 pytestmark = pytest.mark.skipif(not SOURCE, reason="explicit owned database snapshot required")
 
@@ -111,7 +113,7 @@ class Provider:
     def send_message(self, conversation_id, body, **target):
         assert conversation_id.startswith("copy-acceptance:")
         with self.store._connect() as db:
-            review = db.execute("select decision from candidate_reviews order by id desc limit 1").fetchone()
+            review = db.execute(f"select decision from ({CANDIDATE_REVIEW_SQL}) order by id desc limit 1").fetchone()
         assert review[0] == "approve"
         self.calls.append((conversation_id, body, target))
         return {"success": self.state != "failed", "result": {

@@ -11,6 +11,8 @@ from app.store import AutoReplyStore, _audit_event_metadata_json
 from tests.test_agent_turn_store import _claim_consumer, _task
 from tests.run_reader_fixtures import assert_no_core_native_storage
 
+from app.action_storage import REVIEW_CANDIDATE_SQL
+
 
 def test_run_events_exist_only_in_memory_or_native_session(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "runs.sqlite3")
@@ -263,7 +265,7 @@ def test_consumer_completion_adopts_prepared_candidate_atomically(tmp_path, monk
     prepared.proposal.actions[0].payload['text'] = 'hello — service feedback marker'
     store.complete_agent_run(run.id, prepared.model_dump(mode='json'), owner='consumer')
     with store._connect() as db:
-        candidate = db.execute('select * from review_candidates where consumer_run_id=?', (run.id,)).fetchone()
+        candidate = db.execute(f'select * from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?', (run.id,)).fetchone()
     assert candidate is not None
     assert json.loads(candidate['candidate_json']) == prepared.model_dump(mode='json')
     # There is no native transcript; adoption remains recoverable but raw output
@@ -303,13 +305,13 @@ def test_consumer_candidate_insert_failure_rolls_back_completion(tmp_path):
     run = _claim_consumer(store, _task(store)).run
     store.append_agent_run_event(run.id, {'type': 'runtime.prompt', 'prompt': 'private'}, owner='consumer')
     with store._connect() as db:
-        db.execute("create trigger fail_candidate before insert on review_candidates begin select raise(abort, 'candidate_insert_failed'); end")
+        db.execute("create trigger fail_candidate before insert on actions when new.record_type='review_candidates' begin select raise(abort, 'candidate_insert_failed'); end")
     with pytest.raises(sqlite3.IntegrityError, match='candidate_insert_failed'):
         store.complete_agent_run(run.id, _candidate().model_dump(mode='json'), owner='consumer')
     assert store.get_agent_run(run.id).status == 'running'
     assert native_trajectory.live_events(str(store.path.resolve()), run.id)
     with store._connect() as db:
-        assert db.execute('select count(*) from review_candidates').fetchone()[0] == 0
+        assert db.execute(f'select count(*) from ({REVIEW_CANDIDATE_SQL})').fetchone()[0] == 0
 
 
 def test_terminal_run_releases_live_events_after_commit(tmp_path):
@@ -462,7 +464,7 @@ def test_audit_adoption_rolls_back_and_recovers_without_native_output(tmp_path, 
     })
     native = _native_final(tmp_path, monkeypatch, store, audit.id, reviewed.model_dump(mode='json'))
     with store._connect() as db:
-        db.execute("create trigger fail_review before insert on candidate_reviews begin select raise(abort, 'review_insert_failed'); end")
+        db.execute("create trigger fail_review before insert on actions when new.record_type='candidate_reviews' begin select raise(abort, 'review_insert_failed'); end")
     with pytest.raises(sqlite3.IntegrityError, match='review_insert_failed'):
         store.complete_agent_run(audit.id, reviewed.model_dump(mode='json'), owner='audit', transcript_end_line=1)
     assert store.get_agent_run(audit.id).status == 'running'

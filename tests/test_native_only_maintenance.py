@@ -11,6 +11,8 @@ from app.run_storage import AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL, RUNTIME
 from app.task_storage import MEETING_JOB_SQL, REPLY_TASK_SQL, WORKBENCH_TURN_SQL, insert_task, task_physical_id
 from tests.run_reader_fixtures import assert_no_core_native_storage
 
+from app.action_storage import CANDIDATE_REVIEW_SQL, REVIEW_CANDIDATE_SQL
+
 
 def test_native_only_cleanup_removes_missing_native_copies_preserves_service_state(tmp_path):
     store = AutoReplyStore(tmp_path / 'service.sqlite3')
@@ -117,12 +119,12 @@ def test_cleanup_clears_standalone_bodies_and_workbench_keeps_only_source_refere
                 'event_type': kind, 'payload_json': json.dumps(payload),
             })
         before = db.execute(f'select id,turn_id,sequence,event_type,created_at from ({WORKBENCH_EVENT_SQL})').fetchall()
-        candidate_before = db.execute('select candidate_json,candidate_digest from review_candidates where id=?', (candidate['id'],)).fetchone()
-        review_before = db.execute('select result_json from candidate_reviews where id=?', (review['id'],)).fetchone()
+        candidate_before = db.execute(f'select candidate_json,candidate_digest from ({REVIEW_CANDIDATE_SQL}) where id=?', (candidate['id'],)).fetchone()
+        review_before = db.execute(f'select result_json from ({CANDIDATE_REVIEW_SQL}) where id=?', (review['id'],)).fetchone()
     storage_maintenance.compact_native_duplicates(store.path)
     with sqlite3.connect(store.path) as db:
-        assert db.execute('select candidate_json,candidate_digest from review_candidates where id=?', (candidate['id'],)).fetchone() == candidate_before
-        assert db.execute('select result_json from candidate_reviews where id=?', (review['id'],)).fetchone() == review_before
+        assert db.execute(f'select candidate_json,candidate_digest from ({REVIEW_CANDIDATE_SQL}) where id=?', (candidate['id'],)).fetchone() == candidate_before
+        assert db.execute(f'select result_json from ({CANDIDATE_REVIEW_SQL}) where id=?', (review['id'],)).fetchone() == review_before
         assert db.execute(f'select decision_json,audit_summary,audit_tool_events_json from ({MEETING_RUN_SQL})').fetchone() == ('{}','','[]')
         assert db.execute(f'select decision_json,audit_summary,memory_recall_used,projection_json from ({TASK_AGENT_RUN_SQL})').fetchone() == ('{}','',0,'{"applied":true}')
         assert db.execute(f'select envelope_json,audit_summary from ({OKR_RUN_SQL})').fetchone() == ('{}','')
