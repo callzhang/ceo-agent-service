@@ -10607,8 +10607,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ):
                 return False
             sent = db.execute(
-                "select 1 from sent_replies where channel=? and conversation_id=? "
-                "and trigger_message_id=? limit 1",
+                f"select 1 from ({SENT_REPLY_SQL}) as sent where channel=? "
+                "and conversation_id=? and trigger_message_id=? limit 1",
                 (row["channel"], row["conversation_id"], row["trigger_message_id"]),
             ).fetchone()
             action_receipt = db.execute(
