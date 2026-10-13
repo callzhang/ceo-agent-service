@@ -159,6 +159,10 @@ def current_prompt_preview(
         rules = render_audit_rules(AgentRole.AUDIT, create_missing=False)
         developer_sections = audit_developer_sections(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration)
     developer = render_prompt_sections(developer_sections, placement="developer", omit_empty=role == "consumer")
+    if route.runtime_kind is RuntimeKind.CODEX_CLI:
+        from app.native_agent_output import native_developer_assembly
+        native_developer = native_developer_assembly(developer, developer_sections, role)
+        developer, developer_sections = native_developer.text, native_developer.sections
     prompt = source_snapshot["task_prompt"] if source_snapshot else "未绑定任务和候选：仅预览当前角色公共指令与环境。"
     source_format = facts.get("native_output_format")
     source_kind = source_snapshot.get("runtime_kind") if source_snapshot else None

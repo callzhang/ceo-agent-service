@@ -2759,6 +2759,10 @@ Store `2026-10-13.1` 将候选、审查、选择、补充、执行和动作尝�
 缓存代替实际启动验收。此段描述本发布代码契约；是否上线以正式部署回执为准。
 
 
+### Codex 原生输出契约去重
+
+Consumer/Audit 的 Codex 每轮仍提交完整原生 output-schema 并执行原有完整 Pydantic 业务校验。Developer 中仅保留原生投影省略的全部组合和条件断言，以 canonical schema JSON Pointer 标注；结构声明由原生通道提供一次。Claude/Friday 的完整 schema 文本不变。运行提交和 Settings 当前预览共用 `native_developer_assembly`，只替换来源明确且正文唯一出现的 schema 段，其他指令逐字保留；历史输入原文不重写。自定义正文存在同文引用或分段与正文不匹配时，不把未修改来源冒充为压缩来源。
+
 ### 第五期B：独立回执合并
 
 Store `2026-10-13.2` 将 external_action_results、agent_effect_intents 和

@@ -315,6 +315,58 @@ The same six-file candidate passes129 reproducible seeded anonymous text roundtr
 
 Current manager/source readback shows both Qwen replicas use the shared vLLM environment. At2026-10-13T16:54:33Z slots0/1 were ready with13 active requests each, ports9000/9010 and PIDs1340918/1142177. Slot1-only reload would leave mixed versions. A separate exact six-file, both-slot proposal is in `docs/qwen-custom-tool-provider-release-plan.md`; it preserves the no-atomic-drain arrival race and mixed-version interval and awaits explicit approval. No source modification or reload occurred.
 
+### Native output contract prompt compaction
+
+Codex runtime and current Settings preview now use the same `native_developer_assembly` to replace the exact service-owned canonical schema section with native structural-channel guidance plus every original unsupported canonical assertion. Consumer retains three complete assertion locations: DecisionOption, ProposedAction and _ConsumerWire; Audit has none. Other instructions, original validators, Claude/Friday inputs and historical native input remain unchanged. Partial receipts preserve unlisted Developer text; unmatched or repeated schema bodies preserve both original text and source receipts, preventing false provenance.
+
+132 focused tests pass (new residual/assertion/partial/collision regressions, native output codec, composition, runner, preview and snapshot checks). Settings endpoint checks confirm the Codex supplemental contract source while Claude retains its full schema. Public core lengths, excluding saved Developer/Profile/runtime and task facts: Consumer21053→14885 (6168 fewer characters), Audit10045→8645 (1400 fewer). These are service-prepared character counts, not tokens or observed model-input reductions. See `native_contract_compaction.v1.json`. Fixed-model trajectory A/B and production acceptance remain pending; this candidate has not been deployed.
+
+### PR78 OAuth native format/session paired control
+
+Actual configured `codex_oauth` with current model and42/38 role declarations passes all8 full/compact Consumer/Audit cold/resume format controls. Each turn invokes the actual registered read_text_file callback exactly once, returns the current exact nonce and a complete Pydantic-valid result, and every resume retains its successful cold session. Native cold records contain the exact submitted Developer hash and each turn contains its exact Task hash; resume Developer evidence is the inherited cold message in the same session, not a newly observed Developer message. The harness passes the same Developer parameter each round. Each baseline/compact pair has identical Task, native schema, model and read arguments/results.
+
+The initial8 native attempts are separately classified setup-invalid: the old reused harness lacked the task-binding database required by current role-server startup. Explicit MCP enabling alone did not repair it; creating a real temporary task/generation and verifying42/38 tool catalogs did. They are preserved as evidence, excluded from acceptance, and no new runtime fallback was added.
+
+Cold cumulative input tokens: Consumer39036→36069; Audit29834→29112. Cache hits and output histories differ, so this is neither an isolated tokenization benchmark nor proof of lower cost. These are anonymous fixed no_action/approve probes, not business-quality acceptance for the four task domains; session handles are harness-supplied, not application binding verification. Qwen/provider publication remains pending. See `native_contract_compaction.oauth_control.v1.json` for all receipts, native original hashes and reproducible harness.
+
+
+## Business fixture review before inference
+
+The PR78 six-case manifest now binds Consumer project-source replies to ceo-document-review; independent TaskAgentDecision extraction/assessment remains a separate required gate. Audit substantive replacement uses the already aligned reject criterion. The calendar invitation starts at 22:30 local, so its acceptance criterion enforces the personal Blocked boundary without incorrectly requiring the separate after-23:00 direct-decline branch. These are evaluation corrections before inference, not new Agent instructions or Audit policy.
+
+Offline preflight creates six actual claimed temporary tasks, verifies exact frozen business Skill bytes, reads the relevant installed operation Skill and dingtalk-shared through the actual read_skill entry, and checks anonymous source identities. Calendar query ranges filter actual aware instants. Preflight callbacks have separate logs and are not counted as model calls. All six reader preflights pass; mail has only a chat locator and is explicitly gated until original mailbox/thread identity, recipients, subject, current sent state and receipts are represented through its native readonly operation workflow. This does not claim six business passes or a completed model harness. No model or external action ran. Reproducible scripts, input hashes and concise preflight results are in native_contract_compaction.business_preflight.v1.json; task databases and frozen Skill copies are disposable, not historical backups.
+
+
+## Typed Audit and original-mail input preparation
+
+v4 retains v3 evidence and distinguishes document_id from the node_id used by the native reader. A reusable input builder supplies MaterialReference commands and constructs a complete canonical Consumer candidate for Audit: exact source reply target, deliberately false original body, source bindings, proposal revision 0 and computed candidate digest. The actual AuditTurnContext renderer preserves that candidate.
+
+The anonymous mail fixture now supplies principal mailbox identity, exact thread, two original messages (sender, recipients, subject, body, current draft/folder state) and exact sent receipt through documented readonly native mail leaf arguments. Offline reads pass; wrong mailbox/message identities and mail sends fail in the eval fixture. This is evaluation isolation, not new runtime authorization or safety policy. The fixture exposes local native schema metadata without forwarding business leaves. Native CLI v1.0.63/4cd5d053 was identified; exact shortcut output envelope equivalence and actual native model PATH binding remain unproved. Mail stays gated until those are checked, and final scoring must separately inspect required_cli_reads as well as MCP Skill reads.
+
+Six reader preflights pass. Actual stdio MCP child-process initialization, list_tools and frozen read_task_skill pass separately for Consumer (42 declarations) and Audit (38 declarations). Zero model calls occurred. Independent review found no candidate-format/source-binding defect; a stale mail-evidence label was corrected. Scripts and concise hashes/results are retained in native_contract_compaction.business_preflight.v2.json. These are prerequisites, not business judgment, four-domain acceptance, TaskAgent acceptance or production release.
+
+
+## First actual Audit business pair
+
+A v5 anonymous Audit cold pair runs the configured codex_oauth/gpt-5.6-luna/medium route against identical Task/candidate digest/revision/native schema/source results. Two independent native sessions complete with valid full business results and exact binding. Independent review verifies the actual native input and tool returns. The only service Developer difference is the output-contract segment: 26773 to 25373 characters (1400 removed). Actual saved rules/Profile are included in these lengths; earlier empty-Profile measurements are not equivalent.
+
+Both read the frozen ceo-document-review, dingtalk-doc/chat and exact live node, identify capacity120/80 and Oct15/22, and require replacing the false reply without approving or executing it. Both nevertheless return outcome return rather than the predeclared reject for substantive replacement. Full reads the required dingtalk-chat.reply_to_message system action contract; compact omits it. Business acceptance therefore does not pass. Single-pair differences are not causal quality or cost evidence. The current installed product Skills contain their minimum execution contract; blanket mandatory dingtalk-shared reads are not established for every direct MCP read, so that preflight criterion is overbroad rather than proof of Agent violation.
+
+The complete trajectory also reveals 7593 characters of identical rendered Audit policy appearing once in Developer and once in the17262-character Task. This duplication was subsequently confirmed to be an evaluation assembly error: the actual production orchestrator supplies empty Task audit_rules, with current rules in Developer only. It is not a service duplication to remove. No new audit rule, feedback override or fallback was added.
+
+Before inference, a harness PromptAssembly unpack error occurred; it made zero model calls and is separately retained. Native original sessions remain in the CLI home with hashes/actual input presence receipts. Concise results and source/log hashes are in native_contract_compaction.audit_business_control.v1.json; private prompt bodies are not copied into Git. Owned temporary data is disposable. Consumer domains, same-session business continuation, standalone TaskAgent and production release remain pending.
+
+The v5 mail fixture corrects native output using the source commit matching the installed v1.0.63 binary: shortcuts publish ok/outcome/data.value, mailbox reads expose emailAccounts, and sent verification exposes message/sendStatus. The old fixture's success/result shortcut envelope was reproduced as a failed contract assertion; six focused regressions now pass. This fixes evaluation transport only; no original mailbox was queried and native model CLI binding remains to be verified.
+
+
+## Production placement correction and current-main drift
+
+The production orchestrator constructs AuditTurnContext with audit_rules empty. Its existing runner regression confirms current rules appear once in Developer and not in Task; the PR78 expected-Developer assertion now uses the native contract assembly already implemented by PR78 (33 focused tests pass). The evaluation input builder is corrected to the same placement, with a focused regression (1 pass). The prior7593-character duplicate came from the evaluation helper; it must not be presented as production redundancy. Settings historical input readback for actual Audit runs353381,353187,352421 independently shows empty Task Audit Rules and Developer rules present. Only counts/hashes/IDs are recorded, not private source bodies.
+
+A fresh actual native pair retains identical candidate digest/rev0, sources and model, with9669-character Task instead of17262. Both cold turns are valid and source-grounded; both read the required reply action contract; both still return return instead of the predeclared reject for substantive replacement. Independent review confirms no actions and exact native input/callback delivery. These are not business passes.
+
+Production and freshly fetched origin/main are d7397203. Their AuditFeedback contract now includes observation_basis and candidate_field_assertions, with Candidate Field Facts and a scalar index that does not re-expand source_bindings. PR31/78 still use the earlier canonical contract, so even the corrected placement pair is not current-production full-contract evidence. Integrate current main into the native-schema base draft before continuing model acceptance. The original pair is retained with an explicit representativeness correction; no service rule or session change was made. Evidence: native_contract_compaction.audit_business_control.v2.json.
+
 
 ## Current-main canonical feedback integration
 
@@ -323,6 +375,143 @@ PR31 merges deployed main d7397203 without changing its AuditFeedback policy, ca
 Three parameterized transport regressions exercise native JSON to canonical Wire to domain result and the existing bound-candidate validator. Nested values retain literal entries keys, special/empty keys, Unicode, null, booleans and numbers; null and leading-zero strings remain exact. Correct assertions pass, changed candidate values fail, and empty candidate_fields assertions are still rejected by canonical validation even though the structural native grammar permits the array. No new policy or feedback fallback is added.
 
 Focused coverage: the expanded current-main contract/role/preview set validates426 tests with4 intentional skips; three new negative assertions initially mismatched the parser's existing outer schema-error message, then the unchanged rejection invariant passes in the final22-test native file. Combined affected behavior coverage is429 passing cases/4 skips, with no full-suite run or production change. Independent readonly review confirms generated schema equality and unchanged main audit policy. Provider-native model and business release gates remain pending; historical old-schema probes are not relabeled as current-contract evidence.
+
+
+## Current-contract actual Audit control
+
+PR78 integrates updated PR31/main at d33e90a8. Current merged role/preview/native/input coverage passes80 tests. A v7 actual OAuth Audit pair uses the updated d7397203 canonical feedback and native schema57f34f94 with identical Task/candidate/digest/revision/source/model. Only the service Developer output-contract segment differs:28046 to25739 characters (2307 fewer). Native original messages and readonly callback returns match recorded source hashes, confirmed independently.
+
+Both complete with valid current domain results and exact digest/revision. Full supplies candidate_fields feedback with3 exact assertions checked against the current candidate; compact supplies valid business feedback with0 assertions. The latter passes the validator on an empty assertion set and is not evidence of field-level assertion binding. Both request correcting the factual conflicts but still return return rather than predeclared reject. Full does not read the required reply action contract; compact does. Business acceptance remains unpassed; single-sample read differences are not attributable to compaction. No new instruction, policy, adoption override or fallback follows from these observations.
+
+Concise current results and native/source hashes: native_contract_compaction.audit_business_control.v3.json. Prior v5/v6 controls retain their actual inputs and their scope limitations. Consumer domains, standalone TaskAgent, current-route continuation and production publication remain outstanding.
+
+### Consumer native mail fixture binding
+
+The Consumer business control uses the production task/developer assembly and
+native Consumer tools, with separate empty workspaces for each variant. An
+absolute mail material locator alone did not bind the CLI prescribed by the
+installed Skill: both runs selected the machine's native `dws`, failed credential
+lock access in the sandbox, and never read anonymous mail. These are fixture
+binding failures, not business or compaction acceptance. The original native
+sessions and concise evidence are recorded in
+`native_contract_compaction.consumer_mail_binding.v1.json`.
+
+The eval now sets the anonymous CLI directory first through the native
+`shell_environment_policy.set.PATH` configuration. A focused regression checks
+resolution through the native login shell, exact original thread readback, and
+rejection of write leaves. This changes only the eval transport; installed
+Skills, service runtime, contracts, and provider configuration are unchanged.
+Actual model readback is still required before declaring this binding accepted.
+
+Actual cold readback is now recorded in
+`native_contract_compaction.consumer_mail_control.v1.json`: both native turns
+completed, returned canonical `no_action`, and their thread command outputs
+matched the same anonymous original conversation including both messages.
+Developer input was 30,203 versus 24,035 characters (6,168 fewer). Full read only
+the task Skill; compact also read the installed mail and shared operation Skills.
+Neither read the locator chat or separate mailbox/sent receipt. The original
+case's gates remain unchanged and incomplete, so this is correct business fact
+judgment and verified fixture binding, not complete scenario acceptance. Native
+AGENTS reads are separately visible in both trajectories and are not counted
+as service submitted Developer text.
+
+Independent native review found 924 characters of automatic Skill/plugin discovery
+added to compact native Developer (24,959 total), while full matched the saved
+30,203-character service Developer. Native bootstrap User lengths also differed.
+The 6,168-character reduction measures service assembly only; catalog drift
+prevents attributing behavior to one native-input variable.
+
+### Consumer document cold control
+
+The actual current-canonical document pair is recorded in
+`native_contract_compaction.consumer_document_control.v1.json`. Both variants
+read exactly the current anonymous document, task/doc/chat Skills and the reply
+contract. Both propose one exact source-message reply identifying the 120/80
+store conflict, October 15/22 conflict and USD 500,000/620,000 budget discrepancy,
+requesting reconciliation before approval. Neither performs a document edit or
+approval. This runner records model results only: it has not performed service
+candidate preparation, source capture, Audit or System Executor. Its empty model
+source bindings must not be described as prepared source-bound candidates.
+Native catalog parity and the remaining session/provider/pipeline gates remain
+separate requirements.
+
+### Cross-midnight calendar cold and continuation
+
+`native_contract_compaction.consumer_calendar_control.v1.json` records both
+correct cold timezone conversions and exact accept proposals. Full's conflict
+window covers the invitation but stops at midnight; compact's larger window
+also returns the later Blocked event. Both omit the predeclared shared Skill
+read, and full native Developer has an extra automatic Skill directory. A
+compact custom-tool attempt failed before its successful MCP Skill read. These
+limitations are retained.
+
+`native_contract_compaction.consumer_calendar_resume.v1.json` records actual
+continuations using each valid cold SID. Both reread the fixture's now-accepted
+event and return canonical no_action without another response. This proves
+native session continuation and the current-state judgment; it does not prove
+production session-binding selection or real calendar execution. The first eval
+resume export used a dotted filename stem and replaced temporary cold stdout
+exports; the original cold native trajectories remain verified hash prefixes in
+the retained native sessions. Separate cold/resume output names now have a
+focused regression. The active fixture root remains needed for remaining cases.
+
+### Calendar transport representativeness correction and remaining Consumer cases
+
+The exact actual role-reader regression exposed an eval transport mismatch:
+`read_dingtalk_calendar_event` returns `{"event": DwsCalendarEvent.model_dump()}`,
+while the original fixture returned a custom bare object. The old calendar
+control/resume evidence retains its observed anonymous fact judgments and native
+session reuse, but is not actual calendar transport acceptance. The fixture now
+uses the typed provider fields and actual event envelope; list results use the
+same model. The matching regression failed before this correction and passes
+now. No service prompt, timezone policy, route or provider was modified. V8
+records this representation change with unchanged factual cases; actual model
+transport revalidation remains required.
+
+`native_contract_compaction.consumer_remaining_controls.v1.json` records the
+remaining overlap/project-review cold runs. Both overlap variants decline the
+known Blocked conflict, but full queries only the principal's following local
+day. Its result includes Blocked because it crosses midnight; compact initially
+makes the same query then corrects the window to cover the invitation. This
+missing-coverage observation remains unresolved and does not justify adding a
+case-specific prompt rule. Both project-review candidates identify the current
+risk and use task-auth-1 as the existing next step, with one exact source reply
+and no completion claim or new Task action. That case is Consumer document
+review, not standalone TaskAgent extraction.
+
+A bounded readonly investigation confirms the intermittent 924-character
+Skill addition is the CLI's system plugin-creator directory; the service's
+per-path override explicitly disables that path and debug prompt-input did not
+reproduce it in five no-model probes. Its exec trigger remains unconfirmed.
+TaskAgent's complete Skill is inline for all routes, while only Codex has a
+native selected directory; Claude lacks an explicit source locator and Friday
+lacks a local-file reading contract. Removing Task's inline body globally would
+therefore break existing source delivery. Route-specific delivery needs its own
+source/trajectory verification before that removal.
+
+The former active fixture root was removed after the remaining cold controls
+completed, all concise/native evidence was verified, and lsof showed no handles.
+Corrected calendar transport uses a fresh owned temporary root.
+
+Corrected v8 native cold overlap readback is in
+`native_contract_compaction.calendar_native_shape_control.v1.json`. Both actual
+MCP event returns match the typed event envelope, both query a window covering
+the invitation, and both propose the exact decline without changing Blocked.
+Compact also proposes a direct notification after two identity queries fail
+because the fixture does not provide those readers. Its organizer string is
+ambiguous despite matching the fixture ID spelling, so notification identity
+is not accepted. Native successful callback receipts are distinguished from all
+MCP success/failure events. Full still has 924 extra native Skill characters.
+No business writes occur. Both owned roots were removed after no-handle checks,
+with original native sessions retained.
+
+A separate exact code finding is that `_calendar_person` prefers a display name
+and does not preserve organizer userId/openDingTalkId in DwsCalendarEvent's single
+organizer string. Attendee details do not ensure the organizer is present, and
+trigger raw data may preserve IDs only in some sources. This is confirmed data
+projection loss, not yet attribution of a particular production failure. The
+next input improvement should preserve original organizer identity in returned
+data and verify source fidelity, rather than add a notification prompt rule.
 
 ## Store17 integration and scripted native protocol regression
 

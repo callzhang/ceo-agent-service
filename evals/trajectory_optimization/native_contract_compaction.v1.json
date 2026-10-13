@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "code_ref": "ff621dfd",
+  "status": "local_candidate_not_deployed",
+  "scope": "Service-owned common role instructions, explicit empty saved Developer/Profile/runtime facts; Audit uses synthetic rule. Character counts, not token counts or actual model-input measurements.",
+  "results": [
+    {
+      "role": "consumer",
+      "developer_before": 21053,
+      "developer_after": 14885,
+      "characters_removed": 6168,
+      "contract_before": 9737,
+      "contract_after": 3569,
+      "retained_assertion_locations": [
+        "/$defs/DecisionOption",
+        "/$defs/ProposedAction",
+        "/$defs/_ConsumerWire"
+      ]
+    },
+    {
+      "role": "audit",
+      "developer_before": 10045,
+      "developer_after": 8645,
+      "characters_removed": 1400,
+      "contract_before": 1575,
+      "contract_after": 175,
+      "retained_assertion_locations": []
+    }
+  ],
+  "tests": {
+    "passed": 132,
+    "skipped": 0,
+    "files": [
+      "test_native_prompt_contract.py",
+      "test_native_agent_output.py",
+      "test_prompt_composition.py",
+      "test_agent_turn_runner.py",
+      "test_native_prompt_preview.py",
+      "test_prompt_preview.py",
+      "test_runtime_prompt_context.py"
+    ]
+  },
+  "preserved": [
+    "All original omitted canonical schema assertions",
+    "Full Pydantic models and business parsing",
+    "Non-schema Developer text and unmatched/ambiguous source receipts",
+    "Claude/Friday full-schema input",
+    "Original historic native input and session bindings"
+  ],
+  "limits": [
+    "No model/trajectory A/B acceptance with compacted input",
+    "No production deployment",
+    "Actual CLI base prompt, tool schemas, history, user configuration and task facts excluded from length baseline"
+  ],
+  "baseline_code_ref": "f3221e21",
+  "readonly_review": "Source-preserving compaction, same runtime/current-preview helper, exact canonical assertion retention and evidence limits reviewed; model A/B and production acceptance remain pending."
+}

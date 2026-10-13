@@ -1,0 +1,732 @@
+{
+  "version": 7,
+  "purpose": "PR78 Consumer/Audit business judgement A/B for native contract compaction",
+  "baseline": "canonical full Developer schema in current candidate tree",
+  "candidate_code_ref": "ff621dfd",
+  "parent_case_manifest": "evals/trajectory_optimization/native_contract_compaction.business_cases.v6.json",
+  "parent_case_sha256": "00cc577bcace60f4b49488895ff29734de6bccbf8b9e24fa33f80d0cad3881cb",
+  "model": "gpt-5.6-luna",
+  "configured_route": "codex_oauth",
+  "reasoning_effort": "medium",
+  "native_output_schema": true,
+  "fixed_runtime_time": "2026-10-13T10:00:00-07:00",
+  "cases": [
+    {
+      "id": "calendar-cross-midnight",
+      "role": "consumer",
+      "domain": "calendar",
+      "skill_name": "ceo-calendar-invite",
+      "task": "Review the live invitation cal-cross-midnight and the relevant local schedule, then return the complete typed Consumer result for the action, if any.",
+      "trigger": {
+        "channel": "scheduled",
+        "conversation_id": "eval-calendar-conversation",
+        "conversation_title": "Synthetic calendar review",
+        "message_id": "trigger-calendar-cross-midnight",
+        "sender": "Synthetic calendar source",
+        "text": "A new invitation requires review. Exact event id: cal-cross-midnight.",
+        "create_time": "2026-10-13T09:55:00-07:00",
+        "raw_payload": {
+          "event_id": "cal-cross-midnight",
+          "principal_timezone": "America/Los_Angeles",
+          "invitation_timezone": "Asia/Shanghai",
+          "participant_timezones": [
+            {
+              "participant_id": "principal",
+              "timezone": "America/Los_Angeles",
+              "source_ref": "synthetic-principal-profile",
+              "applies_on": "2026-10-16"
+            }
+          ]
+        }
+      },
+      "phases": {
+        "cold": {
+          "calendar_events": [
+            {
+              "event_id": "cal-cross-midnight",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-17T13:30:00+08:00",
+              "end_time": "2026-10-17T14:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {
+                "user_id": "organizer-cross",
+                "verified": true
+              },
+              "principal_response_status": "needsAction",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            },
+            {
+              "event_id": "cal-block-after",
+              "title": "Blocked",
+              "start_time": "2026-10-17T00:00:00-07:00",
+              "end_time": "2026-10-17T00:30:00-07:00",
+              "timezone": "America/Los_Angeles",
+              "organizer": {
+                "user_id": "principal",
+                "verified": true
+              },
+              "principal_response_status": "accepted",
+              "description": "Personal blocked time."
+            }
+          ]
+        },
+        "resume": {
+          "calendar_events": [
+            {
+              "event_id": "cal-cross-midnight",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-17T13:30:00+08:00",
+              "end_time": "2026-10-17T14:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {
+                "user_id": "organizer-cross",
+                "verified": true
+              },
+              "principal_response_status": "accepted",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            },
+            {
+              "event_id": "cal-block-after",
+              "title": "Blocked",
+              "start_time": "2026-10-17T00:00:00-07:00",
+              "end_time": "2026-10-17T00:30:00-07:00",
+              "timezone": "America/Los_Angeles",
+              "organizer": {
+                "user_id": "principal",
+                "verified": true
+              },
+              "principal_response_status": "accepted",
+              "description": "Personal blocked time."
+            }
+          ]
+        }
+      },
+      "criteria": {
+        "required_tool_calls": [
+          "read_task_skill",
+          "read_dingtalk_calendar_event",
+          "list_dingtalk_calendar_events"
+        ],
+        "cold": [
+          "treat 2026-10-17 13:30 Asia/Shanghai as 2026-10-16 22:30 America/Los_Angeles with UTC-07:00",
+          "recognize that the invitation ends at 23:30 and the Blocked event begins at 00:00, so there is no overlap",
+          "propose exactly one accepted response for cal-cross-midnight and no response change for cal-block-after"
+        ],
+        "resume": [
+          "reread live state in the same native session",
+          "recognize that cal-cross-midnight is already accepted",
+          "return no_action with no duplicate calendar response while preserving the attendance-value meaning"
+        ],
+        "required_operation_skills": [
+          "dingtalk-calendar",
+          "dingtalk-shared"
+        ],
+        "conditional_operation_skills": {
+          "source_chat_reply_or_calendar_chat_fallback": "dingtalk-chat"
+        }
+      },
+      "model_input_fields": [
+        "task",
+        "trigger",
+        "skill_name"
+      ],
+      "inference_ready": true
+    },
+    {
+      "id": "calendar-real-overlap",
+      "role": "consumer",
+      "domain": "calendar",
+      "skill_name": "ceo-calendar-invite",
+      "task": "Review the live invitation cal-real-overlap and the relevant local schedule, then return the complete typed Consumer result for the action, if any.",
+      "trigger": {
+        "channel": "scheduled",
+        "conversation_id": "eval-calendar-overlap-conversation",
+        "conversation_title": "Synthetic calendar review",
+        "message_id": "trigger-calendar-real-overlap",
+        "sender": "Synthetic calendar source",
+        "text": "A new invitation requires review. Exact event id: cal-real-overlap.",
+        "create_time": "2026-10-13T09:55:00-07:00",
+        "raw_payload": {
+          "event_id": "cal-real-overlap",
+          "principal_timezone": "America/Los_Angeles",
+          "invitation_timezone": "Asia/Shanghai",
+          "participant_timezones": [
+            {
+              "participant_id": "principal",
+              "timezone": "America/Los_Angeles",
+              "source_ref": "synthetic-principal-profile",
+              "applies_on": "2026-10-16"
+            }
+          ]
+        }
+      },
+      "phases": {
+        "cold": {
+          "calendar_events": [
+            {
+              "event_id": "cal-real-overlap",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-17T13:30:00+08:00",
+              "end_time": "2026-10-17T14:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {
+                "user_id": "organizer-overlap",
+                "verified": true
+              },
+              "principal_response_status": "needsAction",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            },
+            {
+              "event_id": "cal-block-overlap",
+              "title": "Blocked",
+              "start_time": "2026-10-16T23:00:00-07:00",
+              "end_time": "2026-10-17T00:30:00-07:00",
+              "timezone": "America/Los_Angeles",
+              "organizer": {
+                "user_id": "principal",
+                "verified": true
+              },
+              "principal_response_status": "accepted",
+              "description": "Personal blocked time."
+            }
+          ]
+        }
+      },
+      "criteria": {
+        "required_tool_calls": [
+          "read_task_skill",
+          "read_dingtalk_calendar_event",
+          "list_dingtalk_calendar_events"
+        ],
+        "cold": [
+          "use the correct 2026-10-16 22:30-23:30 America/Los_Angeles interval",
+          "recognize the 23:00-23:30 overlap with the active Blocked event",
+          "do not accept or tentatively accept cal-real-overlap; preserve the active personal Blocked boundary",
+          "ground decline or conflict coordination in the applicable Skill and verified facts; any organizer notification must target organizer-overlap"
+        ],
+        "required_operation_skills": [
+          "dingtalk-calendar",
+          "dingtalk-shared"
+        ],
+        "conditional_operation_skills": {
+          "source_chat_reply_or_calendar_chat_fallback": "dingtalk-chat"
+        }
+      },
+      "model_input_fields": [
+        "task",
+        "trigger",
+        "skill_name"
+      ],
+      "criteria_note": "Starts at 22:30 local: the dedicated after-23:00 direct-decline condition does not apply. Do not force a unique decline outcome where the general coordination branch permits another compliant result.",
+      "inference_ready": true
+    },
+    {
+      "id": "mail-already-handled",
+      "role": "consumer",
+      "domain": "mail",
+      "skill_name": "ceo-mail-review",
+      "task": "Review the original mail thread mail-thread-1 located by the mail card in eval-mail-conversation and return the complete typed Consumer result for any remaining action.",
+      "trigger": {
+        "channel": "dingtalk",
+        "conversation_id": "eval-mail-conversation",
+        "conversation_title": "Synthetic mail review",
+        "message_id": "trigger-mail-review",
+        "sender": "Synthetic mail card",
+        "text": "Mail card: Renewal confirmation. Open the complete thread before deciding.",
+        "create_time": "2026-10-13T09:55:00-07:00",
+        "raw_payload": {
+          "mail_thread_id": "mail-thread-1",
+          "preview_truncated": true
+        }
+      },
+      "phases": {
+        "cold": {
+          "messages": [
+            {
+              "message_id": "mail-original",
+              "sender": "Synthetic vendor",
+              "create_time": "2026-10-08T08:00:00-07:00",
+              "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+            },
+            {
+              "message_id": "mail-principal-sent",
+              "sender": "Principal",
+              "create_time": "2026-10-08T07:30:00-07:00",
+              "text": "Approved subject to the recorded legal terms."
+            }
+          ],
+          "mail": {
+            "conversation": {
+              "id": "mail-thread-1",
+              "subject": "Renewal confirmation",
+              "messageCount": 2,
+              "messages": [
+                {
+                  "id": "mail-principal-sent",
+                  "conversationId": "mail-thread-1",
+                  "subject": "Renewal confirmation",
+                  "from": {
+                    "email": "principal@example.test"
+                  },
+                  "toRecipients": [
+                    {
+                      "email": "vendor@example.test"
+                    }
+                  ],
+                  "ccRecipients": [],
+                  "body": {
+                    "contentType": "text",
+                    "content": "Approved subject to the recorded legal terms."
+                  },
+                  "sentDateTime": "2026-10-08T07:30:00-07:00",
+                  "folderId": "sent",
+                  "internetMessageId": "<mail-principal-sent@example.test>",
+                  "isDraft": false,
+                  "attachments": []
+                },
+                {
+                  "id": "mail-original",
+                  "conversationId": "mail-thread-1",
+                  "subject": "Renewal confirmation",
+                  "from": {
+                    "email": "vendor@example.test"
+                  },
+                  "toRecipients": [
+                    {
+                      "email": "principal@example.test"
+                    }
+                  ],
+                  "ccRecipients": [],
+                  "body": {
+                    "contentType": "text",
+                    "content": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                  },
+                  "sentDateTime": "2026-10-08T08:00:00-07:00",
+                  "folderId": "inbox",
+                  "internetMessageId": "<mail-original@example.test>",
+                  "isDraft": false,
+                  "attachments": []
+                }
+              ],
+              "complete": true
+            },
+            "messages": [
+              {
+                "id": "mail-principal-sent",
+                "conversationId": "mail-thread-1",
+                "subject": "Renewal confirmation",
+                "from": {
+                  "email": "principal@example.test"
+                },
+                "toRecipients": [
+                  {
+                    "email": "vendor@example.test"
+                  }
+                ],
+                "ccRecipients": [],
+                "body": {
+                  "contentType": "text",
+                  "content": "Approved subject to the recorded legal terms."
+                },
+                "sentDateTime": "2026-10-08T07:30:00-07:00",
+                "folderId": "sent",
+                "internetMessageId": "<mail-principal-sent@example.test>",
+                "isDraft": false,
+                "attachments": []
+              },
+              {
+                "id": "mail-original",
+                "conversationId": "mail-thread-1",
+                "subject": "Renewal confirmation",
+                "from": {
+                  "email": "vendor@example.test"
+                },
+                "toRecipients": [
+                  {
+                    "email": "principal@example.test"
+                  }
+                ],
+                "ccRecipients": [],
+                "body": {
+                  "contentType": "text",
+                  "content": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                },
+                "sentDateTime": "2026-10-08T08:00:00-07:00",
+                "folderId": "inbox",
+                "internetMessageId": "<mail-original@example.test>",
+                "isDraft": false,
+                "attachments": []
+              }
+            ],
+            "sent_receipt": {
+              "message": {
+                "id": "mail-principal-sent",
+                "conversationId": "mail-thread-1",
+                "subject": "Renewal confirmation",
+                "from": {
+                  "email": "principal@example.test"
+                },
+                "toRecipients": [
+                  {
+                    "email": "vendor@example.test"
+                  }
+                ],
+                "ccRecipients": [],
+                "body": {
+                  "contentType": "text",
+                  "content": "Approved subject to the recorded legal terms."
+                },
+                "sentDateTime": "2026-10-08T07:30:00-07:00",
+                "folderId": "sent",
+                "internetMessageId": "<mail-principal-sent@example.test>",
+                "isDraft": false,
+                "attachments": []
+              },
+              "sendStatus": "success"
+            },
+            "emailAccounts": [
+              {
+                "email": "principal@example.test",
+                "type": "ORG",
+                "name": "Principal"
+              }
+            ]
+          }
+        }
+      },
+      "criteria": {
+        "required_tool_calls": [
+          "read_task_skill",
+          "read_dingtalk_messages"
+        ],
+        "cold": [
+          "use the complete thread rather than the truncated card",
+          "recognize the renewal is already approved and the provider confirmation requests no reply",
+          "return no_action with no duplicate chat or mail action"
+        ],
+        "required_operation_skills": [
+          "dingtalk-mail",
+          "dingtalk-shared"
+        ],
+        "conditional_operation_skills": {
+          "source_chat_reply_or_calendar_chat_fallback": "dingtalk-chat"
+        },
+        "required_cli_reads": [
+          "mailbox identity",
+          "exact original thread identity",
+          "full original messages and current sent state"
+        ]
+      },
+      "model_input_fields": [
+        "task",
+        "trigger",
+        "skill_name"
+      ],
+      "inference_ready": false,
+      "missing_evidence": [
+        "Native model invocation must route dws business reads exclusively to the anonymous readonly fixture; metadata remains native local schema",
+        "Actual native trajectory must prove mailbox/thread/original messages and sent state were read before business acceptance"
+      ],
+      "mail_fixture_status": "Native matching-source envelope correction: shortcuts use ok/outcome/data; mailbox emailAccounts; verify message/sendStatus. Native model binding still pending."
+    },
+    {
+      "id": "document-material-conflicts",
+      "role": "consumer",
+      "domain": "document",
+      "skill_name": "ceo-document-review",
+      "task": "Review document doc-review-1 for material factual consistency and prepare the complete typed Consumer result for replying to the source request.",
+      "trigger": {
+        "channel": "dingtalk",
+        "conversation_id": "eval-document-conversation",
+        "conversation_title": "Synthetic document review",
+        "message_id": "trigger-document-review",
+        "sender": "Synthetic document owner",
+        "text": "Please review doc-review-1 before approval and reply with the material issues.",
+        "create_time": "2026-10-13T09:55:00-07:00",
+        "raw_payload": {
+          "document_id": "doc-review-1"
+        }
+      },
+      "phases": {
+        "cold": {
+          "document": {
+            "document_id": "doc-review-1",
+            "revision": "rev-7",
+            "title": "Synthetic rollout proposal",
+            "content": "Executive summary: Phase 1 covers 120 stores and launches on October 15.\nRollout table: Phase 1 covers 80 stores and launches on October 22.\nBudget summary: total requested budget is USD 500,000.\nBudget lines: platform USD 300,000; operations USD 200,000; contingency USD 120,000.",
+            "node_id": "node-doc-review-1"
+          }
+        }
+      },
+      "criteria": {
+        "required_tool_calls": [
+          "read_task_skill",
+          "read_dingtalk_document"
+        ],
+        "cold": [
+          "identify the 120 versus 80 store conflict",
+          "identify the October 15 versus October 22 launch conflict",
+          "identify that USD 300,000 + 200,000 + 120,000 equals USD 620,000 rather than the stated USD 500,000",
+          "propose one source-conversation reply bound to eval-document-conversation and trigger-document-review that asks for reconciliation before approval",
+          "do not claim the document is approved or edit the document"
+        ],
+        "required_operation_skills": [
+          "dingtalk-doc"
+        ],
+        "conditional_operation_skills": {
+          "source_chat_reply_or_calendar_chat_fallback": "dingtalk-chat",
+          "platform_routing_or_profile_boundary_unclear": "dingtalk-shared"
+        }
+      },
+      "model_input_fields": [
+        "task",
+        "trigger",
+        "skill_name"
+      ],
+      "inference_ready": true
+    },
+    {
+      "id": "work-tracking-existing-remediation",
+      "role": "consumer",
+      "domain": "project_review",
+      "skill_name": "ceo-document-review",
+      "task": "Review document doc-project-1 and return the complete typed Consumer result for replying with the project risk and next action, if any.",
+      "trigger": {
+        "channel": "dingtalk",
+        "conversation_id": "eval-project-conversation",
+        "conversation_title": "Synthetic project update",
+        "message_id": "trigger-project-review",
+        "sender": "Synthetic project source",
+        "text": "Please review doc-project-1 and reply with whether the project needs attention and the next action.",
+        "create_time": "2026-10-13T09:55:00-07:00",
+        "raw_payload": {
+          "document_id": "doc-project-1",
+          "project_anchor_id": "project-orion"
+        }
+      },
+      "phases": {
+        "cold": {
+          "document": {
+            "document_id": "doc-project-1",
+            "revision": "rev-3",
+            "title": "Project Orion status",
+            "content": "Project Orion customer cutover is scheduled for October 20. The authentication callback blocker remains unresolved and now threatens that cutover. Program Lead owns rollout coordination. Existing Task task-auth-1 already requires the Integration Owner to verify the callback configuration and report the result by October 12; it is open and directly addresses this blocker. No source states that task-auth-1 is complete.",
+            "node_id": "node-doc-project-1"
+          }
+        }
+      },
+      "criteria": {
+        "required_tool_calls": [
+          "read_task_skill",
+          "read_dingtalk_document"
+        ],
+        "cold": [
+          "identify a material unresolved authentication blocker threatening the October 20 cutover",
+          "use existing Task task-auth-1 as the next action rather than inventing or claiming a duplicate Task",
+          "do not claim task-auth-1 is complete",
+          "propose one source-conversation reply bound to eval-project-conversation and trigger-project-review with the risk and existing next action"
+        ],
+        "required_operation_skills": [
+          "dingtalk-doc"
+        ],
+        "conditional_operation_skills": {
+          "source_chat_reply_or_calendar_chat_fallback": "dingtalk-chat",
+          "platform_routing_or_profile_boundary_unclear": "dingtalk-shared"
+        }
+      },
+      "coverage_note": "Consumer document-source project-risk reply using ceo-document-review; independent TaskAgentDecision extraction/assessment is a separate required acceptance gate.",
+      "model_input_fields": [
+        "task",
+        "trigger",
+        "skill_name"
+      ],
+      "inference_ready": true
+    },
+    {
+      "id": "audit-document-feedback",
+      "role": "audit",
+      "domain": "document",
+      "skill_name": "ceo-document-review",
+      "task": "Review the complete candidate against the live synthetic document and return the complete typed Audit result.",
+      "trigger": {
+        "channel": "dingtalk",
+        "conversation_id": "eval-audit-document-conversation",
+        "conversation_title": "Synthetic Audit review",
+        "message_id": "trigger-audit-document-review",
+        "sender": "Synthetic document owner",
+        "text": "Please review doc-audit-1 before approval.",
+        "create_time": "2026-10-13T09:55:00-07:00",
+        "raw_payload": {
+          "document_id": "doc-audit-1"
+        }
+      },
+      "phases": {
+        "cold": {
+          "document": {
+            "document_id": "doc-audit-1",
+            "revision": "rev-11",
+            "title": "Synthetic capacity proposal",
+            "content": "Executive summary: capacity is 120 units and launch is October 15.\nImplementation table: capacity is 80 units and launch is October 22.\nApproval status: not approved; factual conflicts must be reconciled first.",
+            "node_id": "node-doc-audit-1"
+          },
+          "candidate": {
+            "summary": "The document is internally consistent and ready for approval.",
+            "reply_body": "No material issues found. The proposal is ready for approval."
+          }
+        }
+      },
+      "criteria": {
+        "required_tool_calls": [
+          "read_task_skill",
+          "read_dingtalk_document"
+        ],
+        "cold": [
+          "preserve the exact proposal_revision and candidate_digest",
+          "return outcome reject with non-null Audit feedback requiring substantive replacement of the false external reply payload; exact capacity/date conflicts required",
+          "state that the candidate missed the 120 versus 80 capacity conflict and October 15 versus October 22 date conflict",
+          "request a replacement candidate grounded in the live document",
+          "do not execute or approve any action"
+        ],
+        "required_operation_skills": [
+          "dingtalk-doc"
+        ],
+        "conditional_operation_skills": {
+          "source_chat_reply_or_calendar_chat_fallback": "dingtalk-chat",
+          "platform_routing_or_profile_boundary_unclear": "dingtalk-shared"
+        }
+      },
+      "model_input_fields": [
+        "task",
+        "trigger",
+        "skill_name"
+      ],
+      "criteria_source": "frozen_skill_session_reuse.aligned_fixed_cases.v2.json case_manifest; substantive replacement matches current Audit contract",
+      "inference_ready": true
+    }
+  ],
+  "skills": {
+    "ceo-calendar-invite": {
+      "path": "/Users/derek/.agents/skills/ceo-calendar-invite/SKILL.md",
+      "sha256": "cdf7ff9e1cc1481a098ef859d3f77721b38bbf9a04d61d5450a06ba0194e02a7",
+      "characters": 7367,
+      "description": "Use for calendar scheduling, candidate windows, participant timezones, incoming DingTalk calendar invitations, calendar cards, meeting invitations, attendance decisions, schedule conflicts, tentative, accept, or decline responses, and questions about why the principal should attend or what input is expected. Use ceo-meeting-work for meeting content after attendance is settled. Load dingtalk-calendar before issuing any DWS calendar command."
+    },
+    "ceo-document-review": {
+      "path": "/Users/derek/.agents/skills/ceo-document-review/SKILL.md",
+      "sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f",
+      "characters": 3713,
+      "description": "Use for requests to inspect, summarize, compare, comment on, or approve DingTalk or Lark documents, files, images, and tables. Use ceo-mail-review for the enclosing mail thread and ceo-meeting-work for meeting records. Load the operation Skill matching the actual material type before reading or editing it."
+    },
+    "ceo-mail-review": {
+      "path": "/Users/derek/.agents/skills/ceo-mail-review/SKILL.md",
+      "sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+      "characters": 11918,
+      "description": "Use when an incoming email, DingTalk or Lark mail card, or channel=email action requires review, reply judgment, or unsubscribe handling."
+    }
+  },
+  "calendar_reference": [
+    {
+      "id": "calendar-cross-midnight",
+      "local_start": "2026-10-16T22:30:00-07:00",
+      "local_end": "2026-10-16T23:30:00-07:00",
+      "overlap": false
+    },
+    {
+      "id": "calendar-real-overlap",
+      "local_start": "2026-10-16T22:30:00-07:00",
+      "local_end": "2026-10-16T23:30:00-07:00",
+      "overlap": true
+    }
+  ],
+  "controls": {
+    "same": [
+      "Full case facts and source locators",
+      "Declared tools and all returned values",
+      "Frozen complete Skill bytes read on demand",
+      "Saved prompt configuration snapshot",
+      "Model/reasoning/native output schema",
+      "Clock and independent criteria"
+    ],
+    "only_change": "Developer canonical schema section replaced by native structure guidance and all omitted canonical assertions",
+    "oracle_visibility": "Criteria and expected result never included in model prompt or tool returns"
+  },
+  "required_acceptance": [
+    "Complete native trajectory and canonical Pydantic result",
+    "Actual task-bound frozen Skill read on cold; exact same revision may be reused on resume",
+    "Actual relevant fact reads; no outbound effects",
+    "Business judgement judged independently against predeclared facts/criteria",
+    "Successful cold before same-session continuation",
+    "Audit feedback on actual supplied candidate with exact digest/revision"
+  ],
+  "pending": [
+    "Verify actual stdio role MCP boot and native dws fixture binding",
+    "Run paired model trajectories and independent business review",
+    "Standalone Task Agent work-tracking pipeline needs separate acceptance; this manifest cannot prove it"
+  ],
+  "operation_skills": {
+    "dingtalk-calendar": {
+      "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md",
+      "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+      "characters": 7923
+    },
+    "dingtalk-doc": {
+      "path": "/Users/derek/.agents/skills/dingtalk-doc/SKILL.md",
+      "sha256": "c0ba5d0143f3fe0421f07c361c9bc18f2147a8800ae54d043df369bdfbcb5f40",
+      "characters": 7657
+    },
+    "dingtalk-chat": {
+      "path": "/Users/derek/.agents/skills/dingtalk-chat/SKILL.md",
+      "sha256": "8911f4c15e697515b53370cea3022a41dbb4e3473b6f3146cc11e6de481d71d5",
+      "characters": 6550
+    },
+    "dingtalk-mail": {
+      "path": "/Users/derek/.agents/skills/dingtalk-mail/SKILL.md",
+      "sha256": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+      "characters": 5719
+    },
+    "dingtalk-shared": {
+      "path": "/Users/derek/.agents/skills/dingtalk-shared/SKILL.md",
+      "sha256": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb",
+      "characters": 4064
+    }
+  },
+  "fixture_review": {
+    "status": "scope_corrected_before_inference",
+    "findings": [
+      "Consumer project document review now binds the source-reply Skill",
+      "Audit substantive replacement criterion corrected to reject",
+      "Calendar real conflict retains hard Blocked boundary without unsupported forced decline",
+      "Original anonymous mail evidence and leaf reads are complete; native runner binding and model trajectory receipts remain pending",
+      "Operation Skill loading must be checked separately from factual reads",
+      "v4 separates document/node identity and supplies typed source-bound Audit candidate and complete anonymous original mail objects",
+      "v5 model pair injected full Audit policy into Task unlike the production orchestrator. v6 uses empty Task audit_rules; earlier real trajectories retained but not representative of production Task composition.",
+      "Current main d7397203 and native schema projection57f34f94 integrated before v7 inference; v6 old-canonical native pair is not current-contract acceptance."
+    ],
+    "model_calls": 0
+  },
+  "native_mail_contract": {
+    "repository": "DingTalk-Real-AI/dingtalk-workspace-cli",
+    "commit": "4cd5d05393a8748e89d9265eb9f7ec85745a0331",
+    "installed_version": "v1.0.63",
+    "sources": {
+      "internal/shortcut/runner.go": "2542c1edfac4f1ef76a59934c9ad006928c8a92a13f7d77faad4d72a5d96068c",
+      "internal/shortcut/types.go": "14f070d2d48b6c90eb271a27c52a66b37087e367f128ec50333856be2540d5f7",
+      "internal/output/envelope.go": "6d15bab86abc1cac94903349e07f44f70ee414995994ca69d70663d6f219e89a",
+      "internal/helpers/mail.go": "8c156365e47f34196900c1593480058a47e6a5783b16319f3c170525cfc9f9d3",
+      "internal/helpers/output.go": "fd668cc57a46ddb8acd408635dc948293a3d77c3276b172ad0263804f7685c7f",
+      "internal/shortcut/mail/common.go": "73047a9ec6272dbd9bca946ddb19d301b4251f77603b33c5602d985500d53b40",
+      "internal/shortcut/mail/mail_strict_cross_platform_coverage_test.go": "44560aabd1e792b591200fb6a3237440ccbad20c55944a3f3f4d3e2956e2c0cb",
+      "internal/shortcut/mail/reads.go": "d3dbb137121d87ee5771205aceae51e0f295771e005078317f7a98ae78441fe8"
+    },
+    "confirmed": [
+      "mail shortcuts +thread/+message use RolloutUnifiedActive and data.value",
+      "native output envelope is ok/outcome/data",
+      "mailbox list source field is emailAccounts",
+      "message verify source fields are message/sendStatus; success is native sent state"
+    ]
+  },
+  "audit_context_policy": "Match app.agent_orchestrator: audit_rules empty in AuditTurnContext; app.audit_agent loads current rules into Developer only. No service prompt or policy change.",
+  "canonical_base": "d7397203",
+  "native_schema_base": "57f34f94",
+  "scope_note": "Current-main canonical feedback/field-facts contract; original fixed business facts and reject oracle retained. Compare only full versus compact native Developer contract."
+}

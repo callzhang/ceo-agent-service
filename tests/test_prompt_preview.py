@@ -44,7 +44,8 @@ def test_current_preview_renders_full_role_without_creating_profile_or_rule_file
     store = AutoReplyStore(tmp_path / "preview.sqlite3")
     consumer = current_prompt_preview(store, role="consumer", config=config, route_name="codex_oauth", current_time="2026-10-05T18:00:00-07:00")
     audit = current_prompt_preview(store, role="audit", config=config, route_name="claude_oauth", current_time="2026-10-05T18:00:00-07:00")
-    assert "## Pydantic Wire Contract" in consumer["developer_instructions"]
+    assert "Canonical constraints by schema JSON Pointer:" in consumer["developer_instructions"]
+    assert "## Pydantic Wire Contract" in audit["developer_instructions"]
     assert consumer["runtime_context"] in consumer["developer_instructions"]
     assert "所选 runtime 的配置预览" in consumer["runtime_context"]
     assert "实际 runtime：" not in consumer["runtime_context"]
@@ -138,7 +139,8 @@ def test_settings_full_preview_endpoint_is_read_only_and_role_specific(tmp_path,
         response = client.get("/api/console/settings/prompt-preview?role=consumer&route_name=codex_oauth")
         assert response.status_code == 200
         item = response.json()["item"]
-        assert "## Pydantic Wire Contract" in item["developer_instructions"]
+        assert "Canonical constraints by schema JSON Pointer:" in item["developer_instructions"]
+        assert any(s["source"] == "Codex 原生结构与补充业务约束" for s in item["sections"])
         assert "运行环境与能力说明" in item["runtime_context"]
         assert item["mode"] == "current" and item["task_id"] is None
         assert client.get("/api/console/settings/prompt-preview?role=invalid").status_code == 422

@@ -1,0 +1,527 @@
+{
+  "version": 1,
+  "case": "calendar-cross-midnight",
+  "scope": "Actual OAuth Consumer cross-midnight cold model judgments only",
+  "records": [
+    {
+      "case": "calendar-cross-midnight",
+      "variant": "full",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136af-37a1-74f1-a692-c2f33502abcb",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "接受日历邀请“Customer launch decision”，让磊哥参加客户发布决策会议并提供发布例外与 go/no-go 决策。",
+          "sourced_facts": [
+            {
+              "assertion": "实时日历事件 cal-cross-midnight 的主题为“Customer launch decision”，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），当前主参与者状态为 needsAction。",
+              "references": [
+                "cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "邀请说明明确要求磊哥在会议中提供客户发布例外与 go/no-go 决策，参会价值清晰。",
+              "references": [
+                "cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "按已提供的时区换算，该会议对应磊哥当地时间为 2026-10-16 22:30–23:30（America/Los_Angeles）；对该时段读取的日程窗口未发现重叠占用事件。",
+              "references": [
+                "trigger-calendar-cross-midnight",
+                "calendar-window:2026-10-16T22:00:00-07:00/2026-10-17T00:00:00-07:00"
+              ]
+            },
+            {
+              "assertion": "事件组织者 organizer-cross 已由实时日历数据验证。",
+              "references": [
+                "cal-cross-midnight"
+              ]
+            }
+          ],
+          "authored_judgment": "这是需要磊哥作客户发布例外和 go/no-go 决策的明确业务会议，参会价值清晰；会议虽延续至当地 23:30，但起始时间为 22:30，且当前核验窗口内没有重叠占用，因此建议接受。没有必要重复发送其他通知。",
+          "actions": [
+            {
+              "description": "接受实时日历事件 cal-cross-midnight 的邀请。",
+              "action_identity": "calendar-respond-cal-cross-midnight-accept",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-cross-midnight"
+              },
+              "payload": {
+                "response_status": "accepted"
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已核实事件身份、会议时间、磊哥的决策贡献和当地时区换算；实时日历中当前状态为待响应，且核验窗口内无重叠占用。建议提交接受该邀请的候选动作，等待 Audit 审核及系统执行回执。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "已核实事件身份、会议时间、磊哥的决策贡献和当地时区换算；实时日历中当前状态为待响应，且核验窗口内无重叠占用。建议提交接受该邀请的候选动作，等待 Audit 审核及系统执行回执。",
+        "proposal": {
+          "objective": "接受日历邀请“Customer launch decision”，让磊哥参加客户发布决策会议并提供发布例外与 go/no-go 决策。",
+          "actions": [
+            {
+              "description": "接受实时日历事件 cal-cross-midnight 的邀请。",
+              "action_identity": "calendar-respond-cal-cross-midnight-accept",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-cross-midnight"
+              },
+              "payload": {
+                "response_status": "accepted"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "实时日历事件 cal-cross-midnight 的主题为“Customer launch decision”，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），当前主参与者状态为 needsAction。",
+              "references": [
+                "cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "邀请说明明确要求磊哥在会议中提供客户发布例外与 go/no-go 决策，参会价值清晰。",
+              "references": [
+                "cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "按已提供的时区换算，该会议对应磊哥当地时间为 2026-10-16 22:30–23:30（America/Los_Angeles）；对该时段读取的日程窗口未发现重叠占用事件。",
+              "references": [
+                "trigger-calendar-cross-midnight",
+                "calendar-window:2026-10-16T22:00:00-07:00/2026-10-17T00:00:00-07:00"
+              ]
+            },
+            {
+              "assertion": "事件组织者 organizer-cross 已由实时日历数据验证。",
+              "references": [
+                "cal-cross-midnight"
+              ]
+            }
+          ],
+          "authored_judgment": "这是需要磊哥作客户发布例外和 go/no-go 决策的明确业务会议，参会价值清晰；会议虽延续至当地 23:30，但起始时间为 22:30，且当前核验窗口内没有重叠占用，因此建议接受。没有必要重复发送其他通知。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "e1f2196b07217ff7da5b6847937daa42955698a8046227a55452199e5aba678f",
+      "developer_sha256": "7ab9e69771a70769c87dee47796c0682f672459548cff826636e4b55da6dad9b",
+      "developer_characters": 30203,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "exact_event_read": true,
+      "required_tool_gates": {
+        "read_task_skill": true,
+        "read_dingtalk_calendar_event": true,
+        "list_dingtalk_calendar_events": true
+      },
+      "required_operation_skill_gates": {
+        "dingtalk-calendar": true,
+        "dingtalk-shared": false
+      },
+      "action_target_payload_exact": true,
+      "business_content_review": {
+        "shanghai_oct17_1330_to_los_angeles_oct16_2230_utc_minus07": true,
+        "end_2330_no_overlap_with_blocked_start_0000": true,
+        "explicit_launch_exception_go_no_go_value": true,
+        "one_accept_for_invited_event_only": true
+      },
+      "conflict_window_receipts": [
+        {
+          "arguments": {
+            "start": "2026-10-16T22:00:00-07:00",
+            "end": "2026-10-17T00:00:00-07:00"
+          },
+          "result": {
+            "events": [
+              {
+                "event_id": "cal-cross-midnight",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-17T13:30:00+08:00",
+                "end_time": "2026-10-17T14:30:00+08:00",
+                "timezone": "Asia/Shanghai",
+                "organizer": {
+                  "user_id": "organizer-cross",
+                  "verified": true
+                },
+                "principal_response_status": "needsAction",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+              }
+            ]
+          }
+        }
+      ],
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result_sha256": "08b08d7e510cfe1b6d1ce7c2d76e7017c5c18fe9b57fda2082710a8ea5385994"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-calendar"
+          },
+          "result_sha256": "0bbd88c1417909debb2fc7d8c7c93f0928001fd37fb95745844f7b03b32a492f"
+        },
+        {
+          "name": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-cross-midnight"
+          },
+          "result_sha256": "68ed3c98226b82f21eda20b17c6a62dc771d8afb27a6fa22ac0d14a18b6fe1fe"
+        },
+        {
+          "name": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-16T22:00:00-07:00",
+            "end": "2026-10-17T00:00:00-07:00"
+          },
+          "result_sha256": "851d507fbbae421c3f1f9d8b62b9338a4516a9ab3dcd47c6c46cd4003045fe1a"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event"
+          },
+          "result_sha256": "9fd965309620ea9ede3445f5b32ebbe1682e53c8a62cd5fa80165ec1ca9619ee"
+        }
+      ],
+      "trajectory_sha256": "8d9568ab935411d6392cdd7302e84ed710316d325d772a57d7158df2bb074526",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-13-35-01a136af-37a1-74f1-a692-c2f33502abcb.jsonl",
+        "sha256": "08a6307fbb7d1b50fd7e4b7713815ea80522d707a3ed8a02d36b9204f6cb2b51",
+        "cold_prefix_bytes_verified_after_resume": 303609,
+        "after_resume_sha256": "bb21b771185df056d6a0bea3da183f24991847040310aa2d6fa4123e8f34d171"
+      },
+      "native_developer_characters": 31127,
+      "native_extra_catalog_characters": 924
+    },
+    {
+      "case": "calendar-cross-midnight",
+      "variant": "compact",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136af-9568-76e1-aca4-6fef3e7ed6d3",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "接受日历事件 cal-cross-midnight，使磊哥参加客户发布决策会议并在会上提供发布例外与 go/no-go 决策。",
+          "sourced_facts": [
+            {
+              "assertion": "事件 cal-cross-midnight 的标题为“Customer launch decision”，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），组织者为已核验的 organizer-cross，当前响应状态为 needsAction。",
+              "references": [
+                "read_dingtalk_calendar_event:cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "事件描述明确说明客户需要磊哥在会议中提供 launch exception 和 go/no-go decision，属于对磊哥有明确决策价值的会议。",
+              "references": [
+                "read_dingtalk_calendar_event:cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "按事件时间换算，会议发生在磊哥 America/Los_Angeles 当地 2026-10-16 22:30–23:30；已读取该时段前后日程，唯一相关的已接受 Blocked 时段为 2026-10-17 00:00–00:30，二者不重叠。",
+              "references": [
+                "Original trigger:trigger-calendar-cross-midnight",
+                "list_dingtalk_calendar_events:2026-10-16T20:00:00-07:00/2026-10-17T01:00:00-07:00"
+              ]
+            },
+            {
+              "assertion": "当前没有证据表明该邀请已被接受、暂定或拒绝，因此不存在重复响应。",
+              "references": [
+                "read_dingtalk_calendar_event:cal-cross-midnight"
+              ]
+            }
+          ],
+          "authored_judgment": "这是一个有明确客户决策价值的邀请，且已核实没有与读取范围内的 Blocked 时段冲突；应接受会议邀请。",
+          "actions": [
+            {
+              "description": "接受事件 cal-cross-midnight 的日历邀请。",
+              "action_identity": "calendar-response:cal-cross-midnight:accept",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-cross-midnight"
+              },
+              "payload": {
+                "response_status": "accepted"
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已读取并核验事件详情、磊哥当地时间及相关冲突窗口。事件要求磊哥参与客户发布例外与 go/no-go 决策，会议换算为洛杉矶时间 2026-10-16 22:30–23:30，未与已读取的 00:00–00:30 Blocked 时段重叠，建议提交接受邀请的受控日历动作；尚未执行外部响应。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "已读取并核验事件详情、磊哥当地时间及相关冲突窗口。事件要求磊哥参与客户发布例外与 go/no-go 决策，会议换算为洛杉矶时间 2026-10-16 22:30–23:30，未与已读取的 00:00–00:30 Blocked 时段重叠，建议提交接受邀请的受控日历动作；尚未执行外部响应。",
+        "proposal": {
+          "objective": "接受日历事件 cal-cross-midnight，使磊哥参加客户发布决策会议并在会上提供发布例外与 go/no-go 决策。",
+          "actions": [
+            {
+              "description": "接受事件 cal-cross-midnight 的日历邀请。",
+              "action_identity": "calendar-response:cal-cross-midnight:accept",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-cross-midnight"
+              },
+              "payload": {
+                "response_status": "accepted"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "事件 cal-cross-midnight 的标题为“Customer launch decision”，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），组织者为已核验的 organizer-cross，当前响应状态为 needsAction。",
+              "references": [
+                "read_dingtalk_calendar_event:cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "事件描述明确说明客户需要磊哥在会议中提供 launch exception 和 go/no-go decision，属于对磊哥有明确决策价值的会议。",
+              "references": [
+                "read_dingtalk_calendar_event:cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "按事件时间换算，会议发生在磊哥 America/Los_Angeles 当地 2026-10-16 22:30–23:30；已读取该时段前后日程，唯一相关的已接受 Blocked 时段为 2026-10-17 00:00–00:30，二者不重叠。",
+              "references": [
+                "Original trigger:trigger-calendar-cross-midnight",
+                "list_dingtalk_calendar_events:2026-10-16T20:00:00-07:00/2026-10-17T01:00:00-07:00"
+              ]
+            },
+            {
+              "assertion": "当前没有证据表明该邀请已被接受、暂定或拒绝，因此不存在重复响应。",
+              "references": [
+                "read_dingtalk_calendar_event:cal-cross-midnight"
+              ]
+            }
+          ],
+          "authored_judgment": "这是一个有明确客户决策价值的邀请，且已核实没有与读取范围内的 Blocked 时段冲突；应接受会议邀请。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "e1f2196b07217ff7da5b6847937daa42955698a8046227a55452199e5aba678f",
+      "developer_sha256": "956e37c10673669358dfb57a5a4f93156330e1aaa1f34e0a302d4ae118a872e1",
+      "developer_characters": 24035,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "exact_event_read": true,
+      "required_tool_gates": {
+        "read_task_skill": true,
+        "read_dingtalk_calendar_event": true,
+        "list_dingtalk_calendar_events": true
+      },
+      "required_operation_skill_gates": {
+        "dingtalk-calendar": true,
+        "dingtalk-shared": false
+      },
+      "action_target_payload_exact": true,
+      "business_content_review": {
+        "shanghai_oct17_1330_to_los_angeles_oct16_2230_utc_minus07": true,
+        "end_2330_no_overlap_with_blocked_start_0000": true,
+        "explicit_launch_exception_go_no_go_value": true,
+        "one_accept_for_invited_event_only": true
+      },
+      "conflict_window_receipts": [
+        {
+          "arguments": {
+            "start": "2026-10-16T20:00:00-07:00",
+            "end": "2026-10-17T01:00:00-07:00"
+          },
+          "result": {
+            "events": [
+              {
+                "event_id": "cal-cross-midnight",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-17T13:30:00+08:00",
+                "end_time": "2026-10-17T14:30:00+08:00",
+                "timezone": "Asia/Shanghai",
+                "organizer": {
+                  "user_id": "organizer-cross",
+                  "verified": true
+                },
+                "principal_response_status": "needsAction",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+              },
+              {
+                "event_id": "cal-block-after",
+                "title": "Blocked",
+                "start_time": "2026-10-17T00:00:00-07:00",
+                "end_time": "2026-10-17T00:30:00-07:00",
+                "timezone": "America/Los_Angeles",
+                "organizer": {
+                  "user_id": "principal",
+                  "verified": true
+                },
+                "principal_response_status": "accepted",
+                "description": "Personal blocked time."
+              }
+            ]
+          }
+        }
+      ],
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result_sha256": "08b08d7e510cfe1b6d1ce7c2d76e7017c5c18fe9b57fda2082710a8ea5385994"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-calendar"
+          },
+          "result_sha256": "0bbd88c1417909debb2fc7d8c7c93f0928001fd37fb95745844f7b03b32a492f"
+        },
+        {
+          "name": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-cross-midnight"
+          },
+          "result_sha256": "68ed3c98226b82f21eda20b17c6a62dc771d8afb27a6fa22ac0d14a18b6fe1fe"
+        },
+        {
+          "name": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-16T20:00:00-07:00",
+            "end": "2026-10-17T01:00:00-07:00"
+          },
+          "result_sha256": "847eacc64e80695818984889a4fc468f916526a3071efdadad62993d6ae06e66"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event"
+          },
+          "result_sha256": "9fd965309620ea9ede3445f5b32ebbe1682e53c8a62cd5fa80165ec1ca9619ee"
+        }
+      ],
+      "trajectory_sha256": "d61a8ff59adb366defbd1ed6f36f1059d140cd7455e12663e08400e9fe04ce2c",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-13-59-01a136af-9568-76e1-aca4-6fef3e7ed6d3.jsonl",
+        "sha256": "ba7ea3c87b672b3fdc7b41bf4b806533b431fb92e16edfa11b72bb26dec2f66f",
+        "cold_prefix_bytes_verified_after_resume": 300426,
+        "after_resume_sha256": "2fa357212ab282a96f5205f13fe9062b18da65515efce59a881f3242218b40af"
+      },
+      "native_developer_characters": 24035,
+      "native_extra_catalog_characters": 0
+    }
+  ],
+  "complete_acceptance": false,
+  "limitations": [
+    "Same-session continuation with provider already-accepted state not yet run.",
+    "Both omit predeclared dingtalk-shared read; retain missing gate. No native DWS command was used; evaluate actual Skill conditional applicability separately rather than silently changing the gate.",
+    "Full calendar query stops at midnight and excludes the later Blocked event; compact wider query reads it. Both queries cover the complete invitation interval, and both propose exactly one acceptance.",
+    "Service candidate preparation, Audit and executor not performed; native catalog parity pending independent check."
+  ],
+  "active_fixture_root": "/private/tmp/ceo-consumer-bound-mail.wRVH3y",
+  "fixture_retention_reason": "Historical active root was removed after completing remaining controls and verifying no open handles; cleanup recorded in consumer_remaining_controls.v1.json. New calendar transport validation uses a separate owned root.",
+  "independent_native_review": {
+    "source_reads_exact": true,
+    "timezone_and_actions_correct": true,
+    "no_business_writes": true,
+    "native_single_variable": false,
+    "compact_custom_tool_setup_error_before_successful_mcp_read": true
+  },
+  "temporary_trace_naming_correction": "First resume used a dotted stem with Path.with_suffix and replaced temporary cold stdout exports. Original native cold trajectories remain verified exact hash prefixes in original sessions; resume exports renamed separately. Regression now enforces distinct cold/resume outputs.",
+  "representativeness_correction": {
+    "confirmed": "Eval read_dingtalk_calendar_event returned a custom bare event with organizer dict/principal_response_status instead of actual event envelope/DwsCalendarEvent fields. list events also used custom fields.",
+    "effect": "Preserve observed judgments and same native session identities as synthetic fact evidence; not current calendar transport acceptance.",
+    "repair": "Existing actual role reader regression reproduces mismatch; fixture projects anonymous facts into actual DwsCalendarEvent and returns exact event envelope. Necessary transport revalidation pending."
+  },
+  "active_fixture_root_removed": true
+}

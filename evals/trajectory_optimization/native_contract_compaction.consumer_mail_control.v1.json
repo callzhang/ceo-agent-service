@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "scope": "Actual OAuth Consumer mail cold pair; no session/provider or production acceptance",
+  "manifest": "native_contract_compaction.business_cases.v7.json",
+  "case": "mail-already-handled",
+  "records": [
+    {
+      "case": "mail-already-handled",
+      "variant": "full",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136ab-10f1-7963-a460-63fb82bd0014",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 0.95,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "no_action",
+        "proposal": null,
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已读取完整邮件线程。主题为“Renewal confirmation”：供应商确认续约已批准并记录在 receipt renew-77，明确说明仅供确认且不需要回复；线程中也已存在此前发出的批准邮件。因此本轮无需回复、退订或其他邮件动作。"
+      },
+      "canonical": {
+        "outcome": "no_action",
+        "summary": "已读取完整邮件线程。主题为“Renewal confirmation”：供应商确认续约已批准并记录在 receipt renew-77，明确说明仅供确认且不需要回复；线程中也已存在此前发出的批准邮件。因此本轮无需回复、退订或其他邮件动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 0.95,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "19fb9d675f76f85047f4a03e9adc345e26b9afc5e8ef1b9e77467f10ee59eda8",
+      "developer_sha256": "7ab9e69771a70769c87dee47796c0682f672459548cff826636e4b55da6dad9b",
+      "developer_characters": 30203,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "source_read_receipt": {
+        "exact_thread_and_embedded_messages": true,
+        "command": "/bin/zsh -lc '/private/tmp/ceo-consumer-bound-mail.wRVH3y/mail-already-handled/dws mail +thread --email principal@example.test --id mail-thread-1 --format json'",
+        "output_sha256": "d43b5ab953339b7ffa3ffbd28b0edd2b5b441d572cfa73117437a30a1f77fc56"
+      },
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-mail-review"
+          },
+          "result_sha256": "8175d27df61cf4ca70377bf25868793e1c8fd7d789cc00cd0dc611771e1723fc"
+        }
+      ],
+      "required_tool_gates": {
+        "read_task_skill": true,
+        "read_dingtalk_messages": false
+      },
+      "required_operation_skill_gates": {
+        "dingtalk-mail": false,
+        "dingtalk-shared": false
+      },
+      "business_fact_judgment_pass": true,
+      "all_predeclared_gates_pass": false,
+      "separate_mailbox_list_read": false,
+      "separate_sent_receipt_read": false,
+      "trajectory_sha256": "06416226593d21006bfa72e8b25aad9380dc3ca023b15eaf1d46f01e6c921aa6",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-09-03-01a136ab-10f1-7963-a460-63fb82bd0014.jsonl",
+        "sha256": "0ca8cc624751806b4b3f6843d7ae190e0597822cfae5e2073a82a9c5b84eee4d"
+      },
+      "native_developer_characters": 30203,
+      "native_extra_catalog_characters": 0
+    },
+    {
+      "case": "mail-already-handled",
+      "variant": "compact",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136ab-4b59-7982-8a9d-d31b2ff6a1f2",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "no_action",
+        "proposal": null,
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已读取完整的 Renewal confirmation 邮件线程。vendor@example.test 明确说明这是确认通知且不需要回复；线程中还已有 principal@example.test 于 2026-10-08 发出的批准邮件，内容为“Approved subject to the recorded legal terms.” 因此当前邮件已被处理，无需重复回复、发送或执行其他邮件动作。"
+      },
+      "canonical": {
+        "outcome": "no_action",
+        "summary": "已读取完整的 Renewal confirmation 邮件线程。vendor@example.test 明确说明这是确认通知且不需要回复；线程中还已有 principal@example.test 于 2026-10-08 发出的批准邮件，内容为“Approved subject to the recorded legal terms.” 因此当前邮件已被处理，无需重复回复、发送或执行其他邮件动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "19fb9d675f76f85047f4a03e9adc345e26b9afc5e8ef1b9e77467f10ee59eda8",
+      "developer_sha256": "956e37c10673669358dfb57a5a4f93156330e1aaa1f34e0a302d4ae118a872e1",
+      "developer_characters": 24035,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "source_read_receipt": {
+        "exact_thread_and_embedded_messages": true,
+        "command": "/bin/zsh -lc 'dws mail +thread --email principal@example.test --id mail-thread-1 --format json'",
+        "output_sha256": "d43b5ab953339b7ffa3ffbd28b0edd2b5b441d572cfa73117437a30a1f77fc56"
+      },
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-mail-review"
+          },
+          "result_sha256": "8175d27df61cf4ca70377bf25868793e1c8fd7d789cc00cd0dc611771e1723fc"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-mail"
+          },
+          "result_sha256": "e014bd7543793158871727b73e25c4c8f81099065571775ea51d7fcbf1c5c073"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-shared"
+          },
+          "result_sha256": "95f04175261a379052833704651a512519cdd462ca6e28562cf7872f9daf36f5"
+        }
+      ],
+      "required_tool_gates": {
+        "read_task_skill": true,
+        "read_dingtalk_messages": false
+      },
+      "required_operation_skill_gates": {
+        "dingtalk-mail": true,
+        "dingtalk-shared": true
+      },
+      "business_fact_judgment_pass": true,
+      "all_predeclared_gates_pass": false,
+      "separate_mailbox_list_read": false,
+      "separate_sent_receipt_read": false,
+      "trajectory_sha256": "5d839840ef714dd85c96336b83d30ac8185e9c4ef222ef99e2d0b8f7a898262e",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-09-18-01a136ab-4b59-7982-8a9d-d31b2ff6a1f2.jsonl",
+        "sha256": "c53e68087e2e60a35b91851cb421d6b7356fc43586eeb3e96f9cc3e5d5591d8a"
+      },
+      "native_developer_characters": 24959,
+      "native_extra_catalog_characters": 924
+    }
+  ],
+  "developer_reduction_characters": 6168,
+  "business_fact_judgment": "2/2 correctly no_action after exact anonymous original thread reads",
+  "complete_acceptance": false,
+  "limitations": [
+    "Both omit required locator chat read and separate mailbox/sent-receipt reads; full also omits installed operation Skills. Predeclared gates preserved, not changed to fit output.",
+    "Anonymous material includes an explicit fixture CLI source locator in both variants; native shell PATH uses the fixture, no installed Skill edits.",
+    "Native CLI read shared AGENTS.md in both trajectories; not counted as service submitted Developer content.",
+    "Single cold pair cannot establish compaction causality or all task behavior.",
+    "Independent native readback: compact Developer additionally contains 924 characters of automatic Skill/plugin discovery (24959 native versus 24035 service); full native Developer equals service 30203. Native bootstrap User lengths differ 5552/5570. Service contract text is the intended variable, but native catalog drift prevents a strict single-variable claim."
+  ],
+  "setup_invalid_attempt": {
+    "reason": "shell_environment_policy.set received JSON text rather than a typed map; corrected using native leaf set.PATH string",
+    "model_calls": 0
+  },
+  "independent_review": {
+    "native_exact_task_text": true,
+    "native_exact_thread_output": true,
+    "thread_output_characters": 1162,
+    "no_write_calls": true,
+    "strict_native_single_variable": false,
+    "service_developer_reduction_only": 6168
+  }
+}
