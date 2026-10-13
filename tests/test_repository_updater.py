@@ -807,3 +807,30 @@ def test_default_restart_bootstraps_when_launchd_label_is_unloaded(monkeypatch):
     updater_module._default_restart()
 
     assert [call[1] for call in calls] == ["kickstart", "print", "bootstrap"]
+
+
+def test_default_stop_waits_until_launchd_finishes_removing_service(monkeypatch):
+    from types import SimpleNamespace
+
+    import app.repository_updater as updater_module
+
+    calls: list[list[str]] = []
+    states = iter((
+        SimpleNamespace(returncode=0, stdout="state = inactive (removing)", stderr=""),
+        SimpleNamespace(returncode=113, stdout="", stderr='Could not find service "x"'),
+    ))
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if args[1] == "bootout":
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return next(states)
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(updater_module.subprocess, "run", run)
+    monkeypatch.setattr(updater_module.time, "sleep", sleeps.append)
+
+    updater_module._default_stop()
+
+    assert [call[1] for call in calls] == ["bootout", "print", "print"]
+    assert sleeps == [0.1]
