@@ -19790,7 +19790,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "external_action_key": action_key,
             }, ignore=True)
             row = db.execute(
-                f"select * from ({SENT_REPLY_SQL}) where external_action_key=?",
+                f"select * from ({SENT_REPLY_SQL}) where external_action_key=? and external_action_key<>''",
                 (action_key,),
             ).fetchone()
             if row is None:
@@ -19890,7 +19890,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "external_action_key": external_action_key,
             }, ignore=True)
             sent = db.execute(
-                f"select * from ({SENT_REPLY_SQL}) where external_action_key=?",
+                f"select * from ({SENT_REPLY_SQL}) where external_action_key=? and external_action_key<>''",
                 (external_action_key,),
             ).fetchone()
             if sent is None or sent["reply_text"] != reply_text:
@@ -19939,7 +19939,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (key, business_object_key),
             ).fetchone()
             projected = db.execute(
-                f"select 1 from ({SENT_REPLY_SQL}) where external_action_key=?",
+                f"select 1 from ({SENT_REPLY_SQL}) where external_action_key=? and external_action_key<>''",
                 (key,),
             ).fetchone()
             if recorded is None or projected is None:
@@ -20117,7 +20117,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "external_action_key": action_key,
             }, ignore=True)
             sent = db.execute(
-                f"select * from ({SENT_REPLY_SQL}) where external_action_key=?",
+                f"select * from ({SENT_REPLY_SQL}) where external_action_key=? and external_action_key<>''",
                 (action_key,),
             ).fetchone()
             if sent is None or sent["reply_text"] != reply_text:

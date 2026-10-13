@@ -9,7 +9,8 @@ Store/Audit sent readers now address finite actions while retaining public IDs,
 original sent facts, observer identities, feedback filters and transaction
 boundaries. Recall timestamps are read after the ordinary writer lock is
 acquired, matching the source UPDATE. Integrated paired release acceptance is
-still pending; production remains Store17.
+still pending. Validated nonempty sent external-key lookups use the finite sent
+index for a key seek; production remains Store17.
 The published Store17 contract below continues to describe the live service.
 
 OA return uses its own effect verification, not the approval/rejection node

@@ -3,10 +3,11 @@
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 
 import pytest
 
-from app.action_storage import SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, update_action
+from app.action_storage import SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, insert_action, update_action
 from app.action_delivery_storage import ACTUAL_SOURCE
 from app.store import AutoReplyStore
 from tests.test_agent_turn_store import _claim_consumer, _task
@@ -169,3 +170,57 @@ def test_recall_timestamp_is_taken_after_writer_lock_like_native_source(tmp_path
         native_stamp = db.execute("select recalled_at from sent_replies where id=1").fetchone()[0]
     assert native_stamp >= release_stamp
     assert typed_stamp >= release_stamp
+
+
+def test_sent_external_key_caller_seeks_existing_partial_index(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "key-plan.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(store, task_id, task.execution_generation, owner="plan").run
+    original_connect = store._connect
+    statements = []
+
+    @contextmanager
+    def traced_connect():
+        with original_connect() as db:
+            db.set_trace_callback(statements.append)
+            yield db
+
+    monkeypatch.setattr(store, "_connect", traced_connect)
+    store.record_agent_message_delivery(
+        agent_run_id=run.id, external_action_key="plan-key",
+        conversation_id="conversation", trigger_message_id="message",
+        reply_text="Delivered", provider_result={"receipt": "accepted"},
+    )
+    lookups = [sql for sql in statements if sql.startswith("select * from (select ")
+               and "external_action_key='plan-key'" in sql]
+    assert len(lookups) == 1
+    with sqlite3.connect(store.path) as db:
+        plan = [row[3] for row in db.execute("explain query plan " + lookups[0])]
+    assert any("SEARCH a USING INDEX idx_actions_sent_external_key (external_action_key=?)" in step
+               for step in plan)
+
+
+@pytest.mark.parametrize("key", ["ordinary", " padded ", "nul\x00key"])
+def test_nonempty_external_key_lookup_keeps_native_result(tmp_path, key):
+    source_path = tmp_path / "source.sqlite3"
+    with sqlite3.connect(source_path) as source:
+        objects = ACTUAL_SOURCE["sent_replies"]["objects"]
+        for obj in sorted(objects, key=lambda item: item["name"] != "sent_replies"):
+            source.execute(obj["sql"])
+        source.execute("insert into sent_replies(id,conversation_id,trigger_message_id,reply_text,external_action_key) "
+                       "values(1,'conversation','message','Delivered',?)", (key,))
+        native = source.execute("select id,reply_text from sent_replies where external_action_key=?",
+                                (key,)).fetchone()
+    store = AutoReplyStore(tmp_path / "target.sqlite3")
+    with store._connect() as db:
+        insert_action(db, "sent_replies", {
+            "id": 1, "conversation_id": "conversation", "trigger_message_id": "message",
+            "reply_text": "Delivered", "external_action_key": key,
+        })
+        projected = db.execute(
+            f"select id,reply_text from ({SENT_REPLY_SQL}) "
+            "where external_action_key=? and external_action_key<>''", (key,),
+        ).fetchone()
+    assert tuple(projected) == native
