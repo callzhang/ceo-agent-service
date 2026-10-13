@@ -108,3 +108,27 @@ Normal merge with main1cca085b exposed an actual factory conflict with PR63: the
 ## Explicitly approved single minimal API diagnostic
 
 Derek explicitly approved the prepared single request to the existing api.kksj.org/v1/responses using its configured native-adapter-selected credential, body Return exactly OK., no business/Profile/tools, retries0 and unchanged route. The exact reviewed script hash9c832361... ran once at2026-10-13T04:47:21Z (October12 21:47 America/Los_Angeles). HTTP200, completed, outputOK; no native session or further API request. This proves minimal current-route reachability, not the cause of historical429, native schema/tool support, Task business judgment or valid cold/resume acceptance. Older rejection and429 evidence stays unchanged. The narrow approval is consumed; no additional native/private-payload probe is authorized by this receipt. Metadata: task_skill_api_destination.current.v2.json.
+# Current-main integration and Store17 readback (2026-10-13)
+
+PR57 merged main `46bfdbe0` in `56f57597`. The existing Task prompt builder,
+Task runner and Claude/Friday delivery functions retain their accepted behavior;
+the installed Skill body and Task output schema hashes are unchanged. The nine
+affected test files pass 347 tests. This is integration evidence, not a new
+native business evaluation.
+
+The original Claude session `b885c7ee-5707-42d8-87af-e239be51fb8b` still contains
+both anonymous final outputs. Parsing them with the current Task parser and
+serializing the model with UTF-8, `ensure_ascii=False`, indent 2 and no trailing
+newline reproduces both saved decision hashes. Applying cold then risk to one
+new isolated current Store (`2026-10-13.3`, Store17) gives 1 Project/0 Task/0
+Attention, then 1 Project/1 Task/1 watch Attention. The Project owner remains
+陈明 and `PRAGMA quick_check` returns `ok`. The temporary database was removed.
+This uses `record_run=False`; it does not test scheduler execution, native
+provider execution or production persistence. No provider or Memory call occurs.
+
+The recorded installed/custom Codex session files were not found in the current
+native session inventories. Their previous delivery evidence remains historical;
+current Store reapplication is unverified, and was not reconstructed from report
+counts. The API, Qwen and Friday native business gates remain open.
+
+Compact evidence: `evals/trajectory_optimization/task_skill_current_store.results.v1.json`.
