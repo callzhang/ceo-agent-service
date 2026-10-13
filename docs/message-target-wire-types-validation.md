@@ -9,7 +9,7 @@ single comparison is not a population estimate or a production send failure.
 
 Offline inspection established the concrete boundary defect: the domain presence
 check used `str(value).strip()` without changing the original value. The original
-integer reached the CLI argument builder as an integer. No message was dispatched
+integer would remain an integer in the CLI argv in an offline construction. No message was dispatched
 in this investigation.
 
 The repair validates known message identifiers at the existing fresh Consumer Wire
