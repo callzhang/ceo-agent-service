@@ -38,3 +38,22 @@ The merged scoped verification passed154 tests, including concurrent main's OA a
 ## Remaining gates
 
 Current main is integrated and corrected application/full-copy proof binding has passed. Run complete CI, including the console checks; deploy only after these gates pass. Read back production marker, PID, health, queues, Attention and History. Continue the remaining actions families and phases6–8 toward the unchanged10+1 goal.
+
+
+## Post-merge execution acceptance (before deployment)
+
+The same311 application hashes remain unchanged. Explicit owned Store15-copy lifecycle tests passed11/11 with scripted roles, in-memory providers, blocked network/subprocess and original-row/FK preservation. This is a scripted workflow gate, separate from model evidence; receipt:evals/database_redesign/phase5a_scripted_copy.v1.json.
+
+A real native Codex CLI approve case then passed using the same production-derived Store15 source. Consumer and Audit each returned0; the normal worker created one business attempt, one independent execution receipt and one sent projection through the substitute provider. Original126 nonvirtual/noninternal table rows remained unchanged. The native session remains in the CLI-owned home; no credential/transcript copy was made. Receipt:evals/database_redesign/phase5a_native_copy.v1.json. This real-model case proves approval for the updated storage; scripted branches are not mislabeled as real-model reruns.
+
+The two task-owned temporary workflow directories were checked for open handles and removed after these count/reference receipts were retained. The full schema acceptance source/candidate remain until final deployment/readback. The first complete CI38389507418 subsequently failed as recorded below; no production write/deploy yet.
+
+## PR72 first complete CI and fixture closure
+
+Quality run38389507418 at head4cb8819 completed with9 failed,12196 passed,110 skipped,44 deselected. This is a failed gate, not acceptance. Eight failures reference retired action source tables, the preceding current marker/guard, or a source13 fixture finalizer that migrates an intentionally malformed source before the refusal assertion. The remaining source-compaction assertion includes main's separately approved scalar field evidence, which intentionally repeats scalar literals after the complete candidate.
+
+The corrections use typed action projections, expect the exact current Store15 marker/action guard, retain malformed source13 without a valid-source finalizer, and check source/candidate single serialization separately from exact scalar evidence. Candidate JSON equality, no execution/receipt writes, no mutation on schema refusal and field evidence remain asserted. Runtime code and approval policy are unchanged. A new complete CI pass remains required before release.
+
+The six affected test files pass234 tests with4 skips in174.98 seconds after these corrections. Ruff and diff whitespace checks pass. This targeted result does not replace the required new complete Quality run.
+
+Real Codex CLI revision acceptance also passed:4 native turns, first review returned/rejected then final approve,1 substitute dispatch/verified receipt/business attempt, current done/input compacted, fresh-store terminal reconstruction without a new turn,126 original nonvirtual application tables unchanged. Receipt:evals/database_redesign/phase5a_native_revision.v1.json. No real outbound send. After terminal process/open-handle checks the exact owned revision temporary directory was removed; native trajectory remains solely in the CLI home.

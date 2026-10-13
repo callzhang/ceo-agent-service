@@ -1,0 +1,152 @@
+{
+  "case": "revision",
+  "interrupted": false,
+  "source": {
+    "sha256": "e1b93ed5955fcace259837de722df547b1d3612c223512784018706459a96b78",
+    "source": "retained verified production-derived Store15 copy",
+    "schema": "2026-10-13.1",
+    "case": "revision"
+  },
+  "task_id": 404510,
+  "conversation_id": "native-copy-acceptance:a0d5b988-e7e9-46ab-bbdf-66c1e13f2cc7",
+  "status": "done",
+  "completed": true,
+  "native_invocations": [
+    {
+      "role": "consumer",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "8cf752902502bb040030883af38b139973ca1e7aa51c5aeb8f933483855acad6"
+    },
+    {
+      "role": "audit",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "e7398aa1a7e08c1158b6475ac41f2ab1915d5e3fae7bf673c5c2b9717e436c9a"
+    },
+    {
+      "role": "consumer",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "ed7fb773bac25bc63c15ea1672c08fc5370db6f0f51216c81c17b104d8025f45"
+    },
+    {
+      "role": "audit",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "a4a680e76992648ab18b077fb7cbf6f03bfd5daa9ac8b55cb0d76ff811c1bfa4"
+    }
+  ],
+  "provider_calls": 1,
+  "verification_calls": 1,
+  "runs": [
+    {
+      "id": 351767,
+      "role": "consumer",
+      "status": "completed",
+      "revision": 0,
+      "parent_id": null,
+      "session_id": "01a1351d-3c08-7ac2-93f4-9a37915a4993",
+      "start": 0,
+      "end": 44,
+      "native_exists": true,
+      "tool_events": 5,
+      "error": "",
+      "attempts": [
+        {
+          "id": 351768,
+          "status": "completed",
+          "session_id": "01a1351d-3c08-7ac2-93f4-9a37915a4993",
+          "start": 0,
+          "end": 44
+        }
+      ]
+    },
+    {
+      "id": 351769,
+      "role": "audit",
+      "status": "completed",
+      "revision": 0,
+      "parent_id": 351767,
+      "session_id": "01a1351d-ade2-7ea2-80cc-601ab9dc2eb8",
+      "start": 0,
+      "end": 31,
+      "native_exists": true,
+      "tool_events": 4,
+      "error": "",
+      "attempts": [
+        {
+          "id": 351770,
+          "status": "completed",
+          "session_id": "01a1351d-ade2-7ea2-80cc-601ab9dc2eb8",
+          "start": 0,
+          "end": 31
+        }
+      ]
+    },
+    {
+      "id": 351771,
+      "role": "consumer",
+      "status": "completed",
+      "revision": 1,
+      "parent_id": 351769,
+      "session_id": "01a1351d-3c08-7ac2-93f4-9a37915a4993",
+      "start": 0,
+      "end": 79,
+      "native_exists": true,
+      "tool_events": 5,
+      "error": "",
+      "attempts": [
+        {
+          "id": 351772,
+          "status": "completed",
+          "session_id": "01a1351d-3c08-7ac2-93f4-9a37915a4993",
+          "start": 44,
+          "end": 79
+        }
+      ]
+    },
+    {
+      "id": 351773,
+      "role": "audit",
+      "status": "completed",
+      "revision": 1,
+      "parent_id": 351771,
+      "session_id": "01a1351e-8c6a-77c1-839d-b8edaf46c3f5",
+      "start": 0,
+      "end": 35,
+      "native_exists": true,
+      "tool_events": 4,
+      "error": "",
+      "attempts": [
+        {
+          "id": 351774,
+          "status": "completed",
+          "session_id": "01a1351e-8c6a-77c1-839d-b8edaf46c3f5",
+          "start": 0,
+          "end": 35
+        }
+      ]
+    }
+  ],
+  "reviews": [
+    {
+      "id": 539,
+      "decision": "return",
+      "proposal_revision": 0,
+      "candidate_digest": "6327b0266ed67afa86f3c2ad049060dd5ab9cb5e2e2b0b080e375dd74935a3e7"
+    },
+    {
+      "id": 540,
+      "decision": "approve",
+      "proposal_revision": 1,
+      "candidate_digest": "d552b754bfb1b73a6f6c4d5402eef55bc80eb55d6ab16e95134f30f11842d9ea"
+    }
+  ],
+  "receipts": 1,
+  "sent_replies": 1,
+  "business_attempts": 1,
+  "reopen_no_new_invocation": 4,
+  "original_tables_unchanged": 126,
+  "passed": true
+}
