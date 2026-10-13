@@ -98,7 +98,7 @@ def _selected_contract_document(
     capability: str,
     operation: str | None,
 ) -> str:
-    """Preserve all shared prose and select only the requested executable rows."""
+    """Select shared prose, capability details and requested executable rows."""
     lines = document.splitlines(keepends=True)
     start, end = _action_table_range(lines)
     selected = []
@@ -113,7 +113,15 @@ def _selected_contract_document(
             selected.append(
                 "| " + " | ".join(cells) + " |" + ("\n" if line.endswith("\n") else "")
             )
-    return "".join(lines[:start] + selected + lines[end:])
+    details = []
+    section_capabilities = None
+    heading = "## Capability: "
+    for line in lines[end:]:
+        if line.startswith(heading):
+            section_capabilities = _code_names(line[len(heading):].strip(), field="capability section")
+        if section_capabilities is None or capability in section_capabilities:
+            details.append(line)
+    return "".join(lines[:start] + selected + details)
 
 
 def action_contract_catalog(document: str | None = None) -> str:
@@ -128,7 +136,7 @@ def action_contract_catalog(document: str | None = None) -> str:
     lines = [
         "## System Action Capability Catalog",
         "Consumer proposes these registered reviewed actions; Audit reviews them and system code executes approved actions.",
-        "Before proposing or reviewing one, call `agent_cli.read_system_action_contract` with exact `capability` and `operation` values below. Omit `operation` to validate a capability and list its operations. The lookup preserves all canonical shared rules and returns only the requested capability/operation rows, including action_identity, target, payload, and completion requirements.",
+        "Before proposing or reviewing one, call `agent_cli.read_system_action_contract` with exact `capability` and `operation` values below. Omit `operation` to list its operations. The lookup returns shared rules, selected capability details and operation rows.",
     ]
     lines.extend(
         f"- `{capability}`: " + ", ".join(f"`{operation}`" for operation in names)
@@ -141,7 +149,7 @@ def read_system_action_contract(
     capability: str,
     operation: str | None = None,
 ) -> dict[str, object]:
-    """Return shared rules and selected action rows after exact name validation."""
+    """Return shared rules, selected capability details and action rows."""
     document = _contract_document()
     entries = parse_action_contracts(document)
     by_capability: dict[str, list[str]] = defaultdict(list)

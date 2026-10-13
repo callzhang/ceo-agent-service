@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "base_commit": "ad7a6506",
+  "lengths": [
+    {
+      "capability": "dingtalk-chat",
+      "operation": "reply_to_message",
+      "before": 3997,
+      "after": 3391,
+      "reduction_percent": 15.2
+    },
+    {
+      "capability": "dingtalk-chat",
+      "operation": "send_message",
+      "before": 3997,
+      "after": 3391,
+      "reduction_percent": 15.2
+    },
+    {
+      "capability": "dingtalk-chat",
+      "operation": "send_group_message",
+      "before": 3927,
+      "after": 3321,
+      "reduction_percent": 15.4
+    },
+    {
+      "capability": "dingtalk-chat",
+      "operation": "send_direct_message",
+      "before": 4030,
+      "after": 3424,
+      "reduction_percent": 15.0
+    },
+    {
+      "capability": "dingtalk-chat",
+      "operation": "add_message_emoji",
+      "before": 3980,
+      "after": 3374,
+      "reduction_percent": 15.2
+    },
+    {
+      "capability": "dingtalk-chat",
+      "operation": "add_message_text_emotion",
+      "before": 3985,
+      "after": 3379,
+      "reduction_percent": 15.2
+    },
+    {
+      "capability": "dingtalk-chat",
+      "operation": "create_message_text_emotion",
+      "before": 3986,
+      "after": 3380,
+      "reduction_percent": 15.2
+    },
+    {
+      "capability": "dingtalk-calendar",
+      "operation": "respond_calendar_event",
+      "before": 3947,
+      "after": 2723,
+      "reduction_percent": 31.0
+    },
+    {
+      "capability": "dingtalk-oa",
+      "operation": "approve",
+      "before": 3932,
+      "after": 3427,
+      "reduction_percent": 12.8
+    },
+    {
+      "capability": "dingtalk-oa",
+      "operation": "reject",
+      "before": 3931,
+      "after": 3426,
+      "reduction_percent": 12.8
+    },
+    {
+      "capability": "dingtalk-oa",
+      "operation": "revert_task",
+      "before": 3974,
+      "after": 3469,
+      "reduction_percent": 12.7
+    },
+    {
+      "capability": "dingtalk-oa",
+      "operation": "redirect_task",
+      "before": 3993,
+      "after": 3488,
+      "reduction_percent": 12.6
+    },
+    {
+      "capability": "dingtalk-oa",
+      "operation": "comment",
+      "before": 3911,
+      "after": 3406,
+      "reduction_percent": 12.9
+    },
+    {
+      "capability": "dingtalk-doc",
+      "operation": "create_document",
+      "before": 3938,
+      "after": 2882,
+      "reduction_percent": 26.8
+    },
+    {
+      "capability": "dingtalk-doc",
+      "operation": "create_doc_comment",
+      "before": 3913,
+      "after": 2857,
+      "reduction_percent": 27.0
+    }
+  ],
+  "all_canonical_content_preserved_except_new_scope_headings": true,
+  "all_action_table_rows_unchanged": true,
+  "test_results": "68 passed: action contract catalog, runtime prompt context, prompt composition; regression failed before fix, passed after. Ruff/diff checks pass.",
+  "runs": [
+    {
+      "arm": "correct-1",
+      "phase": "cold",
+      "run_id": 2,
+      "status": "completed",
+      "session_id": "01a12ec7-40eb-7993-9525-947584666ce4",
+      "outcome": "approve",
+      "revision": 0,
+      "candidate_digest": "42ed1f627840cdadfd2ce921064dcd374cd8deb63780c2e5e6adb4bced7cec8a",
+      "variant": "baseline",
+      "strict_business_pass": true,
+      "hashes": {
+        "submitted-task.txt": "cbe51f21a3818064290eb17e1aa51fc40675df1a2e6a147b9b116d90419505a6",
+        "developer-option.txt": "9c8516273f05efeb44ac22cc3aa19c4d103010617a20f3f8f7857b184ff7811c",
+        "events.jsonl": "b29971ece307b2d6dc7ed4a6263ff3d8a4f559aba8ea086706000659ee46ca28",
+        "calls.json": "aa8463f1e5a8abdbfb93547e2fbe7f30e4ad8140b9fce6cd38aba0eb617bf877",
+        "result.json": "5a7bf0808be09e977d972c93b5669949cde23b4bbbea324581e39ab57eddbcff"
+      },
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ]
+    },
+    {
+      "arm": "wrong_destination",
+      "phase": "cold",
+      "run_id": 2,
+      "status": "completed",
+      "session_id": "01a12ec7-8833-70d0-8637-26304033d7de",
+      "outcome": "return",
+      "revision": 0,
+      "candidate_digest": "a1a9e904c17a5bf3fcb94a62a15c290bf9b3de3f3617aca5de15c47d8de0125e",
+      "variant": "baseline",
+      "strict_business_pass": true,
+      "hashes": {
+        "submitted-task.txt": "330d2a94566d73f743c8455a7f323e028eab0d799431c0f8986587ca699d43d8",
+        "developer-option.txt": "971f0919a05f4a8ee633d5529eae37376e9e766f2c63a528046c9fda5a0f9b63",
+        "events.jsonl": "054b4602aea5f688a82072bde3aab892af876aaadc7948a929e489202ad86ffa",
+        "calls.json": "aa8463f1e5a8abdbfb93547e2fbe7f30e4ad8140b9fce6cd38aba0eb617bf877",
+        "result.json": "10a36756217596ee4ece1d6a3ed63ff15ac554a3f23274e2fc6ba5904cf269b6"
+      },
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ]
+    },
+    {
+      "arm": "correct-1",
+      "phase": "cold",
+      "run_id": 2,
+      "status": "completed",
+      "session_id": "01a12ec8-22f2-7631-8965-22cc6c047866",
+      "outcome": "approve",
+      "revision": 0,
+      "candidate_digest": "42ed1f627840cdadfd2ce921064dcd374cd8deb63780c2e5e6adb4bced7cec8a",
+      "variant": "scoped",
+      "strict_business_pass": true,
+      "hashes": {
+        "submitted-task.txt": "cbe51f21a3818064290eb17e1aa51fc40675df1a2e6a147b9b116d90419505a6",
+        "developer-option.txt": "ea6beb33fe510ad06410966dc8b69d76ed486fb0b3cc32da114cd1f40b7fb9ad",
+        "events.jsonl": "63f1c38a8f205e161988f44a237a74a0839ec7461d43e07b82d719d463f45198",
+        "calls.json": "aa8463f1e5a8abdbfb93547e2fbe7f30e4ad8140b9fce6cd38aba0eb617bf877",
+        "result.json": "cb29140c6c2d10ae254ee3dc4300f2c8e2ff1ce3bcd22d5bec379964cca1d0d2"
+      },
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ]
+    },
+    {
+      "arm": "wrong_destination",
+      "phase": "cold",
+      "run_id": 2,
+      "status": "completed",
+      "session_id": "01a12ec8-72cd-7682-8648-6e18f4eb99e8",
+      "outcome": "return",
+      "revision": 0,
+      "candidate_digest": "a1a9e904c17a5bf3fcb94a62a15c290bf9b3de3f3617aca5de15c47d8de0125e",
+      "variant": "scoped",
+      "strict_business_pass": true,
+      "hashes": {
+        "submitted-task.txt": "330d2a94566d73f743c8455a7f323e028eab0d799431c0f8986587ca699d43d8",
+        "developer-option.txt": "3077da9f709e821fb41bbd68d923e92b3f94b57646a8f55689921d9275a99c57",
+        "events.jsonl": "cc341a698ab159bf1cc3f28074d3d3334c551db5ffe173d57d67581712313dc6",
+        "calls.json": "7cc71c8fb540d7cf3169b0270f245f67e2820f3def97d3e5ce1047a2c18a1eb0",
+        "result.json": "2b3b1ef7e129e0be987bc4872c0757c95d062bf156d5470df08ad62dd053ec4a"
+      },
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ]
+    }
+  ],
+  "input_comparison": [
+    {
+      "arm": "correct-1",
+      "task_equal": true,
+      "developer_equal": false
+    },
+    {
+      "arm": "wrong_destination",
+      "task_equal": true,
+      "developer_equal": false
+    }
+  ],
+  "independent_review": "All four full native trajectories and scope assignments reviewed; legal approves, wrong node returns only genuine target correction.",
+  "limitations": [
+    "Synthetic OA scene only; empty Profile and synthetic Skill.",
+    "Task inputs identical; Developer differs only in native runtime timestamp/workspace metadata.",
+    "No causal improvement in ID misjudgment claimed; prior real-lifecycle failures remain.",
+    "No production deployment or four-domain business acceptance yet."
+  ],
+  "artifact_root": "/private/tmp/ceo-contract-scope-eval-_ofohmkd"
+}

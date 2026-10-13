@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+| codex-action-contract-scope | Isolated /private/tmp/ceo-action-contract-scope: app/action_contract_catalog.py, docs/system-action-contracts.md, tests/test_action_contract_catalog.py, docs/architecture.md/runtime-mechanism.md (lookup scope), scope validation/evidence | Separate approved instruction optimization: explicit capability sections preserve canonical rules; lookup returns shared rules plus selected capability prose/table. No handler, audit policy, schema, routing or source changes. Root owns fixed comparisons before release. | active 2026-10-12 |
+
 
 
 
@@ -1123,3 +1125,5 @@ reverts committed work they did not author.
 | codex-message-native-release-readback | docs/message-native-output-validation.md and evals/trajectory_optimization/message_native_budget.release.v1.json | Save verified PR68 formal deployment, backup, PID, operational endpoints and installed cold/resume command settings; no new model request or business replay. | verified 2026-10-12; deployed06c08020/PID43583; business outcome remains awaiting natural trajectory |
 
 | codex-message-post-release-trajectories | docs/message-native-output-validation.md and message_native_budget.post_release.v1.json metadata only | Read six terminal actual post-release attempts, preserve successful feedback correction and no-truncation evidence; no source originals, model replay or policy/prompt change. | verified 2026-10-12 |
+
+| codex-action-contract-scope-current-main | Existing PR52 normal main integration, scoped contract regressions and validation documentation | Preserve current role/session/Skill/source behavior and existing policy; integrate both independent claim rows. No provider replay or publication of incomplete business gates. | active 2026-10-12 |

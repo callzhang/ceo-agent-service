@@ -49,6 +49,15 @@ an example or a previous instance. An unsupported operation fails explicitly.
 | `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |
 | `dingtalk-doc` | `create_doc_comment` | `node_id` | `content` | Provider `commentKey`; otherwise uncertain |
 
+A generic
+`success: true` without a domain ID or positive readback does not establish
+completion. After an unknown dispatch, the service preserves the action as
+uncertain and does not resend it on restart. Xiaoqing transcript and interview
+uploads have no service-owned native client and are not registered system
+actions.
+
+## Capability: `dingtalk-oa`
+
 For these registered OA operations, `process_instance_id`, `task_id`,
 `target_activity_id` and `to_actioner_id`, where required above, are exact
 nonempty string identifiers. The Consumer must source the process and task
@@ -58,18 +67,21 @@ exact string before Audit reviews the action. Audit checks that source binding,
 while the action model and wire schema reject malformed identifier types before
 review.
 
+The native OA records readback exposes
+`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment
+body or comment ID.
+
+## Capability: `dingtalk-chat`
+
 For message sends, the service first stores the composed final body. The
 Consumer action must carry that same body. The service does not compose a new
 body after Audit approval. A selected option has its own prepared delivery key.
 
 The native reaction list exposes `result.messages[].openMessageId` and
 `emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back
-for the exact message and principal. The native OA records readback exposes
-`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment
-body or comment ID. The document comment and text-emotion reads have no
-confirmed unique correlation shape in the current native CLI schema. A generic
-`success: true` without a domain ID or positive readback does not establish
-completion. After an unknown dispatch, the service preserves the action as
-uncertain and does not resend it on restart. Xiaoqing transcript and interview
-uploads have no service-owned native client and are not registered system
-actions.
+for the exact message and principal.
+
+## Capability: `dingtalk-doc`, `dingtalk-chat`
+
+The document comment and text-emotion reads have no
+confirmed unique correlation shape in the current native CLI schema.
