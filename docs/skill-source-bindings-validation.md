@@ -109,7 +109,9 @@ Consumer17 response items and Audit14. Canonical results are no_action/approve.
 Both read message-triage and chat Skills; Consumer reads both frozen sources,
 while Audit reads the installed chat dependency after the frozen workflow.
 Audit independently reads current conversation. Consumer also executes its shared
-AGENTS read: that custom output is18,771 characters. It is bootstrap/engineering
+AGENTS read: the returned text blocks are18,547 characters (AGENTS body18,500).
+The18,771-character artifact count is Python list representation including wrappers,
+not model-visible plain text; both measurements are explicitly labeled. It is bootstrap/engineering
 instruction material, not the business Skill. The source callback outputs are
 8,160/6,976 characters for Consumer, and8,160/6,865 for Audit; Audit conversation
 output is33,916 characters. Wrapper/reader formatting differs, so these counts do
@@ -124,3 +126,5 @@ Next control should preserve the independent state check while comparing explici
 mandatory bindings versus available applicable source entries on an equivalent
 anonymous closed-exchange case. No shared instruction or Audit policy change is
 justified by this inventory alone.
+
+Independent readonly review verified native hashes/counts, all calls and canonical results; its output-block representation correction is reflected in the artifact and counts above.

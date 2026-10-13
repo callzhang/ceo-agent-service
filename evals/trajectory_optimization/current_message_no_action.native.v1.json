@@ -39,25 +39,33 @@
           "call_id": "call_adaee81efee14faabcaa270ca9d97512",
           "characters": 18771,
           "sha256": "e4812d81228a6443014fec9537bf9d7e48cd691a8de2716b038ee8e99255a603",
-          "contains_output_truncated_marker": false
+          "contains_output_truncated_marker": false,
+          "representation": "python-str-of-output-block-list",
+          "text_block_characters": 18547,
+          "text_block_sha256": "48d84a725090f8b6657c2f7b257ad95899f3deaf55baceefdfc0a925cc823c2e"
         },
         {
           "call_id": "call_afe64f27ba5641f898613ed86526c81f",
           "characters": 210,
           "sha256": "320ad36bb549f0e758568e7def70b742efa3a0542d3f33bf7410a1fc1e1ff9cc",
-          "contains_output_truncated_marker": false
+          "contains_output_truncated_marker": false,
+          "representation": "python-str-of-output-block-list",
+          "text_block_characters": 133,
+          "text_block_sha256": "b2241301ebb48b58f54fa839517d07e4e9216eed6997d35de721e3a71a9eb294"
         },
         {
           "call_id": "call_2733f18d143641c4b5dbdb75f06ad27e",
           "characters": 8160,
           "sha256": "c50341cd42958bf339300b82eea01ab92d9d6d5906e7bd849387208d623878e5",
-          "contains_output_truncated_marker": false
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
         },
         {
           "call_id": "call_bafca4043939459a935233bc0e430142",
           "characters": 6976,
           "sha256": "708fe50fe57f0a48868d2c5220184720fe2e4132463415f46538c0c2e00234cc",
-          "contains_output_truncated_marker": false
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
         }
       ],
       "message_sizes": [
@@ -121,19 +129,22 @@
           "call_id": "call_6a2df2533b7e471fb2fae8c6b930ed65",
           "characters": 8160,
           "sha256": "e2b342f610a6a4c32e27d5cf5e8cfeda983a94a5a2caba786239dc391ec94784",
-          "contains_output_truncated_marker": false
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
         },
         {
           "call_id": "call_840039f3ee69454889beea924bc631bb",
           "characters": 6865,
           "sha256": "62bcf3555a7ec6519e5b2b43d1b1475a603cf996fad79eac38901c811c8839c6",
-          "contains_output_truncated_marker": false
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
         },
         {
           "call_id": "call_988fc3244e124307bf2a4fb673bd59c9",
           "characters": 33916,
           "sha256": "453b32897f5c721a60ddf47768c04e1b06e4452e00c316f83cbf6a576011817d",
-          "contains_output_truncated_marker": false
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
         }
       ],
       "message_sizes": [
@@ -174,7 +185,8 @@
     "Audit reads current conversation; live-state verification is necessary under unchanged workflow and is not classified as redundant.",
     "No explicit content clipping marker found in returned text; this does not prove transport equality to original provider records.",
     "This metadata inventory alone does not prove an incorrect judgment or justify deleting a rule.",
-    "Consumer custom exec returns 18,771 characters for its shared AGENTS read, plus the subsequent composed wrapper and two Skill outputs. This is engineering/bootstrap instruction material, not business source facts. Native observation alone does not authorize changing shared instructions."
+    "Consumer shared AGENTS custom output contains 18,547 characters of returned text blocks; the previous 18,771-character count measures Python list representation including wrappers. This is engineering/bootstrap instruction material, not business source facts. Native observation alone does not authorize changing shared instructions."
   ],
-  "next_control": "Use equivalent anonymous closed-exchange case to compare declared mandatory sources with available applicable sources, retaining independent current-conversation Audit verification."
+  "next_control": "Use equivalent anonymous closed-exchange case to compare declared mandatory sources with available applicable sources, retaining independent current-conversation Audit verification.",
+  "independent_review": "All native counts, hashes, call/source metadata and canonical results verified; custom output block-list versus text counting boundary corrected."
 }
