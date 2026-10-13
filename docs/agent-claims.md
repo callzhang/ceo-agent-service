@@ -1170,3 +1170,5 @@ reverts committed work they did not author.
 | codex-phase5b-native-fixture-alignment | tests/run_schema_fixtures.py; tests/test_agent_turn_store.py; native validation/docs only | Preserve independently migrated source receipt values via new typed writer when populating current target; historical source SQL unchanged. Actual3 fixture failures reproduced. | active 2026-10-13 |
 
 | codex-phase5b-scripted-copy-readback | tests/test_database_copy_lifecycle_acceptance.py; phase5b native/scripted evidence and validation docs | Keep actual copied Store16 workflow business assertions, convert three retired-table readbacks. Explicit owned copy RED reproduced, no runtime/policy change. | active 2026-10-13 |
+
+| codex-phase5c-postfix-source-oracle | docs/superpowers/specs/2026-10-13-database-redesign-phase5c-postfix-source.json; tests/test_postfix_action_source.py; phase5c draft plan only | Freeze next three-table composite-key/FK source contract while Phase5B CI runs. No Store version reservation, runtime edits, provider or production operation. | active 2026-10-13 |
