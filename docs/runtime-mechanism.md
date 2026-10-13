@@ -59,24 +59,25 @@ assertion matches. Scalar field evidence is rendered before the complete final
 candidate JSON; source bindings remain in that JSON without repeating their
 values in the field index.
 
-OA Attention is a business-pending projection: the scanner starts tracking the
-exact principal-owned RUNNING nodes from the authenticated pending list and
-source details. Once tracked, the OA process remains in Attention while it is
-still running and has neither completed nor been explicitly returned, even if
-its current node moves to another approver. A completed comment or internal
-`done`/`no_action` does not remove it. Partial scans and source-read failures
-retain previous pending processes; non-OA pending/processing/needs_human status
-alone remains excluded.
+OA Attention is a business-pending projection for work Derek still owns or must
+review. The scanner tracks exact Derek-owned RUNNING nodes from the authenticated
+pending list and source details. A locally completed reply task does not remove
+an OA item while that exact external node is still RUNNING for Derek. Conversely,
+an overall RUNNING process is not Derek's Attention when the exact tracked node
+is completed or assigned to another approver; the scanner removes only that
+node's key and preserves the historical task/attempt. Partial scans, missing
+identity, malformed ownership/status, and source-read failures retain prior
+keys because they cannot prove that Derek's responsibility ended. Non-OA
+pending/processing/needs_human status alone remains excluded.
 
-Reconciliation does not treat absence from the principal's pending list as
-completion or return. It removes the process from Attention only when live
-detail proves a terminal process, or when the exact reviewed task is canceled,
-the principal has no current RUNNING node, and the latest workflow-changing
-operation is that principal's `REDIRECT_PROCESS`. A running process that merely
-moved to another node remains unresolved in OA Attention; comments and
-unrelated task transitions are not return receipts. Historical local closures
-made solely for `OA_TASK_NOT_PENDING` are rechecked and restored to the
-projection when their live process is still running without a verified return.
+Reconciliation removes an item when live detail proves the process terminal,
+the exact reviewed task is no longer assigned to Derek or is terminal, or when
+the exact reviewed task is canceled and the principal's latest
+workflow-changing operation is `REDIRECT_PROCESS`. Absence from a pending-list
+page alone is not proof. Comments and unrelated transitions are not return
+receipts. Historical local closures made solely for `OA_TASK_NOT_PENDING` are
+rechecked without rewriting their attempts: they remain projected only while
+the exact task is still Derek's live action or the source cannot be verified.
 The service's DingTalk OpenAPI reader returns snake-case `process_instance`,
 `operation_records`, and operation fields; reconciliation reads those native
 records as well as the CLI detail projection before deciding a verified return.
@@ -2804,9 +2805,18 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
 第五期C已通过PR77／46bfdbe0正常发布，生产Store17／Email51及126物理表读回通过；实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
+
 OA approval Attention reflects an unresolved process-level state from the latest
 verified provider scan. A running OA process may have completed the current
 principal's node and moved to another approver; unless the provider detail
 identifies the current node owner, the projection must not claim that the
 principal's node is still pending. Keep the process in Attention until a final
 approval or return receipt is read back.
+
+### 日历组织者来源字段
+
+日历解析继续生成原有 organizer 显示字符串，同时在 organizer_details 中保留
+provider 返回的完整组织者对象。日历事件读取、窗口读取及既有 model_dump 任务输入
+因此可看到原始 userId、openDingTalkId、邮箱及其他来源字段，字符串标识和嵌套值
+不被改写。来源只有字符串时 details 为空，不根据显示名猜测稳定身份。新增对象是
+来源证据，不能冒充接收人核验或授权结果；既有动作、Audit、通知和运行路线不变。
