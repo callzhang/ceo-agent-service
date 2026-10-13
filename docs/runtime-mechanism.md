@@ -2772,3 +2772,6 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 配对逆迁按捕获的源声明恢复当前事实与当前水位，保留迁移后的新增、修改和删除，不恢复旧备份内容。
 发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
 完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
+
+
+原生 Codex Audit 输出投影跟随当前 AuditFeedback 模型，包含 observation_basis 与 candidate_field_assertions；断言路径保留 string/integer，断言 value 沿用完整递归 JSON entries 转换。解码后仍使用当前主干的完整业务模型和绑定候选字段校验，不省略或替代该校验。固定原生 schema 快照由当前模型生成，快照一致性在测试中验证。

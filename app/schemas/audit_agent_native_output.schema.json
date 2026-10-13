@@ -61,7 +61,7 @@
     "feedback": {
       "anyOf": [
         {
-          "$ref": "#/$defs/AuditFeedback"
+          "$ref": "#/$defs/_AuditFeedbackWire"
         },
         {
           "type": "null"
@@ -90,7 +90,106 @@
   ],
   "type": "object",
   "$defs": {
-    "AuditFeedback": {
+    "CandidateFieldAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "json_type": {
+          "enum": [
+            "null",
+            "boolean",
+            "number",
+            "string",
+            "array",
+            "object"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "value",
+        "json_type"
+      ],
+      "type": "object"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/JsonValue"
+                  }
+                },
+                "required": [
+                  "key",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false,
+          "description": "Lossless JSON object: entries contains each original key and its value. Nested JSON objects use the same representation."
+        }
+      ]
+    },
+    "RiskLevel": {
+      "description": "Estimated consequence if the proposed result is acted on incorrectly.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "_AuditFeedbackWire": {
       "additionalProperties": false,
       "properties": {
         "rule": {
@@ -104,23 +203,31 @@
         "requested_revision": {
           "minLength": 1,
           "type": "string"
+        },
+        "observation_basis": {
+          "description": "Use candidate_fields for claims about current candidate JSON values, types or paths; business for policy, authority and source judgments.",
+          "enum": [
+            "business",
+            "candidate_fields"
+          ],
+          "type": "string"
+        },
+        "candidate_field_assertions": {
+          "description": "For candidate_fields, supply the exact candidate-relative path, literal value and JSON type; System checks these before adopting feedback.",
+          "items": {
+            "$ref": "#/$defs/CandidateFieldAssertion"
+          },
+          "type": "array"
         }
       },
       "required": [
         "rule",
         "observation",
-        "requested_revision"
+        "requested_revision",
+        "observation_basis",
+        "candidate_field_assertions"
       ],
       "type": "object"
-    },
-    "RiskLevel": {
-      "description": "Estimated consequence if the proposed result is acted on incorrectly.",
-      "enum": [
-        "low",
-        "medium",
-        "high"
-      ],
-      "type": "string"
     },
     "_AuditWire": {
       "additionalProperties": false,
@@ -185,7 +292,7 @@
         "feedback": {
           "anyOf": [
             {
-              "$ref": "#/$defs/AuditFeedback"
+              "$ref": "#/$defs/_AuditFeedbackWire"
             },
             {
               "type": "null"
