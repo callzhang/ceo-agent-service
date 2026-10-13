@@ -524,10 +524,11 @@ def render_task_skill_discovery(
         if frozen:
             names = ", ".join(f"`{name}`" for name in selected if name in frozen)
             instructions.append(
-                f"For the task-frozen selection {names}, call "
-                "`agent_cli.read_task_skill(name)` before deciding or reviewing. "
-                "That lookup returns this task's exact frozen content; do not "
-                "substitute a similarly named installed Skill."
+                f"For the task-frozen selection {names}, use this task's exact content. "
+                "Reuse complete content already loaded in this session only while "
+                "this selected frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content "
+                "with `agent_cli.read_task_skill(name)`; do not substitute a similarly "
+                "named installed Skill."
             )
         installed = tuple(name for name in selected if name not in frozen)
         if installed:

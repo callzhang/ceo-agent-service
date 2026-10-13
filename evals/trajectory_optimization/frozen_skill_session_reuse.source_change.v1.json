@@ -1,0 +1,371 @@
+{
+  "version": 1,
+  "scope": "Synthetic new frozen Skill input snapshot/generation in existing valid feedback sessions with production role defaults; original facts and input13 preserved. Not service-run orchestration/provider/compaction acceptance",
+  "source_root": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7",
+  "original_input13_unchanged": true,
+  "current_input14": true,
+  "original_trigger_text_unchanged": true,
+  "frozen_material_sha256": "a8fe4aa957f5baf1184fe32691eec3155de2a73e05224b4f3cea668df3bdf1af",
+  "frozen_material_chars": 611,
+  "task_bound_input_sha256": "484ccb645dbb4c5169ab7dc633af7fa8308ab36722c7ccf88159c787e993cdec",
+  "corrected_digest": "954cf27bfb2b0a2ec343ca2f4e5187efe9cfc41cbcae3234ac77dcd57cac2ced",
+  "runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "changed",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13214-9e5d-7351-a1f2-0803d428b467",
+      "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 2,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "文档标题所述 stated total 为120 units；三条完整明细行合计为110 units（40 + 50 + 20）。因此，标题总额与明细行合计相差10 units，且标题总额高于明细行合计。该未解决的算术差异应等待文档所有者确认；110 units 只是根据明细行计算出的合计，不是已批准的更正总额。依据任务冻结的文档审查指引，未改写源文档，也未声称任何更正已获批准。原始请求未要求外部变更，因此无需提出或执行外部操作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": null,
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "0dc3e332a1b098a16ca6c1119c8188d1f5ba97060179a07c823757a250c0bcba",
+          "model_chars": 737,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "965a3d25f1732cfdd5a7fc445cb94707d248610e6b0b436da363b2c0d8bb3cf6",
+      "native_cold_prefix_sha256": "3404a717ae190f45157c0eff871cd964c1bb683e50861b78c108a47c88142365",
+      "native_full_sha256": "5240bf5dfee807309d32d268c7de0e57cd94c51301d1eafc45d82997bd8d7527",
+      "task_sha256": "f01e8bd464074c5cea73073efe70b5cc9f888d3f2b88123332948d951c526a6a",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "command_sha256": "dd0564e6dd6a466d17e76f517d09a4d8c91f936352136c3130cdf4053d04f662",
+      "events_sha256": "8747a29a403e21c7d4941b95ef0fd50ecf104bb0663196493ea4f7748e1c12de",
+      "compaction_events": 0
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "changed",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13214-be6d-7693-85c1-55ef4b5a3bc4",
+      "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 2,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "The document heading/stated total is 120 units. The three complete item rows sum to 110 units (40 + 50 + 20), producing a 10-unit discrepancy. The arithmetic discrepancy remains awaiting document-owner confirmation; the calculated sum is not an approved corrected total. The source remains unchanged, no correction is claimed as approved, and no external change is requested.",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": null,
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "0dc3e332a1b098a16ca6c1119c8188d1f5ba97060179a07c823757a250c0bcba",
+          "model_chars": 737,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "74e7770761e7493f69b9cfad048eda0b2e637989629651fb8e73bf2152e5d68a",
+      "native_cold_prefix_sha256": "bdab99331eb9aebbf96f3db667fc028ab9a5544e263df061e0ebd5f6170f232a",
+      "native_full_sha256": "d5c173736b8aabd83d55f5d2a6cae1e3c774f7ecc33778f00d41c35f9093405c",
+      "task_sha256": "6d429cbd0716bcdfb94df9e6f9bc71b6e044d2ce43661b4ed8fcf8f0f8ad2144",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "command_sha256": "70995aef10534d3c7e3902219f5703955e8b72f5ec53d8061e824bc12881bfb8",
+      "events_sha256": "fee4877c4152c5ba3f9554ac9716e756124d6e22560c0dd874d58470c9350433",
+      "compaction_events": 0
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "changed",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13215-08b4-7823-aef1-1351514c92a4",
+      "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "approve"
+      ],
+      "expected_digest": "954cf27bfb2b0a2ec343ca2f4e5187efe9cfc41cbcae3234ac77dcd57cac2ced",
+      "expected_revision": 2,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "approve",
+        "summary": "Approved. The candidate accurately reports the stated total of 120 units, the complete-row sum of 110 units (40 + 50 + 20), and the 10-unit discrepancy. It correctly describes the unresolved discrepancy as awaiting document-owner confirmation, makes clear that 110 units is a calculated sum rather than an approved correction, and preserves the no-action scope without rewriting the source or claiming approval.",
+        "proposal_revision": 2,
+        "candidate_digest": "954cf27bfb2b0a2ec343ca2f4e5187efe9cfc41cbcae3234ac77dcd57cac2ced",
+        "evidence_refs": [
+          "candidate.summary",
+          "candidate.source_bindings[0].value.trigger_text",
+          "candidate.source_bindings[0].value.trigger_raw_payload.document",
+          "ceo-document-review revision 42"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": null,
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "0dc3e332a1b098a16ca6c1119c8188d1f5ba97060179a07c823757a250c0bcba",
+          "model_chars": 737,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "079bda5cab21aea4e75bffa4bc9712cf6dd1eca1e54de9c83f9d5f403592d23d",
+      "native_cold_prefix_sha256": "ba29b55cdadaab90166a618ba377a1173039a4fa170cb47de2bcdaed6072147f",
+      "native_full_sha256": "7e7850df82f87a26e39bbbda84a0c69a697bb22186f70954023f26b9e5c88dcb",
+      "task_sha256": "3dfb6c14819eb55fa03bc9d7d548b170cfe2c4331a9296a3f097ee310a2bf5b2",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "command_sha256": "f11e063dc128d18e0c19861bd5448b40b7e65656bc3f09e4318fe2cc02a9f322",
+      "events_sha256": "ca162e86eb341d0a8b496dd9c321644876a82c3a7c2a0d4e053d12ab7be51bd8",
+      "compaction_events": 0
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "changed",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13215-561d-75b3-9b29-d303eec475a4",
+      "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "approve"
+      ],
+      "expected_digest": "954cf27bfb2b0a2ec343ca2f4e5187efe9cfc41cbcae3234ac77dcd57cac2ced",
+      "expected_revision": 2,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "approve",
+        "summary": "Approved: the candidate correctly reports the stated total as 120 units, the complete-row sum as 110 units, and the 10-unit discrepancy with the stated total higher. It correctly describes the unresolved discrepancy as awaiting document-owner confirmation, clearly states that 110 units is only the calculated sum and not an approved correction, and does not modify the source or initiate external action.",
+        "proposal_revision": 2,
+        "candidate_digest": "954cf27bfb2b0a2ec343ca2f4e5187efe9cfc41cbcae3234ac77dcd57cac2ced",
+        "evidence_refs": [
+          "candidate.source_bindings[0].value.trigger_text",
+          "candidate.source_bindings[0].value.trigger_raw_payload.document",
+          "managed:ceo-document-review@revision-42"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": null,
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "0dc3e332a1b098a16ca6c1119c8188d1f5ba97060179a07c823757a250c0bcba",
+          "model_chars": 737,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "c8004b46f3d15a6e5cf7eb34191f2f2af52eb94262ab0942b1f3c04820c49754",
+      "native_cold_prefix_sha256": "d833efa8b26ae735a1985d7ffe4a43b36a5f98fd49e0214e07ad280ccb0c22f0",
+      "native_full_sha256": "d6094e07fdbe7ac8899919a22d0ca6a11788e86a2884e6a3b282a96efcd6d649",
+      "task_sha256": "38fe92974615b5f7e2ea1c7c03ed7cdeabea576624369f337fd20a05da47d3e1",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "command_sha256": "511c56b1203c80497d4681c863a73745aa4db4fdf603b476fc695a0e1081acfa",
+      "events_sha256": "8d3555f783ab269e4a0773ab5711c4b3aab42f22a7e35f1294f1ba694123589e",
+      "compaction_events": 0
+    }
+  ],
+  "pre_model_fixture_failure": {
+    "phase": "pre-model fixture setup",
+    "session_id": null,
+    "cause": "Harness placed parent-owned input_version on reply_task_inputs, rejected by existing typed storage CHECK. Transaction rolled back. Remove only that input column; keep input_revision_key on snapshot, input_version/claimed_input_version on parent task. No service code change."
+  },
+  "old_feedback_prefix_matches_original_v1_full_hash": true,
+  "frozen_source_change": {
+    "old_revision": 41,
+    "new_revision": 42,
+    "old_body_sha256": "c05f0e627ebc2f796020a97b33cb0b44b359958381f0497b038643f5084e86b6",
+    "new_body_sha256": "a8fe4aa957f5baf1184fe32691eec3155de2a73e05224b4f3cea668df3bdf1af",
+    "input_snapshot_ids": [
+      13,
+      14
+    ],
+    "new_input_revision_key": "synthetic-skill-revision42",
+    "new_execution_generation": "synthetic-feedback-2",
+    "old_snapshot_json_sha256": "4eabc6826f9e21e5186524f1a361005675d1f1604e6a44fe586a7c7a1060af22",
+    "new_guidance": "Describe unresolved arithmetic discrepancy as awaiting document-owner confirmation; calculated sum is not an approved corrected total."
+  },
+  "limits": "Temporary typed Task/input snapshot binding and native continuations only. Parent version/generation metadata set by fixture, not persisted service orchestration. Synthetic short guidance/profile/provider, no compaction or actual provider acceptance. Do not combine old evidence moment current claim13 with later claim14 as if state unchanged.",
+  "manifest_metadata_correction": {
+    "original_sha256": "c03b82a85e7936e4a184078e4be4d21412f11e86b8ba1842b9b8a4b0960281b4",
+    "corrected_sha256": "d1acf82fd50bb49e14f5515cf808685c943a863c43af51fa766a014a41e462af",
+    "manifest": {
+      "version": 3,
+      "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+      "model": "gpt-5.6-luna",
+      "comparison": "mandatory frozen Skill read each turn versus unchanged complete session content reuse",
+      "phases": [
+        "Consumer same-session new frozen source",
+        "Audit same-session candidate using new frozen source"
+      ],
+      "fault_injection": "None in this changed-source phase. Continue the valid prior feedback sessions; the earlier stage intentionally corrupted only a copied summary.",
+      "role_controls": "Existing make_consumer_agent_command/make_audit_agent_command defaults; local read_task_skill server only, bound to input14/generation synthetic-feedback-2. No role policy override.",
+      "original_task_facts_immutable": true,
+      "source_immutable_within_phase": true,
+      "source_changed_since_feedback": true
+    },
+    "reason": "Copied manifest incorrectly described prior four feedback phases and fault injection as current; corrected only phase/scope metadata, preserving original. No native run or output changed."
+  },
+  "independent_review": "native_catalog_review verified all four same-SID prefixes against the prior full hashes, exact old13/new14 rows and source/generation metadata, paired controls/Task-only intended diff, complete new body in MCP/model and current digests/revisions. Identified inherited manifest scope error; scope metadata corrected and original retained. Synthetic versioned-source mechanism only; no production orchestration/provider claim."
+}
