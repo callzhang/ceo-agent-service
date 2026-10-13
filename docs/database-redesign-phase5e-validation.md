@@ -1,7 +1,44 @@
 # Phase5E source refresh and execution boundary
 
-This is source preparation for the approved Attempt/Memory action consolidation,
-not target storage, a migration, a new Store version or a deployment. The full
+## Task 2 opt-in finite storage checkpoint
+
+The isolated E candidate adds two opt-in `actions` record types with separate
+canonical declarations for `actual_no_memory_fk` and `fresh_memory_fk`. It has
+no Store version, bootstrap choice, migration, caller activation or production
+effect. Public Attempt and Memory IDs remain distinct integer namespaces; the
+physical `actions.id` remains internal. Actual Memory keeps its scalar
+association and four historical Attempt fields; fresh Memory has an immediate
+typed parent FK and omits those four fields. Attempt `agent_run_id` remains a
+scalar and does not acquire the shared run FK. Only exact queued `audit_review`
+markers survive in Attempt event arrays; Memory copied payloads project as
+`{}`. All other source fields use the shared finite `payload_json` with SQLite
+typed generated projections; a confined storage-class tag preserves legal BLOB
+and nonfinite values without parsing raw inner receipt strings. The opt-in
+choice leaves the older six/nine/twelve/fourteen-type layouts unchanged.
+
+The fresh Memory parent alone uses a physical typed FK. Index and constraint
+fields are generated from the shared type payload with their original affinities;
+the actual Memory association stays in that payload. The E payload decoder
+currently uses SQLite `unhex` for BLOB projections. It passed on the local
+SQLite 3.53.4 runtime; CI/runtime support must be checked before E publication.
+This is a target storage checkpoint, not accepted migration or caller behavior.
+No source row or provider action was changed here.
+
+The final local focused gate ran the frozen reply source oracle, new E target
+comparisons, and the existing action, receipt, postfix and delivery storage
+suites: 295 passed, five variant-specific skips. Ruff and `git diff --check`
+passed. The first E test run failed because the opt-in schema flag was absent;
+the final run passed after implementation. The checks cover retained field
+values and SQLite storage classes, both variants, raw BLOB/NUL/nonfinite
+updates, allocator high water and SQLITE_FULL transaction effects, queued
+marker pruning, and indexed lookups with unrelated action volume. Independent
+review, migration, publication and production readback remain separate gates.
+
+## Earlier source preparation
+
+The work below was source preparation for the approved Attempt/Memory action
+consolidation before the isolated target storage checkpoint above. It did not
+migrate rows, reserve a new Store version or deploy. The full
 ten business/runtime tables plus one migration table goal remains incomplete.
 The managed Phase5C checkout was clean and has been reused on the independent
 `codex/database-redesign-phase5e-20261013` branch at D candidate5221062d.
