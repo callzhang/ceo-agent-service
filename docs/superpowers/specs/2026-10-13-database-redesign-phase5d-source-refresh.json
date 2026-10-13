@@ -1,8 +1,9 @@
 {
-  "scope": "source16 metadata refresh before actual C publication; no D activation or future-source claim",
-  "production_commit": "d7397203df678fd4137c237eb7eb84a671e084f3",
-  "store_version": "2026-10-13.2",
-  "candidate_commit": "826bfdf8f0b6b676203133fa8fcc5d253a6975c6",
+  "scope": "actual published Store17 source binding for Phase5D; target storage not activated",
+  "captured_at_utc": "2026-10-13T19:23:41.926361+00:00",
+  "production_commit": "46bfdbe09403238f95c8aece05bf2f6be2c82b88",
+  "store_version": "2026-10-13.3",
+  "candidate_commit": "07d4f594ef110fe38a1c36274191608281c46a0d",
   "candidate_version": "2026-10-13.3",
   "tables": {
     "sent_replies": {
@@ -143,8 +144,11 @@
           "sql": "CREATE TABLE sent_replies (\n                    id integer primary key autoincrement,\n                    conversation_id text not null,\n                    trigger_message_id text not null,\n                    reply_text text not null,\n                    sent_at text not null default current_timestamp\n                , send_result_json text not null default '', recall_key text not null default '', recall_status text not null default '', recall_error text not null default '', recalled_at text, feedback_token text not null default '', channel text not null default 'dingtalk', agent_run_id integer not null default 0, external_action_key text not null default '')"
         }
       ],
-      "count": 2340,
-      "implicit_indexes": []
+      "count": 2341,
+      "implicit_indexes": [],
+      "sequence": [
+        2358
+      ]
     },
     "sent_reply_observers": {
       "columns": [
@@ -240,10 +244,14 @@
           "sql": "CREATE TRIGGER trg_tasks_child_sent_reply_observers_reply_task_id_update before update of \"reply_task_id\" on \"sent_reply_observers\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
         }
       ],
-      "count": 319,
+      "count": 320,
       "implicit_indexes": [
-        "sqlite_autoindex_sent_reply_observers_1"
-      ]
+        [
+          "sqlite_autoindex_sent_reply_observers_1",
+          null
+        ]
+      ],
+      "sequence": null
     }
   },
   "inbound_foreign_keys": {
@@ -260,17 +268,11 @@
       ]
     ]
   },
-  "data_policy": "schema and aggregate counts only; no business originals",
+  "data_policy": "Schema metadata/counts/sequence only; no private row/body/native copy",
   "frozen_source_equal": {
-    "sent_replies": {
-      "columns": true,
-      "foreign_keys": true,
-      "objects": true
-    },
-    "sent_reply_observers": {
-      "columns": true,
-      "foreign_keys": true,
-      "objects": true
-    }
-  }
+    "sent_replies": true,
+    "sent_reply_observers": true
+  },
+  "current_actions_twelve_manifest_verified": true,
+  "phase5c_release_evidence": "evals/database_redesign/phase5c_release.v1.json"
 }
