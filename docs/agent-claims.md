@@ -1131,3 +1131,5 @@ reverts committed work they did not author.
 | codex-oa-frozen-skill-release | OA binding validation and oa_frozen_skill_binding.release.v1.json only | Record actual PR69 formal deployment and installed full-wrapper/Task-projection boundary, PID, backup and operational reads. No model/provider replay, old snapshot rewrite or business acceptance claim. | verified 2026-10-12 |
 
 | codex-oa-frozen-source-natural-readback | OA binding validation and oa_frozen_skill_binding.post_release.v1.json only | Save actual task404387 frozen Skill reads and same-session reuse; compare source/category honestly, not external-effect completion or PR67 acceptance. | verified 2026-10-13 |
+
+| codex-oa-frozen-history-settings | OA binding validation and oa_frozen_skill_history_settings.v1.json only | Verify two historical Settings Tasks byte-match actual selected native User inputs after source binding repair; source labels accurate. No private originals, frontend visibility claim, config or runtime change. | verified 2026-10-13 |

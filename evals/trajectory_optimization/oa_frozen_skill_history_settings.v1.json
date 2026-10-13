@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "observations": [
+    {
+      "run_id": 351101,
+      "runtime_attempt_id": 351102,
+      "task_id": 404387,
+      "mode": "historical",
+      "status": "available",
+      "http_status": 200,
+      "session_id": "01a13448-83a9-71b0-8cc0-901ef9a9cfaa",
+      "task_chars": 16583,
+      "task_sha256": "aa8bd3581db0b1fd30675f171fc89ab793abf4ec9cbd1ab15e85677561925016",
+      "native_user_exact_matches": 1,
+      "sections": [
+        {
+          "name": "Developer 指令",
+          "source": "本轮原生 Developer 记录",
+          "placement": "developer",
+          "characters": 29423
+        },
+        {
+          "name": "本轮 Task",
+          "source": "选定 attempt 的原生输入",
+          "placement": "task",
+          "characters": 16583
+        }
+      ],
+      "scope": "选定原生 attempt 保存的 Task 与服务 Developer；续会话的 session Developer 来源单独标明，不冒充本轮配置提交回执。未包含 CLI 基础系统指令、AGENTS、环境消息、工具 schema 或会话历史。"
+    },
+    {
+      "run_id": 351109,
+      "runtime_attempt_id": 351110,
+      "task_id": 404387,
+      "mode": "historical",
+      "status": "available",
+      "http_status": 200,
+      "session_id": "01a13449-ee2c-7a82-81eb-cb7fb45475a8",
+      "task_chars": 9448,
+      "task_sha256": "0d76cec1f0f1ba36d42a5cb79d423291edbbbeeb59d3ee00495aab416e5d77d3",
+      "native_user_exact_matches": 1,
+      "sections": [
+        {
+          "name": "Developer 指令",
+          "source": "本轮原生 Developer 记录",
+          "placement": "developer",
+          "characters": 29423
+        },
+        {
+          "name": "本轮 Task",
+          "source": "选定 attempt 的原生输入",
+          "placement": "task",
+          "characters": 9448
+        }
+      ],
+      "scope": "选定原生 attempt 保存的 Task 与服务 Developer；续会话的 session Developer 来源单独标明，不冒充本轮配置提交回执。未包含 CLI 基础系统指令、AGENTS、环境消息、工具 schema 或会话历史。"
+    }
+  ],
+  "scope": "Read-only historical Settings endpoint and actual native service Task comparison. No raw business/Profile originals, current-template reconstruction or model/provider call.",
+  "observer_note": "Initial check read the item envelope root and saw null fields; corrected to item before verifying native equality. No application defect inferred."
+}
