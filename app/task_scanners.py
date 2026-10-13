@@ -782,8 +782,6 @@ def scan_pending_oa_approvals(
     }
     legacy_attempts = store.list_oa_task_not_pending_attempts()
     for attempt in legacy_attempts:
-        if attempt.id in reconciled_legacy_oa_attempt_ids:
-            continue
         key = f"oa:{attempt.oa_process_instance_id}:{attempt.oa_task_id}"
         if not pending_scan_complete or not current_user_id:
             pending_business_object_keys.add(key)
@@ -800,12 +798,21 @@ def scan_pending_oa_approvals(
         except Exception:
             reconciliation_read_failures.append(attempt.oa_process_instance_id)
             continue
-        if _oa_terminal_process_state(detail_payload) is not None or (
+        terminal_state = _oa_terminal_process_state(detail_payload)
+        process_result = terminal_state[1] if terminal_state else ""
+        if not process_result and (
             _oa_principal_explicitly_returned_process(
                 detail_payload,
                 task_id=attempt.oa_task_id,
                 current_user_id=current_user_id,
             )
+        ):
+            process_result = "OA_RETURNED"
+        if process_result and store.correct_legacy_oa_task_not_pending_resolution(
+            attempt.id,
+            process_instance_id=attempt.oa_process_instance_id,
+            task_id=attempt.oa_task_id,
+            process_result=process_result,
         ):
             pending_business_object_keys.discard(key)
             reconciled_legacy_oa_attempt_ids.add(attempt.id)
