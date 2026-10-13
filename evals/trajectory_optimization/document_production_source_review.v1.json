@@ -720,7 +720,8 @@
       "provider_task_status": "CANCELED",
       "provider_task_result": "NONE",
       "readback_sha256": "0c7c3c84ad7d1568b18ca7aec98cb330be70b2e0075c1b06531e735599183cb3",
-      "durable_external_action_result_present": false
+      "durable_external_action_result_present": false,
+      "same_owner_as_pre_execution_native_read": false
     },
     {
       "task_id": 404234,
@@ -736,7 +737,8 @@
       "provider_task_status": "CANCELED",
       "provider_task_result": "NONE",
       "readback_sha256": "f80b0ece8229d22d7b737b4d9225b0f9a0378abf01bf76d51eabfedddeb083d3",
-      "durable_external_action_result_present": false
+      "durable_external_action_result_present": false,
+      "same_owner_as_pre_execution_native_read": false
     }
   ],
   "independent_review": {
