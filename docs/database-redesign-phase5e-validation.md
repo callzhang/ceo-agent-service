@@ -48,6 +48,12 @@ checks passed against the actual readonly snapshot and empty constructor.
 All source-only temporary databases, synthetic native fixtures and scripts were
 removed after retaining the metadata artifact.
 
+Independent readonly review of6e39cf31 reproduced every declaration/hash and
+aggregate equality check, confirmed the static wrapper/import and marker
+claims, and ran the combined source/dependency suite:66 passed, two opposite
+variant skips. It found no blocking gap, removed its owned test directory and
+made no production/provider/model call. This is source-preparation acceptance.
+
 D must actually publish before E implementation/migration activation. Re-read
 the exact immediately preceding published schema and its dependencies then;
 this Store17 observation or empty Store18 candidate does not prove a published
