@@ -112,7 +112,11 @@
               "characters": 1098,
               "sha256": "932c6fd4208d5e9ec8e9130036913b81d33ddb76fb2d47e9bfc877ddc492a7ee"
             }
-          ]
+          ],
+          "callback_snapshot_count": 5,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 12,
+          "native_terminal_source_read_count": 12
         },
         {
           "route": "qwen_gpu4",
@@ -176,7 +180,11 @@
               "characters": 174,
               "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
             }
-          ]
+          ],
+          "callback_snapshot_count": 2,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 2
         },
         {
           "route": "codex_oauth",
@@ -229,7 +237,11 @@
               "characters": 174,
               "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
         },
         {
           "route": "codex_oauth",
@@ -282,7 +294,11 @@
               "characters": 174,
               "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
         },
         {
           "route": "codex_oauth",
@@ -335,7 +351,11 @@
               "characters": 174,
               "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 4,
+          "native_terminal_source_read_count": 1
         },
         {
           "route": "codex_oauth",
@@ -388,7 +408,11 @@
               "characters": 174,
               "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 4,
+          "native_terminal_source_read_count": 1
         }
       ]
     },
@@ -477,7 +501,11 @@
               "characters": 22927,
               "sha256": "6b6bc79b5898e7e1744b7236dc5700818694b6ed8af978e1a2ed3c8dc4abc554"
             }
-          ]
+          ],
+          "callback_snapshot_count": 2,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 4,
+          "native_terminal_source_read_count": 2
         },
         {
           "route": "qwen_gpu4",
@@ -529,7 +557,11 @@
               "characters": 18575,
               "sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 1,
+          "native_terminal_source_read_count": 1
         }
       ]
     },
@@ -770,7 +802,11 @@
               "characters": 22003,
               "sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845"
             }
-          ]
+          ],
+          "callback_snapshot_count": 4,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 46,
+          "native_terminal_source_read_count": 12
         },
         {
           "route": "qwen_gpu4",
@@ -1337,7 +1373,11 @@
               "characters": 18575,
               "sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f"
             }
-          ]
+          ],
+          "callback_snapshot_count": 44,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 64,
+          "native_terminal_source_read_count": 62
         },
         {
           "route": "codex_oauth",
@@ -1390,7 +1430,11 @@
               "characters": 22003,
               "sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
         },
         {
           "route": "codex_oauth",
@@ -1443,7 +1487,11 @@
               "characters": 22003,
               "sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
         },
         {
           "route": "codex_oauth",
@@ -1495,7 +1543,11 @@
               "characters": 18575,
               "sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 1,
+          "native_terminal_source_read_count": 1
         },
         {
           "route": "codex_oauth",
@@ -1547,7 +1599,11 @@
               "characters": 18575,
               "sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 1,
+          "native_terminal_source_read_count": 1
         },
         {
           "route": "qwen_gpu4",
@@ -1584,7 +1640,11 @@
               "sha256": "6b6bc79b5898e7e1744b7236dc5700818694b6ed8af978e1a2ed3c8dc4abc554"
             }
           ],
-          "model_visible_context_boundary": "Same service-submitted Developer and User; native Developer includes different builtin-mode bootstrap, and builtin tool interface changes. Not identical complete model-visible context."
+          "model_visible_context_boundary": "Same service-submitted Developer and User; native Developer includes different builtin-mode bootstrap, and builtin tool interface changes. Not identical complete model-visible context.",
+          "callback_snapshot_count": 0,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 1,
+          "native_terminal_source_read_count": 0
         }
       ]
     },
@@ -1648,19 +1708,24 @@
               "characters": 22003,
               "sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845"
             }
-          ]
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
         }
       ]
     }
   ],
   "interpretation": [
     "OAuth passes cold/resume for both roles in thin and registered-source cohorts, eight canonical turns with exact singleton source reads/fresh nonce/binding.",
-    "Qwen thin Consumer times out after five source reads; Audit completes canonical output after two source reads, failing exact singleton requirement.",
+    "Qwen thin Consumer timeout callback snapshot records five source reads (terminal native history records12); Audit completes canonical output after two source reads, failing exact singleton requirement.",
     "Qwen full role Consumer completes after two source reads; Audit reads once but abbreviates prefixed nonce. Both remain failed controls.",
     "Qwen actual registered JSON reader cold turns time out; no valid cold means no resume attempted.",
     "Visible Qwen reasoning already identifies the correct nonce/result fields but continues invalid CodeMode wait calls; this establishes the observed loop, not a proven provider source defect.",
     "First CodeMode-off Consumer diagnostic passes. Strict paired comparison retains identical submitted Developer/Task/schema and source, emits canonical no_action with nonce, but reads through native cat rather than the required MCP; paired probe fails singleton MCP oracle. Native Developer/bootstrap differs (baseline22003 chars versus paired22927); equality refers only to service-submitted Developer before native augmentation. This is a mode configuration bundle, not isolated function availability.",
-    "Schema emission can complete in direct mode, but changing mode and builtin interface is not final full-runtime acceptance. Model/formatter/tool-guidance contributions remain to be isolated."
+    "Schema emission can complete in direct mode, but changing mode and builtin interface is not final full-runtime acceptance. Model/formatter/tool-guidance contributions remain to be isolated.",
+    "Timeout callback snapshots are incomplete relative to preserved terminal native history: thin Qwen Consumer5 callbacks versus12 native reads; registered Consumer4 callbacks versus12 reads+34 waits; registered Audit44 callbacks versus62 reads+2 contract reads. Original snapshots retained; terminal native counts are separate. No failure is promoted."
   ],
   "business_acceptance": false,
   "provider_release_ready": false

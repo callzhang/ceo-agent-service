@@ -173,8 +173,7 @@ read_text_file function to an owned JSON file containing a nonce. API relay was
 not invoked under the consumed one-off diagnosis permission.
 
 Thin diagnostic cohort: OAuth Consumer/Audit cold+same-SID resume all pass exact
-source-read/nonce/canonical/binding checks. Qwen Consumer times out after5 source
-reads; Audit completes valid output after2 reads, failing the singleton requirement.
+source-read/nonce/canonical/binding checks. Qwen Consumer times out (callback snapshot5 source reads; terminal native12); Audit completes valid output after2 reads, failing the singleton requirement.
 Full-role cohort: Qwen Consumer completes after2 reads; Audit reads once but echoes
 only the suffix of the prefixed nonce. Those controls remain failures. The actual
 registered-reader JSON cohort removes that nonce ambiguity; OAuth again passes
@@ -203,3 +202,38 @@ step is to isolate the CodeMode/native-bootstrap/guidance interaction from the
 complete saved trajectory, not repeat these failures or add another prompt rule.
 
 Independent readonly review confirmed all16 case counts, strict paired failure, native bootstrap differences and absence of reasoning originals in committed evidence. Native session originals remain in the CLI home; all16 file hashes and exact Task texts were verified. Owned probe temporary files were removed after process completion and an empty open-handle check.
+
+
+## CodeMode custom-tool conversion defect
+
+An anonymous non-forwarding local HTTP fixture captures the current native CLI
+0.154.0 request using the actual Consumer role builder/catalog: custom `exec`,
+function `wait`, function `request_user_input`,42 namespaced agent_cli functions
+and web_search. No model is invoked; the fixture deliberately terminates with
+`capture_complete`. A first setup failure lacked MCP declarations and is excluded.
+No header values or input bodies are saved.
+
+GPU4 installed vLLM0.29 `ResponsesRequest` accepts those exact tool declarations.
+CPU execution of its real `construct_tool_dicts` produces44 function declarations:
+wait, request_user_input and all42 agent_cli functions; custom exec is absent.
+The installed `iter_response_function_tool_dicts` filters this custom exec. `_make_request` passes this conversion to chat rendering; the installed
+Qwen structural-tag implementation also uses it for final-schema/tool grammar.
+Thus the native execution entry and its description disappear while wait survives.
+This confirms a protocol conversion defect, not a CLI serialization defect.
+It does not establish that this omission alone caused every prior final-output loop.
+
+Repair scope should be generic Responses custom-tool transport: preserve the
+custom declaration through model/grammar rendering, return native custom calls
+and stream events, and round-trip custom call/results in continuation input.
+Do not rename exec as a service function, modify business prompts or silently
+disable CodeMode. The full-role schema, registered-tool and business gates stay
+required. No provider source or production configuration changed in this diagnosis.
+Evidence and CPU checker:codemode_custom_tool_conversion.v1.json.
+
+Timeout callback snapshots must not be treated as terminal call counts. Preserved
+native terminal history contains thin Consumer12 source reads (snapshot5);
+registered Consumer12 reads+34 waits (snapshot4), and registered Audit62 reads+2
+contract reads (snapshot44). Both layers now appear explicitly in the result
+manifest. Original failed snapshots and decisions remain unchanged.
+
+Readonly review matched capture and CPU results, exact harness sources and native hash. The owned serialization fixture was removed after terminal completion and an empty open-handle check; CLI-owned native originals remain.
