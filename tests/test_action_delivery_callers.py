@@ -1,0 +1,110 @@
+"""Real Store18 sent callers preserve the delivery and feedback contracts."""
+
+import pytest
+
+from app.action_storage import SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, update_action
+from app.store import AutoReplyStore
+from tests.test_agent_turn_store import _claim_consumer, _task
+from tests.test_store import _claim_audit_run, _enqueue_universal_reply_task
+
+
+def test_sent_crud_preserves_raw_fields_public_ids_and_feedback_reads(tmp_path):
+    store = AutoReplyStore(tmp_path / "delivery.sqlite3")
+    store.record_sent_reply("conversation", "first", "Original", send_result_json=' {"raw": 1} ',
+                            recall_key="key", feedback_token="token-a")
+    first = store.get_sent_reply("conversation", "first")
+    assert first is not None
+    assert first.id == 1
+    assert first.send_result_json == ' {"raw": 1} '
+    assert (first.recall_key, first.recalled_at, first.agent_run_id) == ("key", None, 0)
+    assert store.has_sent_reply_for_trigger("conversation", "first")
+    assert store.list_sent_replies_after(0) == [first]
+    assert store.list_sent_replies_with_feedback_tokens()[0].id == first.id
+    assert store.list_sent_replies_waiting_for_feedback_events()[0].id == first.id
+
+    store.update_sent_reply_recall(first.id, recall_status="recalled", recall_error="")
+    recalled = store.get_sent_reply("conversation", "first")
+    assert recalled is not None and recalled.recalled_at is not None
+    with store._connect() as db:
+        assert recalled.recalled_at == db.execute("select current_timestamp").fetchone()[0]
+        assert db.execute(f"select count(*) from ({SENT_REPLY_SQL})").fetchone()[0] == 1
+        assert db.execute("select 1 from sqlite_master where name='sent_replies'").fetchone() is None
+    store.update_sent_reply_recall(first.id, recall_status="failed", recall_error="provider")
+    assert store.get_sent_reply("conversation", "first").recalled_at == recalled.recalled_at
+    assert store.count_sent_replies() == 1
+    assert store.max_sent_reply_id() == first.id
+
+
+def test_duplicate_delivery_keeps_first_fact_records_new_observer_and_burns_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "observers.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    first_run = _claim_audit_run(store, task_id, task.execution_generation, owner="first").run
+    first = store.record_agent_message_delivery(
+        agent_run_id=first_run.id, external_action_key="shared-send",
+        conversation_id="original", trigger_message_id="m1", reply_text="Delivered",
+        provider_result={"receipt": "first"},
+    )
+    store.enqueue_reply_task(
+        conversation_id="second", conversation_title="Second", single_chat=False,
+        trigger_message_id="m2", trigger_create_time="2026-10-13 00:00:00",
+        trigger_sender="Derek", trigger_text="Second",
+    )
+    second_task = store.claim_reply_tasks(limit=1)[0]
+    second_run = _claim_audit_run(store, second_task.id, second_task.execution_generation,
+                                  owner="second").run
+    duplicate = store.record_agent_message_delivery(
+        agent_run_id=second_run.id, external_action_key="shared-send",
+        conversation_id="different", trigger_message_id="m2", reply_text="Delivered",
+        provider_result={"receipt": "later"},
+    )
+    assert duplicate == first
+    with store._connect() as db:
+        rows = db.execute(f"select * from ({SENT_REPLY_OBSERVER_SQL}) order by agent_run_id").fetchall()
+        assert [(row["sent_reply_id"], row["agent_run_id"], row["reply_task_id"])
+                for row in rows] == [(first.id, first_run.id, task_id),
+                                    (first.id, second_run.id, second_task.id)]
+        assert db.execute("select seq from sqlite_sequence where name='actions:sent_replies'").fetchone()[0] == 2
+        assert db.execute("select 1 from sqlite_master where name='sent_reply_observers'").fetchone() is None
+    store.record_sent_reply("next", "m3", "Later")
+    assert store.get_sent_reply("next", "m3").id == 3
+    assert store.max_sent_reply_id() == 3
+
+
+def test_completed_delivery_conflict_rolls_back_sent_and_receipt(tmp_path):
+    store = AutoReplyStore(tmp_path / "completed.sqlite3")
+    task = _task(store)
+    run = _claim_consumer(store, task).run
+    store.complete_agent_run(run.id, {"outcome": "proposal"}, owner="consumer")
+    values = dict(agent_run_id=run.id, external_action_key="completed-key",
+                  business_object_key=task.business_object_key, action_identity="reply",
+                  operation="message.send", target_identifiers={"conversation_id": task.conversation_id},
+                  conversation_id=task.conversation_id, trigger_message_id=task.trigger_message_id,
+                  reply_text="Delivered", provider_result={"receipt": "original"})
+    sent = store.record_completed_agent_message_delivery(**values)
+    assert sent.agent_run_id == run.id
+    assert store.get_sent_reply(task.conversation_id, task.trigger_message_id) == sent
+    with pytest.raises(ValueError, match="conflicting message delivery projection"):
+        store.record_completed_agent_message_delivery(**(values | {"reply_text": "Different"}))
+    with store._connect() as db:
+        assert db.execute(f"select count(*) from ({SENT_REPLY_SQL})").fetchone()[0] == 1
+        assert db.execute(f"select count(*) from ({SENT_REPLY_OBSERVER_SQL})").fetchone()[0] == 1
+        assert db.execute("select seq from sqlite_sequence where name='actions:sent_replies'").fetchone()[0] == sent.id
+        assert not db.execute("pragma foreign_key_check").fetchall()
+
+
+def test_feedback_pressure_and_attempt_mapping_read_sent_projection(tmp_path):
+    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    store.record_sent_reply("conversation", "old", "Old", feedback_token="old-token")
+    store.record_sent_reply("conversation", "new", "New", feedback_token="new-token")
+    with store._connect() as db:
+        update_action(db, "sent_replies", 1, {"sent_at": "2026-05-30 12:00:00"})
+        update_action(db, "sent_replies", 2, {"sent_at": "2026-06-02 12:00:00"})
+    store.upsert_feedback_event(key="feedback", feedback_token="old-token", rating="up",
+                                received_at="2026-06-01 12:00:00")
+    stats = store.feedback_pressure_stats("conversation", now_utc="2026-06-12 12:00:00")
+    assert stats.unanswered_since_last_feedback == 1
+    assert stats.unanswered_older_than_7_days == 1
+    assert store.list_sent_replies_waiting_for_feedback_events()[0].feedback_token == "new-token"
+    assert store.list_sent_replies_with_feedback_tokens_for_conversation("conversation", limit=1)[0].id == 2

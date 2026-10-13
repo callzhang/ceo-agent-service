@@ -374,6 +374,8 @@ AGENT_EXECUTION_RECEIPT_SQL = ACTION_PROJECTIONS["agent_execution_receipts"]
 OUTBOUND_POSTFIX_SQL = ACTION_PROJECTIONS["outbound_postfixes"]
 OUTBOUND_POSTFIX_RECEIPT_SQL = ACTION_PROJECTIONS["outbound_postfix_receipts"]
 NATIVE_REPLY_DISPATCH_SQL = ACTION_PROJECTIONS["native_reply_dispatches"]
+SENT_REPLY_SQL = ACTION_PROJECTIONS["sent_replies"]
+SENT_REPLY_OBSERVER_SQL = ACTION_PROJECTIONS["sent_reply_observers"]
 
 
 def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False) -> None:

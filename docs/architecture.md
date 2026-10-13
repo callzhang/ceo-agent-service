@@ -7,8 +7,10 @@ finite `actions` types and retire physical `sent_replies` and
 remain independent; sent `agent_run_id` is the existing scalar field, while
 observer run/task/delivery endpoints remain actual foreign keys. Current-fact
 inverse and published-old-code copy evidence are in the Phase5D validation.
-Caller conversion and integrated release acceptance are still pending; the
-candidate must not be reported as a production migration or the full10+1 goal.
+Store sent delivery writes, feedback/history reads, settlement checks and the
+Audit console sent reader now use the finite action projection. This is caller
+conversion in the development candidate; integrated release acceptance is still
+pending, so it is not a production migration or the full10+1 goal.
 
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
 body-free TSV metadata with separate Root and Relative path columns. Joining
