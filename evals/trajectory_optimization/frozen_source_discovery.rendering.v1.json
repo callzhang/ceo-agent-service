@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "scope": "Pure synthetic frozen-source rendering comparison; no native model request or business acceptance",
+  "baseline_commit": "770de9db",
+  "available_names": [
+    "generic-review",
+    "attendance-review",
+    "cloud-review",
+    "contract-review",
+    "finance-review",
+    "people-review",
+    "project-review"
+  ],
+  "baseline": {
+    "text": "## Selected Task Skills\n- `generic-review`: Selected for this task.\n- `attendance-review`: Selected for this task.\n- `cloud-review`: Selected for this task.\n- `contract-review`: Selected for this task.\n- `finance-review`: Selected for this task.\n- `people-review`: Selected for this task.\n- `project-review`: Selected for this task.\nFor the task-frozen selection `generic-review`, `attendance-review`, `cloud-review`, `contract-review`, `finance-review`, `people-review`, `project-review`, use this task's exact content. Reuse complete content already loaded in this session only while this selected frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content with `agent_cli.read_task_skill(name)`; do not substitute a similarly named installed Skill. When a selected Skill names another installed Skill, read that exact dependency on demand with `agent_cli.read_skill(name=...)`.",
+    "characters": 909,
+    "sha256": "aed1cedbe9ace8eabc604c5484dca5c46e523ff4483f4b200b6bcf0f0234c661"
+  },
+  "candidate": {
+    "text": "## Available Task Skill Sources\n- `generic-review`: Task-bound rule source.\n- `attendance-review`: Task-bound rule source.\n- `cloud-review`: Task-bound rule source.\n- `contract-review`: Task-bound rule source.\n- `finance-review`: Task-bound rule source.\n- `people-review`: Task-bound rule source.\n- `project-review`: Task-bound rule source.\nRead the applicable sources. Reuse complete content already loaded in this session only while this frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content with `agent_cli.read_task_skill(name)`; do not substitute a similarly named installed Skill. When a selected Skill names another installed Skill, read that exact dependency on demand with `agent_cli.read_skill(name=...)`.",
+    "characters": 749,
+    "sha256": "3918502784d4dd01f7507928e5290c9648a804c42bfc94b2db25c300559610b0"
+  },
+  "preserved": [
+    "all seven bound source names",
+    "exact task-bound read entry",
+    "complete unchanged session reuse",
+    "no substitution with installed source",
+    "on-demand installed dependency entry"
+  ],
+  "native_gate": "not run"
+}

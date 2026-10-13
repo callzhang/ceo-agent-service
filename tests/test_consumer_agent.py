@@ -317,6 +317,8 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
 
     assert executor.commands[0][3:5] == ["exec", "resume"]
     assert "ceo-document-review" in executor.prompts[0]
+    import hashlib
+    assert hashlib.sha256(b"FROZEN BODY").hexdigest() in executor.prompts[0]
     assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
     assert (
         "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" in executor.prompts[0]

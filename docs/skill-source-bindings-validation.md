@@ -1,0 +1,192 @@
+# Available sources and explicit workflow requests
+
+The service-command API and Store previously required skill_refs to equal every dollar-name in the prompt. Its editor also removed a bound source when the name was deleted from prompt text. That makes preserving seven complete sources require explicitly requesting all seven workflows. Prior controlled trajectories showed a wording-only candidate did not consistently reduce reads.
+
+This mechanism retains all original refs and exact versions while allowing explicit prompt names to be an ordered subset. API and Store reuse one format validator; unknown, reversed and duplicate bound names stay invalid. Repeated appearances of one prompt name still use the original unique-name parser. Service-command editor prompt edits retain sources; explicit source removal and Agent-task editing remain unchanged. No audit/authorization rule, data migration, route/session change or live task update.
+
+Initial backend regression after correcting a timezone field typo:3 failures,4 passes. The new valid prompt cases fail solely at old equality checking. Subsequent fixture corrections use assigned task IDs, valid managed frontmatter and the actual context-builder method; no runtime fallback was added. Version test updates a prompt after creating a new live managed revision: old/new run snapshots preserve every original ref, and actual context materialization returns the selected older managed body plus both operation bodies. UI regression first fails because removing a prompt token removes its source chip. First frontend test invocation used the wrong workdir and changed no files; corrected before the regression.
+
+This is input/configuration behavior, not acceptance of fewer Skill reads. Complete Task composition/readonly discovery and fixed native scenarios remain required before release.
+
+Focused backend checks:169 passed across the binding, scheduled API/Store/options, scanner and frozen-discovery files. Independent review found the frontend response decoder still enforced the old equality; two new regressions failed with74 existing checks passing. The decoder now shares the ordered-subset semantics and covers actual update/list/recent-snapshot/run response parsing. Final frontend checks:117 passed across the API and page files, TypeScript check passed; focused Python lint and diff checks passed. The first page implementation used the read-only component variable inside the editor, then corrected it to the editor state; one new API fixture needed a mutable capability list for TypeScript. Neither iteration was released. Read-only review confirms service-command edits retain sources and Agent-task editing remains unchanged.
+
+Discovery follow-up: the new available-source regression fails against the previous renderer (one expected failure). The scheduled service-command context previously emitted its own mandatory-reading paragraph in addition to the role composer. It now uses the same renderer as Consumer/Audit/Settings. Frozen names appear once in the available-source list; applicability and exact-content/session reuse requirements remain. 270 related tests passed, including actual Audit runner prompt capture, Consumer cold/continued assembly, Settings saved/legacy input boundaries and original context materialization. Native reading reduction is not yet established.
+
+Independent read-only review confirms installed-only behavior is unchanged and explicit custom instructions remain preserved. A suspected duplicate directory was checked against worker -> exact-suffix stripping -> composer and withdrawn; a new actual-context cold/resume assertion proves heading and each source name occur once. Anonymous seven-source rendering evidence is in frozen_source_discovery.rendering.v1.json; this records service text size only, not native token consumption or model behavior.
+
+## Native anonymous fixed-scenario comparison
+
+Candidate source102cf67f, baseline renderer770de9db; OAuth gpt-5.6-luna/medium, existing native home and role CLI helpers, output schema off in both arms. Seven complete anonymous frozen bodies and identical owned pending OA facts: principal-7 owns proc-owned/task-owned, budget120 equals40+50+30 and source confirmed. Tools only return synthetic reads; no provider action is available. Manifest/results are frozen_source_discovery.native.v1.json and frozen_source_discovery.native.results.v1.json.
+
+This compares the combined requested-name subset and discovery mechanism: baseline explicitly requests all7 Skill names, candidate only the generic OA workflow; every source is retained. It is not a wording-only causal experiment. Initial8 turns showed both Consumer/Audit cold reads7 versus2; candidate Consumer resume reused bodies and remained valid, candidate Audit resume reread2 bodies and remained valid. Baseline Consumer resume had a trailing comma in final JSON and failed full parsing despite rc0. It is not counted as business passing or corrected. Initial candidate Audit cold made one failed attempt to read shared engineering AGENTS through the synthetic Skill tool; this native error is retained separately from its valid final result.
+
+Native initial Developer differed by a925-character system plugin-creator catalog entry between initial arms. Inspecting actual commands showed Skill exclusion catalogs changed while the CLI initialized global system Skills. Four additional cold comparisons used one immutable native skills.config value for both arms; actual cross-arm initial Developer equality, each submitted Task matching its own native User input, tool arguments and complete returns were verified in the native session files. Consumer matched pair:7→2 Skill bodies, valid one approve proposal each with exact target and remark120. Audit matched pair:7→2 bodies, valid approve each for the same original baseline Consumer candidate digest dbb8bfa00505ee40c7fe83fcb89216d6ad499598fc7a27997b7600a63a65632f/revision0. Audit reviews the initial valid baseline candidate, not the matched Consumer candidate; this is a role-level comparison rather than a joined matched pipeline. All fixture callback outputs match native model-visible outputs exactly as a multiset; original body hashes match, with no clipping. Controlled cold turns have no failed tools.
+
+The temporary runner initially failed CLI argument/trusted-directory checks (including a duplicate skip flag in the controlled Consumer readiness check); all five preflight invocations are preserved as non-model failures and excluded from native pass counts. No failed model turn was retried. Synthetic read_task_skill returns fixed bodies by name, so this evidence does not validate production generation/version checks or changed-source rereads; those remain distinct from the repository binding regressions. This single owned OA scenario does not establish every task type, provider route or production acceptance. PR71 remains draft and undeployed.
+
+## Frozen identity projection
+
+Following native diagnostics, inspection of worker extraction found the service removes scheduled_consumer from business raw payload before rendering; discovery previously listed names only. Consumer/Audit asked the model to compare revision_id/sha256 for reuse without supplying current identities. Four actual-role regressions failed when checking the original material hash in submitted prompts. The source entry now carries the exact full saved material SHA, matching the existing read_task_skill result; it comes from validated original bindings and not current disk files. Source-hash input is passed through Consumer/Audit assembly, scheduled generated discovery and Settings guidance. Custom inline instructions remain retained and historical snapshots remain readback-only.
+
+Direct registered Consumer/Audit reader tests verify projected hash equality with real read_task_skill output for two original managed material versions; changed source content produces different discovery while neither body is inlined. This repairs missing source identity data rather than adding a task-specific rule or a cache. At this implementation checkpoint native changed-source behavior had not been verified; the registered-reader probe below supplies subsequent bounded evidence. Prior dictionary-reader results do not prove this mechanism.
+
+Verification of identity projection:270 related tests passed,4 skipped, including actual role invocation prompt capture, exact registered task reader output for two source versions, scheduled snapshots and Settings saved-input readback. Python lint and diff checks passed. Independent read-only review confirmed all role/context/preview paths, preservation of custom protocols, and no invented hashes for unavailable old materials. Wrapper content identity includes managed revision/source metadata; it is not an independent revision_id field. The subsequent registered-reader native probe below tests this additional change.
+
+## Registered-reader native identity probe
+
+Code d007051e, OAuth gpt-5.6-luna/medium, native schema off, existing native home and role CLI helpers. Anonymous self-contained document fixture exposes the actual registered read_task_skill function from build_role_server over a disposable SQLite test schema; it does not substitute a dictionary reader. Four separate tasks/claimed inputs retain versions41,42,42,43. The core rule stays unchanged and the managed revision header changes; complete original bodies and generations are preserved.
+
+Consumer and Audit each keep one native SID across five rounds. Read counts are1/0/1/0/1: cold41, same input41, new input42, another new task with the same42 content, then new input43. Every changed-source read returns the exact newly bound full body; unchanged-source reuse also occurs after a new task/generation. All10 results are canonical: Consumer no_action, Audit approve; each Audit digest matches its actual Consumer candidate. Native input text equals the submitted Task for every round, all3 calls/returns per role match the original SQLite/callback content and hashes, with no failed or clipped tools. Original inputs41/42 remain readable unchanged after the newer tasks are inserted.
+
+The initial observer expected the prior array-shaped native tool output; this probe records a string with Wall time/Output framing. Parsing was corrected against the original bytes, without rerunning any model turn. Evidence:real_frozen_source_identity.native.v1.json and real_frozen_source_identity.native.results.v1.json. Independent read-only review verified the original native files, source content and input/digest receipts.
+
+Limits: the probe explicitly resumes the CLI SID rather than exercising service conversation/route lookup, uses low-level test task inputs rather than a deployed scheduler, and offers a reduced readonly tool catalog. The changed-source rounds also change task IDs/generations; this is not a hash-only causal experiment. Core business rules are unchanged, so this proves observed registered-source delivery/reuse in this fixture, not semantic policy-change handling or full document/all-task business acceptance. No production configuration, history, merge or deploy changed.
+
+
+## Current-main integration
+
+Merged origin/main b9572061 normally into PR71 without resetting or rewriting either branch. This preserves the separately approved exact-candidate field evidence and grounded field-feedback instruction, plus recent OA ownership/recovery and feedback-pair fixes. Source hash plumbing remains additive; app/agent_context.py and its approved evidence helper are unchanged by this branch. Focused integration verification:350 passed,4 skipped across business Skills, composition, actual Consumer/Audit invocation, exact field evidence, current/historical preview and scheduled API/Store. No production deploy or new native model turn is claimed for the merge.
+
+Current saved Audit inputs reveal a separate size tradeoff in the approved field-evidence repair. Task404569 submits23,771 chars, including a4,572-char adopted candidate and6,414-char scalar evidence (94 rows). Task404567 submits44,048 chars, including a14,474-char adopted candidate and16,637-char scalar evidence (118 rows). These are actual model-visible Task snapshots, not estimates from raw Consumer outputs; adopted source bindings materially increase size. Metadata/source hashes are current_audit_field_evidence_size.v1.json. Private originals stay in native records. Earlier fixed scenario native files were unavailable during this recheck, so no reconstructed old size claim is made.
+
+The approved repair is retained. Size alone is not evidence it causes a wrong judgment. An on-demand exact path/value/type lookup is a candidate mechanism to compare against full inline evidence; it must retain original candidate identity, full source availability and the actual type-error regressions before any separate release proposal. No evidence/policy removal, extra rule, tool or runtime change was implemented.
+
+
+## Anonymous field evidence diagnostic
+
+Four native OAuth gpt-5.6-luna/medium cold turns compare complete current candidate plus inline scalar table with that same complete candidate plus an exact JSON Pointer lookup. Fixed cases check a numeric-looking string, a genuine number where string is required, stale feedback falsely accusing the string, escaped object keys, boolean false, number7 and null. Complete anonymous supporting sources remain in both arms. This is a field diagnostic, not canonical Audit/Pydantic/business acceptance. Manifest/results:field_evidence_on_demand.native.v1.json and field_evidence_on_demand.native.results.v1.json.
+
+Initial on-demand makes five field calls, all rejected by native approval configuration; it still classifies correctly from the supplied complete candidate. The fixture omitted readonly annotations and the existing role helper default_tools_approval_mode=approve setting. Those initial turns/failures are retained, not called successful lookups. Revised paired fixture declares the same readonly tool/config in both arms. Five on-demand reads complete and each model-visible text/structured value matches its actual callback exactly. All four final outputs have correct field/value semantics. Submitted text is59,506 versus29,760 chars (29,746 fewer); this is service diagnostic Task text, not total native tokens/cost.
+
+Independent review inspected all native records, stream outputs and callback values. Cross-arm Developer catalogs differ (automatic Skill presence/descriptions/root aliases), while each arm's initial/revised Developer stays equal. Each turn also invokes real Memory bootstrap; private returned profile is not copied. Revised on-demand final literals are JSON-literal strings and escaped_fields is an array, versus typed literals and a named object inline. An observer assertion expecting typed output failed; semantic decoding verifies meanings only, not canonical structural equality. Original outputs remain unchanged.
+
+Thus this probe establishes bounded successful exact reads and candidate-inspection feasibility, not strict causal quality equivalence, original false-Audit-error repair, full role/session/service binding or release readiness. Correct classifications despite blocked lookup also mean a new production lookup is not established as necessary. Next comparison should use a fixed native catalog and canonical Audit roles, retaining complete candidate inspection and current field-error rules, before adding any tool or changing approved inline evidence. No runtime, Audit policy, production configuration, merge or deploy was changed.
+
+
+## Canonical Audit candidate inspection control
+
+This follow-up removes the prior custom-result ambiguity and fixes the native catalog. Four anonymous cold turns use the current full Application Audit rules, AuditAgentWireResult schema and original parser; both cases are complete ConsumerAgentResult candidates with identical source snapshots and stable notification payload/action_identity. Only target.open_dingtalk_id differs between a valid digit string and a true JSON number. Each case compares full candidate plus scalar table against the same full candidate alone, without a new lookup tool. One immutable native skills.config is used across all four turns.
+
+All four results parse canonically, bind exact candidate digest/revision0, and satisfy the bounded business/type oracle. Valid string:approve in both arms. Numeric target:return in both arms; each feedback locates the current exact path/value/number type, requests only the string conversion and preserves the notice/payload/identity. Native Developer sections are identical across all turns, each actual User equals its submitted Task, and complete candidate/source text is retained. Each turn has one real Memory bootstrap; no provider execution occurs. Independent read-only review confirmed these facts directly from original streams/native files.
+
+Submitted text:valid string33,437→17,629 chars; numeric33,433→17,627. This is Task text, not a native-token or global cost claim. The first observer accidentally passed raw final JSON to the parser expecting JSONL; re-reading saved original stdout passed without rerunning the model. Its process exit code was not separately persisted and remains null rather than invented. Original native output is unchanged.
+
+Evidence:canonical_audit_candidate_inspection.native.v1.json and canonical_audit_candidate_inspection.native.results.v1.json. This is manually assembled complete application rules/schema, not deployed AuditAgentRunner/Profile/Skill/MCP, provider or session acceptance. Inline includes renderer table but does not reproduce AuditTurnContext's trailing table-specific guidance. Current production field evidence is retained. Before release, compare complete service-composed inputs for actual task classes and continuation with the same business/type oracles; no new tool is justified merely by this diagnostic.
+
+
+## Actual service Audit assembly control
+
+The next control passes the two original anonymous canonical candidates through AuditAgentRunner, AgentTurnProcess and native command construction, using readonly current file-backed Developer/Work Profile/Audit Rules and the existing production MCP manifest. A capturing executor supplies scripted approve events; no native model, MCP or business RPC executes. Scripted approve for the negative candidate is deliberately not business acceptance. Initial default manifest lookup fails in the isolated checkout before executor invocation; the corrected capture reads the existing production manifest explicitly, without changing configuration.
+
+For each captured input, candidate-only is a byte-identical Task prefix: only the trailing scalar table and its233-character dedicated guidance are removed. Full candidate/digest/source objects, selected ceo-message-triage entry, complete Developer/current field path-literal-type rule and Work Profile are retained. Captured command is read-only. Developer is29,258 chars; valid-string Task33,056→17,014 and numeric Task33,052→17,012, reducing16,042/16,040 chars respectively. These are assembly receipts, not actual model judgments or token/cost changes.
+
+Independent readonly review checks original temporary inputs and confirms the projection. Developer/user/Audit template files in development and production are byte-identical by SHA. Metadata-only artifact:audit_service_candidate_inspection.assembly.v1.json. The temporary developer.txt does contain the full private Work Profile; it is not uploaded/committed, and is cleaned with the owned probe directory after hashes are verified. No claim that no local Profile copy existed. No production input, field evidence, role policy, session, route or deploy is changed. Full service-input native role/MCP/business and continuation comparisons remain required.
+
+
+## Full service-input native Audit control
+
+Eight OAuth gpt-5.6-luna/medium cold turns use actual captured service Developer/Profile/Task and the actual Audit native-command helper (readonly, native apps/functions disabled, immutable Skill catalog). Readonly MCP transport delegates registered read_skill/read_text_file/read_system_action_contract functions; provider messages and recipient directory are anonymous fixed data. No provider action is offered or invoked. Each phase/case pair has identical actual initial Developer/Profile and candidate, exact submitted native User, canonical result/digest/revision, and exact successful callback/native values. Later tool-query trajectories differ. Metadata-only manifest/results:full_audit_candidate_inspection.native.v1.json and full_audit_candidate_inspection.native.results.v1.json.
+
+Original cohort retained: all four reviews return. The trigger is nine days old, its request only says Notify applicant, the notice is a placeholder and recipient identity is not independently verified. These failures do not demonstrate a table defect and are excluded from valid-business acceptance. Corrected new cohort changes both arms equally: current explicit principal request, exact complete Chinese body, precise context_source binding, unchanged supporting facts and readonly directory identity. Valid string targets approve in both arms. Numeric target inline unexpectedly approves; candidate-only returns with exact current path, numeric value/type, string source ID and a request to preserve body/action identity while fixing only type. Independent review confirms this one observed omission; it is not proof that the scalar table caused it, global superiority or a production incident.
+
+All eight attempts to read the shared AGENTS file through the registered material reader are denied text_material_path_forbidden; native errors remain retained, not counted as successful reads or silently suppressed. No relevant candidate/source/Skill result clipping was observed. The local corrected manifest retains unused old digest keys inherited from the first manifest; server never uses them. Formal cases distinguish obsolete keys from authoritative submitted/recomputed/current result digests, rather than rebuilding or overwriting native input. Callback comparison accounts for resolved optional defaults omitted from native arguments; results and every supplied argument match. No failed model turn was replayed.
+
+Offline execution-boundary inspection reveals a separate existing mechanism problem: ProposedAction accepts JSON-valued message targets and checks recipient nonemptiness through str(value), without changing the original target. Message handler passes that original value through sender to DwsClient.build_send_message_command. A string identifier builds only string arguments; the number builds one int argument. This is proven without sending or invoking a provider; no delivery/failure receipt is claimed. Do not add another Audit prompt for this case. Next inspect native parameter typing and historical read boundaries, then repair the existing typed-contract mechanism with focused regressions. Scalar-table removal still needs broader task/continuation acceptance and a separate release; production input/schema/policy remains unchanged.
+
+Complete private Developer/Profile stayed only in task-owned temporary input files and CLI-native originals. It is not copied into repository evidence. Probe scripts, metadata and anonymous cases are retained; temporary material is cleaned after hash verification.
+
+## Latest main integration and current closed-exchange inventory
+
+Merged origin/main `31d95f4e`, preserving both the source-binding additions and
+approved storage behavior/documentation; conflicts were independent appended
+claims and documentation sections, all retained. Actual focused source/config/
+composition/Consumer/Audit checks passed 312 tests with 4 skips. An initial
+invocation named two nonexistent test files and ran no tests; the corrected file
+selection produced that result.
+
+Read-only inspection of actual task404575 covers both complete cold native files:
+Consumer17 response items and Audit14. Canonical results are no_action/approve.
+Both read message-triage and chat Skills; Consumer reads both frozen sources,
+while Audit reads the installed chat dependency after the frozen workflow.
+Audit independently reads current conversation. Consumer also executes its shared
+AGENTS read: the returned text blocks are18,547 characters (AGENTS body18,500).
+The18,771-character artifact count is Python list representation including wrappers,
+not model-visible plain text; both measurements are explicitly labeled. It is bootstrap/engineering
+instruction material, not the business Skill. The source callback outputs are
+8,160/6,976 characters for Consumer, and8,160/6,865 for Audit; Audit conversation
+output is33,916 characters. Wrapper/reader formatting differs, so these counts do
+not establish differing Skill policy bodies or exact provider transport equality.
+
+The actual judgments are reasonable for the completed exchange. Current-state
+verification is not classified as redundant. The native sessions precede the
+current storage deployment, so they are not new-model acceptance of31d95f4e.
+Metadata only is retained in current_message_no_action.native.v1.json; no private
+message body, Profile, provider mutation or replay is stored/performed here.
+Next control should preserve the independent state check while comparing explicit
+mandatory bindings versus available applicable source entries on an equivalent
+anonymous closed-exchange case. No shared instruction or Audit policy change is
+justified by this inventory alone.
+
+Independent readonly review verified native hashes/counts, all calls and canonical results; its output-block representation correction is reflected in the artifact and counts above.
+
+## Closed-message native applicability and continuation control
+
+Source020e54ba, OAuthgpt-5.6-luna/medium, native output schema off in both arms.
+The pure production Developer/Task composers use complete current production
+Profile/Rules; actual Consumer/Audit CLI helpers retain native home and fixed
+catalog. Five complete installed Skill bodies are frozen unchanged in an owned
+SQLite task input. Registered readonly readers return exact content/SHA for all
+five in both roles before the accepted cohort starts (10 checks). The current
+conversation is anonymous and readonly; no provider action is exposed.
+
+Baseline is the actualb9572061 renderer: it says Selected Task Skills and repeats
+frozen names. It does not literally require every source to be read. Candidate
+uses available applicable source entries and content hashes. Do not characterize
+this control as an explicit mandatory-five-versus-two rule change. Candidate Task
+is241 characters longer in each role because hashes make source identity visible.
+Developer text is identical within each role's comparison (Consumer29,879 chars,
+Audit27,107); full private text remains temporary/native only.
+
+Seven accepted-input native turns retain all originals. Four Consumer turns
+(cold/resume for both arms) return canonical no_action with no proposal and read
+only the two relevant Skills on cold start. Candidate Consumer uses the complete
+supplied current snapshot without a provider read; that is sufficient for its
+business disposition, not a failure. Baseline independently reads the conversation
+on both rounds. Audit baseline cold reads Skills and current conversation but its
+final JSON contains unescaped quotation marks, failing parsing; it has no valid
+cold result and no resume is marked passed. Candidate Audit cold/resume parse as
+approve but omit the independent current-conversation read required by the
+unchanged workflow. They fail this comparison's Audit acceptance requirement.
+No body/read-count reduction or full release acceptance is claimed.
+
+Each submitted Task exactly matches a native User input. Consumer continuations
+and candidate Audit continuation retain their respective SIDs. This is manual
+native SID continuation, not service route/session-binding acceptance. The source
+callbacks and original native outputs are retained for independent review.
+Metadata/harness sources:closed_message_source_control.native.v1.json and results.
+
+Early startup failures are excluded: duplicated Consumer skip-git flag and
+misplaced resume SID prevented native model invocation. A separate fixture-error
+cohort had an empty required saved skill_protocol, and the registered reader
+correctly refused frozen Skill reads. All those records are retained and excluded;
+one baseline Audit nevertheless approved on provided facts after failed reads,
+which is not acceptance. The corrected owned DB supplies the generated protocol;
+no source body, production rule, route, session policy or prompt patch changed.
+Shared AGENTS material-reader refusals remain visible in Audit tool results.
+
+The next action follows these actual failures: inspect why independent state
+verification is omitted despite the complete unchanged Skill and why the native
+JSON result is malformed; do not add another reminder or silently normalize the
+invalid JSON. Native output-schema work stays independent. Production remains
+unchanged and this additional source-binding gate remains open.
+
+Independent review verifies native inputs/counts/hashes and all successful MCP
+structured returns against callbacks. It also identifies an additional candidate
+Consumer cold native exec reading shared AGENTS (18,500-character body), absent
+from baseline. This is separate from MCP Skill outputs; native command inventory
+now retains it. Initial submitted Developer/Profile equality does not mean later
+retrieved model context is equal. Audit reviews the same fixed synthetic no_action
+candidate in both arms, not either actual Consumer output; this is independent
+role comparison, not end-to-end Consumer-to-Audit execution acceptance.
+
+After independent review, all seven accepted-cohort native file hashes were rechecked, no open handles remained in the owned probe root, and `/tmp/ceo-message-source-control.YldFvw` was removed (1,181,399 bytes). Complete CLI-owned originals and concise metadata/harness receipts remain; private temporary Developer/Profile copies were removed.

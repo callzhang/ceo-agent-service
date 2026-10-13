@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "task_id": 404575,
+  "observed_production_now": "31d95f4e",
+  "sessions_precede_current_storage_deployment": true,
+  "runs": [
+    {
+      "role": "consumer",
+      "session_id": "01a13532-e878-7952-aec8-4b7608f4b6a1",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-18-11-01a13532-e878-7952-aec8-4b7608f4b6a1.jsonl",
+      "native_sha256": "66e2ef604e33bf89e8e93e624ea3a246284ff78fc178904f587bd2d4783b4b05",
+      "record_count": 42,
+      "response_item_count": 17,
+      "all_response_items_examined": true,
+      "calls": [
+        {
+          "name": "exec",
+          "selector": null,
+          "arguments_sha256": "1661160122e1425654d4dd5df4896ba8520e4388fb17ff9218793e65b959a0f8"
+        },
+        {
+          "name": "exec",
+          "selector": null,
+          "arguments_sha256": "6ca8348272677514b643a75cafcdcd965409d1f0fe33492679f628e0ae36394d"
+        },
+        {
+          "name": "read_task_skill",
+          "selector": "ceo-message-triage",
+          "arguments_sha256": "8be43ddd2831e0e1e4bbb51c670bc2b066009a1379a4ae42959bcbbc4e9b0332"
+        },
+        {
+          "name": "read_task_skill",
+          "selector": "dingtalk-chat",
+          "arguments_sha256": "10f6dae99b817df3b1a9fc4e85ee4a7a0a8b5e09acfd2d3d415e76e63a6fbf0e"
+        }
+      ],
+      "outputs": [
+        {
+          "call_id": "call_adaee81efee14faabcaa270ca9d97512",
+          "characters": 18771,
+          "sha256": "e4812d81228a6443014fec9537bf9d7e48cd691a8de2716b038ee8e99255a603",
+          "contains_output_truncated_marker": false,
+          "representation": "python-str-of-output-block-list",
+          "text_block_characters": 18547,
+          "text_block_sha256": "48d84a725090f8b6657c2f7b257ad95899f3deaf55baceefdfc0a925cc823c2e"
+        },
+        {
+          "call_id": "call_afe64f27ba5641f898613ed86526c81f",
+          "characters": 210,
+          "sha256": "320ad36bb549f0e758568e7def70b742efa3a0542d3f33bf7410a1fc1e1ff9cc",
+          "contains_output_truncated_marker": false,
+          "representation": "python-str-of-output-block-list",
+          "text_block_characters": 133,
+          "text_block_sha256": "b2241301ebb48b58f54fa839517d07e4e9216eed6997d35de721e3a71a9eb294"
+        },
+        {
+          "call_id": "call_2733f18d143641c4b5dbdb75f06ad27e",
+          "characters": 8160,
+          "sha256": "c50341cd42958bf339300b82eea01ab92d9d6d5906e7bd849387208d623878e5",
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
+        },
+        {
+          "call_id": "call_bafca4043939459a935233bc0e430142",
+          "characters": 6976,
+          "sha256": "708fe50fe57f0a48868d2c5220184720fe2e4132463415f46538c0c2e00234cc",
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
+        }
+      ],
+      "message_sizes": [
+        {
+          "role": "developer",
+          "characters": 33353,
+          "sha256": "a826ce7a66ef213031bbd83203bfdcd177dd3d70c9979b20e3f7ad51c7764215"
+        },
+        {
+          "role": "user",
+          "characters": 5456,
+          "sha256": "a464d7b5648bf392dd374248077d4a81bbc07bc01f523159fa3185f73e1fc6fb"
+        },
+        {
+          "role": "user",
+          "characters": 23988,
+          "sha256": "7936112c548a0521dc19e12dedebaa2cc2429de078abd6bbe07ad8ca387bff70"
+        },
+        {
+          "role": "assistant",
+          "characters": 91,
+          "sha256": "d8fcaa67a984629d81048c8bca2ae424545f551151abd04951035ebe4c3e35e4"
+        },
+        {
+          "role": "assistant",
+          "characters": 571,
+          "sha256": "dea6eda4fa5d99ddd1eddd8d78f6f0a4fca504533925db5f21b824cbeb55f269"
+        }
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "has_proposal": false
+    },
+    {
+      "role": "audit",
+      "session_id": "01a13533-4be9-7831-8c16-2c139b1d14b5",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-18-36-01a13533-4be9-7831-8c16-2c139b1d14b5.jsonl",
+      "native_sha256": "46542b605ea52f1a91aced569a9a653c34bc8daa2b8e770fce9388a0bc48ccb1",
+      "record_count": 36,
+      "response_item_count": 14,
+      "all_response_items_examined": true,
+      "calls": [
+        {
+          "name": "read_task_skill",
+          "selector": "ceo-message-triage",
+          "arguments_sha256": "8be43ddd2831e0e1e4bbb51c670bc2b066009a1379a4ae42959bcbbc4e9b0332"
+        },
+        {
+          "name": "read_skill",
+          "selector": "dingtalk-chat",
+          "arguments_sha256": "10f6dae99b817df3b1a9fc4e85ee4a7a0a8b5e09acfd2d3d415e76e63a6fbf0e"
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "selector": null,
+          "arguments_sha256": "6b40b6653d62e1eaa174ea06aff34ef445c66e34ed9dc81b6ecde0d24166c75f"
+        }
+      ],
+      "outputs": [
+        {
+          "call_id": "call_6a2df2533b7e471fb2fae8c6b930ed65",
+          "characters": 8160,
+          "sha256": "e2b342f610a6a4c32e27d5cf5e8cfeda983a94a5a2caba786239dc391ec94784",
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
+        },
+        {
+          "call_id": "call_840039f3ee69454889beea924bc631bb",
+          "characters": 6865,
+          "sha256": "62bcf3555a7ec6519e5b2b43d1b1475a603cf996fad79eac38901c811c8839c6",
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
+        },
+        {
+          "call_id": "call_988fc3244e124307bf2a4fb673bd59c9",
+          "characters": 33916,
+          "sha256": "453b32897f5c721a60ddf47768c04e1b06e4452e00c316f83cbf6a576011817d",
+          "contains_output_truncated_marker": false,
+          "representation": "native-output-string"
+        }
+      ],
+      "message_sizes": [
+        {
+          "role": "developer",
+          "characters": 29395,
+          "sha256": "d34ed4d22ec438952b24d74f6f8d5b914904aed57a018f40cddf1e677ec927af"
+        },
+        {
+          "role": "user",
+          "characters": 4832,
+          "sha256": "4d8bb9a5adc3cbaa025592457c2170799c0c692ef9fffe11fbfbd388c2f63eca"
+        },
+        {
+          "role": "user",
+          "characters": 50706,
+          "sha256": "65a123e8ead308c01c88d8f25cbb26fa7aa4d421016f90a3b1ad57d5810cba6c"
+        },
+        {
+          "role": "assistant",
+          "characters": 89,
+          "sha256": "7fd6a5c0c5ad99e372a615f56676d13a854037fbc25bff9967de57f98f0795a4"
+        },
+        {
+          "role": "assistant",
+          "characters": 703,
+          "sha256": "965e1856c99e5191ad8a3f46a687366335ebdb5b70879d43d412cbc13677f1b0"
+        }
+      ],
+      "canonical_valid": true,
+      "outcome": "approve",
+      "has_proposal": false
+    }
+  ],
+  "interpretation": [
+    "Actual Consumer no_action and Audit approve; no action plan in Consumer output.",
+    "Both roles read ceo-message-triage and dingtalk-chat. Consumer uses frozen reader for both; Audit uses installed reader for operation dependency.",
+    "Audit reads current conversation; live-state verification is necessary under unchanged workflow and is not classified as redundant.",
+    "No explicit content clipping marker found in returned text; this does not prove transport equality to original provider records.",
+    "This metadata inventory alone does not prove an incorrect judgment or justify deleting a rule.",
+    "Consumer shared AGENTS custom output contains 18,547 characters of returned text blocks; the previous 18,771-character count measures Python list representation including wrappers. This is engineering/bootstrap instruction material, not business source facts. Native observation alone does not authorize changing shared instructions."
+  ],
+  "next_control": "Use equivalent anonymous closed-exchange case to compare declared mandatory sources with available applicable sources, retaining independent current-conversation Audit verification.",
+  "independent_review": "All native counts, hashes, call/source metadata and canonical results verified; custom output block-list versus text counting boundary corrected."
+}

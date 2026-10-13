@@ -206,8 +206,11 @@ function validPromptSkillRefs(prompt: unknown, command: unknown, refs: unknown):
   const names = [...prompt.matchAll(/\$([A-Za-z0-9][A-Za-z0-9_-]*)/g)]
     .map((match) => match[1])
     .filter((name, index, all) => all.indexOf(name) === index);
-  return names.length === refs.length
-    && names.every((name, index) => name === refs[index].skill_name);
+  const boundNames = refs.map((ref) => ref.skill_name);
+  const requestedBindings = boundNames.filter((name) => names.includes(name));
+  return new Set(boundNames).size === boundNames.length
+    && names.length === requestedBindings.length
+    && names.every((name, index) => name === requestedBindings[index]);
 }
 
 function validRun(value: unknown): value is ScheduledTaskRun {

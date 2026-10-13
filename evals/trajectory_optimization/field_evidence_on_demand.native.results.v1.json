@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "code_commit": "3a6c5ce0",
+  "runs": [
+    {
+      "phase": "initial",
+      "arm": "inline",
+      "session_id": "01a13509-c933-7880-b901-b151dc7dca22",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-33-16-01a13509-c933-7880-b901-b151dc7dca22.jsonl",
+      "native_file_sha256": "ea2e9e1533538a147d6ba3dbc316e0a273d43d9fc966eb2ab8090872a3abbcb5",
+      "native_record_count": 36,
+      "actual_task_exact": true,
+      "prompt_chars": 59506,
+      "prompt_sha256": "97697a1a6eba7a6741a756b1c6f775dc81166bf3fa36e5515d04accfac67902e",
+      "native_developer_hashes": [
+        "1baf4bd3c2cb0e393b1a2571184a83bb7bad8a99b2bb3d9660f9d0de412941d2",
+        "aca56d9d3bc42933ee57a63c3a10e458ca6d13d47293b0b7ea03600de792f2af"
+      ],
+      "native_developer_chars": [
+        40070,
+        404
+      ],
+      "raw_diagnostic_result": {
+        "issues": [
+          {
+            "pointer": "/cases/1/target/task_id",
+            "type": "number",
+            "literal": 104265682397
+          }
+        ],
+        "quoted_id_valid": true,
+        "escaped_fields": {
+          "enabled": {
+            "pointer": "/cases/2/a~1b~0c/enabled",
+            "type": "boolean",
+            "literal": false
+          },
+          "count": {
+            "pointer": "/cases/2/a~1b~0c/count",
+            "type": "number",
+            "literal": 7
+          },
+          "missing": {
+            "pointer": "/cases/2/a~1b~0c/missing",
+            "type": "null",
+            "literal": null
+          }
+        }
+      },
+      "classification_and_value_semantics_correct": true,
+      "not_canonical_audit_result": true,
+      "field_tool_calls": 0,
+      "successful_field_calls": 0,
+      "failed_field_calls": 0,
+      "field_tool_returns": [],
+      "tool_failures": [],
+      "extra_native_bootstrap_calls": [
+        {
+          "server": "codex_apps",
+          "tool": "memory.user_get",
+          "status": "completed"
+        }
+      ],
+      "terminal_completed": true
+    },
+    {
+      "phase": "initial",
+      "arm": "on-demand",
+      "session_id": "01a1350a-32cc-7a31-b8ec-c68451e94b7d",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-33-43-01a1350a-32cc-7a31-b8ec-c68451e94b7d.jsonl",
+      "native_file_sha256": "222de6b356dd34de17575b961353fae7c46cca5ca079d1a464f93dbca74401a6",
+      "native_record_count": 57,
+      "actual_task_exact": true,
+      "prompt_chars": 29760,
+      "prompt_sha256": "9401bf3da56ac5c9a06695d485e9b231b0e37466868381bb94b61a04d0862874",
+      "native_developer_hashes": [
+        "428f513562bb8f496d2d1d74568b79769eb78113123871ef7fb8a667046972dc",
+        "aca56d9d3bc42933ee57a63c3a10e458ca6d13d47293b0b7ea03600de792f2af"
+      ],
+      "native_developer_chars": [
+        40073,
+        404
+      ],
+      "raw_diagnostic_result": {
+        "issues": [
+          {
+            "pointer": "/cases/1/target/task_id",
+            "type": "number",
+            "literal": 104265682397
+          }
+        ],
+        "quoted_id_valid": true,
+        "escaped_fields": {
+          "enabled": {
+            "pointer": "/cases/2/a~1b~0c/enabled",
+            "type": "boolean",
+            "literal": false
+          },
+          "count": {
+            "pointer": "/cases/2/a~1b~0c/count",
+            "type": "number",
+            "literal": 7
+          },
+          "missing": {
+            "pointer": "/cases/2/a~1b~0c/missing",
+            "type": "null",
+            "literal": null
+          }
+        }
+      },
+      "classification_and_value_semantics_correct": true,
+      "not_canonical_audit_result": true,
+      "field_tool_calls": 5,
+      "successful_field_calls": 0,
+      "failed_field_calls": 5,
+      "field_tool_returns": [],
+      "tool_failures": [
+        {
+          "message": "MCP tool call requires approval, but approval policy is never"
+        },
+        {
+          "message": "MCP tool call requires approval, but approval policy is never"
+        },
+        {
+          "message": "MCP tool call requires approval, but approval policy is never"
+        },
+        {
+          "message": "MCP tool call requires approval, but approval policy is never"
+        },
+        {
+          "message": "MCP tool call requires approval, but approval policy is never"
+        }
+      ],
+      "extra_native_bootstrap_calls": [
+        {
+          "server": "codex_apps",
+          "tool": "memory.user_get",
+          "status": "completed"
+        }
+      ],
+      "terminal_completed": true
+    },
+    {
+      "phase": "revised",
+      "arm": "inline",
+      "session_id": "01a1350b-fc1b-7ff1-892c-7acb2c29884f",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-35-40-01a1350b-fc1b-7ff1-892c-7acb2c29884f.jsonl",
+      "native_file_sha256": "c91d356ee7c87be27b1f75d6ecd00b6c059f73b08284e4f4733cd7ee042bb1f8",
+      "native_record_count": 32,
+      "actual_task_exact": true,
+      "prompt_chars": 59506,
+      "prompt_sha256": "97697a1a6eba7a6741a756b1c6f775dc81166bf3fa36e5515d04accfac67902e",
+      "native_developer_hashes": [
+        "1baf4bd3c2cb0e393b1a2571184a83bb7bad8a99b2bb3d9660f9d0de412941d2",
+        "aca56d9d3bc42933ee57a63c3a10e458ca6d13d47293b0b7ea03600de792f2af"
+      ],
+      "native_developer_chars": [
+        40070,
+        404
+      ],
+      "raw_diagnostic_result": {
+        "issues": [
+          {
+            "pointer": "/cases/1/target/task_id",
+            "type": "number",
+            "literal": 104265682397
+          }
+        ],
+        "quoted_id_valid": true,
+        "escaped_fields": {
+          "enabled": {
+            "pointer": "/cases/2/a~1b~0c/enabled",
+            "type": "boolean",
+            "literal": false
+          },
+          "count": {
+            "pointer": "/cases/2/a~1b~0c/count",
+            "type": "number",
+            "literal": 7
+          },
+          "missing": {
+            "pointer": "/cases/2/a~1b~0c/missing",
+            "type": "null",
+            "literal": null
+          }
+        }
+      },
+      "classification_and_value_semantics_correct": true,
+      "not_canonical_audit_result": true,
+      "field_tool_calls": 0,
+      "successful_field_calls": 0,
+      "failed_field_calls": 0,
+      "field_tool_returns": [],
+      "tool_failures": [],
+      "extra_native_bootstrap_calls": [
+        {
+          "server": "codex_apps",
+          "tool": "memory.user_get",
+          "status": "completed"
+        }
+      ],
+      "terminal_completed": true
+    },
+    {
+      "phase": "revised",
+      "arm": "on-demand",
+      "session_id": "01a1350c-57b9-74f1-bd09-81bb3f52e821",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-36-03-01a1350c-57b9-74f1-bd09-81bb3f52e821.jsonl",
+      "native_file_sha256": "e92b574d7fa697c3a2f9e36c54423a89c77f59f4a57028f0ab343bf75259f264",
+      "native_record_count": 49,
+      "actual_task_exact": true,
+      "prompt_chars": 29760,
+      "prompt_sha256": "9401bf3da56ac5c9a06695d485e9b231b0e37466868381bb94b61a04d0862874",
+      "native_developer_hashes": [
+        "428f513562bb8f496d2d1d74568b79769eb78113123871ef7fb8a667046972dc",
+        "aca56d9d3bc42933ee57a63c3a10e458ca6d13d47293b0b7ea03600de792f2af"
+      ],
+      "native_developer_chars": [
+        40073,
+        404
+      ],
+      "raw_diagnostic_result": {
+        "issues": [
+          {
+            "pointer": "/cases/1/target/task_id",
+            "type": "number",
+            "literal": "104265682397"
+          }
+        ],
+        "quoted_id_valid": true,
+        "escaped_fields": [
+          {
+            "pointer": "/cases/2/a~1b~0c/enabled",
+            "type": "boolean",
+            "literal": "false"
+          },
+          {
+            "pointer": "/cases/2/a~1b~0c/count",
+            "type": "number",
+            "literal": "7"
+          },
+          {
+            "pointer": "/cases/2/a~1b~0c/missing",
+            "type": "null",
+            "literal": "null"
+          }
+        ]
+      },
+      "classification_and_value_semantics_correct": true,
+      "not_canonical_audit_result": true,
+      "field_tool_calls": 5,
+      "successful_field_calls": 5,
+      "failed_field_calls": 0,
+      "field_tool_returns": [
+        {
+          "pointer": "/cases/2/a~1b~0c/count",
+          "json_type": "number",
+          "literal": "7"
+        },
+        {
+          "pointer": "/cases/1/target/task_id",
+          "json_type": "number",
+          "literal": "104265682397"
+        },
+        {
+          "pointer": "/cases/2/a~1b~0c/missing",
+          "json_type": "null",
+          "literal": "null"
+        },
+        {
+          "pointer": "/cases/0/target/task_id",
+          "json_type": "string",
+          "literal": "\"104265682397\""
+        },
+        {
+          "pointer": "/cases/2/a~1b~0c/enabled",
+          "json_type": "boolean",
+          "literal": "false"
+        }
+      ],
+      "tool_failures": [],
+      "extra_native_bootstrap_calls": [
+        {
+          "server": "codex_apps",
+          "tool": "memory.user_get",
+          "status": "completed"
+        }
+      ],
+      "terminal_completed": true
+    }
+  ],
+  "revised_developer_equal": false,
+  "revised_input_reduction_chars": 29746,
+  "initial_failure": "Five field calls rejected by native approval configuration; fixture omitted readonly annotations and existing role default_tools_approval_mode=approve setting. Initial final classification correct but lookup failed.",
+  "observer_correction": "Initial assertion expected native typed literal values; revised on-demand result supplies JSON literal strings and an escaped_fields array. Raw outputs are retained. Semantic decoding is only an observer check, not a runtime conversion or canonical contract acceptance.",
+  "independent_review": "Original native/stream/callback values checked; five revised returns exact; classification correct in four phases; cross-arm automatic Skill catalog drift and output shape/literal encoding differences prevent strict equivalence claim.",
+  "limits": [
+    "Not complete Audit role/wire/business acceptance",
+    "Cross-arm Developer catalog differs: defense-factory presence, descriptions/root aliases; not single-factor quality causality",
+    "Complete current candidate remains in both arms; initial blocked lookup still yields correct classifications, so lookup is not proven necessary",
+    "No service registration/persisted candidate identity/generation/resume/route lookup tested",
+    "No production policy/tool; approved inline evidence retained",
+    "Repeated synthetic support text; no all-task cost claim",
+    "Each turn calls real Memory bootstrap; private returned profile not copied"
+  ],
+  "next_evidence": "Use fixed native catalog and actual canonical Audit roles; compare existing candidate inspection before adding a new lookup, preserve business/type oracles."
+}

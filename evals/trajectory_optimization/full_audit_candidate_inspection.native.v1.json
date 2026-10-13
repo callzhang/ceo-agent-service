@@ -1,0 +1,476 @@
+{
+  "version": 1,
+  "code_commit": "9f2fa72a",
+  "scope": "Actual service-composed Developer/Profile/Task with actual Audit native command helper; registered readonly Skill/contract functions and anonymous provider fixture; cold only",
+  "corrected_cases": [
+    {
+      "case": "valid-string",
+      "candidate": {
+        "outcome": "proposal",
+        "summary": "向已核实的申请人Avery发送Derek本轮明确给出的完整通知。",
+        "proposal": {
+          "objective": "Send exact notice requested by authorized principal to the current verified recipient",
+          "actions": [
+            {
+              "description": "Notify applicant",
+              "action_identity": "notice",
+              "capability": "dingtalk-chat",
+              "operation": "send_direct_message",
+              "target": {
+                "open_dingtalk_id": "104265682397"
+              },
+              "payload": {
+                "content": "Avery，你提交的资料已收到。我们会在完成审核后通知你结果。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Derek本轮明确要求向Avery的当前已核实标识发送该完整正文；当前尚未发送。",
+              "references": [
+                "msg-audit"
+              ]
+            }
+          ],
+          "authored_judgment": "The principal requested exactly this notice; the source snapshot confirms the recipient and current request is unhandled."
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.9,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "msg-audit",
+            "value": {
+              "trigger_text": "请向 Avery（open_dingtalk_id=104265682397）发送下面这段完整通知：Avery，你提交的资料已收到。我们会在完成审核后通知你结果。",
+              "trigger_raw_payload": {
+                "recipient": "104265682397",
+                "applicant_user_id": "anonymous-applicant-1",
+                "applicant_name": "Avery",
+                "authorized": true,
+                "handled": false,
+                "requested_content": "Avery，你提交的资料已收到。我们会在完成审核后通知你结果。",
+                "captured_at": "2026-10-13T12:14:35.339101+00:00",
+                "complete_support": [
+                  {
+                    "index": 0,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 1,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 2,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 3,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 4,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 5,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 6,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 7,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 8,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 9,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 10,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 11,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 12,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 13,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 14,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 15,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 16,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 17,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 18,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 19,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 20,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 21,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 22,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 23,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  }
+                ]
+              },
+              "messages": [],
+              "materials": []
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "actual_submitted_candidate_digest": "89539e854e0954cfdf4675b883744b07db6637bfabd1f9cd73d550380b48b5a6",
+      "unused_old_manifest_digest": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3"
+    },
+    {
+      "case": "invalid-number",
+      "candidate": {
+        "outcome": "proposal",
+        "summary": "向已核实的申请人Avery发送Derek本轮明确给出的完整通知。",
+        "proposal": {
+          "objective": "Send exact notice requested by authorized principal to the current verified recipient",
+          "actions": [
+            {
+              "description": "Notify applicant",
+              "action_identity": "notice",
+              "capability": "dingtalk-chat",
+              "operation": "send_direct_message",
+              "target": {
+                "open_dingtalk_id": 104265682397
+              },
+              "payload": {
+                "content": "Avery，你提交的资料已收到。我们会在完成审核后通知你结果。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Derek本轮明确要求向Avery的当前已核实标识发送该完整正文；当前尚未发送。",
+              "references": [
+                "msg-audit"
+              ]
+            }
+          ],
+          "authored_judgment": "The principal requested exactly this notice; the source snapshot confirms the recipient and current request is unhandled."
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.9,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "msg-audit",
+            "value": {
+              "trigger_text": "请向 Avery（open_dingtalk_id=104265682397）发送下面这段完整通知：Avery，你提交的资料已收到。我们会在完成审核后通知你结果。",
+              "trigger_raw_payload": {
+                "recipient": "104265682397",
+                "applicant_user_id": "anonymous-applicant-1",
+                "applicant_name": "Avery",
+                "authorized": true,
+                "handled": false,
+                "requested_content": "Avery，你提交的资料已收到。我们会在完成审核后通知你结果。",
+                "captured_at": "2026-10-13T12:14:35.339101+00:00",
+                "complete_support": [
+                  {
+                    "index": 0,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 1,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 2,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 3,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 4,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 5,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 6,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 7,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 8,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 9,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 10,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 11,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 12,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 13,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 14,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 15,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 16,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 17,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 18,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 19,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 20,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 21,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 22,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  },
+                  {
+                    "index": 23,
+                    "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+                  }
+                ]
+              },
+              "messages": [],
+              "materials": []
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "actual_submitted_candidate_digest": "f3d948674ae1a2ca5951a38666a468a1439c3f30e8a4379332e2887d00d93ad5",
+      "unused_old_manifest_digest": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32"
+    }
+  ],
+  "snapshot": {
+    "recipient": "104265682397",
+    "applicant_user_id": "anonymous-applicant-1",
+    "applicant_name": "Avery",
+    "authorized": true,
+    "handled": false,
+    "requested_content": "Avery，你提交的资料已收到。我们会在完成审核后通知你结果。",
+    "captured_at": "2026-10-13T12:14:35.339101+00:00",
+    "complete_support": [
+      {
+        "index": 0,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 1,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 2,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 3,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 4,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 5,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 6,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 7,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 8,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 9,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 10,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 11,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 12,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 13,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 14,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 15,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 16,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 17,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 18,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 19,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 20,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 21,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 22,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      },
+      {
+        "index": 23,
+        "body": "Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. Anonymous unchanged supporting facts. "
+      }
+    ]
+  },
+  "request": "请向 Avery（open_dingtalk_id=104265682397）发送下面这段完整通知：Avery，你提交的资料已收到。我们会在完成审核后通知你结果。",
+  "clock": "2026-10-13T12:14:35.339101+00:00",
+  "runner_source": "import sys,json,hashlib,subprocess,tomllib\nfrom pathlib import Path\nsys.path.insert(0,'/private/tmp/ceo-skill-source-bindings')\nfrom app.business_skills import codex_skill_config_override\nfrom app.agent_wire_contracts import parse_audit_agent_wire_result\nfrom app.wechat.codex_safety import make_audit_agent_command,ControlledCliConfig\nroot=Path(__file__).parent\ncatalog=codex_skill_config_override([]);(root/'catalog.txt').write_text(catalog)\ncommon=['codex','exec','--json','--skip-git-repo-check','-s','read-only','-m','gpt-5.6-luna','-c','model_reasoning_effort=\"medium\"','-c','approval_policy=\"never\"','-c',catalog]\nfor name in tomllib.loads(Path('/Users/derek/.codex/config.toml').read_text()).get('mcp_servers',{}):common+=['-c',f'mcp_servers.{name}.enabled=false']\ncommon+=['-c','mcp_servers.agent_cli.command=\"/Users/derek/miniforge3/bin/python\"','-c','mcp_servers.agent_cli.default_tools_approval_mode=\"approve\"','-c','features.code_mode.enabled=true','-c','direct_only_tool_namespaces=[\"mcp__agent_cli\"]','-c','mcp_servers.agent_cli.tools.read_skill.output_token_limit=30000','-c','mcp_servers.agent_cli.tools.read_text_file.output_token_limit=30000']\nresults=[]\nfor case in ['valid-string','invalid-number']:\n    directory=root/(case+'-revised');developer=(directory/'developer.txt').read_text()\n    for arm in ['inline','candidate-only']:\n        stem=case+'.'+arm;prompt=(directory/(arm+'.task.txt')).read_text();command=common+['-c','developer_instructions='+json.dumps(developer),'-c','mcp_servers.agent_cli.args='+json.dumps([str(root/'server.py'),case]),'-']\n        make_audit_agent_command(command,controlled_cli=ControlledCliConfig(command='/Users/derek/miniforge3/bin/python',args=(str(root/'server.py'),case),cwd=str(root)))\n        command=[catalog if x.startswith('skills.config=') else x for x in command]\n        with (root/(stem+'.stdout.jsonl')).open('w') as out,(root/(stem+'.stderr.txt')).open('w') as err:p=subprocess.run(command,input=prompt,text=True,stdout=out,stderr=err,cwd=root,timeout=240)\n        stream=[json.loads(x) for x in (root/(stem+'.stdout.jsonl')).read_text().splitlines()];sid=next(x['thread_id'] for x in stream if x['type']=='thread.started');raw=(root/(stem+'.stdout.jsonl')).read_text()\n        try:result=parse_audit_agent_wire_result(raw).model_dump(mode='json');error=None\n        except Exception as e:result=None;error=type(e).__name__+': '+str(e)\n        record={'case':case,'arm':arm,'returncode':p.returncode,'session_id':sid,'task_chars':len(prompt),'task_sha256':hashlib.sha256(prompt.encode()).hexdigest(),'service_developer_chars':len(developer),'service_developer_sha256':hashlib.sha256(developer.encode()).hexdigest(),'canonical_valid':result is not None,'result':result,'parse_error':error}\n        results.append(record);(root/'results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2));print(json.dumps({k:record[k] for k in ['case','arm','session_id','canonical_valid','parse_error']}),flush=True)\n",
+  "capture_source": "import sys,json,tomllib,hashlib,os\nfrom pathlib import Path\nfrom dataclasses import replace\nfrom unittest.mock import patch\nsys.path.insert(0,'/private/tmp/ceo-skill-source-bindings')\nimport tests.test_audit_agent as fixtures\nfrom app.store import AutoReplyStore\nfrom app.agent_context import AgentTaskContext\nfrom app.reviewed_sources import context_source\nfrom datetime import datetime,timezone\nfrom app.config import load_env_file\nfrom app.prompt_composition import load_prompt_configuration\nfrom app.audit_rules import render_audit_rules\nfrom app.agent_contracts import ConsumerAgentResult\nroot=Path(__file__).parent\nload_env_file(Path('/Users/derek/Services/ceo-agent-service/.env'))\nos.environ['CEO_SERVICE_MCP_CONFIG_PATH']='/Users/derek/Services/ceo-agent-service/data/config/service-mcp.json'\nconfiguration=load_prompt_configuration(role='audit',create_missing=False)\noriginal_render=render_audit_rules\nsource=json.loads(Path('/private/tmp/ceo-skill-source-bindings/evals/trajectory_optimization/canonical_audit_candidate_inspection.native.v1.json').read_text())\nclock=datetime.now(timezone.utc).isoformat()\nbody='Avery，你提交的资料已收到。我们会在完成审核后通知你结果。'\nrequest='请向 Avery（open_dingtalk_id=104265682397）发送下面这段完整通知：'+body\nsnapshot={'recipient':'104265682397','applicant_user_id':'anonymous-applicant-1','applicant_name':'Avery','authorized':True,'handled':False,'requested_content':body,'captured_at':clock,'complete_support':[{'index':i,'body':'Anonymous unchanged supporting facts. '*12} for i in range(24)]}\noriginal_enqueue=AutoReplyStore.enqueue_reply_task\ndef enqueue(self,**kwargs):\n    kwargs.update(trigger_text=request,trigger_create_time=clock,trigger_message_json=json.dumps(snapshot,ensure_ascii=False))\n    return original_enqueue(self,**kwargs)\nAutoReplyStore.enqueue_reply_task=enqueue\ncanonical_context=AgentTaskContext(task_id=1,channel='dingtalk',conversation_id='cid-audit',conversation_title='Review',single_chat=True,trigger_message_id='msg-audit',trigger_sender='Derek',trigger_text=request,trigger_create_time=clock,messages=(),materials=(),prior_receipts=(),trigger_raw_payload=snapshot)\nfor case in source['cases']:\n    c=case['candidate'];c['summary']='向已核实的申请人Avery发送Derek本轮明确给出的完整通知。'\n    c['proposal']['actions'][0]['payload']['content']=body\n    c['proposal']['sourced_facts']=[{'assertion':'Derek本轮明确要求向Avery的当前已核实标识发送该完整正文；当前尚未发送。','references':['msg-audit']}]\n    c['source_bindings']=[{'provider':'task_context','object_ref':'msg-audit','value':context_source(canonical_context)}]\n(root/'corrected_candidate_manifest.json').write_text(json.dumps({'cases':source['cases'],'snapshot':snapshot,'request':request,'clock':clock},ensure_ascii=False,indent=2))\nresults=[]\nfor case in source['cases']:\n    name=case['case'];directory=root/(name+'-revised');directory.mkdir()\n    c=ConsumerAgentResult.model_validate(case['candidate'])\n    with patch.object(fixtures,'_candidate',lambda:c): setup=fixtures.setup.__wrapped__(directory)\n    store,task,parent,ctx,config,router=setup\n    ctx=replace(ctx,audit_rules='',task=replace(ctx.task,trigger_raw_payload=snapshot,skill_names=('ceo-message-triage',),consumer_prompt='Use the applicable message-triage Skill to review the exact prepared notice.'))\n    executor=fixtures.CapturingExecutor(fixtures._wire(ctx.candidate_digest))\n    with patch('app.prompt_composition.load_prompt_configuration',lambda **kwargs:configuration),patch('app.audit_agent.render_audit_rules',lambda role:original_render(role,create_missing=False)):\n        result=fixtures._runner(setup[:3]+(ctx,config,router),executor).run(task,ctx,turn_attempt=0,parent_agent_run_id=parent.id)\n    assert len(executor.commands)==len(executor.prompts)==1\n    command=executor.commands[0];task_text=executor.prompts[0]\n    setting=next(x for x in command if x.startswith('developer_instructions='))\n    developer=tomllib.loads(setting)['developer_instructions']\n    marker='\\n\\nCurrent candidate scalar field evidence, computed from the exact candidate JSON above\\n'\n    prefix,table=task_text.split(marker,1)\n    original_candidate=json.JSONDecoder().raw_decode(task_text.split('Candidate revision\\n',1)[1])[0]\n    projected_candidate=json.JSONDecoder().raw_decode(prefix.split('Candidate revision\\n',1)[1])[0]\n    assert original_candidate==projected_candidate and original_candidate['candidate']==c.model_dump(mode='json')\n    assert 'ceo-message-triage' in prefix\n    for filename,text in [('developer.txt',developer),('inline.task.txt',task_text),('candidate-only.task.txt',prefix)]: (directory/filename).write_text(text)\n    record={'case':name,'mode':'Actual service native-command capture; executor returns scripted approve; not model/business acceptance','candidate_digest':ctx.candidate_digest,'candidate_retained_exact':True,'task_skill_entry_retained':True,'developer_chars':len(developer),'developer_sha256':hashlib.sha256(developer.encode()).hexdigest(),'inline_task_chars':len(task_text),'inline_task_sha256':hashlib.sha256(task_text.encode()).hexdigest(),'candidate_only_task_chars':len(prefix),'candidate_only_task_sha256':hashlib.sha256(prefix.encode()).hexdigest(),'removed_scalar_section_chars':len(task_text)-len(prefix),'current_field_path_literal_type_rule_retained':'Before reporting a candidate field error' in developer,'profile_retained':configuration.work_profile in developer,'configuration_fingerprints':configuration.fingerprints(),'readonly_audit_command': 'sandbox_mode=\"read-only\"' in command,'source_config':'Readonly current file-backed Developer/Work Profile and authored Audit Rules; no secret environment/command copied'}\n    assert all(record[k] for k in ['candidate_retained_exact','task_skill_entry_retained','current_field_path_literal_type_rule_retained','profile_retained','readonly_audit_command'])\n    results.append(record)\n(root/'results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2))\nprint(json.dumps([{k:x[k] for k in ['case','developer_chars','inline_task_chars','candidate_only_task_chars','removed_scalar_section_chars']} for x in results]),flush=True)\n",
+  "reader_source": "import sys,json,os\nfrom pathlib import Path\nsys.path.insert(0,'/private/tmp/ceo-skill-source-bindings')\nfrom app.config import load_env_file\nfrom app.agent_cli import build_role_server\nfrom mcp.server.fastmcp import FastMCP\nfrom mcp.types import ToolAnnotations\nroot=Path(__file__).parent;case=sys.argv[1]\nload_env_file(Path('/Users/derek/Services/ceo-agent-service/.env'))\nregistered=build_role_server('audit',task_id=1,db_path=root/(case+'-revised')/'audit.sqlite3',execution_generation='initial')\nmcp=FastMCP('agent_cli');read=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False)\ndef log(name,args,result):\n    with (root/'calls.jsonl').open('a') as f:f.write(json.dumps({'case':case,'name':name,'args':args,'result':result},ensure_ascii=False)+'\\n')\n    return result\n@mcp.tool(annotations=read)\ndef read_skill(path:str|None=None,name:str|None=None)->dict[str,object]:\n    value=registered._tool_manager.get_tool('read_skill').fn(path=path,name=name)\n    return log('read_skill',{'path':path,'name':name},value)\n@mcp.tool(annotations=read)\ndef read_text_file(path:str)->dict[str,object]:\n    value=registered._tool_manager.get_tool('read_text_file').fn(path=path)\n    return log('read_text_file',{'path':path},value)\n@mcp.tool(annotations=read)\ndef read_system_action_contract(capability:str,operation:str|None=None)->dict[str,object]:\n    value=registered._tool_manager.get_tool('read_system_action_contract').fn(capability=capability,operation=operation)\n    return log('read_system_action_contract',{'capability':capability,'operation':operation},value)\n@mcp.tool(annotations=read)\ndef read_dingtalk_messages(conversation_id:str,title:str='',single_chat:bool=False,limit:int=50)->dict[str,object]:\n    if conversation_id!='cid-audit':raise ValueError('unknown anonymous conversation')\n    manifest=json.loads((root/'corrected_candidate_manifest.json').read_text())\n    candidate=next(x['candidate'] for x in manifest['cases'] if x['case']==case)\n    snapshot=manifest['snapshot']\n    return log('read_dingtalk_messages',{'conversation_id':conversation_id,'title':title,'single_chat':single_chat,'limit':limit},{'messages':[{'message_id':'msg-audit','sender':'Derek','text':manifest['request'],'create_time':manifest['clock'],'raw_payload':snapshot}]})\n@mcp.tool(annotations=read)\ndef read_dingtalk_user_profiles(user_ids:list[str])->dict[str,object]:\n    manifest=json.loads((root/'corrected_candidate_manifest.json').read_text());s=manifest['snapshot']\n    if not set(user_ids).issubset({s['recipient'],s['applicant_user_id']}):raise ValueError('unknown anonymous user')\n    return log('read_dingtalk_user_profiles',{'user_ids':user_ids},{'result':[{'orgEmployeeModel':{'name':s['applicant_name'],'userId':s['applicant_user_id'],'openDingtalkId':s['recipient'],'isActive':True}}],'captured_at':manifest['clock']})\nif __name__=='__main__':mcp.run(transport='stdio')\n",
+  "initial_sources_sha256": {
+    "capture.py": "fcb84740bf4277ccde3c275ae664c60013ed5692c0b5b1d0f9c27ea6f5992502",
+    "run.py": "a4ab3fa4f6f181f4801fbf1fb3eb149022ba640360f44940c30e894c24656d04",
+    "server.py": "9728ef384143927db849180c590fb52c26b1304ff85fdf0fc32fad14e51387c1"
+  },
+  "catalog_sha256": "4a981672d54e85f8a77dd36f3800d915c6e6fc781228a403c27fc6a9e8d3c9a8",
+  "private_boundary": "Complete Developer/Profile only owned temporary files and native CLI originals, not committed here"
+}

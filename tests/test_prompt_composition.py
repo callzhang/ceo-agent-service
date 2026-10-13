@@ -174,6 +174,8 @@ def test_consumer_task_assembly_places_current_skill_entry_on_cold_and_resume_tu
         assert "CURRENT FACTS" in assembly.text
         assert "ceo-calendar-invite" in assembly.text
         assert "agent_cli.read_task_skill(name)" in assembly.text
+        assert "## Available Task Skill Sources" in assembly.text
+        assert "Read the applicable sources" in assembly.text
         assert "ceo-mail-review" not in assembly.text
         assert any(section.name == "任务 Skill 入口" for section in assembly.sections)
     assert "RESULT CORRECTION" in resumed.text

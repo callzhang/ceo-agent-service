@@ -5770,15 +5770,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "prompt and Skill refs together"
                 )
             if skill_refs:
-                from app.agent_cron.commands import consumer_skill_names_from_prompt
+                from app.agent_cron.commands import validate_consumer_skill_bindings
 
-                if consumer_skill_names_from_prompt(prompt) != tuple(
-                    ref.skill_name for ref in skill_refs
-                ):
-                    raise ValueError(
-                        "service command scheduled task Skill refs must exactly "
-                        "match $skill references in prompt"
-                    )
+                validate_consumer_skill_bindings(
+                    prompt, tuple(ref.skill_name for ref in skill_refs)
+                )
             return
         if not prompt:
             raise ValueError("scheduled task prompt must be nonempty")

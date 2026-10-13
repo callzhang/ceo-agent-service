@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "production_commit": "b9572061ac46e2bae0e7cd5f2d0603a32540eed6",
+  "scope": "Actual saved native Audit submission size, metadata only; no private originals",
+  "runs": [
+    {
+      "task_id": 404569,
+      "audit_run_id": 352127,
+      "session_id": "01a13505-ba43-76a2-8465-235e1b38288b",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-28-50-01a13505-ba43-76a2-8465-235e1b38288b.jsonl",
+      "transcript_end": 36,
+      "native_snapshot_sha256": "6cc4bc54d997a02e39b698d9762c9a6dc1652dcb5bd82f62f7663300c497f4dd",
+      "submitted_task_chars": 23771,
+      "submitted_task_sha256": "5b4694addfb3636d87ea1c1f13897fe4fecdb78ef80fdad4a4aba67203ed34c8",
+      "candidate_pretty_json_chars": 4572,
+      "field_evidence_chars": 6414,
+      "field_evidence_lines": 94,
+      "field_evidence_chars_by_top_field_including_newlines": {
+        "outcome": 32,
+        "summary": 135,
+        "proposal": 24,
+        "error": 242,
+        "risk": 23,
+        "confidence": 28,
+        "rule_coverage": 31,
+        "information_completeness": 41,
+        "needs_human_reason": 34,
+        "decision_basis": 30,
+        "requested_input": 31,
+        "stage_index": 26,
+        "predecessor_review_id": 37,
+        "continue_after_execution": 44,
+        "source_bindings": 5657
+      },
+      "field_evidence_sha256": "f1a2791ac2d26f0bbde1f471839c98ae9a61a531203557a0b0229f3184124a5c"
+    },
+    {
+      "task_id": 404567,
+      "audit_run_id": 352101,
+      "session_id": "01a134ff-63ea-7e83-b8c1-4c1ceab66923",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-21-54-01a134ff-63ea-7e83-b8c1-4c1ceab66923.jsonl",
+      "transcript_end": 43,
+      "native_snapshot_sha256": "9a5a09c3b50a50d219452224210aa191de992bd97ee48c527e9c98450d3b6904",
+      "submitted_task_chars": 44048,
+      "submitted_task_sha256": "bb7799637e215a8bad6cd605ae518dcdb91e002d41a8df8d15436e2732363f96",
+      "candidate_pretty_json_chars": 14474,
+      "field_evidence_chars": 16637,
+      "field_evidence_lines": 118,
+      "field_evidence_chars_by_top_field_including_newlines": {
+        "outcome": 31,
+        "summary": 121,
+        "proposal": 2600,
+        "error": 242,
+        "risk": 23,
+        "confidence": 28,
+        "rule_coverage": 31,
+        "information_completeness": 42,
+        "needs_human_reason": 34,
+        "decision_basis": 30,
+        "requested_input": 31,
+        "stage_index": 26,
+        "predecessor_review_id": 37,
+        "continue_after_execution": 44,
+        "source_bindings": 13318
+      },
+      "field_evidence_sha256": "3826032eae31cac5f8204c26ea7e59edd0b079b29ab322839f56907a02ce8c95"
+    }
+  ],
+  "limitations": [
+    "Two currently readable tasks only; not all-task coverage",
+    "These are actual adopted candidate inputs, not raw Consumer final JSON",
+    "Required field-type repair is separately approved and retained; size alone does not justify removing evidence",
+    "No causal claim that evidence length caused a business error"
+  ],
+  "next_comparison": "Preserve exact path/literal/type capability and current-candidate identity; compare on-demand evidence against complete inline evidence before proposing a release"
+}

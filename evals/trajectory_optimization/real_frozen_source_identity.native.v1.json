@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "scope": "Native registered-reader source delivery and version-only identity change, not general document business acceptance",
+  "name": "ceo-document-review",
+  "sources": {
+    "7": {
+      "content": "## Managed Skill: ceo-document-review\nrevision_id: 41\nsha256: 69a91c6e60333580e37a521721fdcb65c74910a7be016b7e833eb5b2bf51c2e5\n\n---\nname: ceo-document-review\ndescription: Review complete anonymous fixture records.\n---\n\nFor the complete synthetic-document fixture record supplied in the Task, state already_reviewed means no edit, comment or outbound action is needed. Return no_action on this evidence. This rule applies only to this anonymous test record and introduces no rule for real documents.\n",
+      "sha256": "9db93abd5119c1fa08e8f8733c4b346d563f5f981d2b2b6da6303b22980668fe",
+      "generation": "first"
+    },
+    "8": {
+      "content": "## Managed Skill: ceo-document-review\nrevision_id: 42\nsha256: 69a91c6e60333580e37a521721fdcb65c74910a7be016b7e833eb5b2bf51c2e5\n\n---\nname: ceo-document-review\ndescription: Review complete anonymous fixture records.\n---\n\nFor the complete synthetic-document fixture record supplied in the Task, state already_reviewed means no edit, comment or outbound action is needed. Return no_action on this evidence. This rule applies only to this anonymous test record and introduces no rule for real documents.\n",
+      "sha256": "cccea960b326231657e0a1f7018f07ed2e3f0d61bbd0d55772878c9a33b211b0",
+      "generation": "second"
+    },
+    "9": {
+      "content": "## Managed Skill: ceo-document-review\nrevision_id: 42\nsha256: 69a91c6e60333580e37a521721fdcb65c74910a7be016b7e833eb5b2bf51c2e5\n\n---\nname: ceo-document-review\ndescription: Review complete anonymous fixture records.\n---\n\nFor the complete synthetic-document fixture record supplied in the Task, state already_reviewed means no edit, comment or outbound action is needed. Return no_action on this evidence. This rule applies only to this anonymous test record and introduces no rule for real documents.\n",
+      "sha256": "cccea960b326231657e0a1f7018f07ed2e3f0d61bbd0d55772878c9a33b211b0",
+      "generation": "third"
+    },
+    "10": {
+      "content": "## Managed Skill: ceo-document-review\nrevision_id: 43\nsha256: 69a91c6e60333580e37a521721fdcb65c74910a7be016b7e833eb5b2bf51c2e5\n\n---\nname: ceo-document-review\ndescription: Review complete anonymous fixture records.\n---\n\nFor the complete synthetic-document fixture record supplied in the Task, state already_reviewed means no edit, comment or outbound action is needed. Return no_action on this evidence. This rule applies only to this anonymous test record and introduces no rule for real documents.\n",
+      "sha256": "5f0e8c090bacca763f4a96879ed475b684134c85c315a640bd8d60b90d554195",
+      "generation": "fourth"
+    }
+  },
+  "phases": [
+    "cold41",
+    "unchanged41",
+    "changed42",
+    "same42newinput",
+    "changed43newinput"
+  ],
+  "oracle": {
+    "outcome": "no_action / Audit approve",
+    "unchanged": "may reuse complete exact content",
+    "changed": "must read newly bound42 content because whole wrapper hash differs"
+  },
+  "history": "Four separate original inputs are retained; task8 and task9 have identical42 bodies; original41/42 bodies are not rewritten.",
+  "probe_files": {
+    "initial_sha256": "04371d29681dcedd8ef0e37102ab4c230dc2042d0a38a2af23f35db822785d65",
+    "extension_sha256": "828d20a1cf4676bc05ce3a7247c570647bac5683a7b62f41b51c8ac962676106"
+  }
+}

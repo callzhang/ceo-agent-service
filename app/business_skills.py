@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 import csv
 from dataclasses import dataclass
 import io
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -504,6 +505,7 @@ def render_task_skill_discovery(
     *,
     catalog: tuple[BusinessSkillCatalogEntry, ...],
     frozen_names: Iterable[str] = (),
+    frozen_hashes: Mapping[str, str] | None = None,
 ) -> str:
     """Render name/use/read-only discovery without preloading Skill bodies."""
     selected = tuple(dict.fromkeys(name for name in selected_names if name))
@@ -519,14 +521,13 @@ def render_task_skill_discovery(
                 + ", ".join(missing_installed)
             )
         entries = tuple((name, by_name.get(name)) for name in selected)
-        heading = "## Selected Task Skills"
+        heading = "## Available Task Skill Sources" if frozen else "## Selected Task Skills"
         instructions: list[str] = []
         if frozen:
-            names = ", ".join(f"`{name}`" for name in selected if name in frozen)
             instructions.append(
-                f"For the task-frozen selection {names}, use this task's exact content. "
+                "Read the applicable sources. "
                 "Reuse complete content already loaded in this session only while "
-                "this selected frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content "
+                "this frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content "
                 "with `agent_cli.read_task_skill(name)`; do not substitute a similarly "
                 "named installed Skill."
             )
@@ -553,12 +554,15 @@ def render_task_skill_discovery(
         )
     lines = [heading]
     for name, entry in entries:
+        default_use = "Task-bound rule source." if name in frozen else "Selected for this task."
         use = (
             " ".join(entry.description.split())
             if entry is not None
-            else "Selected for this task."
-        ) or "Selected for this task."
+            else default_use
+        ) or default_use
         line = f"- `{name}`: {use}"
+        if name in frozen and frozen_hashes and name in frozen_hashes:
+            line += f" sha256: `{frozen_hashes[name]}`."
         if name not in frozen:
             assert entry is not None
             path = json.dumps(str(entry.skill_path.resolve()), ensure_ascii=False)
@@ -579,6 +583,19 @@ def frozen_task_skill_names(
         return ()
     declared = frozenset(binding.declared_names)
     return tuple(name for name in selected if name in declared)
+
+
+def frozen_task_skill_hashes(
+    trigger_message_json: str, selected_names: Iterable[str],
+) -> dict[str, str]:
+    """Project exact bound content identities without exposing the bodies."""
+    selected = frozenset(selected_names)
+    binding = frozen_task_skill_binding(trigger_message_json)
+    return {
+        material.name: sha256(material.content.encode("utf-8")).hexdigest()
+        for material in binding.materials
+        if material.name in selected
+    }
 
 
 def frozen_task_skill_binding(trigger_message_json: str) -> FrozenTaskSkillBinding:

@@ -172,6 +172,18 @@ def consumer_skill_names_from_prompt(prompt: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(_SKILL_REFERENCE_PATTERN.findall(prompt)))
 
 
+def validate_consumer_skill_bindings(prompt: str, bound_names: tuple[str, ...]) -> None:
+    """Explicit workflow names are an ordered subset of available frozen sources."""
+    requested = consumer_skill_names_from_prompt(prompt)
+    if len(set(bound_names)) != len(bound_names) or requested != tuple(
+        name for name in bound_names if name in requested
+    ):
+        raise ValueError(
+            "service command Skill refs must cover $skill references in prompt "
+            "in declared order"
+        )
+
+
 SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
     ServiceCommandOption(
         name="email-message-check-once",

@@ -1111,20 +1111,31 @@ def test_service_trigger_persists_consumer_prompt_and_exact_skill_refs(
     ]
 
 
-def test_service_trigger_rejects_skill_refs_not_extracted_from_prompt(
+def test_service_trigger_keeps_available_refs_not_requested_in_prompt(
     tmp_path: Path,
 ) -> None:
-    client, _store, ids, _wakes = _client(tmp_path)
+    client, store, ids, _wakes = _client(tmp_path)
     payload = _consumer_command_payload(ids)
     payload["prompt"] = "只使用 $ceo-test 处理真实消息。"
 
     with client:
         response = client.post("/api/console/scheduled-tasks", json=payload)
 
+    assert response.status_code == 201, response.json()
+    item = response.json()["item"]
+    assert [ref["skill_name"] for ref in item["skill_refs"]] == ["ceo-test", "dingtalk-chat"]
+    assert store.get_scheduled_task(item["id"]).skill_refs[1].skill_name == "dingtalk-chat"
+
+
+@pytest.mark.parametrize("prompt", ["使用 $not-bound 处理消息。", "使用 $dingtalk-chat 和 $ceo-test。"])
+def test_service_trigger_rejects_unbound_or_reordered_explicit_names(tmp_path, prompt):
+    client, _store, ids, _wakes = _client(tmp_path)
+    payload = _consumer_command_payload(ids)
+    payload["prompt"] = prompt
+    with client:
+        response = client.post("/api/console/scheduled-tasks", json=payload)
     assert response.status_code == 422
-    assert (
-        "must exactly match $skill references in prompt" in response.json()["message"]
-    )
+    assert "must cover $skill references" in response.json()["message"]
 
 
 def test_service_command_task_rejects_agent_fields_and_unknown_commands(
