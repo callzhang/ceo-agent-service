@@ -58,3 +58,7 @@ fresh layout、manifest、版本及配对 release；用最新生产副本完成�
 当前事实逆迁、实际旧代码打开、再次正迁和发布失败演练。随后执行受影响
 业务流程、真实 CLI 加替身发送、独立审查及完整 CI，再通过正常 deploy 上线。
 上线后读回进程、健康、队列、Attention、History 和受影响页面。
+
+## 已发布来源重新核对
+
+第五期B正式部署到ebaf0d96后，当前生产Store16／Email51的九类型actions与postfix三表准确声明通过capture_action_postfix_schema只读校验；水位560／115，postfix行数1079／613／67。简明schema-only evidence见phase5c_published_source.v1.json。C worktree已合并已发布B及其历史fixture修正，合并后268项定向通过，包含C独立迁移、既有action回归、D source oracle及真实source-chain回归；选集有重叠，不与既往总数相加。允许继续Store17接入，仍不表示目标运行、正式生产副本或部署验收完成。

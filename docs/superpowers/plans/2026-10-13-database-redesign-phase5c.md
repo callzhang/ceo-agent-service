@@ -1,6 +1,6 @@
 # 第五期C：发送准备、native dispatch及provider receipt合入actions
 
-本单元属于已批准的完整10+1结构，不能代替剩余actions/business/emails/config/state迁移。Phase5B正式CI/发布尚未完成，因此可以先完成独立源事实、opt-in存储基础和不带marker的正逆迁副本验证；运行调用方、bootstrap和正式release激活须在Phase5B发布后核对实际源marker/commit，不预先占用Store版本。
+本单元属于已批准的完整10+1结构，不能代替剩余actions/business/emails/config/state迁移。Phase5B已于ebaf0d96正式发布，当前生产Store2026-10-13.2／Email51，准确九类型actions及旧postfix三表声明已只读重新验证通过。实际native水位560／115，三个postfix表行数1079／613／67；仅为来源观察，不作为恒定迁移计数。现在为本单元预留Store2026-10-13.3（Store17），继续caller/bootstrap/release接入；尚未激活运行或发布目标结构。已完成的独立十二类型基础和正逆迁证据仍是先前候选副本范围，正式演练必须使用当前生产一致副本。
 
 ## 准确源范围
 
