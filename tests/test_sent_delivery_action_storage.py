@@ -3,6 +3,7 @@
 from contextlib import closing
 import hashlib
 import json
+from pathlib import Path
 import sqlite3
 
 import pytest
@@ -72,6 +73,87 @@ def test_observer_has_three_immediate_no_action_physical_references(db):
         "select name from sqlite_master where type='trigger' and tbl_name='actions'")}
     for field in ("agent_run_id", "reply_task_id"):
         assert {f"trg_actions_{field}_{event}" for event in ("insert", "update")} <= triggers
+
+
+def test_observer_numeric_pair_uniqueness_and_lookup_with_legal_json_spacing(db):
+    sid = sent(db)
+    sent_physical = action_physical_id(db, "sent_replies", sid)
+    db.execute("insert into actions(record_type,legacy_key,payload_json,sent_reply_id,agent_run_id,reply_task_id) "
+               "values(?,?,?,?,?,?)", ("sent_reply_observers", f"[{sid}, 11]",
+                                      '{"created_at":"raw"}', sent_physical, 11, 21))
+    assert action_physical_id(db, "sent_reply_observers", (sid, 11)) is not None
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_action(db, "sent_reply_observers", {"sent_reply_id": sid, "agent_run_id": 11,
+                                                    "reply_task_id": 21})
+    cursor = update_action(db, "sent_reply_observers", (sid, 11), {"created_at": "updated"},
+                           where_sql="created_at=?", parameters=("raw",))
+    assert cursor.rowcount == 1
+    assert db.execute(ACTION_PROJECTIONS["sent_reply_observers"]).fetchone() == (sid, 11, 21, "updated")
+    assert delete_action(db, "sent_reply_observers", (sid, 11)).rowcount == 1
+
+
+def test_all_numeric_lookups_and_projections_use_the_fourteen_type_numeric_index(db):
+    for kind in (*storage.ALL_ACTION_TYPES, "sent_replies"):
+        if kind == "external_action_results":
+            continue
+        plan = db.execute("explain query plan select id from actions where " + storage._identity_predicate(kind),
+                          storage._identity_arguments(kind, 1)).fetchall()
+        assert any("idx_actions_public_id" in row[3] for row in plan), kind
+        plan = db.execute("explain query plan select * from (" + ACTION_PROJECTIONS[kind] +
+                          ") where id=?", (1,)).fetchall()
+        assert any("idx_actions_public_id" in row[3] for row in plan), kind
+
+
+@pytest.mark.parametrize("mode", ["transaction", "savepoint", "autocommit"])
+@pytest.mark.parametrize("committed_max", [False, True])
+def test_sent_full_error_matches_source_transaction_effect(mode, committed_max):
+    inventory = json.loads((Path(__file__).parents[1] /
+                            "docs/superpowers/specs/2026-10-13-database-redesign-phase5d-delivery-source.json").read_text())
+    table_sql = next(obj["sql"] for obj in inventory["actual"]["tables"]["sent_replies"]["objects"]
+                     if obj["type"] == "table")
+    outcomes = []
+    for target in (False, True):
+        with closing(sqlite3.connect(":memory:", isolation_level=None)) as conn:
+            if target:
+                conn.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                conn.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                create_action_schema(conn, include_delivery=True)
+            else:
+                conn.execute(table_sql)
+            conn.execute("create table pending(value text)")
+            sent_values = {"id": 2**63 - 1, "conversation_id": "c",
+                           "trigger_message_id": "m", "reply_text": "body"}
+
+            def insert_max():
+                if target:
+                    insert_action(conn, "sent_replies", sent_values)
+                else:
+                    conn.execute("insert into sent_replies(id,conversation_id,trigger_message_id,reply_text) "
+                                 "values(?,?,?,?)", (2**63 - 1, "c", "m", "body"))
+
+            if committed_max:
+                insert_max()
+            if mode != "autocommit":
+                conn.execute("begin")
+            if mode == "savepoint":
+                conn.execute("savepoint nested")
+            conn.execute("insert into pending values('uncommitted')")
+            if not committed_max:
+                insert_max()
+            with pytest.raises(sqlite3.DatabaseError) as error:
+                if target:
+                    sent(conn)
+                else:
+                    conn.execute("insert into sent_replies(conversation_id,trigger_message_id,reply_text) "
+                                 "values('c','m','body')")
+            assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+            table = "actions" if target else "sent_replies"
+            sequence_name = "actions:sent_replies" if target else "sent_replies"
+            outcomes.append((conn.in_transaction,
+                             conn.execute("select count(*) from pending").fetchone()[0],
+                             conn.execute(f"select count(*) from {table}").fetchone()[0],
+                             conn.execute("select seq from sqlite_sequence where name=?", (sequence_name,)).fetchone()))
+    assert outcomes[0] == outcomes[1]
 
 
 @pytest.mark.parametrize("run_id", [0, 404, 19])

@@ -304,7 +304,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         indexes += ("create unique index idx_actions_postfix_identity on actions(record_type,channel,delivery_key)",)
     if include_delivery:
         indexes += (
-            "create unique index idx_actions_observer_identity on actions(record_type,legacy_key) where record_type='sent_reply_observers'",
+            "create unique index idx_actions_observer_identity on actions(sent_reply_id,agent_run_id) where record_type='sent_reply_observers'",
             "create unique index idx_actions_sent_external_key on actions(external_action_key) where record_type='sent_replies' and external_action_key<>''",
             "create index idx_actions_sent_history on actions(conversation_id,trigger_message_id,sent_at) where record_type='sent_replies'",
         )
@@ -357,8 +357,7 @@ def _projection(kind):
         # SQLite needs the partial index predicate explicitly, even when the
         # literal record_type already identifies an integer-keyed type.
         numeric_scope += f" and a.record_type not in ({_POSTFIX_TYPES_SQL})"
-        if kind == "sent_replies":
-            numeric_scope += " and a.record_type<>'sent_reply_observers'"
+        numeric_scope += " and a.record_type<>'sent_reply_observers'"
     return f"select {','.join(fields)} from actions a {' '.join(joins)} where a.record_type='{kind}'{numeric_scope}"
 
 
@@ -437,24 +436,25 @@ def _require_kind(kind):
 
 def _identity_predicate(kind):
     if kind == "sent_reply_observers":
-        return "record_type=? and legacy_key=?"
+        return ("record_type=? and sent_reply_id=(select id from actions where "
+                "record_type='sent_replies' and record_type<>'external_action_results' "
+                f"and record_type not in ({_POSTFIX_TYPES_SQL}) "
+                "and record_type<>'sent_reply_observers' and cast(legacy_key as integer)=?) "
+                "and agent_run_id=?")
     if kind in POSTFIX_ACTION_TYPES:
         return "record_type=? and channel=? and delivery_key=?"
     if kind == "external_action_results":
         return "record_type=? and legacy_key=?"
-    if kind == "sent_replies":
-        return ("record_type=? and record_type<>'external_action_results' "
-                f"and record_type not in ({_POSTFIX_TYPES_SQL}) "
-                "and record_type<>'sent_reply_observers' and cast(legacy_key as integer)=?")
     return ("record_type=? and record_type<>'external_action_results' "
-            f"and record_type not in ({_POSTFIX_TYPES_SQL}) and cast(legacy_key as integer)=?")
+            f"and record_type not in ({_POSTFIX_TYPES_SQL}) "
+            "and record_type<>'sent_reply_observers' and cast(legacy_key as integer)=?")
 
 
 def _identity_arguments(kind, public_id):
     if kind == "sent_reply_observers":
         if type(public_id) is not tuple or len(public_id) != 2 or any(type(value) is not int for value in public_id):
             raise ValueError("observer public identity must be a (sent_reply_id, agent_run_id) tuple")
-        return (kind, json.dumps(public_id, separators=(",", ":")))
+        return (kind, *public_id)
     if kind in POSTFIX_ACTION_TYPES:
         if type(public_id) is not tuple or len(public_id) != 2 or any(type(value) is not str for value in public_id):
             raise ValueError("postfix public identity must be a (channel, delivery_key) tuple")
@@ -565,6 +565,10 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
     if public_id is None and (record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies"):
         maximum = _autoincrement_high_water(db, record_type)
         if maximum == 2**63 - 1:
+            if record_type == "sent_replies" and db.in_transaction:
+                # Native AUTOINCREMENT SQLITE_FULL aborts the whole caller
+                # transaction, including nested savepoints.
+                db.rollback()
             _raise_autoincrement_full()
         public_id = maximum + 1
     if public_id is None and db.execute("select 1 from actions where record_type=? and legacy_key='9223372036854775807'", (record_type,)).fetchone():
@@ -626,7 +630,7 @@ def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIde
             predicate += f" and (channel,delivery_key) in (select channel,delivery_key from ({ACTION_PROJECTIONS[record_type]}) where channel=? and delivery_key=? and ({where_sql}))"
             args.extend((*public_id, *parameters))
         elif record_type == "sent_reply_observers":
-            predicate += f" and legacy_key in (select json_array(sent_reply_id,agent_run_id) from ({ACTION_PROJECTIONS[record_type]}) where sent_reply_id=? and agent_run_id=? and ({where_sql}))"
+            predicate += f" and exists (select 1 from ({ACTION_PROJECTIONS[record_type]}) where sent_reply_id=? and agent_run_id=? and ({where_sql}))"
             args.extend((*public_id, *parameters))
         else:
             identity_field = IDENTITY_FIELDS[record_type]
