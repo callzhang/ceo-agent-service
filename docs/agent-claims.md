@@ -1,3 +1,4 @@
+| codex-phase5d-delivery-migration | Isolated phase5d worktree: app/action_delivery_storage.py; tests/test_action_delivery_migration.py; own claim row | Finite opt-in twelve-type plus sent-reply/observer source to fourteen-type actions and inverse, preserving current facts and native watermarks; no Store, release, provider, push or deploy. | active 2026-10-13 |
 # Concurrent agent file claims
 
 | codex-phase5d-foundation-evidence | Phase5D worktree: docs/database-redesign-phase5d-validation.md; database redesign program status; own claim row only | Root records opt-in storage review and source fidelity evidence; distinguishes foundation from migration, activation and production acceptance. No runtime or provider changes. | active 2026-10-13 |
