@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "code_commit": "6d64aa4d",
+  "scope": "Actual service AuditAgentRunner -> AgentTurnProcess -> native-command submission capture, not model/business acceptance",
+  "runs": [
+    {
+      "case": "valid-string",
+      "mode": "Actual service native-command capture; executor returns scripted approve; not model/business acceptance",
+      "candidate_digest": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3",
+      "candidate_retained_exact": true,
+      "task_skill_entry_retained": true,
+      "developer_chars": 29258,
+      "developer_sha256": "d45efbfcde08af55251f81c3678560ddc084db5522bfc1e76eb5323ce6786f46",
+      "inline_task_chars": 33056,
+      "inline_task_sha256": "3e70bf392a0f2cab8d0f1e6de012380c39a40c34358cfaa6b8aa556b8243355c",
+      "candidate_only_task_chars": 17014,
+      "candidate_only_task_sha256": "453ce122c36367f2846f279fbb090a8c5348eb868819c4144a7033765bfb499a",
+      "removed_scalar_section_chars": 16042,
+      "current_field_path_literal_type_rule_retained": true,
+      "profile_retained": true,
+      "configuration_fingerprints": {
+        "developer_template": "74458f269c6cd80af4b901be9b6ab625e96ec1b0291f435a7f3a6e7c2e7c59b3",
+        "developer_instructions": "74458f269c6cd80af4b901be9b6ab625e96ec1b0291f435a7f3a6e7c2e7c59b3",
+        "user_template": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "work_profile_instruction": "6e1bab4369c9468c73f2f4951e3088adf679d1d6cf51ab4556d55c478c12afaa"
+      },
+      "readonly_audit_command": true,
+      "source_config": "Readonly current file-backed Developer/Work Profile and authored Audit Rules; no secret environment/command copied",
+      "task_prefix_byte_equal": true,
+      "independent_review": "Input projection verified; complete candidate/digest/source and Skill entry preserved, full Developer/Profile unchanged; readonly native command; no actual model/RPC execution"
+    },
+    {
+      "case": "invalid-number",
+      "mode": "Actual service native-command capture; executor returns scripted approve; not model/business acceptance",
+      "candidate_digest": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32",
+      "candidate_retained_exact": true,
+      "task_skill_entry_retained": true,
+      "developer_chars": 29258,
+      "developer_sha256": "00ad622cae8883ca8a97d4a70ee152e89582de47e2597cb21f2cfac671be6577",
+      "inline_task_chars": 33052,
+      "inline_task_sha256": "46ee646f22f249bd3b3332a1decbc3bc68ce910beaf08ab8bb62c340d8fb9afa",
+      "candidate_only_task_chars": 17012,
+      "candidate_only_task_sha256": "a590d006dda3c4d495e69470f1c5f24e14374c06421ee830c5f216bfff9e83da",
+      "removed_scalar_section_chars": 16040,
+      "current_field_path_literal_type_rule_retained": true,
+      "profile_retained": true,
+      "configuration_fingerprints": {
+        "developer_template": "74458f269c6cd80af4b901be9b6ab625e96ec1b0291f435a7f3a6e7c2e7c59b3",
+        "developer_instructions": "74458f269c6cd80af4b901be9b6ab625e96ec1b0291f435a7f3a6e7c2e7c59b3",
+        "user_template": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "work_profile_instruction": "6e1bab4369c9468c73f2f4951e3088adf679d1d6cf51ab4556d55c478c12afaa"
+      },
+      "readonly_audit_command": true,
+      "source_config": "Readonly current file-backed Developer/Work Profile and authored Audit Rules; no secret environment/command copied",
+      "task_prefix_byte_equal": true,
+      "independent_review": "Input projection verified; complete candidate/digest/source and Skill entry preserved, full Developer/Profile unchanged; readonly native command; no actual model/RPC execution"
+    }
+  ],
+  "current_prompt_file_readback": [
+    {
+      "name": "developer_prompt.md",
+      "development_sha256": "74458f269c6cd80af4b901be9b6ab625e96ec1b0291f435a7f3a6e7c2e7c59b3",
+      "production_sha256": "74458f269c6cd80af4b901be9b6ab625e96ec1b0291f435a7f3a6e7c2e7c59b3",
+      "byte_equal": true
+    },
+    {
+      "name": "user_prompt.md",
+      "development_sha256": "164feb55f0f14f01253f5394eae21e692a64d089e60e868872ec39a2579a1866",
+      "production_sha256": "164feb55f0f14f01253f5394eae21e692a64d089e60e868872ec39a2579a1866",
+      "byte_equal": true
+    },
+    {
+      "name": "audit_rules.md",
+      "development_sha256": "2109b25434cadad2822888f489877849c5eb169db31b7acf516e45f89e2526e1",
+      "production_sha256": "2109b25434cadad2822888f489877849c5eb169db31b7acf516e45f89e2526e1",
+      "byte_equal": true
+    }
+  ],
+  "observer_environment_correction": "Initial isolated checkout had no service MCP manifest. After pre-model failure, capture reads the existing production manifest explicitly; no configuration file changed and no RPC launched. Initial temporary Store remains only until owned cleanup.",
+  "reader_boundary": "Production .env/profile/manifest and matching prompt files read-only; complete Developer with private Work Profile saved only in owned temporary inputs, not in this artifact/repository; originals untouched and temp cleaned after receipt verification.",
+  "removed_section": "Full scalar table plus its table-specific guidance only; current Application Result Contract path/literal/type rule retained",
+  "runner_source": "import sys,json,tomllib,hashlib,os\nfrom pathlib import Path\nfrom dataclasses import replace\nfrom unittest.mock import patch\nsys.path.insert(0,'/private/tmp/ceo-skill-source-bindings')\nimport tests.test_audit_agent as fixtures\nfrom app.config import load_env_file\nfrom app.prompt_composition import load_prompt_configuration\nfrom app.audit_rules import render_audit_rules\nfrom app.agent_contracts import ConsumerAgentResult\nroot=Path(__file__).parent\nload_env_file(Path('/Users/derek/Services/ceo-agent-service/.env'))\nos.environ['CEO_SERVICE_MCP_CONFIG_PATH']='/Users/derek/Services/ceo-agent-service/data/config/service-mcp.json'\nconfiguration=load_prompt_configuration(role='audit',create_missing=False)\noriginal_render=render_audit_rules\nsource=json.loads(Path('/private/tmp/ceo-skill-source-bindings/evals/trajectory_optimization/canonical_audit_candidate_inspection.native.v1.json').read_text())\nresults=[]\nfor case in source['cases']:\n    name=case['case'];directory=root/(name+'-revised');directory.mkdir()\n    c=ConsumerAgentResult.model_validate(case['candidate'])\n    with patch.object(fixtures,'_candidate',lambda:c): setup=fixtures.setup.__wrapped__(directory)\n    store,task,parent,ctx,config,router=setup\n    ctx=replace(ctx,audit_rules='',task=replace(ctx.task,skill_names=('ceo-message-triage',),consumer_prompt='Use the applicable message-triage Skill to review the exact prepared notice.'))\n    executor=fixtures.CapturingExecutor(fixtures._wire(ctx.candidate_digest))\n    with patch('app.prompt_composition.load_prompt_configuration',lambda **kwargs:configuration),patch('app.audit_agent.render_audit_rules',lambda role:original_render(role,create_missing=False)):\n        result=fixtures._runner(setup[:3]+(ctx,config,router),executor).run(task,ctx,turn_attempt=0,parent_agent_run_id=parent.id)\n    assert len(executor.commands)==len(executor.prompts)==1\n    command=executor.commands[0];task_text=executor.prompts[0]\n    setting=next(x for x in command if x.startswith('developer_instructions='))\n    developer=tomllib.loads(setting)['developer_instructions']\n    marker='\\n\\nCurrent candidate scalar field evidence, computed from the exact candidate JSON above\\n'\n    prefix,table=task_text.split(marker,1)\n    original_candidate=json.JSONDecoder().raw_decode(task_text.split('Candidate revision\\n',1)[1])[0]\n    projected_candidate=json.JSONDecoder().raw_decode(prefix.split('Candidate revision\\n',1)[1])[0]\n    assert original_candidate==projected_candidate and original_candidate['candidate']==c.model_dump(mode='json')\n    assert 'ceo-message-triage' in prefix\n    for filename,text in [('developer.txt',developer),('inline.task.txt',task_text),('candidate-only.task.txt',prefix)]: (directory/filename).write_text(text)\n    record={'case':name,'mode':'Actual service native-command capture; executor returns scripted approve; not model/business acceptance','candidate_digest':ctx.candidate_digest,'candidate_retained_exact':True,'task_skill_entry_retained':True,'developer_chars':len(developer),'developer_sha256':hashlib.sha256(developer.encode()).hexdigest(),'inline_task_chars':len(task_text),'inline_task_sha256':hashlib.sha256(task_text.encode()).hexdigest(),'candidate_only_task_chars':len(prefix),'candidate_only_task_sha256':hashlib.sha256(prefix.encode()).hexdigest(),'removed_scalar_section_chars':len(task_text)-len(prefix),'current_field_path_literal_type_rule_retained':'Before reporting a candidate field error' in developer,'profile_retained':configuration.work_profile in developer,'configuration_fingerprints':configuration.fingerprints(),'readonly_audit_command': 'sandbox_mode=\"read-only\"' in command,'source_config':'Readonly current file-backed Developer/Work Profile and authored Audit Rules; no secret environment/command copied'}\n    assert all(record[k] for k in ['candidate_retained_exact','task_skill_entry_retained','current_field_path_literal_type_rule_retained','profile_retained','readonly_audit_command'])\n    results.append(record)\n(root/'results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2))\nprint(json.dumps([{k:x[k] for k in ['case','developer_chars','inline_task_chars','candidate_only_task_chars','removed_scalar_section_chars']} for x in results]),flush=True)\n",
+  "initial_runner_sha256": "9037faef9a96bbc66b674cb478b3d3c89bb9bb2abb8dbe4a4bd57ab2871a648b",
+  "native_model_invoked": false,
+  "production_changed": false,
+  "next_evidence": "Use these complete service-composed inputs and current role-bound readonly MCP fixture in fixed model comparisons across business tasks and continuation before a separate input change/release."
+}
