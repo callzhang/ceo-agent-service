@@ -1,5 +1,5 @@
 from hashlib import sha256
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 
 import pytest
@@ -75,6 +75,68 @@ def acceptance():
         "accepted_at": "2026-10-13T10:06:29.001Z", "dispatch_started_at": "2026-10-13T10:06:25.641Z",
         "dispatch_principal_user_id": "principal",
         "accepted_action_digest": sha256(action().model_dump_json().encode()).hexdigest()}
+
+
+def test_return_acceptance_survives_store_reopen_and_changed_source(tmp_path, monkeypatch):
+    from app.dws_client import DINGTALK_MESSAGE_TIME_ZONE
+    from app.reviewed_sources import capture_candidate_sources
+    from app.store import AgentRole, AutoReplyStore
+    from app.system_executor import SystemExecutor
+    from tests.test_reviewed_orchestration import setup
+    from tests.test_system_executor import _candidate
+
+    class Clock(datetime):
+        offset = timedelta()
+
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + cls.offset
+
+    monkeypatch.setattr("app.system_action_handlers.datetime", Clock)
+
+    class ReturningSource(Source):
+        def read_oa_approval_detail(self, process_id):
+            detail = super().read_oa_approval_detail(process_id)
+            detail["result"]["formValueVOS"] = [{"id": "amount", "value": "900" if self.returned else "100"}]
+            return detail
+
+        def revert_oa_approval_task(self, **kwargs):
+            self.calls.append(kwargs)
+            self.returned = True
+            event = datetime.now(timezone.utc) + timedelta(seconds=2)
+            self.records[0]["date"] = event.astimezone(DINGTALK_MESSAGE_TIME_ZONE).strftime("%Y-%m-%d %H:%M:%S")
+            self.destination["create_time"] = (event + timedelta(seconds=1)).astimezone(
+                DINGTALK_MESSAGE_TIME_ZONE).strftime("%Y-%m-%d %H:%M:%S")
+            Clock.offset = timedelta(seconds=4)
+            return {"success": True, "errorCode": 0, "result": True}
+
+    store, task, context = setup(tmp_path)
+    source = ReturningSource()
+    proposal = capture_candidate_sources(_candidate(actions=[action().model_dump(mode="json")]), context, source)
+    consumer = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None, operation_id="", owner="consumer").run
+    store.complete_agent_run(consumer.id, proposal.model_dump(mode="json"), owner="consumer")
+    selected = store.persist_review_candidate(task, consumer, proposal)
+    audit = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id, operation_id="review", owner="audit").run
+    approval = {"outcome": "approve", "candidate_digest": selected["candidate_digest"]}
+    store.complete_agent_run(audit.id, approval, owner="audit")
+    review = store.record_candidate_review(selected["id"], audit.id, approval)
+    first = SystemExecutor(store, dws=source).execute(task, selected["id"], review["id"], context=context)
+    assert first.error.code == "external_action_uncertain"
+    execution = store.get_candidate_execution(selected["id"])
+    [original] = store.list_candidate_action_attempts(execution["id"])
+    assert json.loads(original["result_json"])["provider_response"]["result"] is True
+
+    reopened = AutoReplyStore(store.path)
+    recovered = SystemExecutor(reopened, dws=source).execute(task, selected["id"], review["id"], context=context)
+    [after] = reopened.list_candidate_action_attempts(execution["id"])
+    assert recovered.outcome == "executed"
+    assert after["status"] == "verified"
+    assert after["created_at"] == original["created_at"]
+    assert after["external_action_key"] == original["external_action_key"]
+    assert len(source.calls) == 1
+    assert reopened.get_candidate_external_action(original["external_action_key"]) is not None
 
 
 def test_return_acceptance_is_preserved_for_readonly_reconciliation(provider_read_clock):
