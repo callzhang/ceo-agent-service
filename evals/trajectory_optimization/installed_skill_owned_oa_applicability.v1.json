@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "scope": "Owned pure synthetic project OA installed Skill control",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "time": "2026-10-13T12:00:00Z",
+  "skills": [
+    {
+      "name": "dingtalk-oa-approval",
+      "text": "---\nname: dingtalk-oa-approval\ndescription: Generic OA current ownership and action workflow.\n---\n\n# Synthetic OA workflow\n\nRead live OA detail, current tasks and principal-7 pending list. Only currently owned pending items are reviewed. For processCode synthetic-project, read stardust-oa-project-review for criteria; other category names are not criteria for this code. If its complete criteria hold, prepare one dingtalk-oa approve action for the exact process_instance_id/task_id and remark. Read the canonical system action contract before proposing/reviewing. This fixture asks for a proposal only; never execute it.\n",
+      "sha256": "754159512787258c70efbd8a91d592dd6deecbeb68cbbbc39672d340124c522e"
+    },
+    {
+      "name": "stardust-oa-attendance-travel-review",
+      "text": "---\nname: stardust-oa-attendance-travel-review\ndescription: Business criteria for synthetic category stardust-oa-attendance-travel-review only.\n---\n\n# Synthetic stardust-oa-attendance-travel-review\n\nThis source applies only to owned pending items in category stardust-oa-attendance-travel-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "58269edc74e475e4985a5af2e0c5266923d41d7052998d826e17d8bd5afbd30e"
+    },
+    {
+      "name": "stardust-oa-cloud-resource-review",
+      "text": "---\nname: stardust-oa-cloud-resource-review\ndescription: Business criteria for synthetic category stardust-oa-cloud-resource-review only.\n---\n\n# Synthetic stardust-oa-cloud-resource-review\n\nThis source applies only to owned pending items in category stardust-oa-cloud-resource-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "a59368cbfbd4d27c2669177b8395fe492610cb91ce1e5bdfe1c15a4eefd007ab"
+    },
+    {
+      "name": "stardust-oa-contract-review",
+      "text": "---\nname: stardust-oa-contract-review\ndescription: Business criteria for synthetic category stardust-oa-contract-review only.\n---\n\n# Synthetic stardust-oa-contract-review\n\nThis source applies only to owned pending items in category stardust-oa-contract-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "dc64826e3f83b4ccb3432c27b447ea3673031ca347db28ee4cabbf6b8e230740"
+    },
+    {
+      "name": "stardust-oa-finance-review",
+      "text": "---\nname: stardust-oa-finance-review\ndescription: Business criteria for synthetic category stardust-oa-finance-review only.\n---\n\n# Synthetic stardust-oa-finance-review\n\nThis source applies only to owned pending items in category stardust-oa-finance-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "dc3d18629dd2ab787b53ffedce420ffbca7b4081fb57d1f6b343a16c756d63e7"
+    },
+    {
+      "name": "stardust-oa-people-review",
+      "text": "---\nname: stardust-oa-people-review\ndescription: Business criteria for synthetic category stardust-oa-people-review only.\n---\n\n# Synthetic stardust-oa-people-review\n\nThis source applies only to owned pending items in category stardust-oa-people-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "71c9c3120d463f74b137b361736bc0b2a05738259880e5927fd598353aae37ec"
+    },
+    {
+      "name": "stardust-oa-project-review",
+      "text": "---\nname: stardust-oa-project-review\ndescription: Project criteria matching processCode synthetic-project.\n---\n\n# Synthetic project criteria\n\nFor processCode synthetic-project only, read live form.projectBudget declared_total and complete items. Criteria are exactly: declared_total equals sum of every item, and source status is confirmed. For a currently owned pending instance where these criteria hold, the applicable result is approval under the generic OA workflow. Include the actual total in the remark. This fixture adds no other threshold or human-only rule. Do not execute provider actions.\n",
+      "sha256": "15a2998ce8ab552d99a51f89c2fb3c7360ef23b4579f6941a426cde7755724cd"
+    }
+  ],
+  "live_sources": {
+    "list_dingtalk_pending_oa": {
+      "result": {
+        "principalUserId": "principal-7",
+        "items": [
+          {
+            "processInstanceId": "proc-owned",
+            "taskId": "task-owned"
+          }
+        ],
+        "hasMore": false
+      }
+    },
+    "read_dingtalk_oa": {
+      "result": {
+        "processInstanceId": "proc-owned",
+        "processCode": "synthetic-project",
+        "status": "RUNNING",
+        "tasks": [
+          {
+            "taskId": "task-owned",
+            "userId": "principal-7",
+            "status": "RUNNING"
+          }
+        ],
+        "form": {
+          "projectBudget": {
+            "declared_total": 120,
+            "items": [
+              40,
+              50,
+              30
+            ],
+            "status": "confirmed"
+          }
+        }
+      }
+    },
+    "read_dingtalk_oa_tasks": {
+      "result": {
+        "tasks": [
+          {
+            "taskId": "task-owned",
+            "userId": "principal-7",
+            "status": "RUNNING"
+          }
+        ]
+      }
+    },
+    "read_system_action_contract": {
+      "capability": "dingtalk-oa",
+      "operation": "approve",
+      "supported_operations": [
+        "approve"
+      ],
+      "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-oa` | `approve` | `process_instance_id`, `task_id` | `remark` | Exact owned task completed with `AGREE` or `REFUSE` |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions."
+    }
+  },
+  "oracle": {
+    "consumer": "single dingtalk-oa approve proposal, exact proc-owned/task-owned string target, remark120; not executed",
+    "audit": "approve same actual baseline Consumer candidate, exact common digest and revision0",
+    "required_skills": [
+      "dingtalk-oa-approval",
+      "stardust-oa-project-review"
+    ],
+    "required_live_sources": [
+      "read_dingtalk_oa",
+      "read_dingtalk_oa_tasks",
+      "list_dingtalk_pending_oa",
+      "read_system_action_contract"
+    ],
+    "criteria": "120=40+50+30, confirmed source, principal-7 current owned pending"
+  }
+}

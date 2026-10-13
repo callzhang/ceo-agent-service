@@ -1,0 +1,331 @@
+{
+  "version": 1,
+  "candidate_commit": "9609a411",
+  "baseline_commit": "e2652eeaa8cdc5cff4f17ce94d6f5cf38ef1f799",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "native_output_schema": false,
+  "runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13486-3b01-7551-a76d-f0d1d4d84e7d",
+      "canonical_valid": true,
+      "business_pass": true,
+      "task_sha256": "45b02ade9a4b2034107c143785aea0c49cdaad39dd556c6ab64ac671f8255d7d",
+      "developer_sha256": "8dd6422d29f356a01af5350dd50c59a8538a442c235db1b4770ab53176ed089f",
+      "native_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "content_chars": 623,
+          "sha256": "754159512787258c70efbd8a91d592dd6deecbeb68cbbbc39672d340124c522e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "content_chars": 406,
+          "sha256": "58269edc74e475e4985a5af2e0c5266923d41d7052998d826e17d8bd5afbd30e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "content_chars": 394,
+          "sha256": "a59368cbfbd4d27c2669177b8395fe492610cb91ce1e5bdfe1c15a4eefd007ab",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "content_chars": 370,
+          "sha256": "dc64826e3f83b4ccb3432c27b447ea3673031ca347db28ee4cabbf6b8e230740",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "content_chars": 366,
+          "sha256": "dc3d18629dd2ab787b53ffedce420ffbca7b4081fb57d1f6b343a16c756d63e7",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "content_chars": 362,
+          "sha256": "71c9c3120d463f74b137b361736bc0b2a05738259880e5927fd598353aae37ec",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "content_chars": 602,
+          "sha256": "15a2998ce8ab552d99a51f89c2fb3c7360ef23b4579f6941a426cde7755724cd",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        }
+      ],
+      "native_errors": [],
+      "native_tool_count": 11,
+      "initial_native_developer_sha256": "8dd6422d29f356a01af5350dd50c59a8538a442c235db1b4770ab53176ed089f",
+      "initial_native_developer_chars": 20594,
+      "outcome": "proposal",
+      "summary": "已完成对 proc-owned 的实时 ownership 和业务条件核验。该实例当前由 principal-7 持有且处于 RUNNING pending 状态；processCode 为 synthetic-project，projectBudget.declared_total 为 120，明细合计为 40+50+30=120，source status 为 confirmed。符合项目审批 Skill 的完整条件，已准备针对精确 process_instance_id 和 task_id 的审批 proposal；未执行 provider action。",
+      "risk": "medium",
+      "candidate_digest": null,
+      "proposal_revision": null
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13486-a96b-7991-8ad1-738314624c2c",
+      "canonical_valid": true,
+      "business_pass": true,
+      "task_sha256": "4dc19b01710b438d2b073e0bc855f553d03e572936dbe6e7ba6b4684e82dcba9",
+      "developer_sha256": "8dd6422d29f356a01af5350dd50c59a8538a442c235db1b4770ab53176ed089f",
+      "native_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "content_chars": 623,
+          "sha256": "754159512787258c70efbd8a91d592dd6deecbeb68cbbbc39672d340124c522e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "content_chars": 406,
+          "sha256": "58269edc74e475e4985a5af2e0c5266923d41d7052998d826e17d8bd5afbd30e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "content_chars": 394,
+          "sha256": "a59368cbfbd4d27c2669177b8395fe492610cb91ce1e5bdfe1c15a4eefd007ab",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "content_chars": 370,
+          "sha256": "dc64826e3f83b4ccb3432c27b447ea3673031ca347db28ee4cabbf6b8e230740",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "content_chars": 366,
+          "sha256": "dc3d18629dd2ab787b53ffedce420ffbca7b4081fb57d1f6b343a16c756d63e7",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "content_chars": 362,
+          "sha256": "71c9c3120d463f74b137b361736bc0b2a05738259880e5927fd598353aae37ec",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "content_chars": 602,
+          "sha256": "15a2998ce8ab552d99a51f89c2fb3c7360ef23b4579f6941a426cde7755724cd",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        }
+      ],
+      "native_errors": [],
+      "native_tool_count": 11,
+      "initial_native_developer_sha256": "8dd6422d29f356a01af5350dd50c59a8538a442c235db1b4770ab53176ed089f",
+      "initial_native_developer_chars": 20594,
+      "outcome": "proposal",
+      "summary": "已核验 principal-7 当前拥有 proc-owned 的待处理 OA 任务。实时流程为 synthetic-project，项目预算声明总额 120，明细合计 40+50+30=120，来源状态为 confirmed；符合项目审批 Skill 的全部条件。现形成针对该确切流程实例和任务的批准提案，未执行任何 provider action。",
+      "risk": "low",
+      "candidate_digest": null,
+      "proposal_revision": null
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13487-1955-7080-b98f-415d2ba99895",
+      "canonical_valid": true,
+      "business_pass": true,
+      "task_sha256": "39edd4d53eccfc6ce37b941d26caeda3209adb87d554401f667fcfa56a53bce0",
+      "developer_sha256": "460408a4bc8f2fbce163a658ab5fd89b81902cf929281307bcec8f96c95130e0",
+      "native_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "content_chars": 623,
+          "sha256": "754159512787258c70efbd8a91d592dd6deecbeb68cbbbc39672d340124c522e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "content_chars": 406,
+          "sha256": "58269edc74e475e4985a5af2e0c5266923d41d7052998d826e17d8bd5afbd30e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "content_chars": 394,
+          "sha256": "a59368cbfbd4d27c2669177b8395fe492610cb91ce1e5bdfe1c15a4eefd007ab",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "content_chars": 370,
+          "sha256": "dc64826e3f83b4ccb3432c27b447ea3673031ca347db28ee4cabbf6b8e230740",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "content_chars": 366,
+          "sha256": "dc3d18629dd2ab787b53ffedce420ffbca7b4081fb57d1f6b343a16c756d63e7",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "content_chars": 362,
+          "sha256": "71c9c3120d463f74b137b361736bc0b2a05738259880e5927fd598353aae37ec",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "content_chars": 602,
+          "sha256": "15a2998ce8ab552d99a51f89c2fb3c7360ef23b4579f6941a426cde7755724cd",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        }
+      ],
+      "native_errors": [],
+      "native_tool_count": 11,
+      "initial_native_developer_sha256": "460408a4bc8f2fbce163a658ab5fd89b81902cf929281307bcec8f96c95130e0",
+      "initial_native_developer_chars": 10220,
+      "outcome": "approve",
+      "summary": "候选方案通过审计。实时证据确认 process_instance_id=proc-owned 当前出现在 principal-7 的待办列表中，task_id=task-owned 当前由 principal-7 持有且处于 RUNNING 状态；实例 processCode=synthetic-project 且实例状态为 RUNNING。适用的项目审批条件已全部满足：projectBudget.declared_total=120，明细为 [40,50,30] 且合计为 120，projectBudget.status=confirmed。候选动作准确使用当前实例和任务标识，remark 包含核验总额，并符合 dingtalk-oa.approve action contract。本审计仅批准候选计划，不执行 provider action。",
+      "risk": "medium",
+      "candidate_digest": "64cee3f8a39ff31705d5ba3d1b697bd095a79d988a8f506b798f98d2334466c6",
+      "proposal_revision": 0
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13487-7844-7c80-8614-e1c1884e18fc",
+      "canonical_valid": true,
+      "business_pass": true,
+      "task_sha256": "f16bf32283b5fcad06e7e913e0054f3cf898119aead61a31c235f1df35fb1e15",
+      "developer_sha256": "460408a4bc8f2fbce163a658ab5fd89b81902cf929281307bcec8f96c95130e0",
+      "native_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "content_chars": 623,
+          "sha256": "754159512787258c70efbd8a91d592dd6deecbeb68cbbbc39672d340124c522e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "content_chars": 406,
+          "sha256": "58269edc74e475e4985a5af2e0c5266923d41d7052998d826e17d8bd5afbd30e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "content_chars": 394,
+          "sha256": "a59368cbfbd4d27c2669177b8395fe492610cb91ce1e5bdfe1c15a4eefd007ab",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "content_chars": 370,
+          "sha256": "dc64826e3f83b4ccb3432c27b447ea3673031ca347db28ee4cabbf6b8e230740",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "content_chars": 366,
+          "sha256": "dc3d18629dd2ab787b53ffedce420ffbca7b4081fb57d1f6b343a16c756d63e7",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "content_chars": 362,
+          "sha256": "71c9c3120d463f74b137b361736bc0b2a05738259880e5927fd598353aae37ec",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "content_chars": 602,
+          "sha256": "15a2998ce8ab552d99a51f89c2fb3c7360ef23b4579f6941a426cde7755724cd",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        }
+      ],
+      "native_errors": [],
+      "native_tool_count": 11,
+      "initial_native_developer_sha256": "460408a4bc8f2fbce163a658ab5fd89b81902cf929281307bcec8f96c95130e0",
+      "initial_native_developer_chars": 10220,
+      "outcome": "approve",
+      "summary": "Approved the complete candidate for proposal_revision 0. Live review confirms that processInstanceId=proc-owned is currently listed as pending for principal-7, processCode is synthetic-project, taskId=task-owned is owned by principal-7 and remains RUNNING, and the project criteria hold: projectBudget.declared_total=120 equals 40+50+30 and projectBudget.status=confirmed. The dingtalk-oa.approve action targets the exact current process and task identifiers, includes the required remark, preserves the candidate action_identity and payload, and is suitable for subsequent system execution. No provider action was executed by Audit.",
+      "risk": "medium",
+      "candidate_digest": "64cee3f8a39ff31705d5ba3d1b697bd095a79d988a8f506b798f98d2334466c6",
+      "proposal_revision": 0
+    }
+  ],
+  "pairs": [
+    {
+      "role": "consumer",
+      "service_developer_equal": true,
+      "initial_native_developer_equal": true,
+      "task_diff": [
+        "--- \n",
+        "+++ \n",
+        "@@ -15 +15 @@\n",
+        "-For each installed selection, call its exact `agent_cli.read_skill(path=...)` entry below before deciding or reviewing. When a selected Skill names another installed Skill, read that exact dependency on demand with `agent_cli.read_skill(name=...)`.",
+        "+Read the applicable installed Skills through their exact `agent_cli.read_skill(path=...)` entries before deciding or reviewing. Read installed dependencies required by their workflows on demand with `agent_cli.read_skill(name=...)`."
+      ],
+      "baseline_task_chars": 4393,
+      "candidate_task_chars": 4377
+    },
+    {
+      "role": "audit",
+      "service_developer_equal": true,
+      "initial_native_developer_equal": true,
+      "task_diff": [
+        "--- \n",
+        "+++ \n",
+        "@@ -11 +11 @@\n",
+        "-For each installed selection, call its exact `agent_cli.read_skill(path=...)` entry below before deciding or reviewing. When a selected Skill names another installed Skill, read that exact dependency on demand with `agent_cli.read_skill(name=...)`.",
+        "+Read the applicable installed Skills through their exact `agent_cli.read_skill(path=...)` entries before deciding or reviewing. Read installed dependencies required by their workflows on demand with `agent_cli.read_skill(name=...)`."
+      ],
+      "baseline_task_chars": 7813,
+      "candidate_task_chars": 7797
+    }
+  ],
+  "independent_review": "Complete native Task receipt/body/source/contract result equality and business proposal binding independently checked read-only.",
+  "limitations": [
+    "Pure synthetic seven installed Skills and minimal Profile; not real OA, frozen-source or external provider acceptance.",
+    "All four roles read seven bodies; no read-volume reduction.",
+    "Consumer risk differs medium versus low; same applicable action/grounded facts, not identical judgments.",
+    "MCP log-prefix differs between arms, fixed outputs and behavior remain equivalent; native clock naturally differs."
+  ]
+}
