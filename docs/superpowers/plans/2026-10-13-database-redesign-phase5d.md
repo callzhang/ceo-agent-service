@@ -66,7 +66,11 @@ schema语义不同。存储定义、payload与引用分配必须按有限record_
    原十二类型，不恢复陈旧快照。source／target变体和数据预检均在改动前。
 5. 转换Store的记录、已完成投递投影、观察者登记、History关联、feedback、
    recall、settlement、跟进和计数路径；包括audit_web的发送结果读取。
-   现有原子写入、重复external key冲突、回执与observer顺序保持。
+   除Store/audit_web外，app/quality_gate.py的已发送结果与observer核对、
+   app/reply_task_deferral.py的延期排除、app/deploy_maintenance.py的维护前提、
+   app/scheduled_task_recovery.py的失败关闭排除均有直接旧表SQL，必须同版本转换。
+   这四条路径只转换读取来源，保留现有判定、返回标签和恢复行为；部署窗口读取
+   要分别核对准确前一／目标布局。现有原子写入、重复external key冲突、回执与observer顺序保持。
    fresh/bootstrap/manifest/child guards/column requirements同版本退休旧两表；
    不保留双写、旧表view或原文fallback。
 6. 最新生产一致副本做全字段值／类型、父子关系、公开／物理身份、水位、
