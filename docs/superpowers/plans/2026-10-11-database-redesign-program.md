@@ -155,3 +155,14 @@ phase5d_constructor_copy.v1.json, phase5d_native_copy.v1.json and D validation.
 Root-owned temporary directories were removed. CI, normal deployment and live
 acceptance remain pending; D is not yet published. Full10+1 remains incomplete;
 E and later action/business/email/config/state/final-retirement work remains.
+
+The first full D CI38467335512 exposed ten historical source16 constructor
+fixtures;12746 checks passed. Fixture-only9acd12dd explicitly advances those
+inputs through the genuine source17 transition, retaining all original
+business assertions and the frozen historical source contract. Exact ten plus
+81 adjacent checks and independent SPEC/QUALITY pass. Latest production
+ba8b5931 is merged; its persistence modules are unchanged, and refreshed real
+constructor/current-fact inverse/actual old-code/native approval plus11 scripted
+copy cases pass. The v1 D copy artifacts now bind that source; temporary copies
+are removed. Replacement full CI and normal deployment remain pending, so D
+is still unpublished and the complete10+1 goal remains incomplete.

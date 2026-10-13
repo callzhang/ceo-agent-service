@@ -1,8 +1,8 @@
 {
   "scope": "actual default Store17 to18 release, current-fact rollback, actual published old constructor and republication",
-  "production_commit": "dc6abe2d42ec9e21320589a11248a5a2a0c89e9e",
-  "candidate_commit": "13551f67aab8ba6015083f8780105384dc32c0ef",
-  "verified_at_utc": "2026-10-13T20:51:45.016087+00:00",
+  "production_commit": "ba8b59315067dd7adbe60d745fae1ccc39f3be64",
+  "candidate_commit": "1b80db97910381a1eb64b40a971fb3e86eeba179",
+  "verified_at_utc": "2026-10-13T21:59:02.777833+00:00",
   "source_marker": [
     "2026-10-13.3",
     "2026-10-12 00:20:48"
@@ -23,7 +23,7 @@
   "current_delivery": {
     "sent_replies": {
       "count": 2342,
-      "value_type_sha256": "cfa43a4098d7bbf5b5a04394a2aac46278dec2a086067d8cc75a391cde910903"
+      "value_type_sha256": "fb7e6b2d7e49c7b7bda053073435879150103340f3763f84402727b972d9ab85"
     },
     "sent_reply_observers": {
       "count": 321,
@@ -180,27 +180,27 @@
     },
     "daily_scan_state": {
       "count": 9,
-      "value_type_sha256": "7b89916768c47ebdfebd3daa003dd380f846c73db8520059e3f5d1ab284372d2"
+      "value_type_sha256": "476b65abc3d4a74e10980dccd8d3380ff9c228761c838f7a66cca5c66ef509df"
     },
     "dispatcher_claim_leases": {
-      "count": 10056,
-      "value_type_sha256": "ea856ab1ba8dcfd92788ba969024711e8e5a9c53ae82431fdc7046dab8e47c9c"
+      "count": 10057,
+      "value_type_sha256": "c3b7af01e13361ae117b450f7581ad96597493ac22f26da2db41ea2fbae39d51"
     },
     "email_accounts": {
       "count": 2,
       "value_type_sha256": "8462c46a6e3c2f7f9d4f82566a5b116ae0cd0c063d56c1c6ae5c133b336e2407"
     },
     "email_action_attempts": {
-      "count": 12171,
-      "value_type_sha256": "8c2c5e20928084670084971cd988118f9a43171d4bc9ba12fdf4b9848d965332"
+      "count": 12176,
+      "value_type_sha256": "d87ac97d324e8a19d07954f4b1f25b7a84593aceafdba1384e35ed78a2532fe8"
     },
     "email_action_plans": {
-      "count": 9797,
-      "value_type_sha256": "b2e2b8ea4056c366cd53c88ccec882058ca5a4c1b38fff50a3d885797fdbff3e"
+      "count": 9802,
+      "value_type_sha256": "ab3c2ce725598bb2de6c85200f9f185f15551acbe082144a92901dd022e1777e"
     },
     "email_actions": {
-      "count": 10179,
-      "value_type_sha256": "52d30fe2f52af5391d6db73bf4dec12f59f899a35e3c081908b34ddb4746c68b"
+      "count": 10184,
+      "value_type_sha256": "92fb50a691791bc82db3a07fe4e9b24184a2aaadf318f38f9fac8037a99bba43"
     },
     "email_agent_classification_tasks": {
       "count": 1356,
@@ -219,12 +219,12 @@
       "value_type_sha256": "a64dbe67df4e20cb64e85709ed07d50f24241859c448abc94fb19b48508ce819"
     },
     "email_classifications": {
-      "count": 8763,
-      "value_type_sha256": "63a16647fb53d17a7d79409b46c39c39e7095e64369e1bceeb22bc3e277d51e3"
+      "count": 8768,
+      "value_type_sha256": "d9e9117ff62a85027b846c4ab5f74c65a0efea280b50722b57918081a2851271"
     },
     "email_classifier_runtime_samples": {
       "count": 2048,
-      "value_type_sha256": "6a714c0bcb1c0fd11eba7dc73934c135e089180bb9d633979930c5ce0558585b"
+      "value_type_sha256": "f7de4bf3f80fe73b539247054ad7c2dd6131c0cb627b72dcb2f7481e7a810df9"
     },
     "email_direct_retry_requests": {
       "count": 1,
@@ -251,8 +251,8 @@
       "value_type_sha256": "95146a053b6b6735d80f238fb7701b340284b373b785e1bfba081b3a62e6aa25"
     },
     "email_messages": {
-      "count": 8763,
-      "value_type_sha256": "26d61c086d6205778b6110801e71a233126adf4af366971b1c0ea7a658362260"
+      "count": 8768,
+      "value_type_sha256": "53aa198386d3a0cae3296daea689806b8887ed049370c6c1a7f793f3d18c1b1a"
     },
     "email_model_mode_transitions": {
       "count": 0,
@@ -264,11 +264,11 @@
     },
     "email_provider_folder_observation_generations": {
       "count": 55,
-      "value_type_sha256": "c620de6855f24a0301b638ec455b1cdc774c3e7e62909996b2075e7598533473"
+      "value_type_sha256": "399f1c932ee8e7f15bbe5894cb62e5b04c82469bd4bd2f8a61666ee924afa3d5"
     },
     "email_provider_observations": {
-      "count": 72075,
-      "value_type_sha256": "4f678c4d410f0236731205659691340ef896e2f6469738acdba373f5d854e682"
+      "count": 72076,
+      "value_type_sha256": "f3f3f0bde36525719558861465ce25a095b42f701e0befe240e720a79f6a627b"
     },
     "email_reply_dispatch_claims": {
       "count": 0,
@@ -280,7 +280,7 @@
     },
     "email_scan_cursors": {
       "count": 2,
-      "value_type_sha256": "f67d6f278af73d635486fd445e6375d03c0a80bad4fd1de97e36c1aa40b209f9"
+      "value_type_sha256": "4d9b33c5087f25b586e3f360d8e4252be8ecb45b1f7020b7600704021f21ffc5"
     },
     "email_schema_migrations": {
       "count": 38,
@@ -319,8 +319,8 @@
       "value_type_sha256": "780f954c561a786cc5528131a8f1e55a9161c20ad98398899cd2e91c0e9e09f7"
     },
     "errors": {
-      "count": 15275,
-      "value_type_sha256": "3f3a9697d750df0df9a9ee11068ccd15b7ab525284c8831df02209225acdf609"
+      "count": 15289,
+      "value_type_sha256": "07a41165f2152657c83fb841c0808da379895a5fbf963c619ef33ab5e91d1c92"
     },
     "feedback_events": {
       "count": 48,
@@ -403,8 +403,8 @@
       "value_type_sha256": "057e284bbf4875b6b1cdf6c5848483eb65ae2cd0e645724691fd6b9433435865"
     },
     "runs": {
-      "count": 222932,
-      "value_type_sha256": "98d75cf3de7edd322eafba9320784e5e90700b780822beed458921185fbb05e1"
+      "count": 223060,
+      "value_type_sha256": "b187e8a2b3525009a1c4c1de1b76966580467dc66034d8b28be8ae04b5ed8a80"
     },
     "runtime_feedback_iteration_capabilities": {
       "count": 18,
@@ -412,7 +412,7 @@
     },
     "runtime_route_pauses": {
       "count": 2,
-      "value_type_sha256": "62ad12cc7b0404ac0b9e26c8fabe1c1ef173ed4ac5a75a704b509d355575be60"
+      "value_type_sha256": "c30b5a9f75df34869cb125ea69ba51923cb3525202ea6cf4c163fba54ce37ca6"
     },
     "runtime_skill_bindings": {
       "count": 227,
@@ -423,8 +423,8 @@
       "value_type_sha256": "a01f5aa39a466283cf1a95b1bb0d694e4896ba3fc69efa665ccc24306f834e43"
     },
     "runtime_skill_load_receipts": {
-      "count": 3989,
-      "value_type_sha256": "314f80e64b334627a083154a6515bbbe0dc1335eb8917638654e6cb59bf9c5bf"
+      "count": 3991,
+      "value_type_sha256": "2b7ff75fc8de4185abab5605a78c7684d09916576bade347739632392c677cde"
     },
     "scheduled_task_config_versions": {
       "count": 68,
@@ -448,7 +448,7 @@
     },
     "service_state": {
       "count": 234,
-      "value_type_sha256": "19ecf522692414dbb11eb32c8bedf61c996fd37ff3c1e98d981e93a323f871c1"
+      "value_type_sha256": "dbe52f96726005f55fb808d686511671c0b4b112839539147c48a20540dfc1bf"
     },
     "setup_wizard_events": {
       "count": 22,
@@ -468,7 +468,7 @@
     },
     "tasks": {
       "count": 25465,
-      "value_type_sha256": "a7aceb3a3684eb795d60c4086b7c079abcce523338bac6e6532c7847dd5a9191"
+      "value_type_sha256": "ef288e34719500a07671a186dfd66ed80b78bdfe7371884ff5b55f961c37acbf"
     },
     "todo_evidence_candidates": {
       "count": 3,

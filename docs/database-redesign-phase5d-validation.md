@@ -204,7 +204,7 @@ Full CI and normal deployment remain required.
 
 ## Actual default-constructor copy and native approval
 
-The latest online source isdc6abe2d, Store17/Email51. The normal
+The first integrated online source wasdc6abe2d, Store17/Email51. The normal
 prepare_store_schema_release factory selected the exact17→18 paired release,
 whose unmodified default publisher opened the copy in a fresh Python process.
 The copy126→124 physical tables retained all original3928 action rows,2341
@@ -242,3 +242,35 @@ distinct from the two real native turns above. Both fixture-only commits passed
 separate SPEC and QUALITY review. All three root-owned temporary directories,
 including copied databases/code and synthetic test-native fixtures, were
 removed after the concise artifacts were retained.
+
+## CI fixture repair and latest-source refresh
+
+Full Quality38467335512 at1aab2a49 ended with12746 passing checks, seven
+failures and three setup errors. All ten errors were current constructors
+opening historical Store16 fixtures; no new runtime failure was hidden.
+Commit9acd12dd preserves the frozen empty_source13 function and every existing
+business assertion. Only affected callers explicitly advance through the
+genuine postfix transition and captured Store17 sent declarations first.
+The exact ten cases and81 adjacent checks pass; independent SPEC and QUALITY
+each passed13 fresh/migrated cases and verified unchanged historical fixture
+and assertion ASTs. SPEC also checked helper validation ordering and atomic
+rollback. A new complete CI result is still required.
+
+During CI another session publishedba8b5931, which omits an internal dedupe key
+from Task Agent input. It is merged into this candidate; all seven checked
+Store/action/postfix/receipt/run/task/email persistence modules are byte-equal
+to the previous production source. The increment plus D bootstrap/selectors
+passed26 focused checks. A new actual online backup fromba8b5931 then repeated
+normal default publication, current-fact inverse, actual published old-code
+opening and republication successfully:126→124 physical tables,3928 original
+actions,2341 sent deliveries,320 observers,122 unrelated table hashes and the
+original FK diagnostic retained. The two v1 copy artifacts now record this
+latest verified source; earlier evidence remains in Git history.
+
+On its separately prepared immutable Store18 baseline, real Consumer/Audit
+approval again exited0, finisheddone and wrote exactly one substitute send,
+verification, business attempt, execution receipt and sent projection. All11
+scripted lifecycle cases passed again in108.94 seconds. App/harness hashes
+remained unchanged during that native run; production test tasks/sessions are
+zero. All three root-owned refresh/CI temporary directories were removed.
+These results do not claim a successful replacement full CI or deployment.
