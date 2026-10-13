@@ -5,8 +5,9 @@ Store18 finite action projections during the existing deploy window. Quality,
 deferral and scheduled recovery read the candidate's typed delivery facts;
 their predicates, logical result labels and recovery decisions are unchanged.
 The existing Store release router now selects the verified17→18 paired inverse.
-These integrations remain a development candidate pending real constructor
-copy, native substitute execution, CI and production acceptance.
+These integrations remain a development candidate. Real constructor copy,
+current-fact rollback, published-old-code reopen and native substitute execution
+have passed; CI and production acceptance remain pending.
 
 Store18 delivery integration is an isolated development candidate, not a
 published runtime. Its fresh bootstrap and exact Store17 migration use fourteen
