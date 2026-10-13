@@ -165,3 +165,10 @@ Health/status/Attention/History HTTP200 in0.05/0.31/0.16/0.62seconds atreadback;
 Livepagesnapshot:file471347200bytes,used426106880bytes,free45240320bytes,WAL166439792bytes. Source15:59file455614464/used401874944. Structuralconsolidationretainsbusinesshistoryandadds typed layout/index overhead; it doesnotdeliverabyte-reductionclaim. No productionVACUUM/checkpoint/retentionpolicy added.
 
 Final task cleanup completed after verified release/readback and no open handles: final ownedCtemporary roots(database copies,325-fileoldcode,logs/scripts/proofs)1420756047bytes removed; earlier4189452582bytes supersededtempremoved,total5610208629temporarybytes. Twoolder task-owned preB/preC recoverycopies876847104bytes removed after latestStore13/Email51 integrity+CEOBverification. Only latest auto-reply.sqlite3.pre-phase4c-verified-20261012-final retained for thisworkflow; unique old dailyEmail50 backup remained untouched pendingprevious explicitquestion. No nativeusertrajectory copies or historical test archives remain. Concise evidence is thisdocument, committed regressiontests andPR/CIreceipts.
+
+
+## Explicitly approved old backup cleanup (2026-10-12)
+
+Derek answered the pending backup question: 删除旧备份，只留最新. Before deletion, the exact old daily file backups/auto-reply-2026-10-12.sqlite3 was confirmed Store2026-10-11.2/Email50, integrity_checkok/completeCEOB,421232640bytes, no open handles or sidecars. The latest retained auto-reply.sqlite3.pre-phase4c-verified-20261012-final was independently reverified Store2026-10-11.3/Email51, integrity_checkok/completeCEOB,455614464bytes. The older preB file named in the original question had already been replaced during C by this verified latest recovery copy.
+
+The authorized old daily file was deleted; absence and latest-copy presence were read back. Released421232640bytes. The prior pending-authorization boundary is now resolved. Runtime database/code, backup schedules and retention implementation were not changed.

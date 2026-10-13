@@ -10,6 +10,15 @@ including distinct paths sharing a name. The response includes its path joining
 and table quoting instructions. Named/path reads, source authorization and
 ambiguity checks are unchanged; no output budget or role policy is changed.
 
+Email unsubscribe page judgement explicitly selects an empty task Skill catalog
+through the existing native per-path Skill configuration. Unspecified standard
+turns retain the native default catalog, while an explicit selection (including
+empty) filters the catalog through the existing per-path helper. Existing
+always-on/plugin entries may remain visible; empty does not mean zero native Skills.
+The page states, verbatim evidence contract, route, approval, sandbox and
+unsubscribe execution rules are unchanged. Native global memory and AGENTS
+instructions remain CLI-owned and are not represented as service prompt text.
+
 Console manual rerun loads only the terminal Agent run metadata used by the
 existing refusal check. It does not discover sessions or read/parse native
 trajectory/result files before queueing. Refusal behavior, original-input
@@ -1023,6 +1032,7 @@ Project；原有关系即使 anchor 后来退休也仅作历史证明保留。�
 检索先读取正式 Project 当前资料/证据，再相关 Tasks；同来源旧身份强制保留，预算先给它们。
 零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
 证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
+Task 语义上下文用无损紧凑 JSON 序列化，省去排版缩进；字段、顺序、原文字符串、引用偏移和检索选择保持不变。
 source_documents 提供精确版本的共享正文一次，source_signals 保留所有 ID/元数据并指向正文；
 当前 WorkItem 正文也只出现一次，immutable 输入不改。历史长文在 2048 字符预算内保留首尾及关键
 引文，visible_ranges/full_length/truncated 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。
@@ -1945,3 +1955,8 @@ work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选�
 已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
+
+
+### Full document native output delivery
+
+Consumer/Audit Codex commands use the existing per-tool native output budget of30,000 for `agent_cli.read_dingtalk_document_full`, on cold and continued turns. The server's complete result can otherwise be clipped in the native model-visible output. This preserves the selected JSONML/revision result without substituting Markdown, changing all-tool budgets or adding prompt rules. The source may still exceed that finite budget; server complete=true alone is not proof of complete model visibility. Regression/native evidence is recorded in `docs/document-native-output-validation.md`.

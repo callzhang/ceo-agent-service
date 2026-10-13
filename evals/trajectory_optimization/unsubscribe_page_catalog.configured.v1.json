@@ -1,0 +1,381 @@
+{
+  "version": 1,
+  "scope": "Configured production MCP manifest/model, anonymous pages only. Four real native cold completions; no actual unsubscribe replay or provider business outcome.",
+  "candidate_merge": "c520b697",
+  "manifest_path": "/Users/derek/Services/ceo-agent-service/data/config/service-mcp.json",
+  "runs": [
+    {
+      "case": "navigation_confirmation",
+      "arm": "baseline",
+      "session_id": "01a13254-1e7e-7c32-bdc6-74987228c86a",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-55-36-01a13254-1e7e-7c32-bdc6-74987228c86a.jsonl",
+      "native_records": 13,
+      "native_sha256": "84a68e15768bd129b1435286a3d121222cf785b7951203cb9d9e8fd082d73765",
+      "task_complete": true,
+      "result": {
+        "state": "done",
+        "evidence": "You are now unsubscribed from Example updates."
+      },
+      "state_match": true,
+      "substantive_evidence": true,
+      "tool_calls": 0,
+      "memory_auth_warning": false,
+      "blocks": [
+        {
+          "kind": "generic.developer_instructions",
+          "characters": 150,
+          "sha256": "436bb5fcf8b3dba486787e810aed0c118901985e5ccfbc9d89e573eb667e9239",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "memories.instructions",
+          "characters": 16098,
+          "sha256": "aac1fc03f5be3ea84eea427a75d1304a1e70dca23961745f86a51747576e806f",
+          "skill_mentions": 1
+        },
+        {
+          "kind": "plugins.usage_instructions",
+          "characters": 1014,
+          "sha256": "81d37acb6feff552b562f712b1e854339d90a0b19aa9f271047cca787f77a51a",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "host_skills.instructions",
+          "characters": 21488,
+          "sha256": "9000b0c091ebd495bdf9dcc16144af8943380c13dfe99824f5bfd25e2e14e1da",
+          "skill_mentions": 265
+        },
+        {
+          "kind": "agents_md.instructions",
+          "characters": 6670,
+          "sha256": "dc0eff45fdd8df93bdf32cc9e8fd29421193699012df8ce3a2122a01f0e11529",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "environments.environment_context",
+          "characters": 390,
+          "sha256": "c6c674344ffc2920c1a236950841c58240ad59682c610ef0a0028fcfa7497519",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "user.text",
+          "characters": 1286,
+          "sha256": "3e1e1795bb2311b1e9837ab03ab6163198a764fe28db7de4add94244ff375e42",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "unknown",
+          "characters": 76,
+          "sha256": "546dc6929a114097d5186e38aef9e16e7aea1599cf72c183b1717d29e15423e5",
+          "skill_mentions": 0
+        }
+      ]
+    },
+    {
+      "case": "navigation_confirmation",
+      "arm": "candidate",
+      "session_id": "01a13254-3936-7483-9066-484b006dd1b9",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-55-42-01a13254-3936-7483-9066-484b006dd1b9.jsonl",
+      "native_records": 13,
+      "native_sha256": "d84a64ccb47ede188d81d21f72084074bd9dfb8c06cb285f2f1ae6fa59fa5802",
+      "task_complete": true,
+      "result": {
+        "state": "done",
+        "evidence": "You are now unsubscribed from Example updates."
+      },
+      "state_match": true,
+      "substantive_evidence": true,
+      "tool_calls": 0,
+      "memory_auth_warning": true,
+      "blocks": [
+        {
+          "kind": "generic.developer_instructions",
+          "characters": 150,
+          "sha256": "436bb5fcf8b3dba486787e810aed0c118901985e5ccfbc9d89e573eb667e9239",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "memories.instructions",
+          "characters": 16098,
+          "sha256": "aac1fc03f5be3ea84eea427a75d1304a1e70dca23961745f86a51747576e806f",
+          "skill_mentions": 1
+        },
+        {
+          "kind": "plugins.usage_instructions",
+          "characters": 1014,
+          "sha256": "81d37acb6feff552b562f712b1e854339d90a0b19aa9f271047cca787f77a51a",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "host_skills.instructions",
+          "characters": 1127,
+          "sha256": "92a855a52f53c5f0d19c2eeb227d1768fea8f70124bde413f065acde29ded8e3",
+          "skill_mentions": 5
+        },
+        {
+          "kind": "agents_md.instructions",
+          "characters": 6670,
+          "sha256": "dc0eff45fdd8df93bdf32cc9e8fd29421193699012df8ce3a2122a01f0e11529",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "environments.environment_context",
+          "characters": 390,
+          "sha256": "c6c674344ffc2920c1a236950841c58240ad59682c610ef0a0028fcfa7497519",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "user.text",
+          "characters": 1286,
+          "sha256": "3e1e1795bb2311b1e9837ab03ab6163198a764fe28db7de4add94244ff375e42",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "unknown",
+          "characters": 76,
+          "sha256": "546dc6929a114097d5186e38aef9e16e7aea1599cf72c183b1717d29e15423e5",
+          "skill_mentions": 0
+        }
+      ]
+    },
+    {
+      "case": "generic_unknown",
+      "arm": "baseline",
+      "session_id": "01a13256-de91-71e3-89b3-f232be56395e",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-58-36-01a13256-de91-71e3-89b3-f232be56395e.jsonl",
+      "native_records": 15,
+      "native_sha256": "e65d427ddc7d8cb9b45bf7c6182a4573b6d8d09a92eeca9bbd0f01d4a9175432",
+      "task_complete": true,
+      "result": {
+        "state": "unknown",
+        "evidence": "Welcome to Example."
+      },
+      "state_match": true,
+      "substantive_evidence": true,
+      "tool_calls": 0,
+      "memory_auth_warning": true,
+      "blocks": [
+        {
+          "kind": "generic.developer_instructions",
+          "characters": 150,
+          "sha256": "436bb5fcf8b3dba486787e810aed0c118901985e5ccfbc9d89e573eb667e9239",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "memories.instructions",
+          "characters": 16098,
+          "sha256": "aac1fc03f5be3ea84eea427a75d1304a1e70dca23961745f86a51747576e806f",
+          "skill_mentions": 1
+        },
+        {
+          "kind": "plugins.usage_instructions",
+          "characters": 1014,
+          "sha256": "81d37acb6feff552b562f712b1e854339d90a0b19aa9f271047cca787f77a51a",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "host_skills.instructions",
+          "characters": 21488,
+          "sha256": "9000b0c091ebd495bdf9dcc16144af8943380c13dfe99824f5bfd25e2e14e1da",
+          "skill_mentions": 265
+        },
+        {
+          "kind": "agents_md.instructions",
+          "characters": 6670,
+          "sha256": "dc0eff45fdd8df93bdf32cc9e8fd29421193699012df8ce3a2122a01f0e11529",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "environments.environment_context",
+          "characters": 390,
+          "sha256": "c6c674344ffc2920c1a236950841c58240ad59682c610ef0a0028fcfa7497519",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "user.text",
+          "characters": 1259,
+          "sha256": "087d842415d965a01d28b9de364a9332dbc0db7600b860691f12a0911dcf0e5f",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "unknown",
+          "characters": 52,
+          "sha256": "f0e1b20879ff9839cc2c1c6ae0df8d828c2b019a1083988dee3830e8dc9067bc",
+          "skill_mentions": 0
+        }
+      ]
+    },
+    {
+      "case": "generic_unknown",
+      "arm": "candidate",
+      "session_id": "01a13256-faf9-7cd3-bbd5-192e7fbd3d05",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-58-43-01a13256-faf9-7cd3-bbd5-192e7fbd3d05.jsonl",
+      "native_records": 15,
+      "native_sha256": "1e2bb0e90e2c2d7e91d250c5b24d8315ab31d2c17195963984dd762c3aa2f41e",
+      "task_complete": true,
+      "result": {
+        "state": "unknown",
+        "evidence": "Welcome to Example."
+      },
+      "state_match": true,
+      "substantive_evidence": true,
+      "tool_calls": 0,
+      "memory_auth_warning": true,
+      "blocks": [
+        {
+          "kind": "generic.developer_instructions",
+          "characters": 150,
+          "sha256": "436bb5fcf8b3dba486787e810aed0c118901985e5ccfbc9d89e573eb667e9239",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "memories.instructions",
+          "characters": 16098,
+          "sha256": "aac1fc03f5be3ea84eea427a75d1304a1e70dca23961745f86a51747576e806f",
+          "skill_mentions": 1
+        },
+        {
+          "kind": "plugins.usage_instructions",
+          "characters": 1014,
+          "sha256": "81d37acb6feff552b562f712b1e854339d90a0b19aa9f271047cca787f77a51a",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "host_skills.instructions",
+          "characters": 1127,
+          "sha256": "92a855a52f53c5f0d19c2eeb227d1768fea8f70124bde413f065acde29ded8e3",
+          "skill_mentions": 5
+        },
+        {
+          "kind": "agents_md.instructions",
+          "characters": 6670,
+          "sha256": "dc0eff45fdd8df93bdf32cc9e8fd29421193699012df8ce3a2122a01f0e11529",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "environments.environment_context",
+          "characters": 390,
+          "sha256": "c6c674344ffc2920c1a236950841c58240ad59682c610ef0a0028fcfa7497519",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "user.text",
+          "characters": 1259,
+          "sha256": "087d842415d965a01d28b9de364a9332dbc0db7600b860691f12a0911dcf0e5f",
+          "skill_mentions": 0
+        },
+        {
+          "kind": "unknown",
+          "characters": 52,
+          "sha256": "f0e1b20879ff9839cc2c1c6ae0df8d828c2b019a1083988dee3830e8dc9067bc",
+          "skill_mentions": 0
+        }
+      ]
+    }
+  ],
+  "latest_actual_production": {
+    "version": 1,
+    "attempt_id": 348464,
+    "session_id": "01a1316c-8441-7a71-bfba-9ceb895ded0f",
+    "start": 0,
+    "end": 15,
+    "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T11-42-37-01a1316c-8441-7a71-bfba-9ceb895ded0f.jsonl",
+    "native_records": 15,
+    "blocks": [
+      {
+        "role": "developer",
+        "kind": "generic.developer_instructions",
+        "characters": 150,
+        "sha256": "436bb5fcf8b3dba486787e810aed0c118901985e5ccfbc9d89e573eb667e9239",
+        "skill_file_mentions": 0
+      },
+      {
+        "role": "developer",
+        "kind": "memories.instructions",
+        "characters": 16098,
+        "sha256": "aac1fc03f5be3ea84eea427a75d1304a1e70dca23961745f86a51747576e806f",
+        "skill_file_mentions": 1
+      },
+      {
+        "role": "developer",
+        "kind": "plugins.usage_instructions",
+        "characters": 1014,
+        "sha256": "81d37acb6feff552b562f712b1e854339d90a0b19aa9f271047cca787f77a51a",
+        "skill_file_mentions": 0
+      },
+      {
+        "role": "developer",
+        "kind": "host_skills.instructions",
+        "characters": 21488,
+        "sha256": "9000b0c091ebd495bdf9dcc16144af8943380c13dfe99824f5bfd25e2e14e1da",
+        "skill_file_mentions": 265
+      },
+      {
+        "role": "user",
+        "kind": "agents_md.instructions",
+        "characters": 6670,
+        "sha256": "dc0eff45fdd8df93bdf32cc9e8fd29421193699012df8ce3a2122a01f0e11529",
+        "skill_file_mentions": 0
+      },
+      {
+        "role": "user",
+        "kind": "environments.environment_context",
+        "characters": 390,
+        "sha256": "c6c674344ffc2920c1a236950841c58240ad59682c610ef0a0028fcfa7497519",
+        "skill_file_mentions": 0
+      },
+      {
+        "role": "user",
+        "kind": "user.text",
+        "characters": 1624,
+        "sha256": "d30daf265222dc2843fa0bb1cac540a3cbe991695a906efcbfa6f6d0a74aa0de",
+        "skill_file_mentions": 0
+      },
+      {
+        "role": "assistant",
+        "kind": "unknown",
+        "characters": 65,
+        "sha256": "02badea5a7aead06b25e90aa1a7cd65343a6f71ac8d1dede53f2a76dea2dcb9c",
+        "skill_file_mentions": 0
+      }
+    ],
+    "tool_calls": 0,
+    "state": "done",
+    "evidence_sha256": "f3b94805a2e9e52c2371b790ee6c7fa5056e4d30e4a7e4529faac37a6b2e685a",
+    "scope": "Actual retained page judgement only; private page excluded, no provider replay or outcome readback",
+    "evidence_contiguous_substring_in_supplied_task": false,
+    "evidence_quote_assessment": {
+      "two_complete_source_sentences_exact": true,
+      "first_sentence_chars": 9,
+      "second_sentence_chars": 26,
+      "first_source_line": 16,
+      "second_source_line": 19,
+      "omitted_between_sentences_chars": 26,
+      "non_contiguous_selection_allowed_by_prompt": true,
+      "quote_contract_failure_proved": false,
+      "state_failure_proved": false
+    }
+  },
+  "limits": [
+    "Memory MCP invalid_token warning differs across arms: not a strict catalog-only quality comparison; actual Memory readiness unverified.",
+    "First script ended after completed candidate because cached native-path inventory omitted its already-existing file. Fresh-process inspection recovered original native range; no model rerun.",
+    "Remaining2 unknown turns executed once with refreshed test path inventory; app unchanged.",
+    "Actual348464 selects two non-contiguous complete original sentences; contiguous-substring check is too strict for this prompt and does not establish a quote failure.",
+    "Original syntheticv1 navigation evidence failure remains preserved."
+  ],
+  "tests": {
+    "current_main_affected_passed": 136,
+    "named_task_schema_session_classifier_passed": 14,
+    "ruff": "passed",
+    "diff_check": "passed"
+  },
+  "independent_review": {
+    "agent": "native_catalog_review",
+    "mode": "read-only",
+    "current_main_scope_verified": true,
+    "navigation_pair_full_native_verified": true,
+    "actual_page_multi_sentence_quote_verified": true,
+    "memory_auth_readiness": "unverified; warnings retained",
+    "provider_business_outcome": "not replayed or newly verified"
+  }
+}
