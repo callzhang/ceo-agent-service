@@ -5,13 +5,14 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from dataclasses import replace
 from typing import ClassVar
 
 from pydantic import JsonValue, RootModel, model_validator
 
 from app.agent_result import parse_typed_agent_result
 from app.agent_wire_contracts import ConsumerAgentWireResult, AuditAgentWireResult
-from app.prompt_composition import PromptSection
+from app.prompt_composition import PromptSection, PromptAssembly
 
 _MODELS = {"consumer": ConsumerAgentWireResult, "audit": AuditAgentWireResult}
 _UNSUPPORTED = {
@@ -109,6 +110,70 @@ def native_output_schema(role: str) -> dict:
     return _project(root)
 
 
+def native_canonical_constraints(role: str) -> dict:
+    """Retain canonical assertions omitted by the native structural projection."""
+    constraints = {}
+    assertions = _UNSUPPORTED - {"default", "title"}
+
+    def visit(value, path):
+        if isinstance(value, dict):
+            omitted = {
+                key: copy.deepcopy(item)
+                for key, item in value.items()
+                if key in assertions
+            }
+            if omitted:
+                constraints[path] = omitted
+            for key, item in value.items():
+                if key not in omitted:
+                    visit(item, path + "/" + key.replace("~", "~0").replace("/", "~1"))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, path + "/" + str(index))
+
+    visit(_MODELS[role].model_json_schema(), "")
+    return constraints
+
+
+def native_developer_sections(
+    sections: tuple[PromptSection, ...], role: str
+) -> tuple[PromptSection, ...]:
+    """Use native structure once, preserving the complete omitted business assertions."""
+    text = (
+        "## Output contract\nUse the supplied native output schema for result structure. "
+        "After restoring ordinary JSON objects, the complete original Pydantic business contract applies."
+    )
+    constraints = native_canonical_constraints(role)
+    if constraints:
+        text += "\nCanonical constraints by schema JSON Pointer:\n" + json.dumps(
+            constraints, ensure_ascii=False, separators=(",", ":")
+        )
+    return tuple(
+        replace(section, source="Codex 原生结构与补充业务约束", text=text)
+        if section.name == "输出契约"
+        and section.source == "Pydantic 业务模型"
+        and section.placement == "developer"
+        else section
+        for section in sections
+    )
+
+
+def native_developer_assembly(
+    developer: str, sections: tuple[PromptSection, ...], role: str
+) -> PromptAssembly:
+    """Replace only the exact service-owned schema segment; preserve all other text."""
+    recorded = list(sections)
+    for index, (before, after) in enumerate(
+        zip(sections, native_developer_sections(sections, role))
+    ):
+        if before != after and developer.count(before.text) == 1:
+            compact = developer.replace(before.text, after.text, 1)
+            if compact != developer:
+                developer = compact
+                recorded[index] = after
+    return PromptAssembly(developer, tuple(recorded))
+
+
 def native_output_schema_path(role: str) -> Path:
     return (
         Path(__file__).resolve().parent
@@ -135,13 +200,18 @@ def native_task_prompt(prompt: str, role: str) -> str:
 
 
 def native_output_section(role: str) -> PromptSection:
-    return PromptSection("原生结果格式", "Codex 原生 schema 格式", "task", native_output_instruction(role))
+    return PromptSection(
+        "原生结果格式",
+        "Codex 原生 schema 格式",
+        "task",
+        native_output_instruction(role),
+    )
 
 
 def native_business_task_prompt(prompt: str, role: str) -> str:
     """Separate the exact service-owned appendix from saved native input."""
     appendix = "\n\n" + native_output_instruction(role)
-    return prompt[:-len(appendix)] if prompt.endswith(appendix) else prompt
+    return prompt[: -len(appendix)] if prompt.endswith(appendix) else prompt
 
 
 def _matches(value, node, definitions):

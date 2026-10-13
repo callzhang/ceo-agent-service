@@ -1169,6 +1169,14 @@ class AgentTurnProcess(Generic[ResultT]):
 
                 rendered_at = datetime.now().astimezone().isoformat()
                 context_facts = {**(invocation_facts or {}), "proposal_revision": run.proposal_revision}
+                effective_developer_instructions = developer_instructions
+                if route.runtime_kind is RuntimeKind.CODEX_CLI and context_facts.get("prompt_sections"):
+                    from app.native_agent_output import native_developer_assembly
+                    from app.prompt_composition import PromptSection, prompt_section_facts
+                    sections = tuple(PromptSection(**section) for section in context_facts["prompt_sections"])
+                    native_developer = native_developer_assembly(developer_instructions, sections, run.role.value)
+                    effective_developer_instructions = native_developer.text
+                    context_facts["prompt_sections"] = prompt_section_facts(native_developer.sections)
                 submitted_task_prompt = prompt
                 if route.runtime_kind is RuntimeKind.CODEX_CLI:
                     submitted_task_prompt = native_task_prompt(prompt, run.role.value)
@@ -1186,7 +1194,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     role=run.role.value, route=route, command=command, task=self.task,
                     current_time=rendered_at, invocation_facts=context_facts,
                 )
-                submitted_developer_instructions = append_runtime_context(developer_instructions, runtime_context)
+                submitted_developer_instructions = append_runtime_context(effective_developer_instructions, runtime_context)
                 if route.runtime_kind is RuntimeKind.CODEX_CLI:
                     command = [
                         "developer_instructions=" + json.dumps(submitted_developer_instructions)
