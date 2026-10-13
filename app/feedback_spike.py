@@ -259,21 +259,35 @@ def sanitize_source_feedback_links(
     urls = [child.attrGet("href") for token in source_parser.parse(value)
             for child in (token.children or []) if child.type == "link_open"
             and FEEDBACK_CALLBACK_PATH in (child.attrGet("href") or "")]
-    if len(urls) != 2:
+    if not urls:
         raise ValueError("feedback_callback_pair_invalid")
     expected_base = urlparse(normalize_vercel_base_url(vercel_base_url))
     expected_path = f"{expected_base.path.rstrip('/')}{FEEDBACK_CALLBACK_PATH}"
-    queries = [_configured_callback_query(url, expected_base=expected_base,
-               expected_path=expected_path, expected_rating=rating)
-               for url, rating in zip(urls, ("up", "down"), strict=True)]
-    up, down = queries
-    # Source identity is opaque evidence, not authorization for an outgoing
-    # callback. Keep origin, query and pair checks; only the outgoing parser
-    # requires the current generator's token format.
-    if (up is None or down is None
-            or up["feedback_token"] != down["feedback_token"]
-            or up.get("attempt_id") != down.get("attempt_id")
-            or contains_forbidden_leak(up["feedback_token"])):
+    pairs: dict[tuple[str, str], set[str]] = {}
+    for url in urls:
+        queries = [
+            query
+            for rating in ("up", "down")
+            if (
+                query := _configured_callback_query(
+                    url,
+                    expected_base=expected_base,
+                    expected_path=expected_path,
+                    expected_rating=rating,
+                )
+            ) is not None
+        ]
+        if len(queries) != 1:
+            raise ValueError("feedback_callback_pair_invalid")
+        query = queries[0]
+        if contains_forbidden_leak(query["feedback_token"]):
+            raise ValueError("feedback_callback_pair_invalid")
+        identity = (query["feedback_token"], query.get("attempt_id", ""))
+        pairs.setdefault(identity, set()).add(query["rating"])
+    # A provider result may combine several historical messages in one text
+    # field. Validate each token/attempt pair independently; preview prose may
+    # differ because providers render old callbacks differently.
+    if any(ratings != {"up", "down"} for ratings in pairs.values()):
         raise ValueError("feedback_callback_pair_invalid")
     inspected = value
     for url in urls:
