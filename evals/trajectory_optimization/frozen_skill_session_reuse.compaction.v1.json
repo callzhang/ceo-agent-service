@@ -1,0 +1,771 @@
+{
+  "version": 1,
+  "scope": "Native manual compaction and synthetic unchanged-source continuations; incomplete proof for absent-full-body reread, automatic compaction trigger, providers and production lifecycle",
+  "native_cli_version": "0.154.0",
+  "official_manual_operation_reference": "https://developers.openai.com/codex/app-server#trigger-thread-compaction",
+  "official_threshold_reference": "https://developers.openai.com/codex/config-reference",
+  "automatic_threshold_diagnostic": {
+    "requested_token_limit": 20000,
+    "compaction_triggered": false,
+    "root_cause_confirmed": false,
+    "runs": [
+      {
+        "role": "consumer",
+        "arm": "baseline",
+        "phase": "compact",
+        "returncode": 0,
+        "timed_out": false,
+        "session_id": "01a13214-9e5d-7351-a1f2-0803d428b467",
+        "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+        "canonical_valid": true,
+        "expected_match": true,
+        "expected_outcomes": [
+          "no_action"
+        ],
+        "expected_digest": null,
+        "expected_revision": 3,
+        "use_native_output_schema": false,
+        "result": {
+          "outcome": "no_action",
+          "summary": "文档标题所述 stated total 为120 units；三条完整明细行合计为110 units（40 + 50 + 20）。因此，标题总额与明细行合计相差10 units，且标题总额高于明细行合计。该未解决的算术差异应等待文档所有者确认；110 units 只是根据明细行计算出的合计，不是已批准的更正总额。依据任务冻结的文档审查指引，未改写源文档，也未声称任何更正已获批准。原始请求未要求外部变更，因此无需提出或执行外部操作。",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "native_phase_sha256": "ecf5ab2873376a91d58460904575f338d8acb1b9a55ac5136bf412d508714227",
+        "native_compaction_records": 0,
+        "accepted_as_compaction": false
+      },
+      {
+        "role": "consumer",
+        "arm": "candidate",
+        "phase": "compact",
+        "returncode": 0,
+        "timed_out": false,
+        "session_id": "01a13214-be6d-7693-85c1-55ef4b5a3bc4",
+        "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+        "canonical_valid": true,
+        "expected_match": true,
+        "expected_outcomes": [
+          "no_action"
+        ],
+        "expected_digest": null,
+        "expected_revision": 3,
+        "use_native_output_schema": false,
+        "result": {
+          "outcome": "no_action",
+          "summary": "The document heading/stated total is 120 units. The three complete item rows sum to 110 units (40 + 50 + 20), producing a 10-unit discrepancy. The arithmetic discrepancy remains awaiting document-owner confirmation; the calculated sum is not an approved corrected total. The source remains unchanged, no correction is claimed as approved, and no external change is requested.",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "native_phase_sha256": "d2528015f6a8e6f361158c1b7fa1c1e47c457e28ff73db9dbb3d5ac420ba87a7",
+        "native_compaction_records": 0,
+        "accepted_as_compaction": false
+      },
+      {
+        "role": "audit",
+        "arm": "baseline",
+        "phase": "compact",
+        "returncode": 0,
+        "timed_out": false,
+        "session_id": "01a13215-08b4-7823-aef1-1351514c92a4",
+        "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+        "canonical_valid": true,
+        "expected_match": true,
+        "expected_outcomes": [
+          "approve"
+        ],
+        "expected_digest": "954cf27bfb2b0a2ec343ca2f4e5187efe9cfc41cbcae3234ac77dcd57cac2ced",
+        "expected_revision": 3,
+        "use_native_output_schema": false,
+        "result": {
+          "outcome": "approve",
+          "summary": "Approved. The candidate accurately reports the stated total of 120 units, the complete-row sum of 110 units (40 + 50 + 20), and the 10-unit discrepancy. It correctly states that the unresolved discrepancy awaits document-owner confirmation, clarifies that 110 units is only the calculated row sum and not an approved correction, and preserves the requested no-action scope without rewriting the source or claiming approval.",
+          "proposal_revision": 3,
+          "candidate_digest": "954cf27bfb2b0a2ec343ca2f4e5187efe9cfc41cbcae3234ac77dcd57cac2ced",
+          "evidence_refs": [
+            "candidate.summary",
+            "candidate.source_bindings[0].value.trigger_text",
+            "candidate.source_bindings[0].value.trigger_raw_payload.document",
+            "ceo-document-review revision 42"
+          ],
+          "feedback": null,
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        },
+        "native_phase_sha256": "220c29343cdb0d63516be90342787b84e326360cf3a139a911f828bcbb8c258b",
+        "native_compaction_records": 0,
+        "accepted_as_compaction": false
+      },
+      {
+        "role": "audit",
+        "arm": "candidate",
+        "phase": "compact",
+        "returncode": 0,
+        "timed_out": false,
+        "session_id": "01a13215-561d-75b3-9b29-d303eec475a4",
+        "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+        "canonical_valid": true,
+        "expected_match": true,
+        "expected_outcomes": [
+          "approve"
+        ],
+        "expected_digest": "954cf27bfb2b0a2ec343ca2f4e5187efe9cfc41cbcae3234ac77dcd57cac2ced",
+        "expected_revision": 3,
+        "use_native_output_schema": false,
+        "result": {
+          "outcome": "approve",
+          "summary": "Approved: the candidate remains consistent with the authoritative trigger and the task-frozen revision-42 guidance. It correctly reports the stated total as 120 units, the complete-row sum as 110 units, and the 10-unit discrepancy; keeps the stated and calculated figures separate; describes the unresolved discrepancy as awaiting document-owner confirmation; and does not rewrite the source, claim an approved correction, or perform external action.",
+          "proposal_revision": 3,
+          "candidate_digest": "954cf27bfb2b0a2ec343ca2f4e5187efe9cfc41cbcae3234ac77dcd57cac2ced",
+          "evidence_refs": [
+            "candidate.source_bindings[0].value.trigger_text",
+            "candidate.source_bindings[0].value.trigger_raw_payload.document",
+            "managed:ceo-document-review@revision-42"
+          ],
+          "feedback": null,
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        },
+        "native_phase_sha256": "4aafb38a90ee39664a4f7bbe54712c75b976291517c9fc2123aa6d2b1afae204",
+        "native_compaction_records": 0,
+        "accepted_as_compaction": false
+      }
+    ]
+  },
+  "manual_compaction_runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "session_id": "01a13214-9e5d-7351-a1f2-0803d428b467",
+      "resume_ok": true,
+      "request_acknowledged": true,
+      "turn_completed": false,
+      "context_compaction_item_completed": true,
+      "error": null,
+      "native_compaction_records": 1,
+      "before_sha256": "497267963db653cfaa7a1b2fadbcc5cab6b77d1f2304f35622bec3f214d02735",
+      "compaction_phase_sha256": "5af6b69e91194e3e03c01df2f4aa043f9b3f67278bedf3c16ba5fef9040eb047",
+      "after_sha256": "32916c599f5f54b2b8e09a771d817ebb8d13e871ccc766decd6bba07a640e84c",
+      "elapsed_seconds": 180.99354120797943,
+      "native_terminal_completed": true,
+      "native_compaction_payload_sha256": "b8b7e76673c4dedccaedc128bb2eddb34d55d06766a8ec4c2df463e18043d56f",
+      "replacement_history": [
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "compaction",
+          "role": null,
+          "encrypted_content_chars": 16164,
+          "encrypted_content_sha256": "49cf5de38d1950c7807857b399a75e85d5029ff2c680867f19d3248118171aa7"
+        }
+      ],
+      "complete_skill_visible_in_plaintext": false,
+      "opaque_context_contents_inspectable": false,
+      "rpc_sha256": "84506b5d06991ed4e8fadfe5f71594676f3e7c99039f0665f820f4976e106c99",
+      "rpc_requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "thread/compact/start"
+      ],
+      "rpc_item_completed": true
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "session_id": "01a13214-be6d-7693-85c1-55ef4b5a3bc4",
+      "resume_ok": true,
+      "request_acknowledged": true,
+      "turn_completed": true,
+      "context_compaction_item_completed": true,
+      "error": null,
+      "native_compaction_records": 1,
+      "before_sha256": "ac5a38a9513e76e5c82ff9a5103c05b6158e4e50a9b8052b56893bba8aabca64",
+      "compaction_phase_sha256": "987d625e3c38a3471d6a19cb9d094d7d2275f73a06fbe8c8ec7355930977597c",
+      "after_sha256": "50e9aef35d53ef3d3a5aedafaba9b914c87060c5dfc88ab1d54cf3ee0d11221f",
+      "elapsed_seconds": 9.036966916988604,
+      "native_terminal_completed": true,
+      "native_compaction_payload_sha256": "b396d82c77b2133c78499c85740213817daf41f07961ed251dd5bb0ded56d313",
+      "replacement_history": [
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "compaction",
+          "role": null,
+          "encrypted_content_chars": 16804,
+          "encrypted_content_sha256": "b2d36fd071ec2dd831b409b0e60595992b7366c71895418e0f527e98729469b4"
+        }
+      ],
+      "complete_skill_visible_in_plaintext": false,
+      "opaque_context_contents_inspectable": false,
+      "rpc_sha256": "0c27c3f3fc9679fb3fd67d2154d2418631dbdd5d3ef076cfea4c5390830c0f97",
+      "rpc_requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "thread/compact/start"
+      ],
+      "rpc_item_completed": true
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "session_id": "01a13215-08b4-7823-aef1-1351514c92a4",
+      "resume_ok": true,
+      "request_acknowledged": true,
+      "turn_completed": true,
+      "context_compaction_item_completed": true,
+      "error": null,
+      "native_compaction_records": 1,
+      "before_sha256": "21574d849d83843d5bee3de38430f53366a43427de25284eeb96c72c0eac3b46",
+      "compaction_phase_sha256": "4d7462437a8ddd5e6b092b5bfe98ce11abec5a20065a3cea921aacdcc006ab25",
+      "after_sha256": "5d7b95916aa070505762a376d5ffe97f1c29f0ee7f11883f89051a28b110ecc6",
+      "elapsed_seconds": 9.377173417015001,
+      "native_terminal_completed": true,
+      "native_compaction_payload_sha256": "27698182d10a2962b697143a6c23598bf435f89f628046140694cc7641f6518b",
+      "replacement_history": [
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "compaction",
+          "role": null,
+          "encrypted_content_chars": 19812,
+          "encrypted_content_sha256": "10aa20ae76c4cd70a7857edc03c6ae81e39f80af55f40cbf5f851aa9cb1373f9"
+        }
+      ],
+      "complete_skill_visible_in_plaintext": false,
+      "opaque_context_contents_inspectable": false,
+      "rpc_sha256": "43dfa314684bc975ca68acfa460331256bfbc0529b9b8c38741ad0b24ca083c8",
+      "rpc_requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "thread/compact/start"
+      ],
+      "rpc_item_completed": true
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "session_id": "01a13215-561d-75b3-9b29-d303eec475a4",
+      "resume_ok": true,
+      "request_acknowledged": true,
+      "turn_completed": true,
+      "context_compaction_item_completed": true,
+      "error": null,
+      "native_compaction_records": 1,
+      "before_sha256": "c99e784b4859e8a2edfada40dbab90579d6b39b33fa4c0275b6d1a474a303dcb",
+      "compaction_phase_sha256": "3073f9434aa4c0397bab776c50f92ab7038dced5dc44a66c8c7cd5a974d55394",
+      "after_sha256": "39913f2fc0e340c1527a0d39475275bd62d637ded95308839a60a223648597b8",
+      "elapsed_seconds": 16.49892937502591,
+      "native_terminal_completed": true,
+      "native_compaction_payload_sha256": "63320cfcb7d1ab0a2b77c887e672ed1f7a049b4c6a88b6638fd54a17f9f7d9c0",
+      "replacement_history": [
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "encrypted_content_chars": 0,
+          "encrypted_content_sha256": null
+        },
+        {
+          "type": "compaction",
+          "role": null,
+          "encrypted_content_chars": 17144,
+          "encrypted_content_sha256": "7414584b2b8e6f21915f0ffc5c7db0d1caf293c054e271a53486e6eeabbfd8f2"
+        }
+      ],
+      "complete_skill_visible_in_plaintext": false,
+      "opaque_context_contents_inspectable": false,
+      "rpc_sha256": "02361671157d2cbecf65105cab54f8db7e5ad6c50d870254c99706693d9fc570",
+      "rpc_requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "thread/compact/start"
+      ],
+      "rpc_item_completed": true
+    }
+  ],
+  "postcompaction": {
+    "version": 1,
+    "scope": "Synthetic unchanged source continued after native manual compaction with production role defaults; encrypted summary contents not inspectable, no complete-body-loss or universal reuse claim. Not service-run/provider acceptance",
+    "source_root": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7",
+    "original_input13_unchanged": true,
+    "current_input14": true,
+    "original_trigger_text_unchanged": true,
+    "frozen_material_sha256": "a8fe4aa957f5baf1184fe32691eec3155de2a73e05224b4f3cea668df3bdf1af",
+    "frozen_material_chars": 611,
+    "task_bound_input_sha256": "484ccb645dbb4c5169ab7dc633af7fa8308ab36722c7ccf88159c787e993cdec",
+    "corrected_digest": "3e8a3536a4f450115f77a1ab80498b84ced9c685c3bf2ec45c4242453c94288d",
+    "runs": [
+      {
+        "role": "consumer",
+        "arm": "baseline",
+        "phase": "postcompact",
+        "returncode": 0,
+        "timed_out": false,
+        "session_id": "01a13214-9e5d-7351-a1f2-0803d428b467",
+        "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+        "canonical_valid": true,
+        "expected_match": true,
+        "expected_outcomes": [
+          "no_action"
+        ],
+        "expected_digest": null,
+        "expected_revision": 4,
+        "use_native_output_schema": false,
+        "result": {
+          "outcome": "no_action",
+          "summary": "The draft document heading states a total of 120 units. The three complete item rows are 40, 50, and 20 units, which sum to 110 units. The discrepancy is therefore 10 units, with the stated total exceeding the computed row sum. This unresolved discrepancy is awaiting document-owner confirmation; 110 units is only the calculated row sum and is not an approved corrected total. The source was not rewritten, no correction approval is claimed, and no external action is requested.",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "native_controls": [
+          {
+            "model": "gpt-5.6-luna",
+            "approval_policy": "never",
+            "sandbox_policy": {
+              "type": "workspace-write",
+              "network_access": false,
+              "exclude_tmpdir_env_var": false,
+              "exclude_slash_tmp": false
+            },
+            "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+          }
+        ],
+        "initial_native_developer_sha256": "01c7cdf06e722517d131754f09fb29fb33ab097197402c6765a3ef05958fe06c",
+        "read_task_skill_calls": 1,
+        "read_task_skill_errors": 0,
+        "read_details": [
+          {
+            "arguments": {
+              "name": "ceo-document-review"
+            },
+            "is_error": false,
+            "complete_source_body": true,
+            "model_sha256": "0dc3e332a1b098a16ca6c1119c8188d1f5ba97060179a07c823757a250c0bcba",
+            "model_chars": 737,
+            "error": null
+          }
+        ],
+        "custom_tool_inputs": [
+          {
+            "name": "exec",
+            "input": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md\",workdir:\"/private/tmp/ceo-frozen-feedback-controls-_4t303f7\",yield_time_ms:10000,max_output_tokens:12000});\ntext(r.output);\n"
+          }
+        ],
+        "native_phase_sha256": "00d1bf2ac11a4c09199505db134fc50b94e0a88533e8a461c999eb7e7c5ab9d6",
+        "native_cold_prefix_sha256": "32916c599f5f54b2b8e09a771d817ebb8d13e871ccc766decd6bba07a640e84c",
+        "native_full_sha256": "d68744e1a3ea4f5d3074a41b24f7c51555746d0cef8093676b2b3a642ec5fc79",
+        "task_sha256": "f01e8bd464074c5cea73073efe70b5cc9f888d3f2b88123332948d951c526a6a",
+        "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+        "command_sha256": "dd0564e6dd6a466d17e76f517d09a4d8c91f936352136c3130cdf4053d04f662",
+        "events_sha256": "3b7bf85f9171e0d8d726a92260babb7fe89e2efa04999e878945e3ff636c2eb8",
+        "compaction_events": 0
+      },
+      {
+        "role": "consumer",
+        "arm": "candidate",
+        "phase": "postcompact",
+        "returncode": 0,
+        "timed_out": false,
+        "session_id": "01a13214-be6d-7693-85c1-55ef4b5a3bc4",
+        "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+        "canonical_valid": true,
+        "expected_match": true,
+        "expected_outcomes": [
+          "no_action"
+        ],
+        "expected_digest": null,
+        "expected_revision": 4,
+        "use_native_output_schema": false,
+        "result": {
+          "outcome": "no_action",
+          "summary": "The document heading/stated total is 120 units. The three complete item rows sum to 110 units (40 + 50 + 20), producing a 10-unit discrepancy. The arithmetic discrepancy remains awaiting document-owner confirmation; the calculated sum is not an approved corrected total. The source remains unchanged, no correction is claimed as approved, and no external change is requested.",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "native_controls": [
+          {
+            "model": "gpt-5.6-luna",
+            "approval_policy": "never",
+            "sandbox_policy": {
+              "type": "workspace-write",
+              "network_access": false,
+              "exclude_tmpdir_env_var": false,
+              "exclude_slash_tmp": false
+            },
+            "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+          }
+        ],
+        "initial_native_developer_sha256": "01c7cdf06e722517d131754f09fb29fb33ab097197402c6765a3ef05958fe06c",
+        "read_task_skill_calls": 0,
+        "read_task_skill_errors": 0,
+        "read_details": [],
+        "custom_tool_inputs": [],
+        "native_phase_sha256": "f2373fbfbd850b6bba1d2690de9992f4f1d1405e847d913fa1683ef8298949be",
+        "native_cold_prefix_sha256": "50e9aef35d53ef3d3a5aedafaba9b914c87060c5dfc88ab1d54cf3ee0d11221f",
+        "native_full_sha256": "ec3dd3d26334a04b5933e649decca076f8c09001bb9b6903dd71cf49e538e096",
+        "task_sha256": "6d429cbd0716bcdfb94df9e6f9bc71b6e044d2ce43661b4ed8fcf8f0f8ad2144",
+        "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+        "command_sha256": "70995aef10534d3c7e3902219f5703955e8b72f5ec53d8061e824bc12881bfb8",
+        "events_sha256": "761363b8a80809f760052a1b0918b2e0959ab03a23d362761686defe3aab2990",
+        "compaction_events": 0
+      },
+      {
+        "role": "audit",
+        "arm": "baseline",
+        "phase": "postcompact",
+        "returncode": 0,
+        "timed_out": false,
+        "session_id": "01a13215-08b4-7823-aef1-1351514c92a4",
+        "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+        "canonical_valid": true,
+        "expected_match": true,
+        "expected_outcomes": [
+          "approve"
+        ],
+        "expected_digest": "3e8a3536a4f450115f77a1ab80498b84ced9c685c3bf2ec45c4242453c94288d",
+        "expected_revision": 4,
+        "use_native_output_schema": false,
+        "result": {
+          "outcome": "approve",
+          "summary": "Approved. The candidate accurately preserves the source distinction: the heading states 120 units, the complete rows sum to 110 units (40 + 50 + 20), and the stated total exceeds the computed row sum by 10 units. It correctly treats the discrepancy as unresolved and awaiting document-owner confirmation, does not present 110 units as an approved correction, does not rewrite the source, and proposes no external action.",
+          "proposal_revision": 4,
+          "candidate_digest": "3e8a3536a4f450115f77a1ab80498b84ced9c685c3bf2ec45c4242453c94288d",
+          "evidence_refs": [
+            "candidate.summary",
+            "candidate.source_bindings[0].value.trigger_text",
+            "candidate.source_bindings[0].value.trigger_raw_payload.document",
+            "candidate.source_bindings[0].value.trigger_raw_payload.skill_refs[0]",
+            "ceo-document-review revision 42"
+          ],
+          "feedback": null,
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        },
+        "native_controls": [
+          {
+            "model": "gpt-5.6-luna",
+            "approval_policy": "never",
+            "sandbox_policy": {
+              "type": "read-only"
+            },
+            "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+          }
+        ],
+        "initial_native_developer_sha256": "f625de068378a73dd369b620c6f7fc07d4c151ad89bba6f5049f7378b5f0190a",
+        "read_task_skill_calls": 1,
+        "read_task_skill_errors": 0,
+        "read_details": [
+          {
+            "arguments": {
+              "name": "ceo-document-review"
+            },
+            "is_error": false,
+            "complete_source_body": true,
+            "model_sha256": "0dc3e332a1b098a16ca6c1119c8188d1f5ba97060179a07c823757a250c0bcba",
+            "model_chars": 737,
+            "error": null
+          }
+        ],
+        "custom_tool_inputs": [],
+        "native_phase_sha256": "db7dfb275dda023d8823e53ce9d1f53e9a0b10fbc51a71479e33e2df1ec5bb59",
+        "native_cold_prefix_sha256": "5d7b95916aa070505762a376d5ffe97f1c29f0ee7f11883f89051a28b110ecc6",
+        "native_full_sha256": "7471e5876e9938267aa9dfb0351c604a2a88669eb23fb0f16b3b170839a2b0d0",
+        "task_sha256": "d9152eca243b5a6223e9eaee1f72555f14a9437c4388560420447be665bf3d20",
+        "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+        "command_sha256": "f11e063dc128d18e0c19861bd5448b40b7e65656bc3f09e4318fe2cc02a9f322",
+        "events_sha256": "d694506c2391ce36c30541e9058881224b6de4f6d64539a5e1ecb7d08fdad211",
+        "compaction_events": 0
+      },
+      {
+        "role": "audit",
+        "arm": "candidate",
+        "phase": "postcompact",
+        "returncode": 0,
+        "timed_out": false,
+        "session_id": "01a13215-561d-75b3-9b29-d303eec475a4",
+        "source_sha256": "ccc72acc0bce5ab01de7b98ad24d4b243933e8c37a0c9c9a0fa5a99360b38aa0",
+        "canonical_valid": true,
+        "expected_match": true,
+        "expected_outcomes": [
+          "approve"
+        ],
+        "expected_digest": "3e8a3536a4f450115f77a1ab80498b84ced9c685c3bf2ec45c4242453c94288d",
+        "expected_revision": 4,
+        "use_native_output_schema": false,
+        "result": {
+          "outcome": "approve",
+          "summary": "Approved. The candidate accurately reports the stated total of 120 units, the complete-row sum of 110 units (40 + 50 + 20), and the 10-unit discrepancy with the stated total higher. It correctly treats the discrepancy as awaiting document-owner confirmation, does not present 110 units as an approved correction, does not rewrite the source, and proposes no external action.",
+          "proposal_revision": 4,
+          "candidate_digest": "3e8a3536a4f450115f77a1ab80498b84ced9c685c3bf2ec45c4242453c94288d",
+          "evidence_refs": [
+            "candidate.source_bindings[0].value.trigger_text",
+            "candidate.source_bindings[0].value.trigger_raw_payload.document",
+            "managed:ceo-document-review@revision-42"
+          ],
+          "feedback": null,
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        },
+        "native_controls": [
+          {
+            "model": "gpt-5.6-luna",
+            "approval_policy": "never",
+            "sandbox_policy": {
+              "type": "read-only"
+            },
+            "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+          }
+        ],
+        "initial_native_developer_sha256": "f625de068378a73dd369b620c6f7fc07d4c151ad89bba6f5049f7378b5f0190a",
+        "read_task_skill_calls": 0,
+        "read_task_skill_errors": 0,
+        "read_details": [],
+        "custom_tool_inputs": [],
+        "native_phase_sha256": "481919e9922ce109b40b3664745f20864d8782988392f69509c3bfc1f6669318",
+        "native_cold_prefix_sha256": "39913f2fc0e340c1527a0d39475275bd62d637ded95308839a60a223648597b8",
+        "native_full_sha256": "0a5e9eb1fbd5c3091a19dbf782548583a209c069902fde438079337cc3bf348f",
+        "task_sha256": "91234e886f3a22614d9005b7173806e57558556fbe04775baa6445f6e7c41332",
+        "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+        "command_sha256": "511c56b1203c80497d4681c863a73745aa4db4fdf603b476fc695a0e1081acfa",
+        "events_sha256": "7ec942ea207166f840070a3c7ae8b130efe9336aa320ec5ec385dc4ca2e9bfd4",
+        "compaction_events": 0
+      }
+    ]
+  },
+  "invalid_enum_pre_resume": {
+    "role": "consumer",
+    "arm": "baseline",
+    "session_id": "01a13214-9e5d-7351-a1f2-0803d428b467",
+    "resume_ok": false,
+    "request_acknowledged": false,
+    "turn_completed": false,
+    "context_compaction_item_completed": false,
+    "error": {
+      "code": -32600,
+      "message": "Invalid request: unknown variant `workspaceWrite`, expected one of `read-only`, `workspace-write`, `danger-full-access`"
+    },
+    "native_compaction_records": 0,
+    "before_sha256": "497267963db653cfaa7a1b2fadbcc5cab6b77d1f2304f35622bec3f214d02735",
+    "compaction_phase_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "after_sha256": "497267963db653cfaa7a1b2fadbcc5cab6b77d1f2304f35622bec3f214d02735",
+    "elapsed_seconds": 0.3265728750266135
+  },
+  "observer_limit": "Baseline select/TextIO observer captured contextCompaction item completion but missed turn/completed and terminated with assertion after timeout. Native compacted+task_complete confirm completion separately; original false flag unchanged. Corrected reader-thread/queue used remaining three only; baseline not compacted twice.",
+  "content_limit": "Replacement history contains four original User inputs and one encrypted compaction item. Full Skill plaintext not found; encrypted context cannot be inspected, so zero-read candidate does not prove absence/full-body loss or absent-body reread behavior.",
+  "independent_review": "native_catalog_review recomputed exact stage boundaries/prefixes, all four native compacted/task_complete records, RPC items and preserved false flag, no-op enum rejection, actual postcompact results and source bodies/digests/role controls. Limited diagnostic only; absent-body condition unaccepted."
+}

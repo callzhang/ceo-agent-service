@@ -1,0 +1,270 @@
+{
+  "version": 1,
+  "scope": "synthetic native discovery mechanism diagnostic; not full role business acceptance or valid paired baseline/candidate business comparison",
+  "native_model": "gpt-5.6-luna",
+  "effort": "medium",
+  "approval_policy": "on-failure",
+  "sandbox": "read-only",
+  "baseline_source_ref": "6b43a93b",
+  "candidate_source_sha256": "b40be60a909bac7e9cd16da415dc2065545e0419ba31d7ced8fc8b4bef9916fc",
+  "native_schema": {
+    "source": "PR31 frozen consumer_agent_native_output.schema.json",
+    "sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+    "production_enabled": false
+  },
+  "candidate_reads": [
+    1,
+    0,
+    1
+  ],
+  "candidate_canonical_results_valid": true,
+  "baseline_valid": false,
+  "baseline_resumed": false,
+  "changed_source_fixture": "Separately bound synthetic task-input database for each turn; no persisted production input was edited. This demonstrates changed source recognition in native session, not production revision lifecycle.",
+  "initial_no_schema_failures": {
+    "directory": "/private/tmp/ceo-frozen-skill-reuse-native-20261012",
+    "candidate_session": "01a130da-3144-7e62-b8a1-7afd53dec3aa",
+    "baseline_session": "01a130da-87d5-76c0-be5d-c3b8820ddd3a",
+    "resumed": false,
+    "reasons": [
+      "candidate rule_coverage was an array",
+      "baseline outcome was no_action_needed"
+    ]
+  },
+  "rows": [
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "session_id": "01a130db-d1ef-7732-ab7e-d8f559a23ee8",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "4f5612f54fc9473c8955f9b5993e77451d6d2f599beb3cd4755c80dd89e7cbd9",
+      "source_revision": 41,
+      "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+      "valid": true,
+      "scope": "native discovery mechanism diagnostic, synthetic source, not full role business acceptance",
+      "reads": 1,
+      "result": {
+        "outcome": "no_action",
+        "summary": "No additional event is needed. The calendar of record uses America/Los_Angeles; the existing meeting is 2026-10-15 09:00\u201310:00 America/Los_Angeles, which corresponds exactly to 2026-10-16 00:00\u201301:00 Asia/Shanghai. It already has the same confirmed participants, Alex and Bo, and the same start and end instants.",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "harness_correction": "service parser consumes native JSONL, not extracted plain final JSON; original events unchanged",
+      "business_valid": true,
+      "events_sha256": "ab2874f707a3153f7ab7ee5f546c504b151f1fe148c358cb9ca67e83bcc7386e",
+      "tool_reads": [
+        {
+          "id": "item_4",
+          "type": "mcp_tool_call",
+          "server": "agent_cli",
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\n  \"name\": \"ceo-calendar-invite\",\n  \"content\": \"## Managed Skill: ceo-calendar-invite\\nrevision_id: 41\\nsha256: f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472\\n\\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses America/Los_Angeles.\",\n  \"sha256\": \"b384995e284774d63f27a56b639eecb990c6daadaab8ba6e18f26c17667d54d7\"\n}"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null,
+          "status": "completed"
+        }
+      ],
+      "source": {
+        "revision_id": 41,
+        "sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 41\nsha256: f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses America/Los_Angeles."
+      },
+      "full_tool_source_verified": true
+    },
+    {
+      "variant": "candidate",
+      "phase": "unchanged",
+      "session_id": "01a130db-d1ef-7732-ab7e-d8f559a23ee8",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "4f5612f54fc9473c8955f9b5993e77451d6d2f599beb3cd4755c80dd89e7cbd9",
+      "source_revision": 41,
+      "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+      "valid": true,
+      "scope": "native discovery mechanism diagnostic, synthetic source, not full role business acceptance",
+      "result": {
+        "outcome": "no_action",
+        "summary": "No additional event is needed. The calendar of record uses America/Los_Angeles. The existing meeting at 2026-10-15 09:00\u201310:00 America/Los_Angeles is the same instant as 2026-10-16 00:00\u201301:00 Asia/Shanghai, with the same confirmed participants, Alex and Bo.",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "reads": 0,
+      "business_valid": true,
+      "events_sha256": "2134c4fd19c4fe3138aae6e079bb3d6f9541323993d0b4c7926cd7d9bb92ffba",
+      "tool_reads": [],
+      "source": {
+        "revision_id": 41,
+        "sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 41\nsha256: f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses America/Los_Angeles."
+      },
+      "full_tool_source_verified": false
+    },
+    {
+      "variant": "candidate",
+      "phase": "changed",
+      "session_id": "01a130db-d1ef-7732-ab7e-d8f559a23ee8",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "48dfcc9bbc48aae3df6cb3d57e2dcf22aad21b7be25ec694220bc40972c7ab64",
+      "source_revision": 42,
+      "source_sha256": "78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b",
+      "valid": true,
+      "scope": "native discovery mechanism diagnostic, synthetic source, not full role business acceptance",
+      "result": {
+        "outcome": "no_action",
+        "summary": "No additional event is needed. The calendar of record uses Asia/Shanghai. The existing meeting at 2026-10-15 09:00\u201310:00 America/Los_Angeles corresponds exactly to 2026-10-16 00:00\u201301:00 Asia/Shanghai, with the same confirmed participants, Alex and Bo, and the same start and end instants.",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "reads": 1,
+      "business_valid": true,
+      "events_sha256": "95318d427cb030b1f7841ea6f583baa1b398604904b3c41d17f08eb87993700c",
+      "tool_reads": [
+        {
+          "id": "item_2",
+          "type": "mcp_tool_call",
+          "server": "agent_cli",
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\n  \"name\": \"ceo-calendar-invite\",\n  \"content\": \"## Managed Skill: ceo-calendar-invite\\nrevision_id: 42\\nsha256: 78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b\\n\\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses Asia/Shanghai.\",\n  \"sha256\": \"ceef422c58ccffeaa07c92d76d53d84ce98e2ef8159949350686098c7678f5f2\"\n}"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null,
+          "status": "completed"
+        }
+      ],
+      "source": {
+        "revision_id": 42,
+        "sha256": "78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 42\nsha256: 78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses Asia/Shanghai."
+      },
+      "full_tool_source_verified": true
+    },
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "session_id": "01a130db-fbbb-7fd3-bce6-e60fd974071b",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "c8643011ab7960304e75c6a00a56000e50c4bb0f548225244341c89e3ff616f2",
+      "source_revision": 41,
+      "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+      "valid": false,
+      "scope": "native discovery mechanism diagnostic, synthetic source, not full role business acceptance",
+      "validation_error": "typed result JSON failed schema validation",
+      "reads": 1,
+      "business_valid": false,
+      "events_sha256": "aade611b3d9c60e763e33981783321e947318920667141c872a34ecfcc69cd50",
+      "tool_reads": [
+        {
+          "id": "item_4",
+          "type": "mcp_tool_call",
+          "server": "agent_cli",
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\n  \"name\": \"ceo-calendar-invite\",\n  \"content\": \"## Managed Skill: ceo-calendar-invite\\nrevision_id: 41\\nsha256: f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472\\n\\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses America/Los_Angeles.\",\n  \"sha256\": \"b384995e284774d63f27a56b639eecb990c6daadaab8ba6e18f26c17667d54d7\"\n}"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null,
+          "status": "completed"
+        }
+      ],
+      "source": {
+        "revision_id": 41,
+        "sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 41\nsha256: f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses America/Los_Angeles."
+      },
+      "full_tool_source_verified": true
+    }
+  ]
+}

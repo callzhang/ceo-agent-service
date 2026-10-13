@@ -1,0 +1,277 @@
+{
+  "version": 1,
+  "candidate_commit": "9179e9df",
+  "scope": "Supplemental old-session feedback diagnostic, not aligned fixed-cohort acceptance or production replay. Provider fixture changes needsAction to accepted between initial Audit and revision2. No external response is executed. Both failed harness expectations retained.",
+  "stages": [
+    {
+      "stage": "captured wrong arithmetic: Audit return",
+      "results": [
+        {
+          "case": "calendar-captured-timezone-audit",
+          "role": "audit",
+          "arm": "candidate",
+          "phase": "cold",
+          "returncode": 0,
+          "timed_out": false,
+          "session_id": "01a132c3-8cff-7370-ae16-bfb23b699c73",
+          "previous_session_id": null,
+          "source_sha256": "8aca44010e9c8fc71fdb87cf056e79691a90303cd987d2354783b518c4480c77",
+          "canonical_valid": true,
+          "binding_valid": true,
+          "result": {
+            "outcome": "return",
+            "summary": "退回候选：接受该邀请的行动方向有当前事实支持，但候选中的时区换算错误。邀请 2026-10-10 13:30–14:30 Asia/Shanghai 对应 2026-10-10 05:30–06:30 UTC，即 America/Los_Angeles 的 2026-10-09 22:30–23:30（UTC−07:00），不是候选所写的 2026-10-09 10:30–11:30。请修正相关摘要和事实断言后重新提交；当前事件仍为 needsAction，且该正确换算后的时段不与 2026-10-10 00:00–00:30 的 Blocked 时间重叠。",
+            "proposal_revision": 0,
+            "candidate_digest": "8d284d1573714cd2724e10a120c0df982b2088824e02e4f82ebc1dca7e5b8c06",
+            "evidence_refs": [
+              "read_dingtalk_calendar_event:event_id=cal-cross-midnight",
+              "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-10T00:00:00-07:00",
+              "canonical_time_facts:execution_time=2026-10-08T10:00:00-07:00"
+            ],
+            "feedback": {
+              "rule": "ceo-calendar-invite：比较指定时区中的实际时间点，并保留日期变化。",
+              "observation": "候选 JSON 路径 `candidate.summary` 的字符串值为“已核验邀请与本地日程：邀请 cal-cross-midnight 在美国太平洋时间为 2026-10-09 10:30–11:30；该时段没有活动的 Blocked 冲突。”，类型为 string；路径 `candidate.proposal.sourced_facts[1].assertion` 的字符串值为“邀请时间换算为 America/Los_Angeles 后为 2026-10-09 10:30–11:30；换算保留了跨午夜的日期变化。”，类型为 string；路径 `candidate.proposal.sourced_facts[2].assertion` 也依赖该错误时段。当前读取到的原始邀请为 2026-10-10 13:30–14:30 Asia/Shanghai，即 2026-10-10 05:30–06:30 UTC，换算为 2026-10-09 22:30–23:30 America/Los_Angeles。候选的接受动作本身仍指向正确的 `event_id`，但整体候选包含实质性时间事实错误。",
+              "requested_revision": "重新计算并更新 `candidate.summary`、`candidate.proposal.sourced_facts[1].assertion` 以及 `candidate.proposal.sourced_facts[2].assertion` 中的本地时间和不冲突说明，将邀请时间改为 2026-10-09 22:30–23:30 America/Los_Angeles；保留接受 `cal-cross-midnight` 的动作仅在修正后的事实仍支持该决定时重新提交。"
+            },
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 0.99,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "revision2 correct arithmetic but stale accepted action; harness no_action assertion failed",
+      "results": [
+        {
+          "role": "consumer",
+          "session_id": "01a132af-ac0a-7040-99f0-dec86915361c",
+          "revision": 2,
+          "previous_native_bytes": 285877,
+          "native_prefix_sha256": "54bc5403544fc9ba1d855a51d467b94aaf0b36a98fe7e7debcf55558533f7d43",
+          "canonical_valid": true,
+          "result": {
+            "outcome": "proposal",
+            "summary": "已根据审计反馈修正时间换算：邀请 cal-cross-midnight 的 2026-10-10 13:30–14:30 Asia/Shanghai 对应 2026-10-10 05:30–06:30 UTC，即 2026-10-09 22:30–23:30 America/Los_Angeles。相关本地 Blocked 活动为 2026-10-10 00:00–00:30，晚于邀请结束时间且不冲突，因此接受邀请的决定仍由修正后的事实支持。",
+            "proposal": {
+              "objective": "接受确切邀请 cal-cross-midnight，使 principal 参加 Customer launch decision 会议并作出客户 launch exception 与 go/no-go 决策。",
+              "actions": [
+                {
+                  "description": "接受日历邀请 Customer launch decision。",
+                  "action_identity": "calendar-response:cal-cross-midnight:accepted",
+                  "capability": "dingtalk-calendar",
+                  "operation": "respond_calendar_event",
+                  "target": {
+                    "event_id": "cal-cross-midnight"
+                  },
+                  "payload": {
+                    "response_status": "accepted"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "当前邀请的 event_id 为 cal-cross-midnight，标题为 Customer launch decision，原始时间为 2026-10-10 13:30–14:30 Asia/Shanghai，principal_response_status 为 needsAction。",
+                  "references": [
+                    "read_dingtalk_calendar_event:event_id=cal-cross-midnight"
+                  ]
+                },
+                {
+                  "assertion": "邀请的 2026-10-10 13:30–14:30 Asia/Shanghai 对应 2026-10-10 05:30–06:30 UTC，再换算为 2026-10-09 22:30–23:30 America/Los_Angeles；换算保留了跨午夜的日期变化。",
+                  "references": [
+                    "read_dingtalk_calendar_event:event_id=cal-cross-midnight",
+                    "canonical_time_facts:principal_timezone=America/Los_Angeles",
+                    "canonical_time_facts:invitation_timezone=Asia/Shanghai",
+                    "audit_feedback:proposal_revision=2"
+                  ]
+                },
+                {
+                  "assertion": "相关本地日程中的 Blocked 活动为 2026-10-10 00:00–00:30 America/Los_Angeles；邀请在本地时间 2026-10-09 22:30–23:30 结束后，该 Blocked 活动才开始，因此两者不重叠。",
+                  "references": [
+                    "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-10T00:00:00-07:00",
+                    "audit_feedback:proposal_revision=2"
+                  ]
+                },
+                {
+                  "assertion": "邀请组织者身份已由当前邀请读取并标记为 verified，organizer user_id 为 organizer-cross。",
+                  "references": [
+                    "read_dingtalk_calendar_event:event_id=cal-cross-midnight"
+                  ]
+                }
+              ],
+              "authored_judgment": "任务冻结的 ceo-calendar-invite 规则要求比较指定时区中的实际时间点并保留日期变化；应参加需要 principal 作出决策且不与活动 Blocked 时间冲突的会议。修正后的本地时间为 2026-10-09 22:30–23:30，未与 2026-10-10 00:00–00:30 的 Blocked 活动冲突，且会议需要 principal 作出 launch exception 与 go/no-go 决策，因此重新提交接受该确切邀请的候选。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 0.99,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "same_session": true,
+          "provider_state": "accepted",
+          "native_prefix_preserved": true
+        }
+      ]
+    },
+    {
+      "stage": "Audit reject duplicate accepted response; harness approve assertion failed",
+      "results": [
+        {
+          "role": "audit",
+          "session_id": "01a132c3-8cff-7370-ae16-bfb23b699c73",
+          "revision": 2,
+          "previous_native_bytes": 127653,
+          "native_prefix_sha256": "0238adc0976c14985996bdbb93943b49752b24521cb58e1b1134c55447b89d6c",
+          "canonical_valid": true,
+          "result": {
+            "outcome": "reject",
+            "summary": "拒绝该候选：实时读取显示邀请 cal-cross-midnight 的 principal_response_status 已为 accepted。根据冻结的 ceo-calendar-invite 规则，已接受的邀请无需重复响应；继续执行 `respond_calendar_event` with `accepted` 会产生重复外部效果。该候选不能执行。",
+            "proposal_revision": 2,
+            "candidate_digest": "2fb8e6be60210b6bd1c44387a025ea75e6265aa83164fef0439c221a94e6224d",
+            "evidence_refs": [
+              "read_dingtalk_calendar_event:event_id=cal-cross-midnight",
+              "ceo-calendar-invite:revision_id=41:sha256=b8c19a23860ccfa9c3ffdcfa5abc371ab484be824af7cbb55d0c9d69f2404113"
+            ],
+            "feedback": {
+              "rule": "ceo-calendar-invite：Already accepted invitations require no duplicate response.",
+              "observation": "当前读取的 `read_dingtalk_calendar_event:event_id=cal-cross-midnight` 显示 `principal_response_status` 为 `accepted`。候选 JSON 路径 `candidate.proposal.actions[0].payload.response_status` 的字面值为 `accepted`，类型为 string；该动作仍提议对同一 `event_id` 执行 `respond_calendar_event`。候选路径 `candidate.proposal.sourced_facts[0].assertion` 的字面值声称 `principal_response_status 为 needsAction`，类型为 string，但这一状态已被当前实时事实取代。",
+              "requested_revision": "不要执行或重新提交对 cal-cross-midnight 的接受响应。重新生成候选以反映当前实时状态 `principal_response_status=accepted`，移除该重复外部动作，并更新任何仍声称状态为 `needsAction` 的事实断言。"
+            },
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 0.99,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "same_session": true,
+          "provider_state": "accepted",
+          "native_prefix_preserved": true
+        }
+      ]
+    },
+    {
+      "stage": "revision3 no_action and Audit approve",
+      "results": [
+        {
+          "role": "consumer",
+          "session_id": "01a132af-ac0a-7040-99f0-dec86915361c",
+          "revision": 3,
+          "previous_native_bytes": 324031,
+          "native_prefix_sha256": "33b54a7ee0fbff09ba2b2bb418cb8854503ef0550cc92e2d0793736e79c92d49",
+          "canonical_valid": true,
+          "result": {
+            "outcome": "no_action",
+            "summary": "当前实时状态显示邀请 cal-cross-midnight 的 principal_response_status 已为 accepted。根据 ceo-calendar-invite 规则，已接受的邀请不得重复响应，因此不执行或重新提交接受动作；该邀请的本地时间为 2026-10-09 22:30–23:30 America/Los_Angeles。",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "same_session": true,
+          "provider_state": "accepted",
+          "native_prefix_preserved": true
+        },
+        {
+          "role": "audit",
+          "session_id": "01a132c3-8cff-7370-ae16-bfb23b699c73",
+          "revision": 3,
+          "previous_native_bytes": 188428,
+          "native_prefix_sha256": "7e02b95037dc7f449a9be3b51271a01a40b7879b70621bbdec9960aa04ec8cb1",
+          "canonical_valid": true,
+          "result": {
+            "outcome": "approve",
+            "summary": "批准无动作结果：实时读取确认邀请 cal-cross-midnight 的 principal_response_status 已为 accepted。根据冻结的 ceo-calendar-invite 规则，已接受的邀请无需重复响应，因此不存在待执行的日历操作。邀请时间换算为 2026-10-09 22:30–23:30 America/Los_Angeles。",
+            "proposal_revision": 3,
+            "candidate_digest": "827ea6eebf8a9e2a3845560aa356353bb8e129fa83ae5725f08f13f6174505ad",
+            "evidence_refs": [
+              "read_dingtalk_calendar_event:event_id=cal-cross-midnight",
+              "ceo-calendar-invite:revision_id=41:sha256=b8c19a23860ccfa9c3ffdcfa5abc371ab484be824af7cbb55d0c9d69f2404113"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "same_session": true,
+          "provider_state": "accepted",
+          "native_prefix_preserved": true
+        }
+      ]
+    }
+  ],
+  "harness_hashes": {
+    "calendar_feedback.py": "53d798c8d7437b7953d2a7115a3571780fd2c8766796b8e6230c59393a950fea",
+    "calendar_feedback_review.py": "289215c54858dec8c9f045a1fb09e270f9e8590a294d297d2875d462bcca0cf8",
+    "calendar_feedback_final.py": "6efc97466c5c4e1b2644ad25f6f404a88e81fc9e0c39bae130edecc3be05433b"
+  },
+  "independent_review": {
+    "reviewer": "native_catalog_review",
+    "confirmed": "Both final native prefixes byte-preserved, completed same-session rev3; Consumer no_action and22:30 with zero new reads relies on feedback accepted state; Audit freshly reads accepted and approves exact corrected candidate digest827ea6eebf8a9e2a3845560aa356353bb8e129fa83ae5725f08f13f6174505ad/revision3. All prior return, stale proposal and reject retained.",
+    "boundary": "Anonymous old-SID supplemental diagnostic, not aligned14-run paired cold or actual provider execution."
+  }
+}
