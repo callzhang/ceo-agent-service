@@ -786,10 +786,11 @@ def scan_pending_oa_approvals(
         if not pending_scan_complete or not current_user_id:
             pending_business_object_keys.add(key)
             continue
-        if pending_task_ids_by_process.get(attempt.oa_process_instance_id):
+        if attempt.oa_task_id in pending_task_ids_by_process.get(
+            attempt.oa_process_instance_id, set()
+        ):
             reconciled_legacy_oa_attempt_ids.add(attempt.id)
             continue
-        pending_business_object_keys.add(key)
         try:
             detail_payload = detail_cache.get(attempt.oa_process_instance_id)
             if detail_payload is None:
@@ -814,8 +815,17 @@ def scan_pending_oa_approvals(
             task_id=attempt.oa_task_id,
             process_result=process_result,
         ):
-            pending_business_object_keys.discard(key)
             reconciled_legacy_oa_attempt_ids.add(attempt.id)
+            continue
+        if process_result:
+            continue
+        if _oa_task_is_no_longer_current_user_action(
+            detail_payload,
+            task_id=attempt.oa_task_id,
+            current_user_id=current_user_id,
+        ):
+            continue
+        pending_business_object_keys.add(key)
 
     # A partial scan or unreadable source cannot prove that a process is done.
     for key in previous_pending_keys:
@@ -848,6 +858,12 @@ def scan_pending_oa_approvals(
                 task_id=task_id,
                 current_user_id=current_user_id,
             )
+        ):
+            continue
+        if _oa_task_is_no_longer_current_user_action(
+            detail_payload,
+            task_id=task_id,
+            current_user_id=current_user_id,
         ):
             continue
         pending_business_object_keys.add(key)
@@ -1035,6 +1051,38 @@ def _pending_oa_task_ids_for_current_user(
         if candidates:
             return list(dict.fromkeys(candidates))
     return []
+
+
+def _oa_task_is_no_longer_current_user_action(
+    payload: Any,
+    *,
+    task_id: str,
+    current_user_id: str,
+) -> bool:
+    """Prove that this exact node is complete or no longer assigned to the principal."""
+    task_id = task_id.strip()
+    current_user_id = current_user_id.strip()
+    if not task_id or not current_user_id:
+        return False
+    matches = [
+        task for task in _oa_task_records(payload)
+        if _oa_task_field(task, ("taskId", "taskid", "task_id", "id")) == task_id
+    ]
+    if not matches:
+        return False
+    no_longer_owned = True
+    for task in matches:
+        owner = _oa_task_field(task, ("userId", "userid", "user_id"))
+        status = _oa_task_field(task, ("status", "taskStatus", "task_status")).upper()
+        if owner == current_user_id and status not in {
+            "COMPLETED", "CANCELED", "CANCELLED", "FINISHED", "TERMINATED",
+        }:
+            return False
+        if owner != current_user_id and status not in {
+            "COMPLETED", "CANCELED", "CANCELLED", "FINISHED", "TERMINATED",
+        } and not owner:
+            no_longer_owned = False
+    return no_longer_owned
 
 
 def _oa_approval_revision(

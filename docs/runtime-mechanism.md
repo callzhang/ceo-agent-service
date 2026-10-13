@@ -37,24 +37,25 @@ assertion matches. Scalar field evidence is rendered before the complete final
 candidate JSON; source bindings remain in that JSON without repeating their
 values in the field index.
 
-OA Attention is a business-pending projection: the scanner starts tracking the
-exact principal-owned RUNNING nodes from the authenticated pending list and
-source details. Once tracked, the OA process remains in Attention while it is
-still running and has neither completed nor been explicitly returned, even if
-its current node moves to another approver. A completed comment or internal
-`done`/`no_action` does not remove it. Partial scans and source-read failures
-retain previous pending processes; non-OA pending/processing/needs_human status
-alone remains excluded.
+OA Attention is a business-pending projection for work Derek still owns or must
+review. The scanner tracks exact Derek-owned RUNNING nodes from the authenticated
+pending list and source details. A locally completed reply task does not remove
+an OA item while that exact external node is still RUNNING for Derek. Conversely,
+an overall RUNNING process is not Derek's Attention when the exact tracked node
+is completed or assigned to another approver; the scanner removes only that
+node's key and preserves the historical task/attempt. Partial scans, missing
+identity, malformed ownership/status, and source-read failures retain prior
+keys because they cannot prove that Derek's responsibility ended. Non-OA
+pending/processing/needs_human status alone remains excluded.
 
-Reconciliation does not treat absence from the principal's pending list as
-completion or return. It removes the process from Attention only when live
-detail proves a terminal process, or when the exact reviewed task is canceled,
-the principal has no current RUNNING node, and the latest workflow-changing
-operation is that principal's `REDIRECT_PROCESS`. A running process that merely
-moved to another node remains unresolved in OA Attention; comments and
-unrelated task transitions are not return receipts. Historical local closures
-made solely for `OA_TASK_NOT_PENDING` are rechecked and restored to the
-projection when their live process is still running without a verified return.
+Reconciliation removes an item when live detail proves the process terminal,
+the exact reviewed task is no longer assigned to Derek or is terminal, or when
+the exact reviewed task is canceled and the principal's latest
+workflow-changing operation is `REDIRECT_PROCESS`. Absence from a pending-list
+page alone is not proof. Comments and unrelated transitions are not return
+receipts. Historical local closures made solely for `OA_TASK_NOT_PENDING` are
+rechecked without rewriting their attempts: they remain projected only while
+the exact task is still Derek's live action or the source cannot be verified.
 The service's DingTalk OpenAPI reader returns snake-case `process_instance`,
 `operation_records`, and operation fields; reconciliation reads those native
 records as well as the CLI detail projection before deciding a verified return.
