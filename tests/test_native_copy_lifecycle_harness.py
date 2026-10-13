@@ -29,3 +29,23 @@ def test_only_real_inherited_servers_are_disabled_and_native_roles_are_preserved
     assert "--skip-git-repo-check" in args
     env = next(arg for arg in args if arg.startswith("mcp_servers.agent_cli.env="))
     assert str(db) in env and '"CEO_WORKSPACE"' in env
+
+
+def test_resume_scoped_options_follow_the_resume_subcommand(monkeypatch):
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    db = Path("/private/tmp/copy/candidate.sqlite3")
+    cmd = command(db)
+    cmd.insert(cmd.index("exec") + 1, "resume")
+    args = restricted_command(cmd, workspace=db.parent, db_path=db)
+    env_index = next(i for i, value in enumerate(args) if value.startswith("mcp_servers.agent_cli.env="))
+    assert env_index > args.index("resume")
+
+
+def test_scoped_tool_list_overrides_existing_role_tool_list(monkeypatch):
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    db = Path("/private/tmp/copy/candidate.sqlite3")
+    cmd = command(db)
+    cmd[-1:-1] = ["-c", 'mcp_servers.agent_cli.enabled_tools=["read_dingtalk_conversations"]']
+    args = restricted_command(cmd, workspace=db.parent, db_path=db)
+    lists = [x for x in args if x.startswith("mcp_servers.agent_cli.enabled_tools=")]
+    assert lists[-1] == 'mcp_servers.agent_cli.enabled_tools=["read_task_artifact","read_system_action_contract"]'

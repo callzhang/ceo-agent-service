@@ -7,6 +7,8 @@ constructor is used. The invocation exposes only bound artifact/contract reads.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import argparse
 import hashlib
 import json
@@ -46,7 +48,7 @@ def restricted_command(command, *, workspace, db_path):
             "PYTHONDONTWRITEBYTECODE": "1",
         }),
     ])
-    index = args.index("exec") + 1
+    index = len(args) - 2 if "resume" in args else len(args) - 1
     args[index:index] = additions
     if "--skip-git-repo-check" not in args:
         args[index:index] = ["--skip-git-repo-check"]
@@ -57,12 +59,16 @@ class NativeExecutor:
     def __init__(self, workspace, db_path):
         self.workspace, self.db_path = workspace, db_path
         self.calls = []
+        self.after_consumer = None
+        self.fail_first_start = False
 
     def __call__(self, command, **kwargs):
         from app.process_runner import run_process_with_idle_timeout
         from app.leak_check import redact_credentials
 
         scoped = restricted_command(command, workspace=self.workspace, db_path=self.db_path)
+        if self.fail_first_start and not self.calls:
+            scoped.insert(scoped.index("exec") + 1, "--copy-acceptance-invalid-start")
         role = "audit" if 'sandbox_mode="read-only"' in scoped else "consumer"
         print(json.dumps({"event": "native_start", "role": role}), flush=True)
         # Keep native authentication/home; no credential files or transcript copies.
@@ -80,6 +86,9 @@ class NativeExecutor:
             record["stderr"] = redact_credentials(result.stderr)[-1200:]
         self.calls.append(record)
         print(json.dumps({"event": "native_end", **record}), flush=True)
+        if role == "consumer" and result.returncode == 0 and self.after_consumer:
+            callback, self.after_consumer = self.after_consumer, None
+            callback()
         return result
 
 
@@ -125,7 +134,7 @@ def original_rows_unchanged(source, candidate):
     return len(tables)
 
 
-def run(root):
+def run(root, case="approve"):
     root = root.resolve()
     assert root.parent == Path("/private/tmp") and root.name.startswith("ceo-native-copy.")
     source = root / "source.sqlite3"
@@ -188,8 +197,22 @@ def run(root):
             ('read_task_artifact(name="case-input.json")',)),), prior_receipts=(),
         consumer_prompt=instruction, skill_protocol_override="Use only this task's local artifact and system action contract; no external source reads.",
         skill_protocol_source="explicit_custom")
+    if case == "revision":
+        # The current source changes after R0, not the returned model JSON.
+        source_file.write_text(json.dumps({**fixture, "records": fixture["records"][:2]}))
+    if case == "no_action":
+        instruction = (
+            '这是副本验收任务。请用 read_task_artifact(name="case-input.json") 读取材料，'
+            '计算条目数及 units 总和，将 verification_tag 和结果写入 summary。'
+            '此任务只需要核对数据，无需通知、发送或任何外部动作；请输出 no_action 合同。'
+        )
+        context = replace(context, trigger_text=instruction, consumer_prompt=instruction)
     config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth", "CEO_CODEX_MODEL": "gpt-5.6-luna"})
     native = NativeExecutor(workspace, store.path)
+    if case == "revision":
+        native.after_consumer = lambda: source_file.write_text(json.dumps(fixture))
+    if case == "technical_retry":
+        native.fail_first_start = True
     provider = InMemoryProvider(store, key)
     driver = AgentOrchestrator(store=store,
         consumer=ConsumerAgentRunner(store=store, workspace=workspace, runtime_config=config, executor=native,
@@ -203,10 +226,34 @@ def run(root):
     worker._sync_processing_reactions = lambda: None
     worker._dismiss_problem_notification = lambda task: None
     worker._notify_problem_attempt = lambda *a, **kw: None
+    interrupted = False
+    if case == "settlement_recovery":
+        with store._connect() as db:
+            db.execute(f"create trigger native_copy_interrupt before update of status on tasks when old.id={task.id} and new.status='done' begin select raise(abort,'native copy settlement interrupted'); end")
+        try:
+            worker.process_claimed_reply_task(task)
+        except sqlite3.IntegrityError as exc:
+            assert "native copy settlement interrupted" in str(exc)
+            interrupted = True
+        assert interrupted and store.get_reply_task(task.id).status == "processing"
+        assert len(provider.calls) == 1
+        with store._connect() as db:
+            assert db.execute("select count(*) from external_action_results where business_object_key=?", (task.business_object_key,)).fetchone()[0] == 1
+            assert db.execute("select count(*) from reply_attempts where conversation_id=?", (key,)).fetchone()[0] == 0
+            db.execute("drop trigger native_copy_interrupt")
+        store = AutoReplyStore(candidate_path)
+        driver = AgentOrchestrator(store=store, consumer=object(), audit=object(), system_executor=None)
+        worker = DingTalkAutoReplyWorker(store, object(), object(), agent_orchestrator=driver)
+        worker._queued_task_prompt_context_messages = lambda *a, **kw: ([], [])
+        worker._build_agent_task_context = lambda **kw: context
+        worker._sync_processing_reactions = lambda: None
+        worker._dismiss_problem_notification = lambda task: None
+        worker._notify_problem_attempt = lambda *a, **kw: None
+        task = store.get_reply_task(task.id)
     completed = worker.process_claimed_reply_task(task)
     runs = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
     current = store.get_reply_task(task.id)
-    report = {"source": metadata, "task_id": task.id, "conversation_id": key, "status": current.status,
+    report = {"case": case, "interrupted": interrupted, "source": metadata, "task_id": task.id, "conversation_id": key, "status": current.status,
         "completed": completed, "native_invocations": native.calls,
         "provider_calls": len(provider.calls), "verification_calls": len(provider.verifications), "runs": []}
     for run in runs:
@@ -221,22 +268,35 @@ def run(root):
                           "start": a.transcript_start, "end": a.transcript_end} for a in attempts]})
     (root / "native-result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
     assert completed and current.status == "done", report
-    assert len(provider.calls) == 1 and provider.verifications
-    body = provider.calls[0]["text"]
-    assert fixture["verification_tag"] in body and "100" in body and "3" in body, body
+    expected_dispatch = 0 if case == "no_action" else 1
+    assert len(provider.calls) == expected_dispatch
+    if expected_dispatch:
+        assert provider.verifications
+        body = provider.calls[0]["text"]
+        assert fixture["verification_tag"] in body and "100" in body and "3" in body, body
+    if case == "revision":
+        assert max(x["revision"] for x in report["runs"]) >= 1, report
+        with store._connect() as db:
+            report["reviews"] = [dict(x) for x in db.execute("select r.id,r.decision,c.proposal_revision,r.candidate_digest from candidate_reviews r join review_candidates c on c.id=r.candidate_id where c.task_id=? and c.execution_generation=? order by r.id", (task.id, task.execution_generation))]
+        assert report["reviews"][0]["decision"] in {"return", "reject"}, report
+        assert report["reviews"][-1]["decision"] == "approve", report
+    if case == "technical_retry":
+        assert native.calls[0]["returncode"] != 0
+        assert any(x["status"] == "failed" for x in report["runs"]), report
     assert current.input_compacted and current.input_provenance_json
     assert {r["role"] for r in report["runs"]} == {"consumer", "audit"}
-    assert all(r["native_exists"] and r["end"] > r["start"] for r in report["runs"])
+    assert all(r["native_exists"] and r["end"] > r["start"] for r in report["runs"] if r["status"] == "completed")
     with store._connect() as db:
         report["receipts"] = db.execute("select count(*) from external_action_results where business_object_key=?", (task.business_object_key,)).fetchone()[0]
         report["sent_replies"] = db.execute("select count(*) from sent_replies where conversation_id=?", (key,)).fetchone()[0]
         report["business_attempts"] = db.execute("select count(*) from reply_attempts where conversation_id=?", (key,)).fetchone()[0]
         assert "final_result_json" not in {r[1] for r in db.execute("pragma table_info(runs)")}
         assert db.execute("pragma quick_check").fetchall()[0][0] == "ok"
-    assert report["receipts"] == report["sent_replies"] == report["business_attempts"] == 1
+    assert report["receipts"] == report["sent_replies"] == expected_dispatch
+    assert report["business_attempts"] == 1
     reopened = AutoReplyStore(store.path)
     recovered = AgentOrchestrator(store=reopened, consumer=object(), audit=object(), system_executor=None)
-    assert recovered.persisted_terminal_result(reopened.get_reply_task(task.id)).status == "executed"
+    assert recovered.persisted_terminal_result(reopened.get_reply_task(task.id)).status == ("no_action" if case == "no_action" else "executed")
     report["reopen_no_new_invocation"] = len(native.calls)
     report["original_tables_unchanged"] = original_rows_unchanged(source, candidate_path)
     assert hashlib.sha256(source.read_bytes()).hexdigest() == metadata["sha256"]
@@ -250,8 +310,9 @@ def run(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--owned-temp-root", type=Path, required=True)
+    parser.add_argument("--case", choices=("approve", "revision", "no_action", "technical_retry", "settlement_recovery"), default="approve")
     args = parser.parse_args()
-    run(args.owned_temp_root)
+    run(args.owned_temp_root, args.case)
 
 
 if __name__ == "__main__":
