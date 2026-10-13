@@ -20565,23 +20565,29 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         process_instance_id: str,
         process_result: str,
     ) -> bool:
-        """Close an OA task that no longer exists in the live approval queue.
+        """Close an OA task only after terminal state or confirmed return.
 
         The OA scanner creates a terminal ``needs_human`` attempt when a
         decision really requires Derek. Derek may then complete that approval
-        directly in DingTalk, or the task can be canceled by a redirect while
-        the wider process continues. A later projection repair can also turn an
+        directly in DingTalk, or explicitly return that exact task while the
+        wider process continues. Merely disappearing from Derek's pending list
+        does not prove either outcome. A later projection repair can also turn an
         invalid technical ``needs_human`` Attempt into ``failed`` while its
-        owning task still has the old status. Once this OA task is terminal
-        there is no action left for that attempt, so the local attempt is
-        ``skipped`` and the owning task is ``done``.
+        owning task still has the old status. Once the external process is
+        terminal or that exact OA task has a verified return receipt, there is
+        no action left for that attempt, so the local attempt is ``skipped``
+        and the owning task is ``done``.
         """
 
         process_id = process_instance_id.strip()
         if not process_id:
             raise ValueError("process_instance_id must be non-empty")
         result = process_result.strip() or "completed"
-        resolution = f"Live DingTalk OA task reached terminal state {result}."
+        resolution = (
+            "Live DingTalk OA process has a verified return receipt for this task."
+            if result == "OA_RETURNED"
+            else f"Live DingTalk OA task reached terminal state {result}."
+        )
         with self._immediate_write_transaction() as db:
             attempt = db.execute(
                 "select channel, conversation_id, trigger_message_id "
@@ -26443,6 +26449,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       )
                   and trim(coalesce(attempts.resolved_at, ''))=''
                   and trim(attempts.oa_process_instance_id)<>''
+                  and trim(attempts.oa_task_id)<>''
                   and attempts.id=(
                       select max(latest.id)
                       from reply_attempts latest
@@ -26456,6 +26463,31 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         and tasks.conversation_id=attempts.conversation_id
                         and tasks.trigger_message_id=attempts.trigger_message_id
                         and tasks.status in ('pending', 'processing')
+                  )
+                order by attempts.id desc
+                limit ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def list_oa_task_not_pending_attempts(
+        self, *, limit: int = 500
+    ) -> list[ReplyAttempt]:
+        """Return latest attempts falsely settled by the old pending-list rule."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select attempts.*
+                from reply_attempts attempts
+                where attempts.send_status='skipped'
+                  and attempts.resolution like '%OA_TASK_NOT_PENDING%'
+                  and trim(attempts.oa_process_instance_id)<>''
+                  and attempts.id=(
+                      select max(latest.id)
+                      from reply_attempts latest
+                      where latest.oa_process_instance_id=
+                            attempts.oa_process_instance_id
                   )
                 order by attempts.id desc
                 limit ?
