@@ -253,9 +253,9 @@ def _reply_value_check(field):
             f"and length({blob_value})%2=0 and unhex({blob_value}) is not null "
             f"and json_remove({obj},'$.t','$.v')='{{}}')")
     nonfinite = f"({tag} in ('inf','-inf') and json_remove({obj},'$.t')='{{}}')"
-    return (f"({field_type} is not null and ({field_type} in ('null','text','integer','real','true','false') or "
-            f"({field_type}='object' and json_type(payload_json,'{path}.t')='text' "
-            f"and ({blob} or {nonfinite}))))")
+    return (f"(case when {field_type} in ('null','text','integer','real','true','false') then 1 "
+            f"when {field_type}='object' then coalesce((json_type(payload_json,'{path}.t')='text' "
+            f"and ({blob} or {nonfinite})),0) else 0 end)")
 
 
 def _reply_payload_check(fields):
@@ -766,7 +766,11 @@ def _insert_reply_action(db, kind, values, *, ignore=False):
         public_id = _native_integer_primary_key(values["id"])
     if ignore and db.execute("select 1 from actions where record_type=? and cast(legacy_key as integer)=?", (kind, public_id)).fetchone():
         # Source INSERT OR IGNORE resolves its public-key uniqueness before FK
-        # evaluation. The existing ID is at or below this type's high water.
+        # evaluation, but still advances AUTOINCREMENT on an explicit ID.
+        # A legal public-key UPDATE can put this ID above the saved sequence.
+        name = REPLY_SEQUENCE_NAMES[kind]
+        db.execute("insert into sqlite_sequence(name,seq) select ?,0 where not exists(select 1 from sqlite_sequence where name=?)", (name, name))
+        db.execute("update sqlite_sequence set seq=max(seq,?) where name=?", (public_id, name))
         return ActionWriteResult(None, 0)
     parent_ref = None
     if kind == "memory_write_events" and variant == "fresh_memory_fk":

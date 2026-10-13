@@ -35,9 +35,17 @@ allocation now precedes fresh parent resolution; ignored public-key conflicts
 and source NULL constraints preserve SQLite outcomes; both E payloads reject
 unknown keys and malformed encoding tags; direct event arrays accept only
 queued audit markers; and a confined in-memory SQLite primary key applies
-native key affinity. The repaired focused gate passed 342 tests with seven
-variant-specific skips; Ruff and `git diff --check` passed. Independent
-SPEC/QUALITY re-review, migration,
+native key affinity. The second SPEC pass found two further source differences:
+an ignored explicit duplicate must advance its type's allocator after a legal
+public-ID update, and a nullable payload field's malformed structural object
+must fail its finite CHECK conclusively. Source-versus-target regressions now
+cover updated IDs of 900 and `MAX_INT` for both types and both variants,
+including deletion and the following automatic insert; raw payload regressions
+cover missing tags on nullable fields. The second repair advances the ignored
+insert's sequence under the existing writer transaction and uses a definite
+SQLite CASE result for every finite payload value. The focused gate passed
+384 tests with seven variant-specific skips; Ruff and `git diff --check`
+passed. Independent SPEC/QUALITY re-review, migration,
 publication and production readback remain separate gates.
 
 ## Earlier source preparation

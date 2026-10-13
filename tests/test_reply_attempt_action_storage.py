@@ -417,6 +417,35 @@ def test_fresh_ignored_duplicate_id_precedes_missing_parent(pair):
         "select seq from sqlite_sequence where name=?", (storage.REPLY_SEQUENCE_NAMES["memory_write_events"],)).fetchone() == (1,)
 
 
+@pytest.mark.parametrize("kind", ["reply_attempts", "memory_write_events"])
+@pytest.mark.parametrize("updated_id", [900, 2**63 - 1])
+def test_ignored_duplicate_after_public_id_update_advances_native_water(pair, kind, updated_id):
+    source, target, _ = pair
+    values = REQUIRED if kind == "reply_attempts" else {"attempt_id": 404, "event_type": "x", "payload_json": "{}"}
+    if kind == "memory_write_events":
+        insert_source(source, "reply_attempts", REQUIRED | {"id": 404})
+        storage.insert_action(target, "reply_attempts", REQUIRED | {"id": 404})
+    assert insert_source(source, kind, values).lastrowid == 1
+    assert storage.insert_action(target, kind, values).lastrowid == 1
+    source.execute(f"update {kind} set id=? where id=1", (updated_id,))
+    storage.update_action(target, kind, 1, {"id": updated_id})
+    duplicate = values | {"id": updated_id}
+    assert insert_source(source, kind, duplicate, ignore=True).rowcount == 0
+    assert storage.insert_action(target, kind, duplicate, ignore=True).rowcount == 0
+    assert source.execute("select seq from sqlite_sequence where name=?", (kind,)).fetchone() == (updated_id,)
+    assert target.execute("select seq from sqlite_sequence where name=?", (storage.REPLY_SEQUENCE_NAMES[kind],)).fetchone() == (updated_id,)
+    source.execute(f"delete from {kind} where id=?", (updated_id,))
+    storage.delete_action(target, kind, updated_id)
+    if updated_id == 2**63 - 1:
+        for operation in (lambda: insert_source(source, kind, values), lambda: storage.insert_action(target, kind, values)):
+            with pytest.raises(sqlite3.DatabaseError) as error:
+                operation()
+            assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+    else:
+        assert insert_source(source, kind, values).lastrowid == updated_id + 1
+        assert storage.insert_action(target, kind, values).lastrowid == updated_id + 1
+
+
 def test_fresh_full_precedes_missing_parent_and_rolls_back_caller_work():
     outcomes = []
     for target in (False, True):
@@ -474,13 +503,15 @@ def test_reply_payload_rejects_unknown_or_retired_fields(pair):
 @pytest.mark.parametrize("fragment", [
     '{"t":"blob","v":"0g"}', '{"t":"blob","v":"00","extra":1}',
     '{"t":"inf","v":"unrelated"}', '{"t":"unknown"}',
+    '{"v":"626f6479"}', '{}', '{"t":null,"v":"00"}',
 ])
-def test_reply_payload_rejects_malformed_storage_tags(pair, fragment):
+@pytest.mark.parametrize("field", ["final_reply_text", "reviewed_at", "agent_run_id"])
+def test_reply_payload_rejects_malformed_storage_tags(pair, fragment, field):
     _, target, _ = pair
     aid = storage.insert_action(target, "reply_attempts", REQUIRED).lastrowid
     with pytest.raises(sqlite3.IntegrityError):
-        target.execute("update actions set payload_json=json_set(payload_json,'$.final_reply_text',json(?)) "
-                       "where record_type='reply_attempts' and cast(legacy_key as integer)=?", (fragment, aid))
+        target.execute("update actions set payload_json=json_set(payload_json,?,json(?)) "
+                       "where record_type='reply_attempts' and cast(legacy_key as integer)=?", ("$." + field, fragment, aid))
 
 
 def test_blob_json_queued_markers_keep_order_and_multiplicity(pair):
