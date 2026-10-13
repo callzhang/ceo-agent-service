@@ -21,4 +21,12 @@ def empty_source13(path):
         with db:
             yield db
     finally:
+        # Apply the separately verified source13 -> source14 transition before
+        # the current Store's explicit source14 -> actions publication.
+        from app.workbench_storage import migrate_workbench_schema
+        db.execute('pragma foreign_keys=off')
+        db.execute('begin immediate')
+        migrate_workbench_schema(db)
+        db.execute("update service_state set value='2026-10-12.1' where key='store_schema_version'")
+        db.commit()
         db.close()

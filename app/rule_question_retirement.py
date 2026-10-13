@@ -18,6 +18,10 @@ from app.database_backup import backup_is_complete
 from app.store import AutoReplyStore
 from app.run_storage import AGENT_RUN_SQL
 
+from app.action_storage import (
+    REVIEW_CANDIDATE_SQL,
+)
+
 
 class _RuleOption(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -65,7 +69,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
           and not exists(select 1 from reply_attempts newer
             where newer.channel=a.channel and newer.conversation_id=a.conversation_id
               and newer.trigger_message_id=a.trigger_message_id and newer.id>a.id)
-          and not exists(select 1 from review_candidates c where c.task_id=t.id)
+          and not exists(select 1 from ({REVIEW_CANDIDATE_SQL}) c where c.task_id=t.id)
     """, (attempt_id,)).fetchone()
     if row is None or not (
         row["send_status"] == "needs_human" and row["reviewed_at"] is None

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from app.action_storage import insert_action
 
 from app.run_storage import AGENT_RUN_SQL, insert_run
 from app.task_storage import REPLY_TASK_SQL
@@ -260,16 +261,28 @@ def test_active_deferral_previews_blocked_and_distinct_apply_is_explicit_conflic
     "update tasks set execution_generation='new-gen'",
     "update runs set structured_error_json='changed' where record_type='agent_runs'",
     "update runs set status='running' where record_type='agent_runs'",
-    "insert into candidate_selections(candidate_id,review_id,option_key,branch_json) values (1,1,'x','{}')",
+    "candidate_selection",
 ])
 def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
     path, task_id, backup = ready(tmp_path)
     preview = preview_deferral(path, task_id, now=NOW)
     with sqlite3.connect(path) as db:
-        if mutation.startswith('insert into candidate'):
-            db.execute(f'insert into review_candidates(task_id,execution_generation,consumer_run_id,stage_index,proposal_revision,candidate_digest,candidate_json) select ?,execution_generation,id,0,0,?,? from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id, 'd'*64, '{}', task_id))
-            db.execute("insert into candidate_reviews(candidate_id,audit_run_id,decision,candidate_digest,result_json) values (1,1,'approve',?,'{}')", ('d'*64,))
-        db.execute(mutation + (" where record_type='reply_tasks' and id=?" if mutation.startswith('update tasks') else (' and task_id=?' if mutation.startswith("update runs ") else '')), ((task_id,) if mutation.startswith('update ') else ()))
+        if mutation == 'candidate_selection':
+            run = db.execute(f"select id,execution_generation from ({AGENT_RUN_SQL}) where reply_task_id=?", (task_id,)).fetchone()
+            insert_action(db, 'review_candidates', {
+                'id': 1, 'task_id': task_id, 'execution_generation': run[1],
+                'consumer_run_id': run[0], 'stage_index': 0, 'proposal_revision': 0,
+                'candidate_digest': 'd'*64, 'candidate_json': '{}',
+            })
+            insert_action(db, 'candidate_reviews', {
+                'id': 1, 'candidate_id': 1, 'audit_run_id': 1, 'decision': 'approve',
+                'candidate_digest': 'd'*64, 'result_json': '{}',
+            })
+            insert_action(db, 'candidate_selections', {
+                'candidate_id': 1, 'review_id': 1, 'option_key': 'x', 'branch_json': '{}',
+            })
+        else:
+            db.execute(mutation + (" where record_type='reply_tasks' and id=?" if mutation.startswith('update tasks') else (' and task_id=?' if mutation.startswith("update runs ") else '')), ((task_id,) if mutation.startswith('update ') else ()))
     with pytest.raises(ValueError):
         apply_deferral(path, task_id, expected_business_object_key=preview['business_object_key'],
             expected_generation=preview['execution_generation'],
