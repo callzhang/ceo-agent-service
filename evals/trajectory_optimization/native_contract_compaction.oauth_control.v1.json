@@ -1,0 +1,815 @@
+{
+  "version": 1,
+  "code_ref": "f4ac5019",
+  "status": "oauth_format_session_control_passed_business_acceptance_pending",
+  "model": [
+    "gpt-5.6-luna"
+  ],
+  "configured_route": "codex_oauth",
+  "scope": "Same full native schema, actual role catalog, paired anonymous readonly source and fixed target outcomes; baseline/compact Developer cold+same-session resume. Not calendar/mail/document/work-tracking business judgement acceptance. No original personal source or business callbacks.",
+  "results": [
+    {
+      "variant": "baseline",
+      "route": "codex_oauth",
+      "role": "consumer",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "source_session_id": null,
+      "session_id": "01a13644-4ae0-7c10-be84-114184d47078",
+      "exit_code": 0,
+      "timeout": false,
+      "turn_completed": true,
+      "turn_failed": false,
+      "canonical_valid": true,
+      "parse_error": null,
+      "outcome": "no_action",
+      "binding_valid": true,
+      "summary_matches_nonce": true,
+      "calls": [
+        {
+          "role": "consumer",
+          "route": "codex_oauth.baseline",
+          "phase": "cold",
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/tmp/ceo-native-contract-paired.qyz36261/bound/consumer.cold.source.json"
+          },
+          "expected": true,
+          "result": {
+            "content": "{\"nonce\": \"4dcaa6727dcd8fd83299b5da5bfd0bc3\"}\n",
+            "path": "/private/tmp/ceo-native-contract-paired.qyz36261/bound/consumer.cold.source.json",
+            "sha256": "7dfcedbd969d0668cfe80874e0f1f70241b70f63f2c2896fc30d5eb71ba04df4"
+          }
+        }
+      ],
+      "passed": true,
+      "task_sha256": "08da677cae79c46571cb75345658f4d721e0ffbd565c0a53d8579c7594c92fb2",
+      "developer_sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845",
+      "developer_characters": 22003,
+      "task_characters": 935,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "native_receipt": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-16-47-01a13644-4ae0-7c10-be84-114184d47078.jsonl",
+        "sha256": "3d14a3afafa2b37b7c62d9054f3d4f91df0fa35940d40df758d05550c382a978",
+        "developer_exact_found": true,
+        "task_exact_found": true,
+        "task_start_line": 6,
+        "task_end_line": 24,
+        "direct_read_calls": 1,
+        "all_tool_call_names": [
+          "read_text_file"
+        ],
+        "developer_evidence_scope": "cold invocation message"
+      },
+      "usage": {
+        "input_tokens": 39036,
+        "cached_input_tokens": 24064,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 486,
+        "reasoning_output_tokens": 161
+      }
+    },
+    {
+      "variant": "baseline",
+      "route": "codex_oauth",
+      "role": "consumer",
+      "phase": "resume",
+      "model": "gpt-5.6-luna",
+      "source_session_id": "01a13644-4ae0-7c10-be84-114184d47078",
+      "session_id": "01a13644-4ae0-7c10-be84-114184d47078",
+      "exit_code": 0,
+      "timeout": false,
+      "turn_completed": true,
+      "turn_failed": false,
+      "canonical_valid": true,
+      "parse_error": null,
+      "outcome": "no_action",
+      "binding_valid": true,
+      "summary_matches_nonce": true,
+      "calls": [
+        {
+          "role": "consumer",
+          "route": "codex_oauth.baseline",
+          "phase": "resume",
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/tmp/ceo-native-contract-paired.qyz36261/bound/consumer.resume.source.json"
+          },
+          "expected": true,
+          "result": {
+            "content": "{\"nonce\": \"4e5233736fa8498f0a0de0b64101d5a5\"}\n",
+            "path": "/private/tmp/ceo-native-contract-paired.qyz36261/bound/consumer.resume.source.json",
+            "sha256": "9d07ea198e187e61bfdbb47112e618277025774c9892aa4063e370887320d058"
+          }
+        }
+      ],
+      "passed": true,
+      "task_sha256": "aa94a258009d8a07f93f42e84cf6b8beaf3e1e519f2580e91e1652a5c6f04388",
+      "developer_sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845",
+      "developer_characters": 22003,
+      "task_characters": 937,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "native_receipt": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-16-47-01a13644-4ae0-7c10-be84-114184d47078.jsonl",
+        "sha256": "3d14a3afafa2b37b7c62d9054f3d4f91df0fa35940d40df758d05550c382a978",
+        "developer_exact_found": true,
+        "task_exact_found": true,
+        "task_start_line": 27,
+        "task_end_line": 45,
+        "direct_read_calls": 1,
+        "all_tool_call_names": [
+          "read_text_file"
+        ],
+        "developer_evidence_scope": "inherited cold Developer in same session; no separate Developer message observed in resume span"
+      },
+      "usage": {
+        "input_tokens": 79530,
+        "cached_input_tokens": 62464,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 830,
+        "reasoning_output_tokens": 179
+      }
+    },
+    {
+      "variant": "baseline",
+      "route": "codex_oauth",
+      "role": "audit",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "source_session_id": null,
+      "session_id": "01a13644-9b02-7ed3-9f33-259befea9d6a",
+      "exit_code": 0,
+      "timeout": false,
+      "turn_completed": true,
+      "turn_failed": false,
+      "canonical_valid": true,
+      "parse_error": null,
+      "outcome": "approve",
+      "binding_valid": true,
+      "summary_matches_nonce": true,
+      "calls": [
+        {
+          "role": "audit",
+          "route": "codex_oauth.baseline",
+          "phase": "cold",
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/tmp/ceo-native-contract-paired.qyz36261/bound/audit.cold.source.json"
+          },
+          "expected": true,
+          "result": {
+            "content": "{\"nonce\": \"3164928e9468d00a644bed0ffc82f1a5\"}\n",
+            "path": "/private/tmp/ceo-native-contract-paired.qyz36261/bound/audit.cold.source.json",
+            "sha256": "73d36c1a7404c98578ad76dd73bfeca4416d0a3dcb338f77741655be41380ead"
+          }
+        }
+      ],
+      "passed": true,
+      "task_sha256": "5942537c0c08626c2080b2b33f1003903598d5b71a877106b7e9721b013d20f5",
+      "developer_sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f",
+      "developer_characters": 18575,
+      "task_characters": 1659,
+      "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+      "native_receipt": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-17-08-01a13644-9b02-7ed3-9f33-259befea9d6a.jsonl",
+        "sha256": "7ef5becae1bf7334a9728131dbac97a004eafb84678511d2f261e351a97db0e8",
+        "developer_exact_found": true,
+        "task_exact_found": true,
+        "task_start_line": 6,
+        "task_end_line": 24,
+        "direct_read_calls": 1,
+        "all_tool_call_names": [
+          "read_text_file"
+        ],
+        "developer_evidence_scope": "cold invocation message"
+      },
+      "usage": {
+        "input_tokens": 29834,
+        "cached_input_tokens": 14080,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 481,
+        "reasoning_output_tokens": 152
+      }
+    },
+    {
+      "variant": "baseline",
+      "route": "codex_oauth",
+      "role": "audit",
+      "phase": "resume",
+      "model": "gpt-5.6-luna",
+      "source_session_id": "01a13644-9b02-7ed3-9f33-259befea9d6a",
+      "session_id": "01a13644-9b02-7ed3-9f33-259befea9d6a",
+      "exit_code": 0,
+      "timeout": false,
+      "turn_completed": true,
+      "turn_failed": false,
+      "canonical_valid": true,
+      "parse_error": null,
+      "outcome": "approve",
+      "binding_valid": true,
+      "summary_matches_nonce": true,
+      "calls": [
+        {
+          "role": "audit",
+          "route": "codex_oauth.baseline",
+          "phase": "resume",
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/tmp/ceo-native-contract-paired.qyz36261/bound/audit.resume.source.json"
+          },
+          "expected": true,
+          "result": {
+            "content": "{\"nonce\": \"2e4f9fa27637dc47074f3c3c261512bd\"}\n",
+            "path": "/private/tmp/ceo-native-contract-paired.qyz36261/bound/audit.resume.source.json",
+            "sha256": "f33cdb4182877cfa0f87a5c0a0f6d905e5be1e6539942ab79c85a2e956c16862"
+          }
+        }
+      ],
+      "passed": true,
+      "task_sha256": "0ade55ad3cfff59661b27bf1b85d8f0f454df76a58f6dca3eb1aa0c77dcedd9d",
+      "developer_sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f",
+      "developer_characters": 18575,
+      "task_characters": 1661,
+      "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+      "native_receipt": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-17-08-01a13644-9b02-7ed3-9f33-259befea9d6a.jsonl",
+        "sha256": "7ef5becae1bf7334a9728131dbac97a004eafb84678511d2f261e351a97db0e8",
+        "developer_exact_found": true,
+        "task_exact_found": true,
+        "task_start_line": 29,
+        "task_end_line": 47,
+        "direct_read_calls": 1,
+        "all_tool_call_names": [
+          "read_text_file"
+        ],
+        "developer_evidence_scope": "inherited cold Developer in same session; no separate Developer message observed in resume span"
+      },
+      "usage": {
+        "input_tokens": 61825,
+        "cached_input_tokens": 43264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 835,
+        "reasoning_output_tokens": 185
+      }
+    },
+    {
+      "variant": "compact",
+      "route": "codex_oauth",
+      "role": "consumer",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "source_session_id": null,
+      "session_id": "01a13644-e917-7500-b373-9acaa683cfe7",
+      "exit_code": 0,
+      "timeout": false,
+      "turn_completed": true,
+      "turn_failed": false,
+      "canonical_valid": true,
+      "parse_error": null,
+      "outcome": "no_action",
+      "binding_valid": true,
+      "summary_matches_nonce": true,
+      "calls": [
+        {
+          "role": "consumer",
+          "route": "codex_oauth.compact",
+          "phase": "cold",
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/tmp/ceo-native-contract-paired.qyz36261/bound/consumer.cold.source.json"
+          },
+          "expected": true,
+          "result": {
+            "content": "{\"nonce\": \"4dcaa6727dcd8fd83299b5da5bfd0bc3\"}\n",
+            "path": "/private/tmp/ceo-native-contract-paired.qyz36261/bound/consumer.cold.source.json",
+            "sha256": "7dfcedbd969d0668cfe80874e0f1f70241b70f63f2c2896fc30d5eb71ba04df4"
+          }
+        }
+      ],
+      "passed": true,
+      "task_sha256": "08da677cae79c46571cb75345658f4d721e0ffbd565c0a53d8579c7594c92fb2",
+      "developer_sha256": "ab9f6df2b220ac1714d682089556674ff0df2ffc38dd04fc080fc16eb6a67d19",
+      "developer_characters": 15835,
+      "task_characters": 935,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "native_receipt": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-17-28-01a13644-e917-7500-b373-9acaa683cfe7.jsonl",
+        "sha256": "bb5d425fadaaf6e9bc2f837650d94004579a19e604f5b7ce6a4973b28b94f43d",
+        "developer_exact_found": true,
+        "task_exact_found": true,
+        "task_start_line": 6,
+        "task_end_line": 24,
+        "direct_read_calls": 1,
+        "all_tool_call_names": [
+          "read_text_file"
+        ],
+        "developer_evidence_scope": "cold invocation message"
+      },
+      "usage": {
+        "input_tokens": 36069,
+        "cached_input_tokens": 17152,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 495,
+        "reasoning_output_tokens": 172
+      }
+    },
+    {
+      "variant": "compact",
+      "route": "codex_oauth",
+      "role": "consumer",
+      "phase": "resume",
+      "model": "gpt-5.6-luna",
+      "source_session_id": "01a13644-e917-7500-b373-9acaa683cfe7",
+      "session_id": "01a13644-e917-7500-b373-9acaa683cfe7",
+      "exit_code": 0,
+      "timeout": false,
+      "turn_completed": true,
+      "turn_failed": false,
+      "canonical_valid": true,
+      "parse_error": null,
+      "outcome": "no_action",
+      "binding_valid": true,
+      "summary_matches_nonce": true,
+      "calls": [
+        {
+          "role": "consumer",
+          "route": "codex_oauth.compact",
+          "phase": "resume",
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/tmp/ceo-native-contract-paired.qyz36261/bound/consumer.resume.source.json"
+          },
+          "expected": true,
+          "result": {
+            "content": "{\"nonce\": \"4e5233736fa8498f0a0de0b64101d5a5\"}\n",
+            "path": "/private/tmp/ceo-native-contract-paired.qyz36261/bound/consumer.resume.source.json",
+            "sha256": "9d07ea198e187e61bfdbb47112e618277025774c9892aa4063e370887320d058"
+          }
+        }
+      ],
+      "passed": true,
+      "task_sha256": "aa94a258009d8a07f93f42e84cf6b8beaf3e1e519f2580e91e1652a5c6f04388",
+      "developer_sha256": "ab9f6df2b220ac1714d682089556674ff0df2ffc38dd04fc080fc16eb6a67d19",
+      "developer_characters": 15835,
+      "task_characters": 937,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "native_receipt": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-17-28-01a13644-e917-7500-b373-9acaa683cfe7.jsonl",
+        "sha256": "bb5d425fadaaf6e9bc2f837650d94004579a19e604f5b7ce6a4973b28b94f43d",
+        "developer_exact_found": true,
+        "task_exact_found": true,
+        "task_start_line": 27,
+        "task_end_line": 43,
+        "direct_read_calls": 1,
+        "all_tool_call_names": [
+          "read_text_file"
+        ],
+        "developer_evidence_scope": "inherited cold Developer in same session; no separate Developer message observed in resume span"
+      },
+      "usage": {
+        "input_tokens": 73457,
+        "cached_input_tokens": 52480,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 709,
+        "reasoning_output_tokens": 197
+      }
+    },
+    {
+      "variant": "compact",
+      "route": "codex_oauth",
+      "role": "audit",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "source_session_id": null,
+      "session_id": "01a13645-2fe1-7d60-a20d-a3b54bf99175",
+      "exit_code": 0,
+      "timeout": false,
+      "turn_completed": true,
+      "turn_failed": false,
+      "canonical_valid": true,
+      "parse_error": null,
+      "outcome": "approve",
+      "binding_valid": true,
+      "summary_matches_nonce": true,
+      "calls": [
+        {
+          "role": "audit",
+          "route": "codex_oauth.compact",
+          "phase": "cold",
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/tmp/ceo-native-contract-paired.qyz36261/bound/audit.cold.source.json"
+          },
+          "expected": true,
+          "result": {
+            "content": "{\"nonce\": \"3164928e9468d00a644bed0ffc82f1a5\"}\n",
+            "path": "/private/tmp/ceo-native-contract-paired.qyz36261/bound/audit.cold.source.json",
+            "sha256": "73d36c1a7404c98578ad76dd73bfeca4416d0a3dcb338f77741655be41380ead"
+          }
+        }
+      ],
+      "passed": true,
+      "task_sha256": "5942537c0c08626c2080b2b33f1003903598d5b71a877106b7e9721b013d20f5",
+      "developer_sha256": "de254fb4694a6a806f4e88db7028d02d7feb9ce77483a440b99f2b7a4ef2f5b3",
+      "developer_characters": 17175,
+      "task_characters": 1659,
+      "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+      "native_receipt": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-17-46-01a13645-2fe1-7d60-a20d-a3b54bf99175.jsonl",
+        "sha256": "da7d30ce10f36cb18c33277bd8762223f0fb8a654e3d3357a05c4368d9ef4be0",
+        "developer_exact_found": true,
+        "task_exact_found": true,
+        "task_start_line": 6,
+        "task_end_line": 24,
+        "direct_read_calls": 1,
+        "all_tool_call_names": [
+          "read_text_file"
+        ],
+        "developer_evidence_scope": "cold invocation message"
+      },
+      "usage": {
+        "input_tokens": 29112,
+        "cached_input_tokens": 14080,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 486,
+        "reasoning_output_tokens": 165
+      }
+    },
+    {
+      "variant": "compact",
+      "route": "codex_oauth",
+      "role": "audit",
+      "phase": "resume",
+      "model": "gpt-5.6-luna",
+      "source_session_id": "01a13645-2fe1-7d60-a20d-a3b54bf99175",
+      "session_id": "01a13645-2fe1-7d60-a20d-a3b54bf99175",
+      "exit_code": 0,
+      "timeout": false,
+      "turn_completed": true,
+      "turn_failed": false,
+      "canonical_valid": true,
+      "parse_error": null,
+      "outcome": "approve",
+      "binding_valid": true,
+      "summary_matches_nonce": true,
+      "calls": [
+        {
+          "role": "audit",
+          "route": "codex_oauth.compact",
+          "phase": "resume",
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/tmp/ceo-native-contract-paired.qyz36261/bound/audit.resume.source.json"
+          },
+          "expected": true,
+          "result": {
+            "content": "{\"nonce\": \"2e4f9fa27637dc47074f3c3c261512bd\"}\n",
+            "path": "/private/tmp/ceo-native-contract-paired.qyz36261/bound/audit.resume.source.json",
+            "sha256": "f33cdb4182877cfa0f87a5c0a0f6d905e5be1e6539942ab79c85a2e956c16862"
+          }
+        }
+      ],
+      "passed": true,
+      "task_sha256": "0ade55ad3cfff59661b27bf1b85d8f0f454df76a58f6dca3eb1aa0c77dcedd9d",
+      "developer_sha256": "de254fb4694a6a806f4e88db7028d02d7feb9ce77483a440b99f2b7a4ef2f5b3",
+      "developer_characters": 17175,
+      "task_characters": 1661,
+      "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+      "native_receipt": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-17-46-01a13645-2fe1-7d60-a20d-a3b54bf99175.jsonl",
+        "sha256": "da7d30ce10f36cb18c33277bd8762223f0fb8a654e3d3357a05c4368d9ef4be0",
+        "developer_exact_found": true,
+        "task_exact_found": true,
+        "task_start_line": 29,
+        "task_end_line": 47,
+        "direct_read_calls": 1,
+        "all_tool_call_names": [
+          "read_text_file"
+        ],
+        "developer_evidence_scope": "inherited cold Developer in same session; no separate Developer message observed in resume span"
+      },
+      "usage": {
+        "input_tokens": 60413,
+        "cached_input_tokens": 29184,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 870,
+        "reasoning_output_tokens": 228
+      }
+    }
+  ],
+  "pairs_verified": {
+    "task_sha_equal": true,
+    "native_schema_sha_equal": true,
+    "model_equal": true,
+    "read_name_arguments_result_equal": true,
+    "actual_declared_tool_counts": {
+      "consumer": 42,
+      "audit": 38
+    },
+    "all_cold_developer_and_each_turn_task_found_exactly": true
+  },
+  "setup_invalid": [
+    {
+      "cohort": "unbound",
+      "role": "consumer",
+      "variant": "baseline",
+      "session_id": "01a1363f-efda-7ef1-84e4-3057de015fde",
+      "canonical_valid": true,
+      "required_read_calls": 0,
+      "passed": false,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-12-02-01a1363f-efda-7ef1-84e4-3057de015fde.jsonl",
+      "native_sha256": "e1ba5da3da39820103cc548a6f77bd890d05f3d751dba772a8d519d71625fd3b",
+      "classification": "setup_invalid_missing_task_binding_database"
+    },
+    {
+      "cohort": "unbound",
+      "role": "audit",
+      "variant": "baseline",
+      "session_id": "01a13640-46d7-7ff0-8167-ae4ed97bc3f9",
+      "canonical_valid": true,
+      "required_read_calls": 0,
+      "passed": false,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-12-24-01a13640-46d7-7ff0-8167-ae4ed97bc3f9.jsonl",
+      "native_sha256": "d0a78fd3561a55bffbc34801353389a4cc5c5c4daba2b006d222f530930f3f70",
+      "classification": "setup_invalid_missing_task_binding_database"
+    },
+    {
+      "cohort": "unbound",
+      "role": "consumer",
+      "variant": "compact",
+      "session_id": "01a13640-c352-7783-a251-418f56311e23",
+      "canonical_valid": true,
+      "required_read_calls": 0,
+      "passed": false,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-12-56-01a13640-c352-7783-a251-418f56311e23.jsonl",
+      "native_sha256": "7df6c5e96b3d28d10c2d3258a9a07f3083cbbda3760e3e8ac9ac68c465b96db4",
+      "classification": "setup_invalid_missing_task_binding_database"
+    },
+    {
+      "cohort": "unbound",
+      "role": "audit",
+      "variant": "compact",
+      "session_id": "01a13641-0a0b-7660-9817-72a6b400dcce",
+      "canonical_valid": true,
+      "required_read_calls": 0,
+      "passed": false,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-13-14-01a13641-0a0b-7660-9817-72a6b400dcce.jsonl",
+      "native_sha256": "748cb24ca67342a49a78583b8c462b7bad4dc102a50ca14a5f8625be6f79f16e",
+      "classification": "setup_invalid_missing_task_binding_database"
+    },
+    {
+      "cohort": "enabled_but_unbound",
+      "role": "consumer",
+      "variant": "baseline",
+      "session_id": "01a13642-3214-7cf3-b3b1-3c8a390cda64",
+      "canonical_valid": true,
+      "required_read_calls": 0,
+      "passed": false,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-14-30-01a13642-3214-7cf3-b3b1-3c8a390cda64.jsonl",
+      "native_sha256": "9ad892a505e735fda489889e6ccd8e58380a2bdc0ac921d0227ed1266f2c63b1",
+      "classification": "setup_invalid_missing_task_binding_database"
+    },
+    {
+      "cohort": "enabled_but_unbound",
+      "role": "audit",
+      "variant": "baseline",
+      "session_id": "01a13642-76ac-7512-a298-360915f0d556",
+      "canonical_valid": true,
+      "required_read_calls": 0,
+      "passed": false,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-14-47-01a13642-76ac-7512-a298-360915f0d556.jsonl",
+      "native_sha256": "a9c1924ba6fc17d70f4d61e2ae49a4b196eef5757945fa00cad2ba73a8b8a158",
+      "classification": "setup_invalid_missing_task_binding_database"
+    },
+    {
+      "cohort": "enabled_but_unbound",
+      "role": "consumer",
+      "variant": "compact",
+      "session_id": "01a13642-b7ec-7c72-8e62-b485f0d1108f",
+      "canonical_valid": true,
+      "required_read_calls": 0,
+      "passed": false,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-15-04-01a13642-b7ec-7c72-8e62-b485f0d1108f.jsonl",
+      "native_sha256": "ba8bd3926f0ab35608dae08bd387e5e1a4ef00735b652c9749a632c5835a0e7b",
+      "classification": "setup_invalid_missing_task_binding_database"
+    },
+    {
+      "cohort": "enabled_but_unbound",
+      "role": "audit",
+      "variant": "compact",
+      "session_id": "01a13643-2456-7b52-b34b-d1d2b53428da",
+      "canonical_valid": true,
+      "required_read_calls": 0,
+      "passed": false,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T10-15-32-01a13643-2456-7b52-b34b-d1d2b53428da.jsonl",
+      "native_sha256": "5bb79c116cffd15535b57c75cd8c7c3a3c11207f3dae483fb524f071c6b0d060",
+      "classification": "setup_invalid_missing_task_binding_database"
+    }
+  ],
+  "setup_root_cause": "Reused prior control harness built current role server with task_id7 and nonexistent fixture.sqlite3. Current build_role_server reads the real task generation at startup, so no tools were exposed. Explicit enabling alone did not repair it. Corrected fixture creates real task_id1/generationprobe; MCP boot and42/38 catalogs verified before valid model cohort.",
+  "raw_file_receipts": {
+    "codex_oauth.baseline.audit.cold.stderr.txt": {
+      "sha256": "0efb0dd0d5dcccdfbda7c7585145e232d5789b4f8c45a1810a708feab877b070",
+      "bytes": 143
+    },
+    "results.json": {
+      "sha256": "5154d65b20302afb102921c3fdf49fa2a67a9d37eb85770ef6ff50371548a278",
+      "bytes": 3362
+    },
+    "codex_oauth.compact.consumer.cold.stdout.jsonl": {
+      "sha256": "9cf164b5d5e5b76aa4e5d38ff739a9ee66f1ff4ddae978cdd3b342655f4935e4",
+      "bytes": 21600
+    },
+    "codex_oauth.baseline.audit.cold.stdout.jsonl": {
+      "sha256": "e23c38021757a1f381d8f5be7577f5568f207901eff8a1b79db831d4683bb89e",
+      "bytes": 1823
+    },
+    "codex_oauth.compact.consumer.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "codex_oauth.compact.audit.cold.stdout.jsonl": {
+      "sha256": "170753eeb33959b9848a23f9228670180e807ef5724cc958a183086af0e9d862",
+      "bytes": 1756
+    },
+    "codex_oauth.baseline.consumer.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "codex_oauth.compact.audit.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "codex_oauth.baseline.consumer.cold.stdout.jsonl": {
+      "sha256": "e113600dc6655d903eaaaa2f93455c32ceb9340ea77095539fa5a3fe19a78cd9",
+      "bytes": 2442
+    },
+    "bound/codex_oauth.baseline.audit.resume.stdout.jsonl": {
+      "sha256": "e0abc0011b049c41b166ab8701f6e990f184db72c9652bf34cefe4b58264455e",
+      "bytes": 2742
+    },
+    "bound/codex_oauth.baseline.consumer.resume.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "bound/codex_oauth.compact.consumer.resume.stdout.jsonl": {
+      "sha256": "4cb86e4282f7cdebf3d14f2d2565cb57c34fb74ace23ef0cebcdd71bbe198277",
+      "bytes": 2337
+    },
+    "bound/codex_oauth.compact.audit.resume.calls.jsonl": {
+      "sha256": "dbeffe62a74f6025819b91a86579cb33d53231ef274a3cb4febdd0cc0177d6e5",
+      "bytes": 458
+    },
+    "bound/codex_oauth.compact.audit.resume.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "bound/codex_oauth.compact.audit.cold.calls.jsonl": {
+      "sha256": "bf9a72f3fbdb4787822954d34f57fa7377461404a4e87cc373bbe3a20b516739",
+      "bytes": 452
+    },
+    "bound/codex_oauth.baseline.audit.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "bound/results.json": {
+      "sha256": "a4b677436ae5ac265faedfde9325dcc7b56752f8c13dab1b9436fe9e08a1b479",
+      "bytes": 11614
+    },
+    "bound/codex_oauth.compact.consumer.cold.stdout.jsonl": {
+      "sha256": "5adc82d68ecfd2b134548b23633de91e80eacdd62985bb571298cd19256f0002",
+      "bytes": 2986
+    },
+    "bound/codex_oauth.baseline.audit.cold.calls.jsonl": {
+      "sha256": "e58dd15f5502ecd2ce5a09078270c1bab2bb78ccb6f11325b3cae6e59b49cf9b",
+      "bytes": 453
+    },
+    "bound/codex_oauth.baseline.consumer.cold.calls.jsonl": {
+      "sha256": "a0c8d0371a65360c70d6dcb649587adc82eea6636c0d6ca680c3195d4e502ba2",
+      "bytes": 462
+    },
+    "bound/codex_oauth.baseline.audit.resume.calls.jsonl": {
+      "sha256": "d902552784e18453c2d49c510d60ad54c70a2c7bc66e47aca7dfabea6a4696a4",
+      "bytes": 459
+    },
+    "bound/codex_oauth.baseline.audit.cold.stdout.jsonl": {
+      "sha256": "5b6fd730ba9484e111727dbe5c624772d620a58f315789b3eba2efb0b041c4da",
+      "bytes": 2771
+    },
+    "bound/codex_oauth.compact.consumer.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "bound/codex_oauth.baseline.audit.resume.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "bound/codex_oauth.baseline.consumer.resume.stdout.jsonl": {
+      "sha256": "6cd13703df6599e62e281634530ec2f6a283b75d144afe31590519bfcca51620",
+      "bytes": 2992
+    },
+    "bound/codex_oauth.compact.consumer.resume.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "bound/codex_oauth.baseline.consumer.resume.calls.jsonl": {
+      "sha256": "0cfddaac85650c37c26a418dc23687e3ec0c3d02ba269cafa435c065809e9b43",
+      "bytes": 468
+    },
+    "bound/codex_oauth.compact.audit.resume.stdout.jsonl": {
+      "sha256": "80009219c5d4f37e68cd31f41f9c06b672754745710d9017c6cc0416f9ddf717",
+      "bytes": 2776
+    },
+    "bound/codex_oauth.compact.consumer.resume.calls.jsonl": {
+      "sha256": "122d8600b7edffb526106c2d8704c28d2a1a972f54ff4fbf53a52f35720222d7",
+      "bytes": 467
+    },
+    "bound/codex_oauth.compact.audit.cold.stdout.jsonl": {
+      "sha256": "83b6c935668177c4d0b3871f75a50ca0b36e941acf1ee340e08ef7c257360987",
+      "bytes": 2768
+    },
+    "bound/codex_oauth.baseline.consumer.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "bound/codex_oauth.compact.consumer.cold.calls.jsonl": {
+      "sha256": "734c1b457fac80fdeebf4143495d60503d5e73dede0b1cffc3ee48aba775dc56",
+      "bytes": 461
+    },
+    "bound/codex_oauth.compact.audit.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "bound/codex_oauth.baseline.consumer.cold.stdout.jsonl": {
+      "sha256": "9eefda69a3981204ca989a2707bcbfd30fd70b78e1074fd10b86fd8ceecc1fbe",
+      "bytes": 2984
+    },
+    "corrected/codex_oauth.baseline.audit.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "corrected/results.json": {
+      "sha256": "40267dc0171c86c6af2b4d97953655a6c9dc9c7d293b1553e0a9d86c4d4c0d03",
+      "bytes": 3361
+    },
+    "corrected/codex_oauth.compact.consumer.cold.stdout.jsonl": {
+      "sha256": "592206b779b3e2e3bb718b5ad03cedb6399b47cfe1b88804e6e8613085f1ab1c",
+      "bytes": 2894
+    },
+    "corrected/codex_oauth.baseline.audit.cold.stdout.jsonl": {
+      "sha256": "816ce0a20f8b44daaec2f208130f872584bf66c75da67c7e2b22a311bd6612ea",
+      "bytes": 1866
+    },
+    "corrected/codex_oauth.compact.consumer.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "corrected/codex_oauth.compact.audit.cold.stdout.jsonl": {
+      "sha256": "7ce670193f15c992ef48ae9764d9487b8ae84580bf6c7e187c34e491e471788b",
+      "bytes": 1814
+    },
+    "corrected/codex_oauth.baseline.consumer.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "corrected/codex_oauth.compact.audit.cold.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "corrected/codex_oauth.baseline.consumer.cold.stdout.jsonl": {
+      "sha256": "71d9455059d3ac722761391a1e86ae624a17de6035f932c1624f1c7ddefa93d9",
+      "bytes": 21497
+    }
+  },
+  "harness_sources": {
+    "runner": "import sys,os,json,secrets,subprocess,tomllib,hashlib\nfrom pathlib import Path\nfrom unittest.mock import patch\nsys.path.insert(0,'/private/tmp/ceo-native-schema-current-main')\nfrom app.config import load_env_file\nfrom app.consumer_agent import consumer_developer_sections,audit_developer_sections\nfrom app.prompt_composition import render_prompt_sections\nfrom app.native_agent_output import native_developer_assembly\nfrom app.prompt_composition import load_prompt_configuration\nfrom app.audit_rules import render_audit_rules\nfrom app.store import AgentRole\nfrom app.agent_contracts import ConsumerAgentResult\nfrom app.reviewed_candidates import candidate_digest\nfrom app.agent_runtime_config import load_runtime_config\nfrom app.codex_runtime_adapter import CodexRuntimeAdapter\nfrom app.native_agent_output import native_output_schema_path,native_task_prompt,parse_native_output\nfrom app.wechat.codex_safety import make_role_agent_command,ControlledCliConfig,disable_automatic_review\nfrom app.agent_runtime_contracts import CredentialMode\nroot=Path(__file__).parent;load_env_file(Path('/Users/derek/Services/ceo-agent-service/.env'))\nconfig=load_runtime_config(os.environ);frozen_configurations={role:load_prompt_configuration(create_missing=False,role=role) for role in ('consumer','audit')};frozen_audit_rules=render_audit_rules(AgentRole.AUDIT,create_missing=False);candidate=ConsumerAgentResult.model_validate({'outcome':'no_action','summary':'Anonymous read-only provider compatibility probe; no business action.','proposal':None,'error':{'code':'','retryable':False,'authorization_required':False},'risk':'low','confidence':1.0,'rule_coverage':1.0,'information_completeness':1.0});digest=candidate_digest(candidate);adapter=CodexRuntimeAdapter(root,config);records=[]\nfor variant in ('baseline','compact'):\n route_name='codex_oauth';route=next(x for x in config.routes if x.name==route_name);server_route=route_name+'.'+variant\n for role in ('consumer','audit'):\n  sid=None\n  for phase in ('cold','resume'):\n   stem=f'{server_route}.{role}.{phase}';shared=root/(role+'.'+phase+'.source.json');nonce=json.loads(shared.read_text())['nonce'] if shared.exists() else secrets.token_hex(16)\n   source_path=shared;source_path.write_text(json.dumps({'nonce':nonce})+'\\n')\n   task='Call agent_cli.read_text_file(path='+json.dumps(str(source_path))+') exactly once this turn. Parse the JSON in its content and include the exact nonce field value in summary. '\n   if role=='consumer':task+='Return canonical no_action with no proposal or decisions.'\n   else:task+='Return canonical approve for proposal_revision=0 and candidate_digest=\"'+digest+'\", feedback=null.'\n   task+=' This is a native provider compatibility diagnostic with anonymous substitute source, not a business decision or authorization. Do not invoke other diagnostic callbacks.'\n   if role=='audit':task+=' Current fixed anonymous candidate: '+json.dumps(candidate.model_dump(mode='json'),ensure_ascii=False)\n   prompt=native_task_prompt(task,role)\n   configuration=frozen_configurations[role]\n   sections=(consumer_developer_sections(work_profile='',prompt_configuration=configuration) if role=='consumer' else audit_developer_sections(frozen_audit_rules,work_profile='',prompt_configuration=configuration));developer=render_prompt_sections(sections,placement='developer',omit_empty=role=='consumer')\n   if variant=='compact':developer=native_developer_assembly(developer,sections,role).text\n   # Substitute transports only. No service or personal connector is called.\n   with patch('app.codex_runtime_adapter.service_mcp_config_options',lambda:[]):\n    command=adapter.build_command(route,prompt,sid,None,native_output_schema_path(role),True,'on-failure',developer,True,skip_git_repo_check=False,reasoning_effort='medium',skill_names=())\n   insertion=len(command)-1-(1 if sid else 0)\n   for name in tomllib.loads(Path('/Users/derek/.codex/config.toml').read_text()).get('mcp_servers',{}):\n    if name!='agent_cli':command[insertion:insertion]=['-c',f'mcp_servers.{name}.enabled=false'];insertion+=2\n   make_role_agent_command(command,role=role,task_workspace=str(root),controlled_cli=ControlledCliConfig(command='/Users/derek/miniforge3/bin/python',args=(str(root/'server.py'),role,server_route,phase),cwd=str(root)))\n   index=len(command)-1-(1 if sid else 0);command[index:index]=['-c','mcp_servers.agent_cli.enabled=true']\n   if role=='audit':command.insert(-1 if not sid else -2,'--skip-git-repo-check')\n   if route.credential_mode is CredentialMode.SERVICE_API:disable_automatic_review(command)\n   env=adapter.build_env(route)\n   with (root/(stem+'.stdout.jsonl')).open('w') as out,(root/(stem+'.stderr.txt')).open('w') as err:\n    try:proc=subprocess.run(command,input=prompt,text=True,stdout=out,stderr=err,cwd=root,env=env,timeout=180);code=proc.returncode;timeout=False\n    except subprocess.TimeoutExpired:code=None;timeout=True\n   raw=(root/(stem+'.stdout.jsonl')).read_text();events=[json.loads(l) for l in raw.splitlines()];observed=next((x.get('thread_id') for x in events if x.get('type')=='thread.started'),None)\n   try:result=json.loads(parse_native_output(raw,role));error=None\n   except Exception as e:result=None;error=type(e).__name__+': '+str(e)\n   callsfile=root/(stem+'.calls.jsonl');calls=[json.loads(l) for l in callsfile.read_text().splitlines()] if callsfile.exists() else []\n   completed=any(x.get('type')=='turn.completed' for x in events);failed=any(x.get('type')=='turn.failed' for x in events)\n   expected=[x for x in calls if x['expected']];binding=result is not None and (role=='consumer' and result['outcome']=='no_action' and result.get('proposal') is None or role=='audit' and result['outcome']=='approve' and result['proposal_revision']==0 and result['candidate_digest']==digest)\n   passed=code==0 and not timeout and completed and not failed and binding and len(expected)==1 and len(calls)==1 and nonce in result['summary'] and (not sid or observed==sid)\n   rec={'variant':variant,'route':route_name,'role':role,'phase':phase,'model':route.model,'source_session_id':sid,'session_id':observed,'exit_code':code,'timeout':timeout,'turn_completed':completed,'turn_failed':failed,'canonical_valid':result is not None,'parse_error':error,'outcome':None if result is None else result['outcome'],'binding_valid':binding,'summary_matches_nonce':result is not None and nonce in result['summary'],'calls':calls,'passed':passed,'task_sha256':hashlib.sha256(prompt.encode()).hexdigest(),'developer_sha256':hashlib.sha256(developer.encode()).hexdigest(),'developer_characters':len(developer),'task_characters':len(prompt),'native_schema_sha256':hashlib.sha256(native_output_schema_path(role).read_bytes()).hexdigest()}\n   records.append(rec);(root/'results.json').write_text(json.dumps(records,ensure_ascii=False,indent=2));print(json.dumps({k:rec[k] for k in ('route','role','phase','exit_code','session_id','canonical_valid','passed','parse_error')}),flush=True)\n   if not passed:break\n   sid=observed\n",
+    "server": "import sys,json,hashlib\nfrom pathlib import Path\nsys.path.insert(0,'/private/tmp/ceo-native-schema-current-main')\nfrom app.agent_cli import build_role_server\nroot=Path(__file__).parent;role,route,phase=sys.argv[1:4]\nserver=build_role_server(role,task_id=1,db_path=root/'fixture.sqlite3',execution_generation='probe')\noriginal_read=server._tool_manager.get_tool('read_text_file').fn\ndef replacement(name):\n def callback(**kwargs):\n  expected={'path':str(root/f'{role}.{phase}.source.json')}\n  ok=name=='read_text_file' and kwargs==expected\n  record={'role':role,'route':route,'phase':phase,'name':name,'arguments':kwargs,'expected':ok}\n  if ok:\n   value=original_read(path=expected['path'])\n   record['result']=value\n  with (root/f'{route}.{role}.{phase}.calls.jsonl').open('a') as f:f.write(json.dumps(record,ensure_ascii=False)+'\\n')\n  if not ok:raise ValueError('unexpected diagnostic callback')\n  return value\n return callback\nfor tool in server._tool_manager.list_tools():\n server._tool_manager._tools[tool.name]=tool.model_copy(update={'fn':replacement(tool.name),'is_async':False})\ncatalog=[{'name':t.name,'description':t.description,'parameters':t.parameters,'annotations':t.annotations.model_dump() if t.annotations else None} for t in server._tool_manager.list_tools()]\n(root/f'{role}.catalog.json').write_text(json.dumps(catalog,ensure_ascii=False,sort_keys=True))\nif __name__=='__main__':server.run(transport='stdio')\n",
+    "fixture_setup": "store=AutoReplyStore(root/'fixture.sqlite3'); store.enqueue_reply_task(conversation_id='anonymous-control',conversation_title='Anonymous control',single_chat=True,trigger_message_id='fixture',trigger_create_time='2026-10-13T12:00:00+00:00',trigger_sender='Fixture',trigger_text='Anonymous readonly diagnostic',execution_generation='probe',trigger_message_json='{}')"
+  },
+  "limitations": [
+    "Anonymous forced no_action/approve format probe, not complete business cases or evidence quality",
+    "Sessions passed explicitly by harness, not application conversation+route binding acceptance",
+    "Token usage is cumulative per-turn model input including tool/final calls; cache hits differ, so not a cost reduction proof",
+    "Qwen and API routes remain pending; no provider source modifications or deployment",
+    "No personal MCP transport was contacted; current agent_cli declarations used with substitute callbacks except actual anonymous file reader",
+    "Resume developer hash matches inherited cold Developer in session, not a new resume Developer message; harness submitted same parameter each round."
+  ],
+  "input_token_comparison": {
+    "consumer": {
+      "baseline": 39036,
+      "compact": 36069
+    },
+    "audit": {
+      "baseline": 29834,
+      "compact": 29112
+    }
+  },
+  "readonly_review": "Verified8 valid terminal outcomes, paired hashes/reads,43 raw file receipts, native session hashes and per-turn1 read+1 output; invalid8 excluded. Resume Developer evidence scoped to inherited cold message.",
+  "cleanup": {
+    "owned_path": "/tmp/ceo-native-contract-paired.qyz36261",
+    "removed": true,
+    "bytes_removed": 1796155,
+    "open_handles": "lsof exit1/no output",
+    "preserved": "native original sessions in own CLI home, hashes, anonymous results and reproducible harness; no historical fixture database archive"
+  }
+}
