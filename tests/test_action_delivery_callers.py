@@ -1,8 +1,13 @@
 """Real Store18 sent callers preserve the delivery and feedback contracts."""
 
+import sqlite3
+import threading
+import time
+
 import pytest
 
 from app.action_storage import SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, update_action
+from app.action_delivery_storage import ACTUAL_SOURCE
 from app.store import AutoReplyStore
 from tests.test_agent_turn_store import _claim_consumer, _task
 from tests.test_store import _claim_audit_run, _enqueue_universal_reply_task
@@ -108,3 +113,59 @@ def test_feedback_pressure_and_attempt_mapping_read_sent_projection(tmp_path):
     assert stats.unanswered_older_than_7_days == 1
     assert store.list_sent_replies_waiting_for_feedback_events()[0].feedback_token == "new-token"
     assert store.list_sent_replies_with_feedback_tokens_for_conversation("conversation", limit=1)[0].id == 2
+
+
+def test_recall_timestamp_is_taken_after_writer_lock_like_native_source(tmp_path):
+    store = AutoReplyStore(tmp_path / "typed.sqlite3")
+    store.record_sent_reply("conversation", "message", "Delivered")
+    native_path = tmp_path / "native.sqlite3"
+    with sqlite3.connect(native_path) as db:
+        native_decl = next(obj["sql"] for obj in ACTUAL_SOURCE["sent_replies"]["objects"]
+                           if obj["name"] == "sent_replies")
+        db.execute(native_decl)
+        db.execute("insert into sent_replies(id,conversation_id,trigger_message_id,reply_text) "
+                   "values(1,'conversation','message','Delivered')")
+
+    typed_lock = sqlite3.connect(store.path, timeout=10)
+    native_lock = sqlite3.connect(native_path, timeout=10)
+    typed_lock.execute("begin immediate")
+    native_lock.execute("begin immediate")
+    started = [threading.Event(), threading.Event()]
+    failures = []
+
+    def typed_update():
+        started[0].set()
+        try:
+            store.update_sent_reply_recall(1, recall_status="recalled", recall_error="")
+        except BaseException as exc:
+            failures.append(exc)
+
+    def native_update():
+        started[1].set()
+        try:
+            with sqlite3.connect(native_path, timeout=10) as db:
+                db.execute("update sent_replies set recalled_at=current_timestamp where id=1")
+        except BaseException as exc:
+            failures.append(exc)
+
+    workers = [threading.Thread(target=typed_update), threading.Thread(target=native_update)]
+    try:
+        for worker in workers:
+            worker.start()
+        assert all(event.wait(2) for event in started)
+        time.sleep(2.2)
+        release_stamp = typed_lock.execute("select current_timestamp").fetchone()[0]
+    finally:
+        typed_lock.commit()
+        native_lock.commit()
+        typed_lock.close()
+        native_lock.close()
+        for worker in workers:
+            worker.join(timeout=10)
+    assert not failures
+    assert all(not worker.is_alive() for worker in workers)
+    typed_stamp = store.get_sent_reply("conversation", "message").recalled_at
+    with sqlite3.connect(native_path) as db:
+        native_stamp = db.execute("select recalled_at from sent_replies where id=1").fetchone()[0]
+    assert native_stamp >= release_stamp
+    assert typed_stamp >= release_stamp

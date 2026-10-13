@@ -7,8 +7,9 @@ Four cold/fresh bootstrap checks cover both captured source declarations, raw
 sent TEXT and deleted-ID watermark progress. Store sent writes and direct
 Store/Audit sent readers now address finite actions while retaining public IDs,
 original sent facts, observer identities, feedback filters and transaction
-boundaries. Integrated paired release acceptance is still pending; production
-remains Store17.
+boundaries. Recall timestamps are read after the ordinary writer lock is
+acquired, matching the source UPDATE. Integrated paired release acceptance is
+still pending; production remains Store17.
 The published Store17 contract below continues to describe the live service.
 
 OA return uses its own effect verification, not the approval/rejection node

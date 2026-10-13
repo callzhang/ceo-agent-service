@@ -23435,6 +23435,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             values = {"recall_status": recall_status, "recall_error": recall_error}
             if recall_status == "recalled":
+                # The native UPDATE evaluated current_timestamp after acquiring
+                # the writer lock. Keep that ordering for the finite action.
+                db.execute("update sqlite_sequence set seq=seq where 0")
                 values["recalled_at"] = db.execute("select current_timestamp").fetchone()[0]
             update_action(db, "sent_replies", sent_reply_id, values)
 

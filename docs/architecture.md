@@ -9,8 +9,10 @@ observer run/task/delivery endpoints remain actual foreign keys. Current-fact
 inverse and published-old-code copy evidence are in the Phase5D validation.
 Store sent delivery writes, feedback/history reads, settlement checks and the
 Audit console sent reader now use the finite action projection. This is caller
-conversion in the development candidate; integrated release acceptance is still
-pending, so it is not a production migration or the full10+1 goal.
+conversion in the development candidate. Recall timestamps are read after the
+ordinary writer lock is acquired, matching the source UPDATE. Integrated release
+acceptance is still pending, so this is not a production migration or the
+full10+1 goal.
 
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
 body-free TSV metadata with separate Root and Relative path columns. Joining
