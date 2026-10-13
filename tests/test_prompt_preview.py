@@ -290,6 +290,8 @@ def test_legacy_task_preview_uses_saved_frozen_skill_entry(tmp_path, monkeypatch
     result = current_prompt_preview(store, role="consumer", config=load_runtime_config({}), task_id=task.id)
     assert "agent_cli.read_task_skill" in result["task_prompt"]
     assert "## Available Task Skill Sources" in result["task_prompt"]
+    import hashlib
+    assert hashlib.sha256(b"EXACT SAVED SKILL BODY").hexdigest() in result["task_prompt"]
     assert "EXACT SAVED SKILL BODY" not in result["task_prompt"]
     assert result["task_prompt"].endswith("Complete saved Task")
     assert result["sections"][-2]["source"] == "任务冻结 Skill 元数据"

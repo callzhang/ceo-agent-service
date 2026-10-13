@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from hashlib import sha256
 from typing import Literal
 
@@ -136,6 +137,7 @@ def compose_consumer_task_assembly(
     continuation: str = "",
     skill_names: tuple[str, ...] = (),
     frozen_skill_names: tuple[str, ...] = (),
+    frozen_skill_hashes: Mapping[str, str] | None = None,
     skill_protocol: str = "",
     skill_protocol_is_custom: bool = True,
     skill_catalog=(),
@@ -152,6 +154,7 @@ def compose_consumer_task_assembly(
             skill_names,
             catalog=tuple(skill_catalog),
             frozen_names=frozen_skill_names,
+            frozen_hashes=frozen_skill_hashes,
         )
         unfrozen = tuple(name for name in skill_names if name not in frozen_skill_names)
         if skill_protocol_is_custom and skill_protocol:
@@ -289,6 +292,7 @@ def compose_consumer_task(configuration: PromptConfiguration, *, task_context: s
                           scheduled_prompt: str = '', continuation: str = '',
                           skill_names: tuple[str, ...] = (),
                           frozen_skill_names: tuple[str, ...] = (), skill_protocol: str = '',
+                          frozen_skill_hashes: Mapping[str, str] | None = None,
                           skill_protocol_is_custom: bool = True,
                           skill_catalog=()) -> str:
     return compose_consumer_task_assembly(
@@ -298,6 +302,7 @@ def compose_consumer_task(configuration: PromptConfiguration, *, task_context: s
         continuation=continuation,
         skill_names=skill_names,
         frozen_skill_names=frozen_skill_names,
+        frozen_skill_hashes=frozen_skill_hashes,
         skill_protocol=skill_protocol,
         skill_protocol_is_custom=skill_protocol_is_custom,
         skill_catalog=skill_catalog,

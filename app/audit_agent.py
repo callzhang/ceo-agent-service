@@ -149,6 +149,7 @@ class AuditAgentRunner:
         )
         from app.business_skills import (
             frozen_task_skill_names,
+            frozen_task_skill_hashes,
             render_task_skill_discovery,
         )
         from app.consumer_agent import audit_developer_sections, default_task_skill_catalog
@@ -191,6 +192,9 @@ class AuditAgentRunner:
                 context.task.skill_names,
                 catalog=default_task_skill_catalog(context.task.skill_names),
                 frozen_names=frozen_names,
+                frozen_hashes=frozen_task_skill_hashes(
+                    task.trigger_message_json, context.task.skill_names,
+                ),
             )
             if task_skill_protocol_is_custom and task_skill_protocol:
                 task_skill_text += (

@@ -87,6 +87,8 @@ def test_store_update_preserves_available_sources_and_original_run_snapshot(tmp_
 
     assert context.skill_protocol == render_task_skill_discovery(
         NAMES, catalog=(), frozen_names=NAMES,
+        frozen_hashes={material.name: hashlib.sha256(material.content.encode()).hexdigest()
+                       for material in context.skill_materials},
     )
     assert "Available Task Skill Sources" in context.role_prompt()
     assert "FROZEN BODY" not in context.role_prompt()
@@ -98,6 +100,8 @@ def test_store_update_preserves_available_sources_and_original_run_snapshot(tmp_
             scheduled_prompt=context.role_prompt(), skill_protocol=context.skill_protocol,
             skill_protocol_is_custom=False, skill_names=context.skill_names,
             frozen_skill_names=context.skill_names, skill_catalog=(), continuation=continuation,
+            frozen_skill_hashes={material.name: hashlib.sha256(material.content.encode()).hexdigest()
+                                 for material in context.skill_materials},
         )
         assert assembly.text.count("## Available Task Skill Sources") == 1
         assert assembly.text.count(context.prompt) == 1

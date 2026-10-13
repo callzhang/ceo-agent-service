@@ -411,6 +411,8 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
 
     assert executor.prompts[0].count(saved_task_instruction) == 1
     assert "## Available Task Skill Sources" in executor.prompts[0]
+    import hashlib
+    assert hashlib.sha256(b"FROZEN BODY").hexdigest() in executor.prompts[0]
     assert "Read the applicable sources" in executor.prompts[0]
     assert "ceo-document-review" in executor.prompts[0]
     assert "agent_cli.read_task_skill(name)" in executor.prompts[0]

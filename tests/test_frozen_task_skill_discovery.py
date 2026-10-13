@@ -269,3 +269,27 @@ def test_frozen_sources_are_available_without_requesting_every_workflow():
     for name in names:
         assert rendered.count(f"`{name}`") == 1
     assert "agent_cli.read_task_skill(name)" in rendered
+
+
+def test_source_identity_changes_with_original_frozen_content_and_matches_reader(tmp_path):
+    from app.business_skills import frozen_task_skill_hashes, render_task_skill_discovery
+
+    name = "ceo-calendar-invite"
+    rendered = []
+    for revision in (41, 42):
+        content = f"## Managed Skill: {name}\nrevision_id: {revision}\n\nRULE {revision}"
+        context = _context(ServiceCommandSkillMaterial(name=name, content=content))
+        trigger = json.dumps({"raw_payload": {"scheduled_consumer": context.to_payload()}})
+        path = tmp_path / f"revision-{revision}.sqlite3"
+        _task_db(path, scheduled_consumer=context.to_payload())
+        hashes = frozen_task_skill_hashes(trigger, (name,))
+        for role in ("consumer", "audit"):
+            reader = build_role_server(role, task_id=7, db_path=path,
+                                       execution_generation="first")._tool_manager.get_tool("read_task_skill")
+            assert reader.fn(name)["sha256"] == hashes[name]
+        entry = render_task_skill_discovery((name,), catalog=(), frozen_names=(name,), frozen_hashes=hashes)
+        assert hashes[name] in entry
+        assert f"RULE {revision}" not in entry
+        rendered.append(entry)
+    assert rendered[0] != rendered[1]
+    assert frozen_task_skill_hashes(trigger, ("not-bound",)) == {}

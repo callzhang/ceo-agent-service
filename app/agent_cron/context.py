@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -222,6 +223,8 @@ class ScheduledAgentContextBuilder:
             skill_names=skill_names,
             skill_protocol=render_task_skill_discovery(
                 skill_names, catalog=(), frozen_names=skill_names,
+                frozen_hashes={name: sha256(content.encode("utf-8")).hexdigest()
+                               for name, content in zip(skill_names, protocols, strict=True)},
             ),
             skill_protocol_source="generated_discovery",
             skill_materials=tuple(
@@ -322,6 +325,8 @@ class ScheduledAgentContextBuilder:
             skill_names,
             catalog=(),
             frozen_names=skill_names,
+            frozen_hashes={material.name: sha256(material.content.encode("utf-8")).hexdigest()
+                           for material in skill_materials},
         )
 
         context = AgentTaskContext(
