@@ -23,6 +23,8 @@ def test_current_oa_pending_node_remains_attention_after_comment_done(tmp_path):
     rows = _queue_attention_rows(store)
     assert [(r["category"], r["id"]) for r in rows] == [("OA approval", str(task.id))]
     assert rows[0]["status"] == "pending"
+    assert "OA process remains unresolved" in rows[0]["error"]
+    assert "principal OA node is still pending" not in rows[0]["error"]
     store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T02:00:00Z",
         cursor_json=json.dumps({"pending_business_object_keys": []}), last_error="")
     assert _queue_attention_rows(store) == []
@@ -35,6 +37,8 @@ def test_verified_pending_node_is_visible_before_local_task_is_enqueued(tmp_path
         last_error="")
     rows = _queue_attention_rows(store)
     assert [(row["category"], row["id"]) for row in rows] == [("OA approval", "oa:instance:second")]
+    assert "OA process remains unresolved" in rows[0]["error"]
+    assert "principal OA node" not in rows[0]["error"]
 
 
 def test_scanner_retains_pending_nodes_when_detail_read_fails_after_pending_disappears(tmp_path):

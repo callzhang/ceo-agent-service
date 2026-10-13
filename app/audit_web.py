@@ -3402,7 +3402,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     "summary": str(task["trigger_text"]),
                     "updated_at": str(task["updated_at"]),
                     "error": str(task["error"] or
-                        "Current principal OA node is still pending; no completed approval or return readback."),
+                        "OA process remains unresolved; no final approval or return receipt is recorded."),
                 })
             else:
                 pending_oa_rows.append({
@@ -3410,7 +3410,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     "context": "OA approval", "summary": key,
                     "updated_at": str(state["last_success_at"]),
                     "error": str(state["last_error"] or
-                        "Verified principal OA node is pending and has not entered local processing."),
+                        "OA process remains unresolved; no final approval or return receipt is recorded."),
                 })
         db.create_function(
             "decode_work_summary_payload",

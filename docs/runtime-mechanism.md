@@ -2783,6 +2783,13 @@ echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
 完整十张核心表加迁移表目标仍未完成。此段描述开发候选，上线以正式部署回执为准。
 
+OA approval Attention reflects an unresolved process-level state from the latest
+verified provider scan. A running OA process may have completed the current
+principal's node and moved to another approver; unless the provider detail
+identifies the current node owner, the projection must not claim that the
+principal's node is still pending. Keep the process in Attention until a final
+approval or return receipt is read back.
+
 ### 日历组织者来源字段
 
 日历解析继续生成原有 organizer 显示字符串，同时在 organizer_details 中保留
