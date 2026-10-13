@@ -1,0 +1,2469 @@
+{
+  "version": 1,
+  "code_ref": "67b3c9d8",
+  "status": "prototype_not_release_ready",
+  "scope": "Non-Harmony Responses custom-tool transport. Normal Python import order with only five copied modules overridden in memory; GPU4 installed source hashes unchanged. No model inference, weights load, business callback, provider package edit or reload.",
+  "sources": {
+    "vllm/tool_parsers/utils.py": {
+      "original_sha256": "bd5caa24867098d5883570668766f9abb1d06e6d6ac48ce68d37dcd7a0d727dd",
+      "candidate_sha256": "d58335d25733cf4295db1385040b100f669fb65b4c1a77c1125d7e0283e395ad"
+    },
+    "vllm/tool_parsers/structural_tag_registry.py": {
+      "original_sha256": "be9475e0bbb08de435b13e208278188f65fbb1b72f83e910f18825525fefbf3e",
+      "candidate_sha256": "fb00ca389eb9265c6a719ad1d7c4adba08baeadfff5354637f72b408e07792b0"
+    },
+    "vllm/entrypoints/openai/responses/utils.py": {
+      "original_sha256": "4a07bb382fb22ca79516db24a7269491ac949e1171d059479179ed1407024632",
+      "candidate_sha256": "be82dff814350b708ecb807f1e1bac35e388d3d636e4441d398eaa59e78985e5"
+    },
+    "vllm/entrypoints/openai/responses/streaming_events.py": {
+      "original_sha256": "f2681d82bdb1d041b3d78535db90b556d29c6474f790b783079c7ea156319017",
+      "candidate_sha256": "17733c91dad2e60325c75fa75a6e9784018033af2b4cce574dcebb2241eba98a"
+    },
+    "vllm/entrypoints/openai/responses/protocol.py": {
+      "original_sha256": "d0d4f4b4776c40ad9744e08ffb9135e1b26af696b7ffb6a5ee3e3a60a1be2c90",
+      "candidate_sha256": "7d5472ee808137cc4de89b9ec14217588d205eb7e728f6e6673ecd980ecb8ecf"
+    }
+  },
+  "patch_sha256": "b061d5a42e7f10a474b600aac3ae8f2d5772724dcff4d6b275134f0d78f26d97",
+  "grammar_fixture": {
+    "tools": [
+      {
+        "type": "custom",
+        "name": "exec",
+        "description": "Run JavaScript code to orchestrate/compose tool calls\n- Evaluates the provided JavaScript code in a fresh V8 isolate as an async module.\n- All nested tools are available on the global `tools` object, for example `await tools.exec_command(...)`. Tool names are exposed as normalized JavaScript identifiers, for example `await tools.mcp__ologs__get_profile(...)`.\n- Nested tool methods take either a string or an object as their input argument.\n- Nested tools return either an object or a string, based on the description.\n- Runs raw JavaScript -- no Node, no file system, no network access, no console.\n- Accepts raw JavaScript source text, not JSON, quoted strings, or markdown code fences.\n- You may optionally start the tool input with a first-line pragma like `// @exec: {\"yield_time_ms\": 10000, \"max_output_tokens\": 1000}`.\n- `yield_time_ms` asks `exec` to yield early if the script is still running. Defaults to 30000 ms.\n- `max_output_tokens` sets the token budget for direct `exec` results. Defaults to 10000 tokens.\n- When the JS code is fully evaluated, the isolate's lifetime ends and unawaited promises are silently discarded.\n\n- Global helpers:\n- `exit()`: Immediately ends the current script successfully (like an early return from the top level).\n- `text(value: string | number | boolean | undefined | null)`: Appends a text item. Non-string values are stringified with `JSON.stringify(...)` when possible.\n- `image(imageUrlOrItem: string | { image_url: string; detail?: \"auto\" | \"low\" | \"high\" | \"original\" | null } | ImageContent, detail?: \"auto\" | \"low\" | \"high\" | \"original\" | null)`: Appends an image item. `image_url` should be a base64-encoded `data:` URL. To forward an MCP tool image, pass an individual `ImageContent` block from `result.content`, for example `image(result.content[0])`. MCP image blocks may request detail with `_meta: { \"codex/imageDetail\": \"original\" }`. When provided, the second `detail` argument overrides any detail embedded in the first argument.\n- `audio(audioUrlOrItem: string | { audio_url: string } | AudioContent)`: Appends an audio item. `audio_url` should be a base64-encoded `data:` URL. To forward an MCP tool audio block, pass an individual `AudioContent` block from `result.content`, for example `audio(result.content[0])`.\n- `generatedImage(result: { image_url: string; output_hint?: string })`: Appends an image-generation result and its optional output hint. HTTP(S) URLs are not supported.\n- `store(key: string, value: any)`: stores a serializable value under a string key for later `exec` calls in the same session.\n- `load(key: string)`: returns the stored value for a string key, or `undefined` if it is missing.\n- `notify(value: string | number | boolean | undefined | null)`: immediately injects an extra `custom_tool_call_output` for the current `exec` call. Values are stringified like `text(...)`.\n- `setTimeout(callback: () => void, delayMs?: number)`: schedules a callback to run later and returns a timeout id. Pending timeouts do not keep `exec` alive by themselves; await an explicit promise if you need to wait for one.\n- `clearTimeout(timeoutId?: number)`: cancels a timeout created by `setTimeout`.\n- `ALL_TOOLS`: metadata for the enabled nested tools as `{ name, description }` entries.\n- `yield_control()`: yields the accumulated output to the model immediately while the script keeps running.\n\n### `exec_command`\nRuns a command in a PTY, returning output or a session ID for ongoing interaction.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: {\n  // Shell command to execute.\n  cmd: string;\n  // User-facing approval question for `require_escalated`; omit otherwise.\n  justification?: string;\n  // True runs the shell with -l/-i semantics; false disables them. Defaults to true.\n  login?: boolean;\n  // Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.\n  max_output_tokens?: number;\n  // Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].\n  prefix_rule?: Array<string>;\n  // Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.\n  sandbox_permissions?: \"use_default\" | \"require_escalated\";\n  // Shell binary to launch. Defaults to the user's default shell.\n  shell?: string;\n  // Working directory for the command. Defaults to the turn cwd.\n  workdir?: string;\n  // Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms.\n  yield_time_ms?: number;\n}): Promise<{\n  // Chunk identifier included when the response reports one.\n  chunk_id?: string;\n  // Process exit code when the command finished during this call.\n  exit_code?: number;\n  // Approximate token count before output truncation.\n  original_token_count?: number;\n  // Command output text, possibly truncated.\n  output: string;\n  // Session identifier to pass to write_stdin when the process is still running.\n  session_id?: number;\n  // Elapsed wall time spent waiting for output in seconds.\n  wall_time_seconds: number;\n}>; };\n```\n\n### `list_mcp_resource_templates`\nLists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.\n\nexec tool declaration:\n```ts\ndeclare const tools: { list_mcp_resource_templates(args: {\n  // Opaque cursor from a previous list_mcp_resource_templates call; omit for the first page.\n  cursor?: string;\n  // MCP server name. Omit to list resource templates from every configured server.\n  server?: string;\n}): Promise<unknown>; };\n```\n\n### `list_mcp_resources`\nLists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.\n\nexec tool declaration:\n```ts\ndeclare const tools: { list_mcp_resources(args: {\n  // Opaque cursor from a previous list_mcp_resources call; omit for the first page.\n  cursor?: string;\n  // MCP server name. Omit to list resources from every configured server.\n  server?: string;\n}): Promise<unknown>; };\n```\n\n### `read_mcp_resource`\nRead a specific resource from an MCP server given the server name and resource URI.\n\nexec tool declaration:\n```ts\ndeclare const tools: { read_mcp_resource(args: {\n  // MCP server name exactly as configured. Must match the 'server' field returned by list_mcp_resources.\n  server: string;\n  // Resource URI to read. Must be one of the URIs returned by list_mcp_resources.\n  uri: string;\n}): Promise<unknown>; };\n```\n\n### `view_image`\nView a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: {\n  // Local filesystem path to an image file.\n  path: string;\n}): Promise<{\n  // Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved.\n  detail: \"high\" | \"original\";\n  // Data URL for the loaded image.\n  image_url: string;\n}>; };\n```\n\n### `write_stdin`\nWrites characters to an existing unified exec session and returns recent output.\n\nexec tool declaration:\n```ts\ndeclare const tools: { write_stdin(args: {\n  // Bytes to write to stdin. Defaults to empty, which polls without writing.\n  chars?: string;\n  // Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.\n  max_output_tokens?: number;\n  // Identifier of the running unified exec session.\n  session_id: number;\n  // Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default.\n  yield_time_ms?: number;\n}): Promise<{\n  // Chunk identifier included when the response reports one.\n  chunk_id?: string;\n  // Process exit code when the command finished during this call.\n  exit_code?: number;\n  // Approximate token count before output truncation.\n  original_token_count?: number;\n  // Command output text, possibly truncated.\n  output: string;\n  // Session identifier to pass to write_stdin when the process is still running.\n  session_id?: number;\n  // Elapsed wall time spent waiting for output in seconds.\n  wall_time_seconds: number;\n}>; };\n```",
+        "format": {
+          "type": "grammar",
+          "syntax": "lark",
+          "definition": "\nstart: pragma_source | plain_source\npragma_source: PRAGMA_LINE NEWLINE SOURCE\nplain_source: SOURCE\n\nPRAGMA_LINE: /[ \\t]*\\/\\/ @exec:[^\\r\\n]*/\nNEWLINE: /\\r?\\n/\nSOURCE: /[\\s\\S]+/\n"
+        }
+      },
+      {
+        "type": "function",
+        "name": "wait",
+        "description": "Waits on a yielded `exec` cell and returns new output or completion.\n- Use `wait` only after `exec` returns `Script running with cell ID ...`.\n- `cell_id` identifies the running `exec` cell to resume.\n- `yield_time_ms` controls how long to wait for more output before yielding again. Defaults to 10000 ms.\n- `max_tokens` limits how much new output this wait call returns. Defaults to 10000 tokens.\n- `terminate: true` stops the running cell; false or omitted waits for output.\n- `wait` returns only the new output since the last yield, or the final completion or termination result for that cell.\n- If the cell is still running, `wait` may yield again with the same `cell_id`.\n- If the cell has already finished, `wait` returns the completed result and closes the cell.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cell_id": {
+              "type": "string",
+              "description": "Identifier of the running exec cell."
+            },
+            "max_tokens": {
+              "type": "number",
+              "description": "Output token budget for this wait call. Defaults to 10000 tokens."
+            },
+            "terminate": {
+              "type": "boolean",
+              "description": "True stops the running exec cell; false or omitted waits for output."
+            },
+            "yield_time_ms": {
+              "type": "number",
+              "description": "Wait before yielding more output. Defaults to 10000 ms."
+            }
+          },
+          "required": [
+            "cell_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "request_user_input",
+        "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "questions": {
+              "type": "array",
+              "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "header": {
+                    "type": "string",
+                    "description": "Short header label shown in the UI (12 or fewer chars)."
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "Stable identifier for mapping answers (snake_case)."
+                  },
+                  "options": {
+                    "type": "array",
+                    "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "description": {
+                          "type": "string",
+                          "description": "One short sentence explaining impact/tradeoff if selected."
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "User-facing label (1-5 words)."
+                        }
+                      },
+                      "required": [
+                        "label",
+                        "description"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "question": {
+                    "type": "string",
+                    "description": "Single-sentence prompt shown to the user."
+                  }
+                },
+                "required": [
+                  "id",
+                  "header",
+                  "question",
+                  "options"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "questions"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "namespace",
+        "name": "mcp__agent_cli",
+        "description": "Task-bound Agent reads and Consumer report documents",
+        "tools": [
+          {
+            "type": "function",
+            "name": "consumer_artifact_write",
+            "description": "Write a text artifact only in this task's current workspace generation.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "content"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "consumer_document_write",
+            "description": "Publish this scheduled CEO report to its service-resolved document.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "expected_revision": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "content"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "daily_report_facts",
+            "description": "Read the fixed service facts for this scheduled daily report.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_dingtalk_calendar_events",
+            "description": "Read the principal's events over an explicit time window.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "end": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_dingtalk_minutes",
+            "description": "Search accessible AI minutes by title or time range.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "end": {
+                  "type": "string"
+                },
+                "query": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_dingtalk_pending_oa",
+            "description": "Read one unfiltered page of the principal's live OA pending list.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "page": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_dingtalk_sheets",
+            "description": "List workbook sheets by stable sheet ID.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_task_artifacts",
+            "description": "List text artifacts from this task's current execution generation.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_calendar_event",
+            "description": "Read one live DingTalk calendar event.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "event_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "event_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_document",
+            "description": "Read a DingTalk document and its current content.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_document_full",
+            "description": "Read a DingTalk document's full JSONML and editing revision.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_document_info",
+            "description": "Read an exact document node's title, type, and owner metadata.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_document_permissions",
+            "description": "Read an exact document's current collaborators and roles.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_drive_file",
+            "description": "Read the body of one exact DingTalk Drive attachment for OA review.\n\n        Use after drive metadata identifies an accessible attachment node. Returns\n        bounded PDF, workbook, presentation, or text contents. Scanned PDFs set\n        ocr_required and include a temporary path; only send that material to OCR\n        when the current run authorizes the OCR destination. A technical read\n        failure does not mean the applicant omitted the material.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "file_name": {
+                  "type": "string"
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "space_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id",
+                "space_id",
+                "file_name"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_drive_info",
+            "description": "Read an exact drive file's metadata before deciding how to open it.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                },
+                "space_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_group_members",
+            "description": "Read the complete bounded users/bots roster for an exact group ID.\n\n        Check complete, hasMore, buckets and failures. Partial results are not\n        a complete audience. openDingtalkId is not an organization userId;\n        correlate stable identifiers before reading enterprise profiles.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "conversation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "conversation_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_messages",
+            "description": "Read recent messages of an identified DingTalk conversation.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "conversation_id": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer"
+                },
+                "single_chat": {
+                  "type": "boolean"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "conversation_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_messages_in_window",
+            "description": "Read one identified group's messages over the report window.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "conversation_id": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "conversation_id",
+                "start",
+                "end"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_minutes",
+            "description": "Read AI minutes details, summary, and the complete transcript.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "task_uuid": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "task_uuid"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_oa",
+            "description": "Read the live DingTalk OA process and its current facts.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "process_instance_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_oa_records",
+            "description": "Read one OA process's recorded actions.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "process_instance_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_oa_revert_activities",
+            "description": "Read legal return destinations for one exact OA task.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "oa_task_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "oa_task_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_oa_tasks",
+            "description": "Read one OA process's current tasks and owners.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "process_instance_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_sheet_info",
+            "description": "Read one sheet's bounds and merged-cell metadata.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                },
+                "sheet_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id",
+                "sheet_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_sheet_range",
+            "description": "Read an explicit A1 workbook range, bounded by the DWS read API.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "cell_range": {
+                  "type": "string"
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "sheet_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id",
+                "sheet_id",
+                "cell_range"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_thread_replies",
+            "description": "Read the full bounded reply thread for one exact root message.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "message_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_user_profiles",
+            "description": "Read exact organization userId profiles and original organization fields.\n\n        Supply verified organization userIds, not display names or group\n        openDingtalkIds. Preserve empty profiles as missing evidence; a native\n        success flag does not prove identity or title. Preserve native depts,\n        labels and manager fields; verify title evidence from actual returned\n        data rather than assuming every profile contains a title.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "user_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "user_ids"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_skill",
+            "description": "Read an installed Agent skill or its referenced Markdown safely.\n\n    With no source, return body-free name/use/path TSV with exact root aliases. Otherwise\n    pass exactly one source. `path` identifies a Markdown file inside an\n    installed Skill directory. `name` resolves one exact installed Skill's\n    metadata name and reads its SKILL.md through the same path authorization.\n    ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "path": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_spreadsheet",
+            "description": "Read a bounded preview of a downloaded xlsx workbook without shell access.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "max_columns": {
+                  "type": "integer"
+                },
+                "max_rows": {
+                  "type": "integer"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_system_action_contract",
+            "description": "Read canonical shared rules and the requested reviewed system action rows.\n\n        Pass a capability from the prompt catalog and optionally one of its\n        operations. The result retains every shared, role, identity, payload,\n        target, and completion-evidence rule from the canonical contract.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "capability": {
+                  "type": "string"
+                },
+                "operation": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "capability"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_task_artifact",
+            "description": "Read a text artifact from this task's current execution generation.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_task_skill",
+            "description": "Read an exact selected Skill frozen in this task's original input.\n\n        Pass a Skill name from the scheduled prompt catalog. The returned content\n        is the immutable managed revision or operation snapshot saved when the\n        scheduled command ran; this lookup never rereads an installed Skill file.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_text_file",
+            "description": "Read bounded text, PDF, workbook, or presentation material from the temp directory.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_weekly_report_archive",
+            "description": "Read one transcript named in this run's meeting archive index.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "recent_dingtalk_conversations",
+            "description": "List conversations active in a bounded report time window.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "end": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "render_weekly_report",
+            "description": "Render and validate weekly report JSONML and its full draft.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "before": {
+                  "type": "array",
+                  "items": {}
+                },
+                "report": {
+                  "$ref": "#/$defs/WeeklyReport"
+                }
+              },
+              "required": [
+                "report",
+                "before"
+              ],
+              "$defs": {
+                "BusinessLineReport": {
+                  "type": "object",
+                  "properties": {
+                    "core_metrics": {},
+                    "full_report_jsonml": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {}
+                      }
+                    },
+                    "largest_risk": {},
+                    "management_decision": {},
+                    "metrics": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                      }
+                    },
+                    "milestone_deviation": {},
+                    "milestones": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                      }
+                    },
+                    "summary": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportClaim": {
+                  "type": "object",
+                  "properties": {
+                    "counterevidence": {},
+                    "evidence": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/ReportEvidence"
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "type": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportEvidence": {
+                  "type": "object",
+                  "properties": {
+                    "source_id": {},
+                    "source_kind": {},
+                    "speaker_is_derek": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportIssue": {
+                  "type": "object",
+                  "properties": {
+                    "as_of": {},
+                    "closure_evidence": {},
+                    "deadline": {},
+                    "id": {
+                      "type": "string"
+                    },
+                    "management_decision": {},
+                    "severity": {},
+                    "status": {},
+                    "weeks_without_evidence": {},
+                    "weeks_without_gate_movement": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportJudgment": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "ReportMetric": {
+                  "type": "object",
+                  "properties": {
+                    "change": {},
+                    "current": {},
+                    "data_date": {},
+                    "decision_critical": {},
+                    "definition": {},
+                    "key": {},
+                    "next_checkpoint": {},
+                    "previous": {},
+                    "responsible_name": {},
+                    "responsible_user_id": {},
+                    "source": {},
+                    "status": {},
+                    "target": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportRootCause": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "WeeklyReport": {
+                  "type": "object",
+                  "properties": {
+                    "as_of": {},
+                    "business_lines": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": {
+                        "$ref": "#/$defs/BusinessLineReport"
+                      }
+                    },
+                    "ceo_judgment": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportJudgment"
+                      }
+                    },
+                    "claims": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportClaim"
+                      }
+                    },
+                    "cockpit": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "company_metrics": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportMetric"
+                      }
+                    },
+                    "discussion": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportIssue"
+                      }
+                    },
+                    "private": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": true
+                    },
+                    "root_causes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportRootCause"
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "search_dingtalk_contacts",
+            "description": "Find current organization users by name or stable identifier.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "search_dingtalk_conversations",
+            "description": "Find an existing DingTalk conversation by title.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "search_dingtalk_documents",
+            "description": "Find DingTalk documents by title before reading an exact node.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "page_size": {
+                  "type": "integer"
+                },
+                "query": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "search_dingtalk_messages",
+            "description": "Search messages by exact keyword in an explicit time window.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "end": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer"
+                },
+                "query": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query",
+                "start",
+                "end"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "validate_weekly_report",
+            "description": "Validate a scheduled CEO weekly report using its installed Skill.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "manifest": {
+                  "$ref": "#/$defs/WeeklyReportManifest"
+                },
+                "previous_issues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                  }
+                },
+                "report": {
+                  "$ref": "#/$defs/WeeklyReport"
+                }
+              },
+              "required": [
+                "manifest",
+                "report",
+                "previous_issues"
+              ],
+              "$defs": {
+                "BusinessLineReport": {
+                  "type": "object",
+                  "properties": {
+                    "core_metrics": {},
+                    "full_report_jsonml": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {}
+                      }
+                    },
+                    "largest_risk": {},
+                    "management_decision": {},
+                    "metrics": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                      }
+                    },
+                    "milestone_deviation": {},
+                    "milestones": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                      }
+                    },
+                    "summary": {}
+                  },
+                  "additionalProperties": true
+                },
+                "MessagesCoverage": {
+                  "type": "object",
+                  "properties": {
+                    "context_read_ids": {
+                      "type": "array",
+                      "items": {}
+                    },
+                    "inventory_complete": {},
+                    "selected_ids": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "MinutesCoverage": {
+                  "type": "object",
+                  "properties": {
+                    "full_transcript_ids": {
+                      "type": "array",
+                      "items": {}
+                    },
+                    "inventory_complete": {},
+                    "relevant_ids": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "ReportClaim": {
+                  "type": "object",
+                  "properties": {
+                    "counterevidence": {},
+                    "evidence": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/ReportEvidence"
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "type": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportDocumentIdentity": {
+                  "type": "object",
+                  "properties": {
+                    "node_id": {},
+                    "revision": {},
+                    "title": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportEvidence": {
+                  "type": "object",
+                  "properties": {
+                    "source_id": {},
+                    "source_kind": {},
+                    "speaker_is_derek": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportIssue": {
+                  "type": "object",
+                  "properties": {
+                    "as_of": {},
+                    "closure_evidence": {},
+                    "deadline": {},
+                    "id": {
+                      "type": "string"
+                    },
+                    "management_decision": {},
+                    "severity": {},
+                    "status": {},
+                    "weeks_without_evidence": {},
+                    "weeks_without_gate_movement": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportJudgment": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "ReportMetric": {
+                  "type": "object",
+                  "properties": {
+                    "change": {},
+                    "current": {},
+                    "data_date": {},
+                    "decision_critical": {},
+                    "definition": {},
+                    "key": {},
+                    "next_checkpoint": {},
+                    "previous": {},
+                    "responsible_name": {},
+                    "responsible_user_id": {},
+                    "source": {},
+                    "status": {},
+                    "target": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportRootCause": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "WeeklyReport": {
+                  "type": "object",
+                  "properties": {
+                    "as_of": {},
+                    "business_lines": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": {
+                        "$ref": "#/$defs/BusinessLineReport"
+                      }
+                    },
+                    "ceo_judgment": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportJudgment"
+                      }
+                    },
+                    "claims": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportClaim"
+                      }
+                    },
+                    "cockpit": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "company_metrics": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportMetric"
+                      }
+                    },
+                    "discussion": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportIssue"
+                      }
+                    },
+                    "private": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": true
+                    },
+                    "root_causes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportRootCause"
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "WeeklyReportManifest": {
+                  "type": "object",
+                  "properties": {
+                    "business_reports": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": true
+                    },
+                    "messages": {
+                      "$ref": "#/$defs/MessagesCoverage"
+                    },
+                    "minutes": {
+                      "$ref": "#/$defs/MinutesCoverage"
+                    },
+                    "previous": {
+                      "$ref": "#/$defs/ReportDocumentIdentity"
+                    },
+                    "target": {
+                      "$ref": "#/$defs/ReportDocumentIdentity"
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "weekly_report_materials",
+            "description": "Read the fixed inputs for this scheduled CEO weekly report.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        ]
+      },
+      {
+        "type": "web_search",
+        "external_web_access": false
+      }
+    ],
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_retryable": {
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "type": "boolean"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rule_coverage": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "information_completeness": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "durable_memories": {
+          "description": "Before you finish, check whether this turn confirmed anything durable: a person's preference, a decision that was made, a reusable rule or convention, an accepted project rule, a stable business fact, long-term context, or the explicit next step of unfinished work. If it did, list each one as its own item here. Skip temporary tasks, logs, code, one-off errors, unconfirmed guesses, sensitive original text, secrets or tokens, unauthorized document content, and anything already in Memory. An empty list is the right answer when nothing durable came up this turn -- but check every turn, don't default to empty.",
+          "items": {
+            "$ref": "#/$defs/DurableMemory"
+          },
+          "type": "array"
+        },
+        "outcome": {
+          "enum": [
+            "proposal",
+            "needs_human",
+            "no_action",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsumerProposal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision_options": {
+          "items": {
+            "$ref": "#/$defs/DecisionOption"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "requested_input": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "needs_human_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision_basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DecisionBasis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage_index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "predecessor_review_id": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "continue_after_execution": {
+          "type": "boolean"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "risk",
+        "confidence",
+        "rule_coverage",
+        "information_completeness",
+        "durable_memories",
+        "outcome",
+        "proposal",
+        "decision_options",
+        "requested_input",
+        "needs_human_reason",
+        "decision_basis",
+        "stage_index",
+        "predecessor_review_id",
+        "continue_after_execution",
+        "summary"
+      ],
+      "type": "object",
+      "$defs": {
+        "ConsumerProposal": {
+          "additionalProperties": false,
+          "properties": {
+            "objective": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "sourced_facts": {
+              "items": {
+                "$ref": "#/$defs/ProposalFact"
+              },
+              "type": "array"
+            },
+            "authored_judgment": {
+              "type": "string"
+            },
+            "actions": {
+              "items": {
+                "$ref": "#/$defs/ProposedAction"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "objective",
+            "sourced_facts",
+            "authored_judgment",
+            "actions"
+          ],
+          "type": "object"
+        },
+        "DecisionBasis": {
+          "additionalProperties": false,
+          "description": "The compact evidence chain a person needs to assess an escalation.",
+          "properties": {
+            "verified_facts": {
+              "items": {
+                "$ref": "#/$defs/ProposalFact"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "rule_evidence": {
+              "items": {
+                "$ref": "#/$defs/ProposalFact"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "quality_explanation": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "no_external_action_evidence": {
+              "items": {
+                "$ref": "#/$defs/ProposalFact"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "conclusion": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "verified_facts",
+            "rule_evidence",
+            "quality_explanation",
+            "no_external_action_evidence",
+            "conclusion"
+          ],
+          "type": "object"
+        },
+        "DecisionOption": {
+          "additionalProperties": false,
+          "description": "One bound choice for the current business instance.",
+          "properties": {
+            "key": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "label": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "instruction": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "consequence": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "plan": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ConsumerProposal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "terminal_outcome": {
+              "anyOf": [
+                {
+                  "const": "skipped",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "key",
+            "label",
+            "instruction",
+            "consequence",
+            "plan",
+            "terminal_outcome",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "DurableMemory": {
+          "additionalProperties": false,
+          "description": "Only information this turn confirmed that should outlive it: a person's preference, a decision that was made, a reusable rule or convention, a stable business fact, or the explicit next step of unfinished work. Never temporary tasks, logs, code, one-off errors, unconfirmed guesses, sensitive original text, secrets or tokens, unauthorized document content, or anything already in Memory. Name people by name, never 'the user'.",
+          "properties": {
+            "title": {
+              "description": "One-line title.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "content": {
+              "description": "One to three sentences of plain language about one thing.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "source_time": {
+              "description": "ISO-8601 time the information arose in its source (the message, meeting or document), not the time of this turn.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "source_refs": {
+              "description": "Where it came from: message ids, document links, approval ids.",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "subject": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DurableMemorySubject"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The main person, project, customer or organization."
+            }
+          },
+          "required": [
+            "title",
+            "content",
+            "source_time",
+            "source_refs",
+            "subject"
+          ],
+          "type": "object"
+        },
+        "DurableMemorySubject": {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "Person",
+                "Project",
+                "Customer",
+                "Organization"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name"
+          ],
+          "type": "object"
+        },
+        "JsonValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            {
+              "type": "object",
+              "properties": {
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "$ref": "#/$defs/JsonValue"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "entries"
+              ],
+              "additionalProperties": false,
+              "description": "Lossless JSON object: entries contains each original key and its value. Nested JSON objects use the same representation."
+            }
+          ]
+        },
+        "ProposalFact": {
+          "additionalProperties": false,
+          "properties": {
+            "assertion": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "references": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "assertion",
+            "references"
+          ],
+          "type": "object"
+        },
+        "ProposedAction": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "action_identity": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "capability": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "operation": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "$ref": "#/$defs/JsonValue"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1
+                }
+              },
+              "required": [
+                "entries"
+              ],
+              "additionalProperties": false,
+              "description": "Lossless JSON object: entries contains each original key and its value. Nested JSON objects use the same representation."
+            },
+            "payload": {
+              "type": "object",
+              "properties": {
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "$ref": "#/$defs/JsonValue"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "entries"
+              ],
+              "additionalProperties": false,
+              "description": "Lossless JSON object: entries contains each original key and its value. Nested JSON objects use the same representation."
+            },
+            "effect": {
+              "description": "external when performing this action changes something outside the service and a provider must accept it; none when it changes nothing -- a verification, or a state already in place. An action that carries a message body is always external.",
+              "enum": [
+                "external",
+                "none"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "action_identity",
+            "capability",
+            "operation",
+            "target",
+            "payload",
+            "effect"
+          ],
+          "type": "object"
+        },
+        "RiskLevel": {
+          "description": "Estimated consequence if the proposed result is acted on incorrectly.",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "type": "string"
+        },
+        "_ConsumerWire": {
+          "additionalProperties": false,
+          "properties": {
+            "error_code": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_retryable": {
+              "type": "boolean"
+            },
+            "error_authorization_required": {
+              "type": "boolean"
+            },
+            "risk": {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            "confidence": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "rule_coverage": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "information_completeness": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "durable_memories": {
+              "description": "Before you finish, check whether this turn confirmed anything durable: a person's preference, a decision that was made, a reusable rule or convention, an accepted project rule, a stable business fact, long-term context, or the explicit next step of unfinished work. If it did, list each one as its own item here. Skip temporary tasks, logs, code, one-off errors, unconfirmed guesses, sensitive original text, secrets or tokens, unauthorized document content, and anything already in Memory. An empty list is the right answer when nothing durable came up this turn -- but check every turn, don't default to empty.",
+              "items": {
+                "$ref": "#/$defs/DurableMemory"
+              },
+              "type": "array"
+            },
+            "outcome": {
+              "enum": [
+                "proposal",
+                "needs_human",
+                "no_action",
+                "failed"
+              ],
+              "type": "string"
+            },
+            "proposal": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ConsumerProposal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 4,
+              "type": "array"
+            },
+            "requested_input": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "needs_human_reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "decision_basis": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DecisionBasis"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stage_index": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "predecessor_review_id": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "continue_after_execution": {
+              "type": "boolean"
+            },
+            "summary": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "error_code",
+            "error_retryable",
+            "error_authorization_required",
+            "risk",
+            "confidence",
+            "rule_coverage",
+            "information_completeness",
+            "durable_memories",
+            "outcome",
+            "proposal",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis",
+            "stage_index",
+            "predecessor_review_id",
+            "continue_after_execution",
+            "summary"
+          ],
+          "type": "object"
+        }
+      }
+    },
+    "result": {
+      "summary": "Anonymous grammar control",
+      "error_code": null,
+      "error_retryable": false,
+      "error_authorization_required": false,
+      "risk": "low",
+      "confidence": 1.0,
+      "rule_coverage": 1.0,
+      "information_completeness": 1.0,
+      "durable_memories": [],
+      "outcome": "no_action",
+      "proposal": null,
+      "decision_options": [],
+      "requested_input": null,
+      "needs_human_reason": null,
+      "decision_basis": null,
+      "stage_index": 0,
+      "predecessor_review_id": null,
+      "continue_after_execution": false
+    }
+  },
+  "checks": {
+    "original": {
+      "transport_log": "test_custom_grammar_and_input_shape (__main__.Transport.test_custom_grammar_and_input_shape) ... \n  test_custom_grammar_and_input_shape (__main__.Transport.test_custom_grammar_and_input_shape) (value={'input': 'wrong'}) ... FAIL\n  test_custom_grammar_and_input_shape (__main__.Transport.test_custom_grammar_and_input_shape) (value={'input': 42}) ... FAIL\n  test_custom_grammar_and_input_shape (__main__.Transport.test_custom_grammar_and_input_shape) (value={'input': 'OK', 'extra': 1}) ... FAIL\ntest_declarations (__main__.Transport.test_declarations) ... FAIL\ntest_function_stream_unchanged (__main__.Transport.test_function_stream_unchanged) ... ok\ntest_function_unchanged (__main__.Transport.test_function_unchanged) ... ok\ntest_history_object_and_dict (__main__.Transport.test_history_object_and_dict) ... \n  test_history_object_and_dict (__main__.Transport.test_history_object_and_dict) (kind='ResponseCustomToolCall') ... ERROR\n  test_history_object_and_dict (__main__.Transport.test_history_object_and_dict) (kind='dict') ... ERROR\ntest_lookup_and_required_forced_choices (__main__.Transport.test_lookup_and_required_forced_choices) ... FAIL\ntest_multiple_stream_call_identity_and_order (__main__.Transport.test_multiple_stream_call_identity_and_order) ... FAIL\ntest_nonstream_plain_and_namespace (__main__.Transport.test_nonstream_plain_and_namespace) ... \n  test_nonstream_plain_and_namespace (__main__.Transport.test_nonstream_plain_and_namespace) (name='arbitrary_code') ... FAIL\n  test_nonstream_plain_and_namespace (__main__.Transport.test_nonstream_plain_and_namespace) (name='arbitrary_namespace__another_code') ... FAIL\ntest_regex_grammar (__main__.Transport.test_regex_grammar) ... ERROR\ntest_required_and_forced_structural_tag (__main__.Transport.test_required_and_forced_structural_tag) ... FAIL\ntest_stored_previous_response_custom_call (__main__.Transport.test_stored_previous_response_custom_call) ... FAIL\ntest_stream_one_character_chunks (__main__.Transport.test_stream_one_character_chunks) ... \n  test_stream_one_character_chunks (__main__.Transport.test_stream_one_character_chunks) (name='arbitrary_code') ... FAIL\n  test_stream_one_character_chunks (__main__.Transport.test_stream_one_character_chunks) (name='arbitrary_namespace__another_code') ... FAIL\n\n======================================================================\nERROR: test_history_object_and_dict (__main__.Transport.test_history_object_and_dict) (kind='ResponseCustomToolCall')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 138, in test_history_object_and_dict\n  File \"anonymous-offline-source:vllm.entrypoints.openai.responses.utils\", line 215, in construct_chat_messages_with_tool_call\n  File \"anonymous-offline-source:vllm.entrypoints.openai.responses.utils\", line 233, in _construct_message_from_response_item\n  File \"/home/derek/.local/lib/python3.12/site-packages/pydantic/main.py\", line 1042, in __getattr__\n    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')\nAttributeError: 'ResponseCustomToolCall' object has no attribute 'get'\n\n======================================================================\nERROR: test_history_object_and_dict (__main__.Transport.test_history_object_and_dict) (kind='dict')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 150, in test_history_object_and_dict\nKeyError: 'tool_calls'\n\n======================================================================\nERROR: test_regex_grammar (__main__.Transport.test_regex_grammar)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 262, in test_regex_grammar\n  File \"/home/derek/.local/lib/python3.12/site-packages/pydantic/main.py\", line 1042, in __getattr__\n    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')\nAttributeError: 'ResponseFunctionToolCall' object has no attribute 'input'\n\n======================================================================\nFAIL: test_custom_grammar_and_input_shape (__main__.Transport.test_custom_grammar_and_input_shape) (value={'input': 'wrong'})\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 208, in test_custom_grammar_and_input_shape\nAssertionError: (<class 'ValueError'>, <class 'lark.exceptions.LarkError'>) not raised\n\n======================================================================\nFAIL: test_custom_grammar_and_input_shape (__main__.Transport.test_custom_grammar_and_input_shape) (value={'input': 42})\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 208, in test_custom_grammar_and_input_shape\nAssertionError: (<class 'ValueError'>, <class 'lark.exceptions.LarkError'>) not raised\n\n======================================================================\nFAIL: test_custom_grammar_and_input_shape (__main__.Transport.test_custom_grammar_and_input_shape) (value={'input': 'OK', 'extra': 1})\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 208, in test_custom_grammar_and_input_shape\nAssertionError: (<class 'ValueError'>, <class 'lark.exceptions.LarkError'>) not raised\n\n======================================================================\nFAIL: test_declarations (__main__.Transport.test_declarations)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 66, in test_declarations\nAssertionError: Lists differ: ['ordinary_read', 'arbitrary_namespace__read'] != ['arbitrary_code', 'ordinary_read', 'arbitr[53 chars]ead']\n\nFirst differing element 0:\n'ordinary_read'\n'arbitrary_code'\n\nSecond list contains 2 additional elements.\nFirst extra element 2:\n'arbitrary_namespace__another_code'\n\n+ ['arbitrary_code',\n+  'ordinary_read',\n+  'arbitrary_namespace__another_code',\n- ['ordinary_read', 'arbitrary_namespace__read']\n? -----------------\n\n+  'arbitrary_namespace__read']\n\n======================================================================\nFAIL: test_lookup_and_required_forced_choices (__main__.Transport.test_lookup_and_required_forced_choices)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 305, in test_lookup_and_required_forced_choices\nAssertionError: False is not true\n\n======================================================================\nFAIL: test_multiple_stream_call_identity_and_order (__main__.Transport.test_multiple_stream_call_identity_and_order)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 364, in test_multiple_stream_call_identity_and_order\nAssertionError: Lists differ: ['function_call', 'function_call', 'function_call'] != ['custom_tool_call', 'function_call', 'custom_tool_call']\n\nFirst differing element 0:\n'function_call'\n'custom_tool_call'\n\n- ['function_call', 'function_call', 'function_call']\n+ ['custom_tool_call', 'function_call', 'custom_tool_call']\n\n======================================================================\nFAIL: test_nonstream_plain_and_namespace (__main__.Transport.test_nonstream_plain_and_namespace) (name='arbitrary_code')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 105, in test_nonstream_plain_and_namespace\nAssertionError: 'function_call' != 'custom_tool_call'\n- function_call\n+ custom_tool_call\n\n\n======================================================================\nFAIL: test_nonstream_plain_and_namespace (__main__.Transport.test_nonstream_plain_and_namespace) (name='arbitrary_namespace__another_code')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 105, in test_nonstream_plain_and_namespace\nAssertionError: 'function_call' != 'custom_tool_call'\n- function_call\n+ custom_tool_call\n\n\n======================================================================\nFAIL: test_required_and_forced_structural_tag (__main__.Transport.test_required_and_forced_structural_tag)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 403, in test_required_and_forced_structural_tag\nAssertionError: False is not true\n\n======================================================================\nFAIL: test_stored_previous_response_custom_call (__main__.Transport.test_stored_previous_response_custom_call)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 296, in test_stored_previous_response_custom_call\nAssertionError: 2 != 3\n\n======================================================================\nFAIL: test_stream_one_character_chunks (__main__.Transport.test_stream_one_character_chunks) (name='arbitrary_code')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 182, in test_stream_one_character_chunks\nAssertionError: 'function_call' != 'custom_tool_call'\n- function_call\n+ custom_tool_call\n\n\n======================================================================\nFAIL: test_stream_one_character_chunks (__main__.Transport.test_stream_one_character_chunks) (name='arbitrary_namespace__another_code')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 182, in test_stream_one_character_chunks\nAssertionError: 'function_call' != 'custom_tool_call'\n- function_call\n+ custom_tool_call\n\n\n----------------------------------------------------------------------\nRan 12 tests in 0.027s\n\nFAILED (failures=12, errors=3)\n",
+      "grammar_records": [
+        {
+          "custom_exec_xml": false,
+          "full_final_schema_in_declared_order": true,
+          "canonical_wire_order_accepted": false,
+          "free_text_rejected": true,
+          "invalid_final_enum_rejected": true,
+          "final_schema_exact": true,
+          "converter_count": 44
+        },
+        {
+          "diagnostic": "result",
+          "prefix_failure_offset": 2,
+          "failure_context": "{\"summary\": \"Anonymous grammar contro",
+          "completed": false,
+          "eos": false
+        },
+        {
+          "diagnostic": "schema_order",
+          "prefix_failure_offset": null,
+          "failure_context": null,
+          "completed": true,
+          "eos": true
+        }
+      ],
+      "parser": {
+        "tokenizer_only": true,
+        "weights_loaded": false,
+        "rows": [
+          {
+            "encoding": "raw",
+            "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'text(\"中文 🐈\");'",
+            "expected_repr": "'text(\"中文 🐈\");'"
+          },
+          {
+            "encoding": "json_string",
+            "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\"text(\\\\\"中文 🐈\\\\\");\"'",
+            "expected_repr": "'text(\"中文 🐈\");'"
+          },
+          {
+            "encoding": "raw",
+            "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'text(\"quoted\\\\\" and \\\\n\");'",
+            "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+          },
+          {
+            "encoding": "json_string",
+            "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\"\\\\ntext(\\\\\"quoted\\\\\\\\\\\\\" and \\\\\\\\n\\\\\");\\\\n\"'",
+            "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+          },
+          {
+            "encoding": "raw",
+            "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'123'",
+            "expected_repr": "'123'"
+          },
+          {
+            "encoding": "json_string",
+            "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\"123\"'",
+            "expected_repr": "'123'"
+          },
+          {
+            "encoding": "raw",
+            "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'const tag = \"'",
+            "expected_repr": "'const tag = \"</parameter>\";'"
+          },
+          {
+            "encoding": "json_string",
+            "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\"const tag = \\\\\"'",
+            "expected_repr": "'const tag = \"</parameter>\";'"
+          }
+        ]
+      },
+      "object_framing": {
+        "tokenizer_only": true,
+        "weights_loaded": false,
+        "rows": [
+          {
+            "encoding": "json_object",
+            "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'text(\"中文 🐈\");'",
+            "expected_repr": "'text(\"中文 🐈\");'"
+          },
+          {
+            "encoding": "json_object",
+            "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'",
+            "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+          },
+          {
+            "encoding": "json_object",
+            "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'123'",
+            "expected_repr": "'123'"
+          },
+          {
+            "encoding": "json_object",
+            "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'{\"value\": \"const tag = \\\\\"'",
+            "expected_repr": "'const tag = \"</parameter>\";'"
+          }
+        ]
+      }
+    },
+    "candidate": {
+      "transport_log": "test_custom_grammar_and_input_shape (__main__.Transport.test_custom_grammar_and_input_shape) ... ok\ntest_declarations (__main__.Transport.test_declarations) ... ok\ntest_function_stream_unchanged (__main__.Transport.test_function_stream_unchanged) ... ok\ntest_function_unchanged (__main__.Transport.test_function_unchanged) ... ok\ntest_history_object_and_dict (__main__.Transport.test_history_object_and_dict) ... ok\ntest_lookup_and_required_forced_choices (__main__.Transport.test_lookup_and_required_forced_choices) ... ok\ntest_multiple_stream_call_identity_and_order (__main__.Transport.test_multiple_stream_call_identity_and_order) ... ok\ntest_nonstream_plain_and_namespace (__main__.Transport.test_nonstream_plain_and_namespace) ... ok\ntest_regex_grammar (__main__.Transport.test_regex_grammar) ... ok\ntest_required_and_forced_structural_tag (__main__.Transport.test_required_and_forced_structural_tag) ... ok\ntest_stored_previous_response_custom_call (__main__.Transport.test_stored_previous_response_custom_call) ... ok\ntest_stream_one_character_chunks (__main__.Transport.test_stream_one_character_chunks) ... ok\n\n----------------------------------------------------------------------\nRan 12 tests in 0.081s\n\nOK\n",
+      "grammar_records": [
+        {
+          "custom_exec_xml": true,
+          "full_final_schema_in_declared_order": true,
+          "canonical_wire_order_accepted": false,
+          "free_text_rejected": true,
+          "invalid_final_enum_rejected": true,
+          "final_schema_exact": true,
+          "converter_count": 45
+        },
+        {
+          "diagnostic": "result",
+          "prefix_failure_offset": 2,
+          "failure_context": "{\"summary\": \"Anonymous grammar contro",
+          "completed": false,
+          "eos": false
+        },
+        {
+          "diagnostic": "schema_order",
+          "prefix_failure_offset": null,
+          "failure_context": null,
+          "completed": true,
+          "eos": true
+        }
+      ],
+      "parser": {
+        "tokenizer_only": true,
+        "weights_loaded": false,
+        "rows": [
+          {
+            "encoding": "raw",
+            "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'text(\"中文 🐈\");'",
+            "expected_repr": "'text(\"中文 🐈\");'"
+          },
+          {
+            "encoding": "json_string",
+            "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\"text(\\\\\"中文 🐈\\\\\");\"'",
+            "expected_repr": "'text(\"中文 🐈\");'"
+          },
+          {
+            "encoding": "raw",
+            "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'text(\"quoted\\\\\" and \\\\n\");'",
+            "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+          },
+          {
+            "encoding": "json_string",
+            "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\"\\\\ntext(\\\\\"quoted\\\\\\\\\\\\\" and \\\\\\\\n\\\\\");\\\\n\"'",
+            "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+          },
+          {
+            "encoding": "raw",
+            "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'123'",
+            "expected_repr": "'123'"
+          },
+          {
+            "encoding": "json_string",
+            "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\"123\"'",
+            "expected_repr": "'123'"
+          },
+          {
+            "encoding": "raw",
+            "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'const tag = \"'",
+            "expected_repr": "'const tag = \"</parameter>\";'"
+          },
+          {
+            "encoding": "json_string",
+            "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\"const tag = \\\\\"'",
+            "expected_repr": "'const tag = \"</parameter>\";'"
+          }
+        ]
+      },
+      "object_framing": {
+        "tokenizer_only": true,
+        "weights_loaded": false,
+        "rows": [
+          {
+            "encoding": "json_object",
+            "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'text(\"中文 🐈\");'",
+            "expected_repr": "'text(\"中文 🐈\");'"
+          },
+          {
+            "encoding": "json_object",
+            "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'",
+            "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+          },
+          {
+            "encoding": "json_object",
+            "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+            "exact": true,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'123'",
+            "expected_repr": "'123'"
+          },
+          {
+            "encoding": "json_object",
+            "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+            "exact": false,
+            "actual_type": "str",
+            "tool_calls": 1,
+            "actual_repr": "'{\"value\": \"const tag = \\\\\"'",
+            "expected_repr": "'const tag = \"</parameter>\";'"
+          }
+        ]
+      }
+    }
+  },
+  "limitations": [
+    "12 transport-helper tests pass, but actual configured Qwen parser fails freeform fidelity for leading/trailing newlines and embedded XML boundary tokens; provider release remains false.",
+    "JSON object framing restores boundary whitespace in 3/4 source cases, but XML end marker in content is still truncated. This is a separate diagnostic, not an adopted wrapper/fallback.",
+    "Schema-ordered complete final Consumer result remains accepted in both arms with identical native schema; canonical Wire property order is rejected by both. Native key-order projection remains unchanged; historical frozen business comparison must be reconciled before any separate change.",
+    "No assertion of all Qwen final-loop root causes or current role cold/resume acceptance. Generic grammar validity is postvalidated in helper tests; live structured masking/streaming awaits end-to-end fidelity."
+  ],
+  "history": [
+    "Initial namespace fixture used wrong SDK FunctionTool class and failed before checks; corrected to namespace SDK declaration before baseline.",
+    "Initial helper8 pass missed stored previous_response_id and top-level custom lookup; review failures were reproduced, then fixed; final12 include normal imports, forced/required native grammar and stream ordering/identity.",
+    "Initial full-schema fixture was valid JSON Schema but not accepted in canonical field order; retained as an order diagnostic, not excluded as malformed data."
+  ],
+  "installed_sources_unchanged": true,
+  "provider_release_ready": false,
+  "raw_log_receipts": {
+    "original.final.stderr.txt": {
+      "sha256": "38b34e0d948d3eea3902c50a988622799ef7359b2ce1a1861ef501fd119a3407",
+      "bytes": 10323
+    },
+    "candidate.final.stderr.txt": {
+      "sha256": "8e176d3d95d40c00e2d871e4d8148e414a2013c35ab4a080bf1fafb09283bb1c",
+      "bytes": 1219
+    },
+    "original.grammar.stdout.txt": {
+      "sha256": "1a2a2793113663a301dce576fe91ec3e2f4db31a8db63fe3dead6e29d97e4871",
+      "bytes": 497
+    },
+    "candidate.grammar.stdout.txt": {
+      "sha256": "db6121b00451fc446aeb48958f4c1f6202db7084791c25d0c5baef7448545650",
+      "bytes": 496
+    },
+    "original.parser.stdout.txt": {
+      "sha256": "8f80df8a6b7487861dc81526fa43a481ae639cd580ff4a1cde8c6dc980af176b",
+      "bytes": 2092
+    },
+    "candidate.parser.stdout.txt": {
+      "sha256": "8f80df8a6b7487861dc81526fa43a481ae639cd580ff4a1cde8c6dc980af176b",
+      "bytes": 2092
+    },
+    "original.object-framing.stdout.txt": {
+      "sha256": "1e1941f5b475dab5697b13188e91329cef55c27493c0892695b02b0ed92abc15",
+      "bytes": 1086
+    },
+    "candidate.object-framing.stdout.txt": {
+      "sha256": "1e1941f5b475dab5697b13188e91329cef55c27493c0892695b02b0ed92abc15",
+      "bytes": 1086
+    }
+  },
+  "loader_mode": "Fresh process MetaPathFinder before any vLLM import; candidate modules imported normally rather than replacing already-imported modules.",
+  "reproducible_check_sources": {
+    "run_checks.py": "import pathlib,subprocess,shlex,json\nr=pathlib.Path(__file__).parent;paths=['vllm/tool_parsers/utils.py','vllm/entrypoints/openai/responses/protocol.py','vllm/entrypoints/openai/responses/utils.py','vllm/entrypoints/openai/responses/streaming_events.py','vllm/tool_parsers/structural_tag_registry.py']\nfor arm in ['original','candidate']:\n d={'sources':{x[:-3].replace('/','.'):(r/arm/x).read_text() for x in paths},'test':(r/'check_transport.py').read_text()}\n p=subprocess.run(['ssh','stardust-gpu4','/home/derek/miniforge3/envs/llm-gateway-vllm-029/bin/python -c '+shlex.quote((r/'run_overlay.py').read_text())],input=json.dumps(d),capture_output=True,text=True,timeout=45);(r/(arm+'.final.stdout.txt')).write_text(p.stdout);(r/(arm+'.final.stderr.txt')).write_text(p.stderr);print(arm,'exit',p.returncode);print(p.stderr[-1700:],flush=True)\n",
+    "run_grammar.py": "import pathlib,subprocess,shlex,json\nr=pathlib.Path(__file__).parent;paths=['vllm/tool_parsers/utils.py','vllm/entrypoints/openai/responses/protocol.py','vllm/entrypoints/openai/responses/utils.py','vllm/entrypoints/openai/responses/streaming_events.py','vllm/tool_parsers/structural_tag_registry.py'];fixture=json.loads((r/'grammar_fixture.json').read_text())\nfor arm in ['original','candidate']:\n test='_FIXTURE=json.loads('+repr(json.dumps(fixture))+')\\n'+(r/'check_full_grammar.py').read_text();test='import json\\n'+test\n d={'sources':{x[:-3].replace('/','.'):(r/arm/x).read_text() for x in paths},'test':test}\n p=subprocess.run(['ssh','stardust-gpu4','/home/derek/miniforge3/envs/llm-gateway-vllm-029/bin/python -c '+shlex.quote((r/'run_overlay.py').read_text())],input=json.dumps(d),capture_output=True,text=True,timeout=45);(r/(arm+'.grammar.stdout.txt')).write_text(p.stdout);(r/(arm+'.grammar.stderr.txt')).write_text(p.stderr);print(arm,p.returncode,p.stdout,p.stderr[-700:],flush=True)\n",
+    "run_parser.py": "import pathlib,subprocess,shlex,json\nr=pathlib.Path(__file__).parent;paths=['vllm/tool_parsers/utils.py','vllm/entrypoints/openai/responses/protocol.py','vllm/entrypoints/openai/responses/utils.py','vllm/entrypoints/openai/responses/streaming_events.py','vllm/tool_parsers/structural_tag_registry.py'];fixture=json.loads((r/'grammar_fixture.json').read_text())\nfor arm in ['original','candidate']:\n test='_FIXTURE=json.loads('+repr(json.dumps(fixture))+')\\n'+(r/'check_native_parser.py').read_text();test='import json\\n'+test\n d={'sources':{x[:-3].replace('/','.'):(r/arm/x).read_text() for x in paths},'test':test}\n p=subprocess.run(['ssh','stardust-gpu4','/home/derek/miniforge3/envs/llm-gateway-vllm-029/bin/python -c '+shlex.quote((r/'run_overlay.py').read_text())],input=json.dumps(d),capture_output=True,text=True,timeout=45);(r/(arm+'.parser.stdout.txt')).write_text(p.stdout);(r/(arm+'.parser.stderr.txt')).write_text(p.stderr);print(arm,p.returncode,p.stdout,p.stderr[-700:],flush=True)\n",
+    "run_object_framing.py": "import pathlib,subprocess,shlex,json\nr=pathlib.Path(__file__).parent;paths=['vllm/tool_parsers/utils.py','vllm/entrypoints/openai/responses/protocol.py','vllm/entrypoints/openai/responses/utils.py','vllm/entrypoints/openai/responses/streaming_events.py','vllm/tool_parsers/structural_tag_registry.py'];fixture=json.loads((r/'grammar_fixture.json').read_text())\nfor arm in ['original','candidate']:\n test='_FIXTURE=json.loads('+repr(json.dumps(fixture))+')\\n'+(r/'check_object_framing.py').read_text();test='import json\\n'+test\n d={'sources':{x[:-3].replace('/','.'):(r/arm/x).read_text() for x in paths},'test':test}\n p=subprocess.run(['ssh','stardust-gpu4','/home/derek/miniforge3/envs/llm-gateway-vllm-029/bin/python -c '+shlex.quote((r/'run_overlay.py').read_text())],input=json.dumps(d),capture_output=True,text=True,timeout=45);(r/(arm+'.object-framing.stdout.txt')).write_text(p.stdout);(r/(arm+'.object-framing.stderr.txt')).write_text(p.stderr);print(arm,p.returncode,p.stdout,p.stderr[-700:],flush=True)\n"
+  },
+  "checker_sha256": {
+    "qwen_custom_tool_transport.parser.cpu.py": "736c6b14ffa63a30a674cd33493dea28d57c36ab91cd21bf94b2ec1626f63206",
+    "qwen_custom_tool_transport.object_framing.cpu.py": "38e6ee47590019a9390fbb6748cf76d0821fa3b1d36ee4f90512538be46fda47",
+    "qwen_custom_tool_transport.loader.py": "00ae2e9afdc4874d8b9944f5a6808d2042830caf04206827b70f09548a4c4e87",
+    "qwen_custom_tool_transport.cpu.py": "8beb88cf9f2115251b04df926722f28af2e41616d50ac86ae9c52db95fd63b92",
+    "qwen_custom_tool_transport.grammar.cpu.py": "842379a579eea1e9a0908b26d25d55f3a5167d1c28b0df9024d0d1febc6b54c6"
+  },
+  "cleanup": {
+    "owned_path": "/private/tmp/ceo-qwen-custom-tools.T8SsIm",
+    "removed": true,
+    "bytes_removed": 602057,
+    "open_handles_check": "lsof exit 1 with no output before removal",
+    "preserved": "prototype patch, checker scripts, hashes and anonymous results in repository; installed provider sources unchanged"
+  }
+}

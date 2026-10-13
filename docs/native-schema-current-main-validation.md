@@ -237,3 +237,50 @@ contract reads (snapshot44). Both layers now appear explicitly in the result
 manifest. Original failed snapshots and decisions remain unchanged.
 
 Readonly review matched capture and CPU results, exact harness sources and native hash. The owned serialization fixture was removed after terminal completion and an empty open-handle check; CLI-owned native originals remain.
+
+
+## Offline custom-tool transport prototype (not release-ready)
+
+The five-file provider prototype preserves CustomTool declarations through
+chat rendering, normal/namespace name lookup and native tool grammar; restores
+custom calls and typed SSE events; and retains source calls for previous_response_id
+continuations. It contains no exec-name special case. Lark/regex input declarations
+are retained and postvalidated. Registered function transport and complete current
+Consumer output schema remain unchanged. The installed five source files were
+read back with exact original hashes after all checks; no provider edit/reload,
+model inference, model weights load or business callback occurred.
+
+Final fresh-process normal-import CPU regressions:12 tests pass on the candidate;
+original reports12 failures and3 errors across subtests (not15 separate tests).
+Ordinary function and function-stream controls pass in both. Readonly review found
+a missing stored-response call path and custom lookup gates; both were reproduced
+as two candidate failures before correction. The final suite includes stored-response
+continuation, required/forced native grammar and multiple streamed call identities.
+
+The complete current Consumer grammar accepts its final object in declared schema
+order in both arms, rejecting free text and an invalid enum. Only the candidate
+accepts the custom exec XML branch; converter declarations increase44→45 while
+all42 registered functions remain. Canonical Wire serialization starts summary,
+whereas the native projection intentionally moves summary last/actions after
+evidence. Both grammars reject the canonical order at offset2. This is an independent
+format-order observation, not invalid fixture data or proof of every Qwen loop.
+The historical frozen comparison favored that native order in its bounded sample;
+no native field-order change is made without reconciling that evidence. Do not use
+xgrammar any_order=True: its installed contract relaxes required-key presence and
+key uniqueness, so it would weaken this grammar.
+
+Actual configured Qwen tokenizer/parser checks expose the remaining release
+blocker. Two of four raw-source cases round-trip exactly; boundary newlines are
+trimmed and literal XML end markers truncate source text. JSON-string framing
+does not recover the source. A separately declared JSON-object framing diagnostic
+restores whitespace (three of four exact), but still truncates the marker case.
+Those observations remain failures. The12 helper passes do not establish end-to-end
+freeform fidelity or native Consumer/Audit cold/resume success.
+
+Artifacts:qwen_custom_tool_transport.prototype.patch/v1.json and the CPU checker,
+normal-import loader, grammar/parser/object-framing checkers. Status remains
+prototype_not_release_ready. Next work must establish an unambiguous text framing
+and parser boundary, then repeat complete source/token/stream/role verification.
+No prompt rule, model route, CodeMode toggle or fallback was adopted.
+
+The exact owned prototype directory `/private/tmp/ceo-qwen-custom-tools.T8SsIm` was removed after a zero-open-handle check and preservation of the patch, checkers, anonymous results, and hashes. Installed provider source hashes were reread unchanged. Independent read-only review verified the saved artifact hashes and result counts; this review approves the evidence checkpoint, not provider publication.
