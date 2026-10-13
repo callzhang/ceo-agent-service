@@ -13,7 +13,7 @@
 `native_reply_dispatches` 不增加原表没有的 channel 或空白键 CHECK。
 provider 回执保留原始 TEXT，未增加 JSON 有效性约束。
 
-十二类型声明仅供显式 opt-in 使用。原六类型、九类型 schema 声明保持原样。
+Store17 开发候选明确选择十二类型声明。原六类型、九类型 schema 声明保持原样。
 原九类型的全部持久字段、物理 ID、公开身份、引用及两个原生分配器水位
 均由迁移保留。逆迁恢复当前事实，包括迁移后的新增、修改、删除，
 不会恢复旧数据快照，也不触发发送或任务回放。
@@ -72,13 +72,14 @@ Ruff 和 diff 检查通过。
 phase5c_constructor_copy.v1.json 记录当前生产在线副本，经正式 factory 和新进程
 Store17 构造函数迁移 129→126；123 张其他表（不计本次应改变的版本记录表）
 值及类型不变。替身新增 parent、dispatch、receipt 后当前事实逆迁与重复逆迁通过；
-原 marker 值和时间完整恢复，已发布旧 Store16 ebaf 新进程能够读取这些新增事实，
+原 marker 值和时间完整恢复，实际捕获来源 Store16 db0c2b73 新进程能够读取这些新增事实，
 再正迁与 integrity_check 通过；保留既有 FK finding。真实发送为零。
 私有副本及临时代码在验证后已清理，仅保存摘要证据。
 
-生产代码并行前进到 beb62413，但 Store 来源仍为16；旧构造函数证明绑定 earlier
-published ebaf，不冒充当前生产完整代码。发布前需合并最新 main 并重新绑定证据，
-完成独立审查／CLI 替身业务检查／CI。完整十表目标尚未完成。
+正式构造函数证明已重新绑定生产 db0c2b73；原九类型完整持久值／类型和两个水位也经正逆正比较。
+后续生产代码继续前进到 d7397203，Store 来源仍为16；已安全合并新 main，
+不将此前捕获副本冒充更晚快照。独立审查与 CLI 替身批准验收通过；
+完整 CI 和正常部署仍需完成。完整十表目标尚未完成。
 
 当前源存储独立演练见 phase5c_current_source_storage_copy.v1.json：同一 Store16
 在线副本原九类型完整持久值与类型、两个水位以及124张其他表不变；
@@ -127,3 +128,7 @@ db0c2b73，不将这份副本表述为 d7397203 的新快照。一次 2.978 秒�
 Codex home；未复制 auth、配置或 trajectory。核对证据写入后，已删除本次唯一拥有的
 `/private/tmp/ceo-native-copy.phase5c-jTOQja`，并确认路径不存在；其他临时目录及
 原生会话均未清理。完整 CI、最终主线整合与正常部署由根任务另行完成。
+
+最新 main d7397203 已合并到 d8c2afcd，89项 OA／postfix release／caller／native recovery 定向检查通过。
+native验收绑定较早候选的完整app哈希；新main只改变独立OA函数。下列AST和模块hash
+核对将其与当前候选关联，不宣称对无关OA改动重跑同一native案例。

@@ -65,5 +65,30 @@
     "app/action_postfix_storage.py": "123706c686b7a54bab6976068e49d17aa7d9ed4249f0843102086ae8d77bd8f0",
     "app/action_postfix_schema_release.py": "1e2cac54525be36e17d04601f0cdfb4a856cd458de89fc67d80f31f4abb1f5a4",
     "app/store_schema_release.py": "91a59e89629e413a6738bf011923f56d9344ab60b9539223984ec5ca32a70235"
+  },
+  "post_main_merge": {
+    "commit": "d8c2afcd3720a813fed7fccfc0d1b0b94859685b",
+    "merged_main": "d7397203df678fd4137c237eb7eb84a671e084f3",
+    "native_candidate": "40dfa5b9c0e50ea07de9d755886531e641151813",
+    "postfix_constructor_caller_ast_unchanged": [
+      "prepare_meeting_alignment_message",
+      "prepare_outbound_postfix",
+      "_prepare_outbound_postfix_in_transaction",
+      "get_outbound_postfix",
+      "recorded_outbound_body_keys",
+      "claim_native_reply_dispatch",
+      "get_outbound_postfix_receipt",
+      "record_outbound_postfix_receipt",
+      "_require_supported_store_bootstrap_source",
+      "_migrate_known_task_schema",
+      "rerun_meeting_alignment_jobs"
+    ],
+    "changed_existing_store_methods": [
+      "list_oa_task_not_pending_attempts"
+    ],
+    "added_store_methods": [
+      "correct_legacy_oa_task_not_pending_resolution"
+    ],
+    "focused_checks_passed": 89
   }
 }
