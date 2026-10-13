@@ -568,7 +568,7 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
             if record_type == "sent_replies" and db.in_transaction:
                 # Native AUTOINCREMENT SQLITE_FULL aborts the whole caller
                 # transaction, including nested savepoints.
-                db.rollback()
+                db.execute("rollback")
             _raise_autoincrement_full()
         public_id = maximum + 1
     if public_id is None and db.execute("select 1 from actions where record_type=? and legacy_key='9223372036854775807'", (record_type,)).fetchone():

@@ -106,14 +106,17 @@ def test_all_numeric_lookups_and_projections_use_the_fourteen_type_numeric_index
 
 @pytest.mark.parametrize("mode", ["transaction", "savepoint", "autocommit"])
 @pytest.mark.parametrize("committed_max", [False, True])
-def test_sent_full_error_matches_source_transaction_effect(mode, committed_max):
+@pytest.mark.parametrize("connection_mode", ["legacy", "native-autocommit"])
+def test_sent_full_error_matches_source_transaction_effect(mode, committed_max, connection_mode):
     inventory = json.loads((Path(__file__).parents[1] /
                             "docs/superpowers/specs/2026-10-13-database-redesign-phase5d-delivery-source.json").read_text())
     table_sql = next(obj["sql"] for obj in inventory["actual"]["tables"]["sent_replies"]["objects"]
                      if obj["type"] == "table")
     outcomes = []
     for target in (False, True):
-        with closing(sqlite3.connect(":memory:", isolation_level=None)) as conn:
+        connection_options = ({"autocommit": True} if connection_mode == "native-autocommit"
+                              else {"isolation_level": None})
+        with closing(sqlite3.connect(":memory:", **connection_options)) as conn:
             if target:
                 conn.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
                 conn.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
