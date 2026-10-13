@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+| codex-phase5d-storage-foundation | Isolated database-redesign-phase5d worktree: app/action_storage.py; tests/test_sent_delivery_action_storage.py; own claim row | Opt-in finite fourteen-type sent delivery storage foundation and independent target tests only. Preserve older layouts; no migration, callers, release, version, provider, or production work. | implemented 2026-10-13; 256 focused checks and Ruff pass; unpublished |
+
 
 
 
