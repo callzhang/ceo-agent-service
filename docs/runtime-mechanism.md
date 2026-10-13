@@ -1884,6 +1884,9 @@ time, up to 24 hours before deployment. It starts the service
 again with launchd `bootstrap` after verification, then performs the normal
 health and queue readback. This prevents the deployment process and worker
 process from writing the same SQLite database concurrently.
+After a successful launchd `bootout`, the updater waits until `launchctl print`
+confirms that the service label is absent before checkout or a later bootstrap;
+an inactive-but-still-removing label is not treated as stopped.
 
 An operator may explicitly run `python -m app.deploy --skip-quiet-wait` when
 immediate deployment is required. This bypasses only the in-flight-work wait;

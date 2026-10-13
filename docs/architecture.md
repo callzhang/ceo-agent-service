@@ -606,6 +606,7 @@ launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 复用上面的 updater，先等没有进行中的 Agent 回合和已领取的条目（30 分钟内不空闲就什么都不改），
 再停止服务、复用最近 24 小时的已验证数据库备份（没有则新建并验证）、fast-forward、控制台不是从检出当前的 `frontend/` 构建的时重建（比较构建戳 `app/static/workbench/.built-from` 与 `HEAD:frontend` 的树，而不是看本次部署的差异——中途停下的部署或别的会话插进来的部署会让下一次差异里没有前端改动，控制台就停在旧版本）、检查 import、重启，并轮询健康最多
 15 分钟（重启要重读数 GB 的数据库，负载高时曾用 8 分钟，只探一次会把正常升级误判回滚）。
+`launchctl bootout` 成功后还会等待 `launchctl print` 明确确认服务 label 已卸载，避免异步移除期间过早 `bootstrap`。
 静默检查将会议和回复任务处于 `processing` 视为在途工作，仅当它们有有效的对应 dispatcher 租约，
 或分别存在运行中的 meeting alignment / Agent 运行记录时阻止部署；没有这些 owner 证据的孤儿行
 由服务启动时现有的恢复逻辑重新排队。仍锁定的会议投递继续阻止部署。静默轮询每次只读计数后
