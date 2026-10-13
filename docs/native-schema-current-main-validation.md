@@ -454,3 +454,61 @@ resume export used a dotted filename stem and replaced temporary cold stdout
 exports; the original cold native trajectories remain verified hash prefixes in
 the retained native sessions. Separate cold/resume output names now have a
 focused regression. The active fixture root remains needed for remaining cases.
+
+### Calendar transport representativeness correction and remaining Consumer cases
+
+The exact actual role-reader regression exposed an eval transport mismatch:
+`read_dingtalk_calendar_event` returns `{"event": DwsCalendarEvent.model_dump()}`,
+while the original fixture returned a custom bare object. The old calendar
+control/resume evidence retains its observed anonymous fact judgments and native
+session reuse, but is not actual calendar transport acceptance. The fixture now
+uses the typed provider fields and actual event envelope; list results use the
+same model. The matching regression failed before this correction and passes
+now. No service prompt, timezone policy, route or provider was modified. V8
+records this representation change with unchanged factual cases; actual model
+transport revalidation remains required.
+
+`native_contract_compaction.consumer_remaining_controls.v1.json` records the
+remaining overlap/project-review cold runs. Both overlap variants decline the
+known Blocked conflict, but full queries only the principal's following local
+day. Its result includes Blocked because it crosses midnight; compact initially
+makes the same query then corrects the window to cover the invitation. This
+missing-coverage observation remains unresolved and does not justify adding a
+case-specific prompt rule. Both project-review candidates identify the current
+risk and use task-auth-1 as the existing next step, with one exact source reply
+and no completion claim or new Task action. That case is Consumer document
+review, not standalone TaskAgent extraction.
+
+A bounded readonly investigation confirms the intermittent 924-character
+Skill addition is the CLI's system plugin-creator directory; the service's
+per-path override explicitly disables that path and debug prompt-input did not
+reproduce it in five no-model probes. Its exec trigger remains unconfirmed.
+TaskAgent's complete Skill is inline for all routes, while only Codex has a
+native selected directory; Claude lacks an explicit source locator and Friday
+lacks a local-file reading contract. Removing Task's inline body globally would
+therefore break existing source delivery. Route-specific delivery needs its own
+source/trajectory verification before that removal.
+
+The former active fixture root was removed after the remaining cold controls
+completed, all concise/native evidence was verified, and lsof showed no handles.
+Corrected calendar transport uses a fresh owned temporary root.
+
+Corrected v8 native cold overlap readback is in
+`native_contract_compaction.calendar_native_shape_control.v1.json`. Both actual
+MCP event returns match the typed event envelope, both query a window covering
+the invitation, and both propose the exact decline without changing Blocked.
+Compact also proposes a direct notification after two identity queries fail
+because the fixture does not provide those readers. Its organizer string is
+ambiguous despite matching the fixture ID spelling, so notification identity
+is not accepted. Native successful callback receipts are distinguished from all
+MCP success/failure events. Full still has 924 extra native Skill characters.
+No business writes occur. Both owned roots were removed after no-handle checks,
+with original native sessions retained.
+
+A separate exact code finding is that `_calendar_person` prefers a display name
+and does not preserve organizer userId/openDingTalkId in DwsCalendarEvent's single
+organizer string. Attendee details do not ensure the organizer is present, and
+trigger raw data may preserve IDs only in some sources. This is confirmed data
+projection loss, not yet attribution of a particular production failure. The
+next input improvement should preserve original organizer identity in returned
+data and verify source fidelity, rather than add a notification prompt rule.

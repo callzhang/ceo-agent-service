@@ -10,7 +10,16 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app.agent_cli import build_role_server
+from app.dws_client import DwsCalendarEvent
 
+
+def calendar_event(fact):
+    return DwsCalendarEvent(
+        event_id=fact["event_id"], title=fact["title"],
+        start_time=fact["start_time"], end_time=fact["end_time"],
+        description=fact["description"], organizer=fact["organizer"]["user_id"],
+        self_response_status=fact["principal_response_status"],
+    ).model_dump(mode="json")
 
 def build_fixture(
     root: Path, case: dict, phase: str, *, task_id: int = 1, log_label: str | None = None
@@ -36,7 +45,7 @@ def build_fixture(
                 ]
                 if len(matches) != 1:
                     raise ValueError("fixture calendar identity unavailable")
-                result = matches[0]
+                result = {"event": calendar_event(matches[0])}
             elif name == "list_dingtalk_calendar_events":
                 # Match provider calendar date queries to its explicit configured zone.
                 start = datetime.fromisoformat(kwargs["start"])
@@ -50,7 +59,7 @@ def build_fixture(
                     raise ValueError("fixture calendar interval invalid")
                 result = {
                     "events": [
-                        e
+                        calendar_event(e)
                         for e in facts["calendar_events"]
                         if datetime.fromisoformat(e["start_time"]) < end
                         and datetime.fromisoformat(e["end_time"]) > start

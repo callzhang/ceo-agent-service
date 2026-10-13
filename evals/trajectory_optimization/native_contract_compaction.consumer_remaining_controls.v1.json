@@ -1,0 +1,962 @@
+{
+  "version": 1,
+  "scope": "Remaining Consumer current-canonical cold trajectories, preserving calendar representation/window limitations",
+  "records": [
+    {
+      "case": "calendar-real-overlap",
+      "variant": "full",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136b4-8ca5-7763-8b71-4cab61646b01",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 0.95,
+        "information_completeness": 1,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "拒绝与本人已确认的 Blocked 时间发生重叠的 Customer launch decision 邀请，并向已核实的邀请发起人说明具体冲突原因。",
+          "sourced_facts": [
+            {
+              "assertion": "指定邀请 cal-real-overlap 的主题为 Customer launch decision，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），换算为本人 America/Los_Angeles 时间是 2026-10-16 22:30–23:30。",
+              "references": [
+                "cal-real-overlap",
+                "trigger-calendar-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请要求本人在会议期间作出 launch exception 与 go/no-go 决策，当前本人响应状态为 needsAction。",
+              "references": [
+                "cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "本人同一绝对时间窗口内已有已接受的 Blocked 日程：2026-10-16 23:00–2026-10-17 00:30（America/Los_Angeles），与新邀请重叠 30 分钟。",
+              "references": [
+                "cal-block-overlap",
+                "calendar_window:2026-10-17"
+              ]
+            },
+            {
+              "assertion": "邀请发起人 organizer-overlap 已由当前邀请记录标记为 verified，可作为日历响应和直接通知的目标。",
+              "references": [
+                "cal-real-overlap"
+              ]
+            }
+          ],
+          "authored_judgment": "该邀请虽然要求本人作出明确客户决策，但其开始时间对应本人当地晚间，并与已接受的个人 Blocked 时间重叠。根据日历规则，个人 Blocked 是硬边界，不能接受或暂定接受重叠会议，因此应拒绝新邀请并把具体冲突告知已核实的邀请发起人。",
+          "actions": [
+            {
+              "description": "拒绝 Customer launch decision 日历邀请。",
+              "action_identity": "calendar-decline-cal-real-overlap-blocked-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            },
+            {
+              "description": "向 Customer launch decision 的已核实邀请发起人发送拒绝原因，说明该邀请与本人已接受的 Blocked 时间重叠。",
+              "action_identity": "chat-notify-organizer-cal-real-overlap-blocked-overlap",
+              "capability": "dingtalk-chat",
+              "operation": "send_direct_message",
+              "target": {
+                "user_id": "organizer-overlap"
+              },
+              "payload": {
+                "content": "您好，这个 Customer launch decision 邀请与我在洛杉矶当地 10 月 16 日 23:00–次日 00:30 的 Blocked 时间重叠，无法参加本次会议。我会先拒绝该邀请；如仍需要我参与，请协调现有日程后再发起新的时间。"
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已核实邀请详情、本人时区换算及同日真实日程：Customer launch decision 为本人当地 2026-10-16 22:30–23:30，与已接受的 Blocked 时间 23:00–次日 00:30 重叠。依据个人 Blocked 硬边界，提出拒绝该日历邀请，并向已核实的邀请发起人发送具体冲突说明；等待审核和系统执行回执。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "已核实邀请详情、本人时区换算及同日真实日程：Customer launch decision 为本人当地 2026-10-16 22:30–23:30，与已接受的 Blocked 时间 23:00–次日 00:30 重叠。依据个人 Blocked 硬边界，提出拒绝该日历邀请，并向已核实的邀请发起人发送具体冲突说明；等待审核和系统执行回执。",
+        "proposal": {
+          "objective": "拒绝与本人已确认的 Blocked 时间发生重叠的 Customer launch decision 邀请，并向已核实的邀请发起人说明具体冲突原因。",
+          "actions": [
+            {
+              "description": "拒绝 Customer launch decision 日历邀请。",
+              "action_identity": "calendar-decline-cal-real-overlap-blocked-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            },
+            {
+              "description": "向 Customer launch decision 的已核实邀请发起人发送拒绝原因，说明该邀请与本人已接受的 Blocked 时间重叠。",
+              "action_identity": "chat-notify-organizer-cal-real-overlap-blocked-overlap",
+              "capability": "dingtalk-chat",
+              "operation": "send_direct_message",
+              "target": {
+                "user_id": "organizer-overlap"
+              },
+              "payload": {
+                "content": "您好，这个 Customer launch decision 邀请与我在洛杉矶当地 10 月 16 日 23:00–次日 00:30 的 Blocked 时间重叠，无法参加本次会议。我会先拒绝该邀请；如仍需要我参与，请协调现有日程后再发起新的时间。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "指定邀请 cal-real-overlap 的主题为 Customer launch decision，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），换算为本人 America/Los_Angeles 时间是 2026-10-16 22:30–23:30。",
+              "references": [
+                "cal-real-overlap",
+                "trigger-calendar-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请要求本人在会议期间作出 launch exception 与 go/no-go 决策，当前本人响应状态为 needsAction。",
+              "references": [
+                "cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "本人同一绝对时间窗口内已有已接受的 Blocked 日程：2026-10-16 23:00–2026-10-17 00:30（America/Los_Angeles），与新邀请重叠 30 分钟。",
+              "references": [
+                "cal-block-overlap",
+                "calendar_window:2026-10-17"
+              ]
+            },
+            {
+              "assertion": "邀请发起人 organizer-overlap 已由当前邀请记录标记为 verified，可作为日历响应和直接通知的目标。",
+              "references": [
+                "cal-real-overlap"
+              ]
+            }
+          ],
+          "authored_judgment": "该邀请虽然要求本人作出明确客户决策，但其开始时间对应本人当地晚间，并与已接受的个人 Blocked 时间重叠。根据日历规则，个人 Blocked 是硬边界，不能接受或暂定接受重叠会议，因此应拒绝新邀请并把具体冲突告知已核实的邀请发起人。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 0.95,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "a4747d873f33f01c59082719e3cef77dfedd440687205fc60a2afcc9f8eb95c7",
+      "developer_sha256": "7ab9e69771a70769c87dee47796c0682f672459548cff826636e4b55da6dad9b",
+      "developer_characters": 30203,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result_sha256": "08b08d7e510cfe1b6d1ce7c2d76e7017c5c18fe9b57fda2082710a8ea5385994"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-calendar"
+          },
+          "result_sha256": "0bbd88c1417909debb2fc7d8c7c93f0928001fd37fb95745844f7b03b32a492f"
+        },
+        {
+          "name": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-real-overlap"
+          },
+          "result_sha256": "e1975f5c6bc7a5b3abd02b412e79371edc0cdfb10ae0fd046eca7433339629c4"
+        },
+        {
+          "name": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-17T00:00:00-07:00",
+            "end": "2026-10-18T00:00:00-07:00"
+          },
+          "result_sha256": "3e3362f82ca227e53a728f6e014bd39d07607a1231e58dfd56e1d4beda20a0af"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event"
+          },
+          "result_sha256": "9fd965309620ea9ede3445f5b32ebbe1682e53c8a62cd5fa80165ec1ca9619ee"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "result_sha256": "c06bb0c99b36523f75f9f226a991e72618077a24831622d4f23a57d8539bb1ab"
+        }
+      ],
+      "trajectory_sha256": "b77d29aa9dba52d0028a4f24138ac2bf71734006d3fda104b656a6d776a8f833",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-19-24-01a136b4-8ca5-7763-8b71-4cab61646b01.jsonl",
+        "sha256": "7757b5caa678c53996d7336fd6e0e3e0167f03b9dc76ee8192d400f08e7b9574"
+      },
+      "evidence_class": "Synthetic calendar field-shape control, not actual calendar transport acceptance",
+      "business_content_review": {
+        "absolute_time_conversion_correct": true,
+        "known_blocked_overlap_recognized": true,
+        "no_accept_or_tentative": true,
+        "exact_decline_target": true,
+        "notification_identifies_given_inviter": true
+      },
+      "query_coverage_review": {
+        "initial_query_misses_invitation_interval": true,
+        "corrected_query_performed": false,
+        "reason_result_still_included_blocked": "Blocked extends past midnight into queried local next day; observing its actual start/end supported decline but initial window does not cover invitation."
+      },
+      "representativeness_correction": "Custom bare event/organizer object/principal_response_status fields mismatch actual role event envelope/DwsCalendarEvent. Retain facts and wrong-window evidence; transport revalidation required.",
+      "complete_acceptance": false
+    },
+    {
+      "case": "calendar-real-overlap",
+      "variant": "compact",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136b5-16d8-7321-a87b-1cdf00de333f",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 1,
+        "information_completeness": 1,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "拒绝日历邀请 cal-real-overlap，并向已核验的邀请发起人说明：该会议在磊哥当地时间为深夜，且与已接受的 Blocked 时间重叠，因此无法参加。",
+          "sourced_facts": [
+            {
+              "assertion": "实时邀请 cal-real-overlap 的主题为 Customer launch decision，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），当前参会状态为 needsAction。",
+              "references": [
+                "live_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请说明客户需要磊哥在会议中作出 launch exception 及 go/no-go 决策，原本具有明确参会价值。",
+              "references": [
+                "live_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请发起人为已核验的用户 organizer-overlap。",
+              "references": [
+                "live_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "按已提供时区换算，邀请时间对应磊哥当地时间 2026-10-16 22:30–23:30（America/Los_Angeles）。",
+              "references": [
+                "live_event:cal-real-overlap",
+                "trigger-calendar-real-overlap"
+              ]
+            },
+            {
+              "assertion": "磊哥已有已接受的 Blocked 日程，时间为 2026-10-16 23:00 至 2026-10-17 00:30（America/Los_Angeles）；它与新邀请重叠 23:00–23:30。",
+              "references": [
+                "live_event:cal-block-overlap",
+                "calendar_window:2026-10-16T22:00:00-07:00/2026-10-17T01:00:00-07:00"
+              ]
+            }
+          ],
+          "authored_judgment": "这是个人 Blocked 时间与深夜时段的硬边界。根据 ceo-calendar-invite，不能接受或暂定接受与 Blocked 时间重叠的会议；因此应拒绝新邀请，并通知已核验的邀请发起人。",
+          "actions": [
+            {
+              "description": "拒绝日历邀请 cal-real-overlap。",
+              "action_identity": "calendar:decline:cal-real-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            },
+            {
+              "description": "向邀请发起人 organizer-overlap 发送拒绝原因及后续安排说明。",
+              "action_identity": "chat:notify:organizer-overlap:cal-real-overlap",
+              "capability": "dingtalk-chat",
+              "operation": "send_direct_message",
+              "target": {
+                "user_id": "organizer-overlap"
+              },
+              "payload": {
+                "content": "你好，这个会议在我当地时间是 10 月 16 日 22:30–23:30，与我已接受的 Blocked 时间 23:00–次日 00:30 重叠，因此我无法参加。若仍需要我参与，请另行发起不与该时间冲突的邀请。"
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已核验实时邀请、发起人、双方时区换算及重叠的已接受 Blocked 日程。根据硬规则，候选方案为拒绝 cal-real-overlap，并向 organizer-overlap 发送包含具体冲突时段的通知；两项均为待 Audit 审核及 SystemExecutor 执行的外部动作。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "已核验实时邀请、发起人、双方时区换算及重叠的已接受 Blocked 日程。根据硬规则，候选方案为拒绝 cal-real-overlap，并向 organizer-overlap 发送包含具体冲突时段的通知；两项均为待 Audit 审核及 SystemExecutor 执行的外部动作。",
+        "proposal": {
+          "objective": "拒绝日历邀请 cal-real-overlap，并向已核验的邀请发起人说明：该会议在磊哥当地时间为深夜，且与已接受的 Blocked 时间重叠，因此无法参加。",
+          "actions": [
+            {
+              "description": "拒绝日历邀请 cal-real-overlap。",
+              "action_identity": "calendar:decline:cal-real-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            },
+            {
+              "description": "向邀请发起人 organizer-overlap 发送拒绝原因及后续安排说明。",
+              "action_identity": "chat:notify:organizer-overlap:cal-real-overlap",
+              "capability": "dingtalk-chat",
+              "operation": "send_direct_message",
+              "target": {
+                "user_id": "organizer-overlap"
+              },
+              "payload": {
+                "content": "你好，这个会议在我当地时间是 10 月 16 日 22:30–23:30，与我已接受的 Blocked 时间 23:00–次日 00:30 重叠，因此我无法参加。若仍需要我参与，请另行发起不与该时间冲突的邀请。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "实时邀请 cal-real-overlap 的主题为 Customer launch decision，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），当前参会状态为 needsAction。",
+              "references": [
+                "live_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请说明客户需要磊哥在会议中作出 launch exception 及 go/no-go 决策，原本具有明确参会价值。",
+              "references": [
+                "live_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请发起人为已核验的用户 organizer-overlap。",
+              "references": [
+                "live_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "按已提供时区换算，邀请时间对应磊哥当地时间 2026-10-16 22:30–23:30（America/Los_Angeles）。",
+              "references": [
+                "live_event:cal-real-overlap",
+                "trigger-calendar-real-overlap"
+              ]
+            },
+            {
+              "assertion": "磊哥已有已接受的 Blocked 日程，时间为 2026-10-16 23:00 至 2026-10-17 00:30（America/Los_Angeles）；它与新邀请重叠 23:00–23:30。",
+              "references": [
+                "live_event:cal-block-overlap",
+                "calendar_window:2026-10-16T22:00:00-07:00/2026-10-17T01:00:00-07:00"
+              ]
+            }
+          ],
+          "authored_judgment": "这是个人 Blocked 时间与深夜时段的硬边界。根据 ceo-calendar-invite，不能接受或暂定接受与 Blocked 时间重叠的会议；因此应拒绝新邀请，并通知已核验的邀请发起人。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "a4747d873f33f01c59082719e3cef77dfedd440687205fc60a2afcc9f8eb95c7",
+      "developer_sha256": "956e37c10673669358dfb57a5a4f93156330e1aaa1f34e0a302d4ae118a872e1",
+      "developer_characters": 24035,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result_sha256": "08b08d7e510cfe1b6d1ce7c2d76e7017c5c18fe9b57fda2082710a8ea5385994"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-calendar"
+          },
+          "result_sha256": "0bbd88c1417909debb2fc7d8c7c93f0928001fd37fb95745844f7b03b32a492f"
+        },
+        {
+          "name": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-real-overlap"
+          },
+          "result_sha256": "e1975f5c6bc7a5b3abd02b412e79371edc0cdfb10ae0fd046eca7433339629c4"
+        },
+        {
+          "name": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-17T00:00:00-07:00",
+            "end": "2026-10-17T23:59:59-07:00"
+          },
+          "result_sha256": "3e3362f82ca227e53a728f6e014bd39d07607a1231e58dfd56e1d4beda20a0af"
+        },
+        {
+          "name": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-16T22:00:00-07:00",
+            "end": "2026-10-17T01:00:00-07:00"
+          },
+          "result_sha256": "9057c34956c4ceae28e563a519ca97e5aaacb964f3c49e208eea11cdd9150f08"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event"
+          },
+          "result_sha256": "9fd965309620ea9ede3445f5b32ebbe1682e53c8a62cd5fa80165ec1ca9619ee"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "result_sha256": "c06bb0c99b36523f75f9f226a991e72618077a24831622d4f23a57d8539bb1ab"
+        }
+      ],
+      "trajectory_sha256": "b36cdffa744e50239181cc9d3d447a6010baf15585050e75264f73ddfba13431",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-19-59-01a136b5-16d8-7321-a87b-1cdf00de333f.jsonl",
+        "sha256": "a477cbf8c3dd0d16c9264fd3e08421bb4026acfa66eed9e0360983a5211678b8"
+      },
+      "evidence_class": "Synthetic calendar field-shape control, not actual calendar transport acceptance",
+      "business_content_review": {
+        "absolute_time_conversion_correct": true,
+        "known_blocked_overlap_recognized": true,
+        "no_accept_or_tentative": true,
+        "exact_decline_target": true,
+        "notification_identifies_given_inviter": true
+      },
+      "query_coverage_review": {
+        "initial_query_misses_invitation_interval": true,
+        "corrected_query_performed": true,
+        "reason_result_still_included_blocked": "Blocked extends past midnight into queried local next day; observing its actual start/end supported decline but initial window does not cover invitation."
+      },
+      "representativeness_correction": "Custom bare event/organizer object/principal_response_status fields mismatch actual role event envelope/DwsCalendarEvent. Retain facts and wrong-window evidence; transport revalidation required.",
+      "complete_acceptance": false
+    },
+    {
+      "case": "work-tracking-existing-remediation",
+      "variant": "full",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136b6-b934-7691-8246-c3b8a81173aa",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.9,
+        "information_completeness": 0.95,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "回复原触发消息，说明 Project Orion 需要关注，并明确认证回调阻塞的下一步行动。",
+          "sourced_facts": [
+            {
+              "assertion": "Project Orion 客户切换计划为 2026 年 10 月 20 日。",
+              "references": [
+                "node-doc-project-1",
+                "doc-project-1@rev-3"
+              ]
+            },
+            {
+              "assertion": "认证回调阻塞仍未解决，已威胁客户切换。",
+              "references": [
+                "node-doc-project-1",
+                "doc-project-1@rev-3"
+              ]
+            },
+            {
+              "assertion": "已有开放任务 task-auth-1，要求 Integration Owner 核验回调配置并报告结果，截止日期为 2026 年 10 月 12 日；文档没有证据表明该任务已完成。",
+              "references": [
+                "node-doc-project-1",
+                "doc-project-1@rev-3"
+              ]
+            },
+            {
+              "assertion": "原请求要求在触发消息所在会话中回复项目是否需要关注及下一步行动。",
+              "references": [
+                "trigger-project-review",
+                "eval-project-conversation"
+              ]
+            }
+          ],
+          "authored_judgment": "项目需要立即关注：认证回调阻塞直接影响 10 月 20 日客户切换，且负责核验的 task-auth-1 已逾期、仍无完成证据。下一步应由 Integration Owner 立即核验回调配置并回报结果；Program Lead 负责跟进闭环并评估切换风险。",
+          "actions": [
+            {
+              "description": "在原触发消息下回复项目关注判断和认证回调阻塞的下一步行动。",
+              "action_identity": "reply-project-orion-attention-next-action-trigger-project-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-project-conversation",
+                "message_id": "trigger-project-review"
+              },
+              "payload": {
+                "content": "需要立即关注。Project Orion 的认证回调阻塞仍未解决，已威胁 10 月 20 日客户切换；现有 task-auth-1 已于 10 月 12 日到期，且暂无完成证据。下一步：请 Integration Owner 立即核验回调配置并回报结果，由 Program Lead 跟进闭环，并据此更新切换风险与计划。"
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "基于 Project Orion 文档 rev-3，项目需要立即关注：认证回调阻塞仍未解决并威胁 10 月 20 日客户切换；task-auth-1 已逾期且没有完成证据。已形成针对原触发消息的完整回复候选，待 Audit 审核后由系统执行。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "基于 Project Orion 文档 rev-3，项目需要立即关注：认证回调阻塞仍未解决并威胁 10 月 20 日客户切换；task-auth-1 已逾期且没有完成证据。已形成针对原触发消息的完整回复候选，待 Audit 审核后由系统执行。",
+        "proposal": {
+          "objective": "回复原触发消息，说明 Project Orion 需要关注，并明确认证回调阻塞的下一步行动。",
+          "actions": [
+            {
+              "description": "在原触发消息下回复项目关注判断和认证回调阻塞的下一步行动。",
+              "action_identity": "reply-project-orion-attention-next-action-trigger-project-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-project-conversation",
+                "message_id": "trigger-project-review"
+              },
+              "payload": {
+                "content": "需要立即关注。Project Orion 的认证回调阻塞仍未解决，已威胁 10 月 20 日客户切换；现有 task-auth-1 已于 10 月 12 日到期，且暂无完成证据。下一步：请 Integration Owner 立即核验回调配置并回报结果，由 Program Lead 跟进闭环，并据此更新切换风险与计划。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Project Orion 客户切换计划为 2026 年 10 月 20 日。",
+              "references": [
+                "node-doc-project-1",
+                "doc-project-1@rev-3"
+              ]
+            },
+            {
+              "assertion": "认证回调阻塞仍未解决，已威胁客户切换。",
+              "references": [
+                "node-doc-project-1",
+                "doc-project-1@rev-3"
+              ]
+            },
+            {
+              "assertion": "已有开放任务 task-auth-1，要求 Integration Owner 核验回调配置并报告结果，截止日期为 2026 年 10 月 12 日；文档没有证据表明该任务已完成。",
+              "references": [
+                "node-doc-project-1",
+                "doc-project-1@rev-3"
+              ]
+            },
+            {
+              "assertion": "原请求要求在触发消息所在会话中回复项目是否需要关注及下一步行动。",
+              "references": [
+                "trigger-project-review",
+                "eval-project-conversation"
+              ]
+            }
+          ],
+          "authored_judgment": "项目需要立即关注：认证回调阻塞直接影响 10 月 20 日客户切换，且负责核验的 task-auth-1 已逾期、仍无完成证据。下一步应由 Integration Owner 立即核验回调配置并回报结果；Program Lead 负责跟进闭环并评估切换风险。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.9,
+        "information_completeness": 0.95,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "69931e5de459d409e3cfcff1c71cc4ce3462f413d4161f96beba99c9bab8cd65",
+      "developer_sha256": "7ab9e69771a70769c87dee47796c0682f672459548cff826636e4b55da6dad9b",
+      "developer_characters": 30203,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result_sha256": "3c0c57c83ff9bd7bc93a806b47136719b6a5c58cdecfe17fa0455498b1b770ce"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-doc"
+          },
+          "result_sha256": "948b589315d22ae5d65905b2cdff054f0935d0b31ae19a1dcdf56673e45bfc1a"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "node-doc-project-1"
+          },
+          "result_sha256": "f4a04f80eeabf3d0f6888d5bab76938a3e0e31da53fdfc2c940fd21e37b2da8c"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message"
+          },
+          "result_sha256": "92bf6ccd04c1e662718635ae55f6da5e84c042d5d9222404adfc8c65cb31d527"
+        }
+      ],
+      "trajectory_sha256": "15d4ead2a28d7f107f959ead290961f3e468d560b14e3702712e98ab250b0b47",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-21-47-01a136b6-b934-7691-8246-c3b8a81173aa.jsonl",
+        "sha256": "3f2c1c8c375b4413e5f1dce2ad3f0e4e4fd53b8bfdbbb3b2fe3b541c318d76f7"
+      },
+      "evidence_class": "Anonymous Consumer document project-risk cold judgment; not standalone TaskAgent extraction or full pipeline",
+      "business_content_review": {
+        "authentication_risk_threatens_oct20": true,
+        "existing_task_auth_1_reused_as_next_action": true,
+        "no_completion_claim": true,
+        "one_source_reply_no_new_task_action": true
+      },
+      "complete_acceptance": false
+    },
+    {
+      "case": "work-tracking-existing-remediation",
+      "variant": "compact",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136b7-1689-76a1-92bf-ca5b18b072fa",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.96,
+        "rule_coverage": 0.92,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "回复原触发消息，明确 Project Orion 当前需要关注，并给出针对认证回调阻塞的下一步行动。",
+          "sourced_facts": [
+            {
+              "assertion": "Project Orion 客户切换计划为 2026 年 10 月 20 日。",
+              "references": [
+                "node-doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "认证回调阻塞仍未解决，已经威胁到客户切换计划。",
+              "references": [
+                "node-doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "现有任务 task-auth-1 已要求 Integration Owner 核验回调配置并在 2026 年 10 月 12 日前报告结果；该任务仍处于开放状态，且直接对应此阻塞。",
+              "references": [
+                "node-doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "文档没有说明 task-auth-1 已完成。",
+              "references": [
+                "node-doc-project-1",
+                "rev-3"
+              ]
+            }
+          ],
+          "authored_judgment": "项目需要立即关注。最小下一步是由 Integration Owner 尽快完成 task-auth-1，核验认证回调配置并报告结果；Program Lead 负责跟进 rollout 协调，并据核验结果重新评估 10 月 20 日切换计划。",
+          "actions": [
+            {
+              "description": "在原触发消息的会话中回复项目关注判断与下一步行动。",
+              "action_identity": "reply-project-orion-attention-next-action-trigger-project-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-project-conversation",
+                "message_id": "trigger-project-review"
+              },
+              "payload": {
+                "content": "需要立即关注。Project Orion 计划于 10 月 20 日进行客户切换，但认证回调阻塞仍未解决，已威胁到切换计划。下一步：请 Integration Owner 立即完成现有任务 task-auth-1，核验回调配置并报告结果；由 Program Lead 跟进 rollout 协调，并根据核验结果重新评估 10 月 20 日切换计划。"
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已读取 Project Orion 状态文档当前版本（rev-3）。证据显示客户切换临近、认证回调阻塞未解决，且对应的 task-auth-1 已逾期并仍开放；因此项目需要立即关注，建议回复原消息，要求 Integration Owner 完成配置核验并由 Program Lead 跟进切换协调。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "已读取 Project Orion 状态文档当前版本（rev-3）。证据显示客户切换临近、认证回调阻塞未解决，且对应的 task-auth-1 已逾期并仍开放；因此项目需要立即关注，建议回复原消息，要求 Integration Owner 完成配置核验并由 Program Lead 跟进切换协调。",
+        "proposal": {
+          "objective": "回复原触发消息，明确 Project Orion 当前需要关注，并给出针对认证回调阻塞的下一步行动。",
+          "actions": [
+            {
+              "description": "在原触发消息的会话中回复项目关注判断与下一步行动。",
+              "action_identity": "reply-project-orion-attention-next-action-trigger-project-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-project-conversation",
+                "message_id": "trigger-project-review"
+              },
+              "payload": {
+                "content": "需要立即关注。Project Orion 计划于 10 月 20 日进行客户切换，但认证回调阻塞仍未解决，已威胁到切换计划。下一步：请 Integration Owner 立即完成现有任务 task-auth-1，核验回调配置并报告结果；由 Program Lead 跟进 rollout 协调，并根据核验结果重新评估 10 月 20 日切换计划。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Project Orion 客户切换计划为 2026 年 10 月 20 日。",
+              "references": [
+                "node-doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "认证回调阻塞仍未解决，已经威胁到客户切换计划。",
+              "references": [
+                "node-doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "现有任务 task-auth-1 已要求 Integration Owner 核验回调配置并在 2026 年 10 月 12 日前报告结果；该任务仍处于开放状态，且直接对应此阻塞。",
+              "references": [
+                "node-doc-project-1",
+                "rev-3"
+              ]
+            },
+            {
+              "assertion": "文档没有说明 task-auth-1 已完成。",
+              "references": [
+                "node-doc-project-1",
+                "rev-3"
+              ]
+            }
+          ],
+          "authored_judgment": "项目需要立即关注。最小下一步是由 Integration Owner 尽快完成 task-auth-1，核验认证回调配置并报告结果；Program Lead 负责跟进 rollout 协调，并据核验结果重新评估 10 月 20 日切换计划。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.96,
+        "rule_coverage": 0.92,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "69931e5de459d409e3cfcff1c71cc4ce3462f413d4161f96beba99c9bab8cd65",
+      "developer_sha256": "956e37c10673669358dfb57a5a4f93156330e1aaa1f34e0a302d4ae118a872e1",
+      "developer_characters": 24035,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result_sha256": "3c0c57c83ff9bd7bc93a806b47136719b6a5c58cdecfe17fa0455498b1b770ce"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-doc"
+          },
+          "result_sha256": "948b589315d22ae5d65905b2cdff054f0935d0b31ae19a1dcdf56673e45bfc1a"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "node-doc-project-1"
+          },
+          "result_sha256": "f4a04f80eeabf3d0f6888d5bab76938a3e0e31da53fdfc2c940fd21e37b2da8c"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message"
+          },
+          "result_sha256": "92bf6ccd04c1e662718635ae55f6da5e84c042d5d9222404adfc8c65cb31d527"
+        }
+      ],
+      "trajectory_sha256": "c965a2563fd3122bacdb0d8254bf9ac5bd97e7ce2ac298c34cb7ab9ed0362ae1",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-22-10-01a136b7-1689-76a1-92bf-ca5b18b072fa.jsonl",
+        "sha256": "ff1fe8f659089ccb0af8edde6d0a3b712570b916c692c23fdbb324208ec5e533"
+      },
+      "evidence_class": "Anonymous Consumer document project-risk cold judgment; not standalone TaskAgent extraction or full pipeline",
+      "business_content_review": {
+        "authentication_risk_threatens_oct20": true,
+        "existing_task_auth_1_reused_as_next_action": true,
+        "no_completion_claim": true,
+        "one_source_reply_no_new_task_action": true
+      },
+      "complete_acceptance": false
+    }
+  ],
+  "no_service_runtime_change": true,
+  "native_catalog_parity": "Not established; prior native catalog drift remains a limitation",
+  "full_pipeline": "Service candidate preparation/Audit/executor not run",
+  "standalone_task_agent": "Not represented by the project-review Consumer case",
+  "temporary_cleanup": {
+    "path": "/private/tmp/ceo-consumer-bound-mail.wRVH3y",
+    "removed": true,
+    "open_handle_check": "lsof +D returned 1 with empty stdout before removal",
+    "native_original_sessions_retained": true
+  }
+}

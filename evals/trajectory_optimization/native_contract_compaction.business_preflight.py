@@ -94,7 +94,7 @@ for case in manifest["cases"]:
         operation_reads.append({"name": name, "sha256": operation["sha256"]})
     if case["domain"] == "calendar":
         first = case["phases"]["cold"]["calendar_events"][0]
-        assert read("read_dingtalk_calendar_event", event_id=first["event_id"]) == first
+        assert read("read_dingtalk_calendar_event", event_id=first["event_id"]) == {"event": fixture.calendar_event(first)}
         window = read(
             "list_dingtalk_calendar_events",
             start="2026-10-16T00:00:00-07:00",

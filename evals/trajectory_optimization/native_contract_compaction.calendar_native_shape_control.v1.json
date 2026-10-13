@@ -1,0 +1,672 @@
+{
+  "version": 1,
+  "manifest": "native_contract_compaction.business_cases.v8.json",
+  "scope": "Actual typed calendar role reader envelope; anonymous OAuth cold overlap pair only",
+  "records": [
+    {
+      "case": "calendar-real-overlap",
+      "variant": "full",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136bf-c672-7b31-9800-6dc957d7a3d6",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.97,
+        "rule_coverage": 0.95,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "拒绝当前日历邀请，避免与主人已接受的 Blocked 时间重叠。",
+          "sourced_facts": [
+            {
+              "assertion": "目标事件 cal-real-overlap 的主题为 Customer launch decision，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），对应主人时区 America/Los_Angeles 的 2026-10-16 22:30–23:30。",
+              "references": [
+                "Original trigger message trigger-calendar-real-overlap",
+                "read_dingtalk_calendar_event(cal-real-overlap)"
+              ]
+            },
+            {
+              "assertion": "主日历中存在已接受的 Blocked 事件 cal-block-overlap，时间为 2026-10-16 23:00–00:30（America/Los_Angeles）；与新邀请实际重叠 23:00–23:30。",
+              "references": [
+                "list_dingtalk_calendar_events(2026-10-16T00:00:00-07:00/2026-10-18T00:00:00-07:00)"
+              ]
+            },
+            {
+              "assertion": "日历 Skill 将个人 Blocked 或 sleep hold 视为硬边界，不得接受或暂定接受重叠会议；当前邀请尚未回复，self_response_status 为 needsAction。",
+              "references": [
+                "ceo-calendar-invite frozen Skill revision cdf7ff9e1cc1481a098ef859d3f77721b38bbf9a04d61d5450a06ba0194e02a",
+                "read_dingtalk_calendar_event(cal-real-overlap)"
+              ]
+            }
+          ],
+          "authored_judgment": "新邀请虽然涉及客户发布例外和 go/no-go 决策，但与已接受的个人 Blocked 时间发生真实重叠。按硬边界应拒绝新邀请；当前可核实的事件组织者标识为 organizer-overlap，但未提供可用于单独聊天通知的 verified open_dingtalk_id，因此本候选只包含日历拒绝响应，不虚构额外通知目标。",
+          "actions": [
+            {
+              "description": "拒绝日历事件 cal-real-overlap 的邀请，使主人不接受与已接受 Blocked 时间重叠的会议。",
+              "action_identity": "calendar-decline-cal-real-overlap-blocked-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已核实目标邀请与主日历存在真实重叠：新会议在主人当地 22:30–23:30，和已接受的 Blocked 23:00–00:30 重叠。依据日历硬边界，形成拒绝 cal-real-overlap 的受控候选；尚未执行，需由 Audit 审核后再由系统执行并核验 self_response_status。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "已核实目标邀请与主日历存在真实重叠：新会议在主人当地 22:30–23:30，和已接受的 Blocked 23:00–00:30 重叠。依据日历硬边界，形成拒绝 cal-real-overlap 的受控候选；尚未执行，需由 Audit 审核后再由系统执行并核验 self_response_status。",
+        "proposal": {
+          "objective": "拒绝当前日历邀请，避免与主人已接受的 Blocked 时间重叠。",
+          "actions": [
+            {
+              "description": "拒绝日历事件 cal-real-overlap 的邀请，使主人不接受与已接受 Blocked 时间重叠的会议。",
+              "action_identity": "calendar-decline-cal-real-overlap-blocked-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "目标事件 cal-real-overlap 的主题为 Customer launch decision，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），对应主人时区 America/Los_Angeles 的 2026-10-16 22:30–23:30。",
+              "references": [
+                "Original trigger message trigger-calendar-real-overlap",
+                "read_dingtalk_calendar_event(cal-real-overlap)"
+              ]
+            },
+            {
+              "assertion": "主日历中存在已接受的 Blocked 事件 cal-block-overlap，时间为 2026-10-16 23:00–00:30（America/Los_Angeles）；与新邀请实际重叠 23:00–23:30。",
+              "references": [
+                "list_dingtalk_calendar_events(2026-10-16T00:00:00-07:00/2026-10-18T00:00:00-07:00)"
+              ]
+            },
+            {
+              "assertion": "日历 Skill 将个人 Blocked 或 sleep hold 视为硬边界，不得接受或暂定接受重叠会议；当前邀请尚未回复，self_response_status 为 needsAction。",
+              "references": [
+                "ceo-calendar-invite frozen Skill revision cdf7ff9e1cc1481a098ef859d3f77721b38bbf9a04d61d5450a06ba0194e02a",
+                "read_dingtalk_calendar_event(cal-real-overlap)"
+              ]
+            }
+          ],
+          "authored_judgment": "新邀请虽然涉及客户发布例外和 go/no-go 决策，但与已接受的个人 Blocked 时间发生真实重叠。按硬边界应拒绝新邀请；当前可核实的事件组织者标识为 organizer-overlap，但未提供可用于单独聊天通知的 verified open_dingtalk_id，因此本候选只包含日历拒绝响应，不虚构额外通知目标。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.97,
+        "rule_coverage": 0.95,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "a4747d873f33f01c59082719e3cef77dfedd440687205fc60a2afcc9f8eb95c7",
+      "developer_sha256": "7ab9e69771a70769c87dee47796c0682f672459548cff826636e4b55da6dad9b",
+      "developer_characters": 30203,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "native_mcp_results": [
+        {
+          "tool": "read_task_skill",
+          "status": "completed"
+        },
+        {
+          "tool": "read_skill",
+          "status": "completed"
+        },
+        {
+          "tool": "read_dingtalk_calendar_event",
+          "status": "completed"
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "status": "completed"
+        },
+        {
+          "tool": "read_system_action_contract",
+          "status": "completed"
+        }
+      ],
+      "successful_callback_receipts": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result_sha256": "08b08d7e510cfe1b6d1ce7c2d76e7017c5c18fe9b57fda2082710a8ea5385994"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-calendar"
+          },
+          "result_sha256": "0bbd88c1417909debb2fc7d8c7c93f0928001fd37fb95745844f7b03b32a492f"
+        },
+        {
+          "name": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-real-overlap"
+          },
+          "result_sha256": "519dcb9400eeb75d4457463a1671fd77c67db604ae291f1b557226b7d9e11251"
+        },
+        {
+          "name": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-16T00:00:00-07:00",
+            "end": "2026-10-18T00:00:00-07:00"
+          },
+          "result_sha256": "4ac673c810aebe8b533a4293d68afde2b4c71c775b61a89a328097a0d61e7139"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event"
+          },
+          "result_sha256": "9fd965309620ea9ede3445f5b32ebbe1682e53c8a62cd5fa80165ec1ca9619ee"
+        }
+      ],
+      "typed_event_receipt": {
+        "event": {
+          "event_id": "cal-real-overlap",
+          "title": "Customer launch decision",
+          "start_time": "2026-10-17T13:30:00+08:00",
+          "end_time": "2026-10-17T14:30:00+08:00",
+          "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting.",
+          "organizer": "organizer-overlap",
+          "response_status": "",
+          "self_response_status": "needsAction",
+          "attendees": [],
+          "attendee_details": [],
+          "comments": [],
+          "status": "",
+          "created_ms": 0,
+          "updated_ms": 0
+        }
+      },
+      "core_decline_judgment_pass": true,
+      "notification_identity_verified": false,
+      "notification_review": "No notification proposed",
+      "calendar_windows": [
+        {
+          "arguments": {
+            "start": "2026-10-16T00:00:00-07:00",
+            "end": "2026-10-18T00:00:00-07:00"
+          },
+          "result": {
+            "events": [
+              {
+                "event_id": "cal-real-overlap",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-17T13:30:00+08:00",
+                "end_time": "2026-10-17T14:30:00+08:00",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting.",
+                "organizer": "organizer-overlap",
+                "response_status": "",
+                "self_response_status": "needsAction",
+                "attendees": [],
+                "attendee_details": [],
+                "comments": [],
+                "status": "",
+                "created_ms": 0,
+                "updated_ms": 0
+              },
+              {
+                "event_id": "cal-block-overlap",
+                "title": "Blocked",
+                "start_time": "2026-10-16T23:00:00-07:00",
+                "end_time": "2026-10-17T00:30:00-07:00",
+                "description": "Personal blocked time.",
+                "organizer": "principal",
+                "response_status": "",
+                "self_response_status": "accepted",
+                "attendees": [],
+                "attendee_details": [],
+                "comments": [],
+                "status": "",
+                "created_ms": 0,
+                "updated_ms": 0
+              }
+            ]
+          }
+        }
+      ],
+      "invitation_window_covered": true,
+      "trajectory_sha256": "9ce8557f1e700b598fa2c56f1b7b62ebd3208b722421602d2ea4eb9082f305a7",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-31-40-01a136bf-c672-7b31-9800-6dc957d7a3d6.jsonl",
+        "sha256": "24658af72556d97914349bd63facddd4ba49b81ffedccf1f8c0fb3ddf97b664e"
+      },
+      "native_developer_readback": [
+        {
+          "characters": 31127,
+          "sha256": "da0c00e73326e7ceb8db43c0c092566fca7df2a32aa946eaea2b3c2d89cb45bd",
+          "extra_characters": 924
+        }
+      ]
+    },
+    {
+      "case": "calendar-real-overlap",
+      "variant": "compact",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136c0-2dd3-7c70-ac28-7db989cec5a4",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.97,
+        "rule_coverage": 0.98,
+        "information_completeness": 0.9,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "拒绝与本人已接受的个人 Blocked 时间重叠的 Customer launch decision 邀请，并向已核实为该日程组织者的联系人说明冲突原因，请其协调改期或补充替代安排。",
+          "sourced_facts": [
+            {
+              "assertion": "原邀请的稳定事件 ID 为 cal-real-overlap，主题为 Customer launch decision，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），换算为本人时区 America/Los_Angeles 的 2026-10-16 22:30–23:30。",
+              "references": [
+                "authoritative_message_id:trigger-calendar-real-overlap",
+                "calendar_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请说明客户需要本人在会上作出 launch exception 和 go/no-go 决策，属于需要本人参与的会议；当前邀请状态为 needsAction。",
+              "references": [
+                "calendar_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "本人已有已接受的 Blocked 日程 cal-block-overlap，时间为 2026-10-16 23:00–00:30（America/Los_Angeles），与新邀请实际重叠 30 分钟。",
+              "references": [
+                "calendar_event:cal-block-overlap",
+                "calendar_window:2026-10-16T00:00:00-07:00/2026-10-18T00:00:00-07:00"
+              ]
+            },
+            {
+              "assertion": "适用日历规则规定，新的邀请若与本人已接受的个人 Blocked 时间重叠，不得接受或暂定接受，应直接拒绝。",
+              "references": [
+                "skill:ceo-calendar-invite"
+              ]
+            },
+            {
+              "assertion": "实时事件记录将 organizer-overlap 标识为该邀请的组织者；用于通知的联系人目标采用该实时事件提供的稳定组织者标识。",
+              "references": [
+                "calendar_event:cal-real-overlap"
+              ]
+            }
+          ],
+          "authored_judgment": "这是硬冲突，不需要比较客户会议与 Blocked 时间的重要性；应拒绝新邀请，并把具体的洛杉矶时间冲突告知邀请方，推动改期或明确替代决策输入。",
+          "actions": [
+            {
+              "description": "拒绝 Customer launch decision 日历邀请。",
+              "action_identity": "calendar-decline:cal-real-overlap:blocked-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            },
+            {
+              "description": "向该日程组织者发送冲突通知，说明本人已接受的 Blocked 时间与邀请重叠，请其协调改期或补充替代安排。",
+              "action_identity": "calendar-conflict-notice:cal-real-overlap:organizer-overlap",
+              "capability": "dingtalk-chat",
+              "operation": "send_direct_message",
+              "target": {
+                "user_id": "organizer-overlap"
+              },
+              "payload": {
+                "content": "这场 Customer launch decision 与我已接受的个人 Blocked 时间重叠：洛杉矶时间 10 月 16 日 22:30–23:30（对应上海时间 10 月 17 日 13:30–14:30）。因此我无法参加这次邀请。请协调改期；如果会议时间不能调整，请说明是否有可替代的决策输入安排。"
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已核实新邀请在本人洛杉矶时间 10 月 16 日 22:30–23:30 与已接受的 Blocked 日程 23:00–00:30 重叠。依据日历规则，候选动作是拒绝该邀请并向组织者说明具体冲突；本轮仅提交完整候选，未执行任何外部动作。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "已核实新邀请在本人洛杉矶时间 10 月 16 日 22:30–23:30 与已接受的 Blocked 日程 23:00–00:30 重叠。依据日历规则，候选动作是拒绝该邀请并向组织者说明具体冲突；本轮仅提交完整候选，未执行任何外部动作。",
+        "proposal": {
+          "objective": "拒绝与本人已接受的个人 Blocked 时间重叠的 Customer launch decision 邀请，并向已核实为该日程组织者的联系人说明冲突原因，请其协调改期或补充替代安排。",
+          "actions": [
+            {
+              "description": "拒绝 Customer launch decision 日历邀请。",
+              "action_identity": "calendar-decline:cal-real-overlap:blocked-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            },
+            {
+              "description": "向该日程组织者发送冲突通知，说明本人已接受的 Blocked 时间与邀请重叠，请其协调改期或补充替代安排。",
+              "action_identity": "calendar-conflict-notice:cal-real-overlap:organizer-overlap",
+              "capability": "dingtalk-chat",
+              "operation": "send_direct_message",
+              "target": {
+                "user_id": "organizer-overlap"
+              },
+              "payload": {
+                "content": "这场 Customer launch decision 与我已接受的个人 Blocked 时间重叠：洛杉矶时间 10 月 16 日 22:30–23:30（对应上海时间 10 月 17 日 13:30–14:30）。因此我无法参加这次邀请。请协调改期；如果会议时间不能调整，请说明是否有可替代的决策输入安排。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "原邀请的稳定事件 ID 为 cal-real-overlap，主题为 Customer launch decision，时间为 2026-10-17 13:30–14:30（Asia/Shanghai），换算为本人时区 America/Los_Angeles 的 2026-10-16 22:30–23:30。",
+              "references": [
+                "authoritative_message_id:trigger-calendar-real-overlap",
+                "calendar_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "邀请说明客户需要本人在会上作出 launch exception 和 go/no-go 决策，属于需要本人参与的会议；当前邀请状态为 needsAction。",
+              "references": [
+                "calendar_event:cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "本人已有已接受的 Blocked 日程 cal-block-overlap，时间为 2026-10-16 23:00–00:30（America/Los_Angeles），与新邀请实际重叠 30 分钟。",
+              "references": [
+                "calendar_event:cal-block-overlap",
+                "calendar_window:2026-10-16T00:00:00-07:00/2026-10-18T00:00:00-07:00"
+              ]
+            },
+            {
+              "assertion": "适用日历规则规定，新的邀请若与本人已接受的个人 Blocked 时间重叠，不得接受或暂定接受，应直接拒绝。",
+              "references": [
+                "skill:ceo-calendar-invite"
+              ]
+            },
+            {
+              "assertion": "实时事件记录将 organizer-overlap 标识为该邀请的组织者；用于通知的联系人目标采用该实时事件提供的稳定组织者标识。",
+              "references": [
+                "calendar_event:cal-real-overlap"
+              ]
+            }
+          ],
+          "authored_judgment": "这是硬冲突，不需要比较客户会议与 Blocked 时间的重要性；应拒绝新邀请，并把具体的洛杉矶时间冲突告知邀请方，推动改期或明确替代决策输入。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.97,
+        "rule_coverage": 0.98,
+        "information_completeness": 0.9,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "a4747d873f33f01c59082719e3cef77dfedd440687205fc60a2afcc9f8eb95c7",
+      "developer_sha256": "956e37c10673669358dfb57a5a4f93156330e1aaa1f34e0a302d4ae118a872e1",
+      "developer_characters": 24035,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "native_mcp_results": [
+        {
+          "tool": "read_task_skill",
+          "status": "completed"
+        },
+        {
+          "tool": "read_skill",
+          "status": "completed"
+        },
+        {
+          "tool": "read_dingtalk_calendar_event",
+          "status": "completed"
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "status": "completed"
+        },
+        {
+          "tool": "read_skill",
+          "status": "completed"
+        },
+        {
+          "tool": "read_system_action_contract",
+          "status": "completed"
+        },
+        {
+          "tool": "read_system_action_contract",
+          "status": "completed"
+        },
+        {
+          "tool": "read_dingtalk_user_profiles",
+          "status": "failed"
+        },
+        {
+          "tool": "search_dingtalk_contacts",
+          "status": "failed"
+        }
+      ],
+      "successful_callback_receipts": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result_sha256": "08b08d7e510cfe1b6d1ce7c2d76e7017c5c18fe9b57fda2082710a8ea5385994"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-calendar"
+          },
+          "result_sha256": "0bbd88c1417909debb2fc7d8c7c93f0928001fd37fb95745844f7b03b32a492f"
+        },
+        {
+          "name": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-real-overlap"
+          },
+          "result_sha256": "519dcb9400eeb75d4457463a1671fd77c67db604ae291f1b557226b7d9e11251"
+        },
+        {
+          "name": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-16T00:00:00-07:00",
+            "end": "2026-10-18T00:00:00-07:00"
+          },
+          "result_sha256": "4ac673c810aebe8b533a4293d68afde2b4c71c775b61a89a328097a0d61e7139"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event"
+          },
+          "result_sha256": "9fd965309620ea9ede3445f5b32ebbe1682e53c8a62cd5fa80165ec1ca9619ee"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "result_sha256": "c06bb0c99b36523f75f9f226a991e72618077a24831622d4f23a57d8539bb1ab"
+        }
+      ],
+      "typed_event_receipt": {
+        "event": {
+          "event_id": "cal-real-overlap",
+          "title": "Customer launch decision",
+          "start_time": "2026-10-17T13:30:00+08:00",
+          "end_time": "2026-10-17T14:30:00+08:00",
+          "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting.",
+          "organizer": "organizer-overlap",
+          "response_status": "",
+          "self_response_status": "needsAction",
+          "attendees": [],
+          "attendee_details": [],
+          "comments": [],
+          "status": "",
+          "created_ms": 0,
+          "updated_ms": 0
+        }
+      },
+      "core_decline_judgment_pass": true,
+      "notification_identity_verified": false,
+      "notification_review": "DM target matches anonymous fact ID by spelling, but typed organizer string is ambiguous and both required identity-reader attempts failed; identity not verified.",
+      "calendar_windows": [
+        {
+          "arguments": {
+            "start": "2026-10-16T00:00:00-07:00",
+            "end": "2026-10-18T00:00:00-07:00"
+          },
+          "result": {
+            "events": [
+              {
+                "event_id": "cal-real-overlap",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-17T13:30:00+08:00",
+                "end_time": "2026-10-17T14:30:00+08:00",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting.",
+                "organizer": "organizer-overlap",
+                "response_status": "",
+                "self_response_status": "needsAction",
+                "attendees": [],
+                "attendee_details": [],
+                "comments": [],
+                "status": "",
+                "created_ms": 0,
+                "updated_ms": 0
+              },
+              {
+                "event_id": "cal-block-overlap",
+                "title": "Blocked",
+                "start_time": "2026-10-16T23:00:00-07:00",
+                "end_time": "2026-10-17T00:30:00-07:00",
+                "description": "Personal blocked time.",
+                "organizer": "principal",
+                "response_status": "",
+                "self_response_status": "accepted",
+                "attendees": [],
+                "attendee_details": [],
+                "comments": [],
+                "status": "",
+                "created_ms": 0,
+                "updated_ms": 0
+              }
+            ]
+          }
+        }
+      ],
+      "invitation_window_covered": true,
+      "trajectory_sha256": "64ac3385ea64371ef43f71b81eae23a26c7d4cb934d55cdda58781c738cca2b3",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-32-06-01a136c0-2dd3-7c70-ac28-7db989cec5a4.jsonl",
+        "sha256": "0737ec54a2ad3584cdd4901fa4723189ab8da1ba54597733d060f3207b108b3d"
+      },
+      "native_developer_readback": [
+        {
+          "characters": 24035,
+          "sha256": "956e37c10673669358dfb57a5a4f93156330e1aaa1f34e0a302d4ae118a872e1",
+          "extra_characters": 0
+        }
+      ]
+    }
+  ],
+  "complete_acceptance": false,
+  "independent_review": {
+    "both_decline_known_blocked_overlap": true,
+    "both_correct_absolute_window_now": true,
+    "no_business_writes": true,
+    "compact_two_missing_fixture_identity_reads": true,
+    "native_catalog_drift": true
+  },
+  "confirmed_input_mechanism": "DwsClient projects organizer to one string, preferring displayName/name/email over userId and omitting openDingTalkId. Exact code loss confirmed; cannot alone attribute a production notification failure to it. Native sources may separately preserve IDs in trigger payload.",
+  "limitations": [
+    "Identity profiles/contact search are declared but unavailable in this fixture; failed queries are included in native_mcp_results and not masked as successful callback receipts.",
+    "Both predeclared shared Skill gate and service preparation/Audit/executor still not accepted.",
+    "No same-session typed-envelope continuation yet; older synthetic-shaped resume is not relabeled.",
+    "Native catalog discrepancy prevents strict single-variable attribution."
+  ],
+  "temporary_cleanup": {
+    "path": "/private/tmp/ceo-calendar-native-shape.ZO4TVD",
+    "removed": true,
+    "open_handle_check": "lsof +D returned 1 with empty stdout before removal",
+    "native_original_sessions_retained": true
+  }
+}
