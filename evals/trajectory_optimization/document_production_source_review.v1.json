@@ -1,0 +1,758 @@
+{
+  "version": 1,
+  "scope": "Metadata-only complete actual native chains; no private documents/Profile copied or replayed; canonical candidate-execution ledger separately checked.",
+  "attempts": [
+    {
+      "attempt_id": 190316,
+      "agent_run_id": 190315,
+      "task_id": 404232,
+      "role": "consumer",
+      "proposal_revision": 0,
+      "session_id": "01a130d9-86c7-72e2-b398-c2758bce4411",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-02-04-01a130d9-86c7-72e2-b398-c2758bce4411.jsonl",
+      "range": [
+        0,
+        147
+      ],
+      "native_records": 147,
+      "native_sha256": "8943d7eda44b448098966481d111ee84e79cfef7434e97da432f93be9155a0ed",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "chars": 7523,
+          "body_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "chars": 7654,
+          "body_sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "chars": 5514,
+          "body_sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "chars": 11717,
+          "body_sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "chars": 7044,
+          "body_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "chars": 3453,
+          "body_sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "is_error": false
+        }
+      ],
+      "document_reads": [
+        {
+          "tool": "read_dingtalk_drive_info",
+          "arguments_sha256": "cca449b19e1439b13441c7f648d8a5a3fd80a5fb07430d8c26555d08e9290b21",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_info",
+          "arguments_sha256": "f31d001c4597647971b4c0ce87d13324c1035fca000bcc2de414b653ce3783fb",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "search_dingtalk_documents",
+          "arguments_sha256": "c4b79ec3dc6f675da53ed6a331a0033baf5e8b91add021aa15934b6e3eeba399",
+          "source_chars": 17,
+          "source_sha256": "1bf2399115d2492c18e511f4522cd9e159c1817a82145c518209084cd9d27f0b",
+          "is_error": false,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_file",
+          "arguments_sha256": "6d86604752e4bf1fe237f4e5f9a2c8c28976d1ceb8e95308625e359b1670538a",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_file",
+          "arguments_sha256": "3594bae141bbea08e30ca15d0c6ebdbb05788573802b0c1759566cecfe301dda",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        }
+      ],
+      "clipped_model_outputs": []
+    },
+    {
+      "attempt_id": 190321,
+      "agent_run_id": 190320,
+      "task_id": 404234,
+      "role": "consumer",
+      "proposal_revision": 0,
+      "session_id": "01a130da-7b2c-7842-b450-b96751be866b",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-03-07-01a130da-7b2c-7842-b450-b96751be866b.jsonl",
+      "range": [
+        0,
+        141
+      ],
+      "native_records": 141,
+      "native_sha256": "dfc936e28888df296978d43d7b9f4a8a6e08f2b81a14a24d68d8a54a688a3942",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "chars": 7523,
+          "body_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "chars": 7654,
+          "body_sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "chars": 5514,
+          "body_sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "chars": 11717,
+          "body_sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "chars": 7044,
+          "body_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "chars": 3453,
+          "body_sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "is_error": false
+        }
+      ],
+      "document_reads": [
+        {
+          "tool": "read_dingtalk_document_full",
+          "arguments_sha256": "b358c56e5753b9cacf9dee9d39b38a38670382758badb21452ddaf8799e01cc5",
+          "source_chars": 54470,
+          "source_sha256": "16f2166ab2e5d79b9319871fd80292c96bb8b60d7fd5e97b58853b35c9905e7f",
+          "is_error": false,
+          "provider_complete": true,
+          "jsonml": {
+            "chars": 46046,
+            "sha256": "a74fd0a330c3d40f91f93b4c3ba34222d2edf7be79cc968a9015f19d841b5887",
+            "full_model_visible": false
+          }
+        },
+        {
+          "tool": "read_dingtalk_drive_info",
+          "arguments_sha256": "cdb1bfe188cab6bb9dabcf6f19bd3b76909b9ce7f73daa2959392d4dbd94f871",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_file",
+          "arguments_sha256": "92cb801d6d39d96bbf7df3f744d73d9e91ca3848b0152df8a97bd2cf7365ac79",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        }
+      ],
+      "clipped_model_outputs": [
+        {
+          "chars": 41933,
+          "sha256": "2c4e9d722492d1cbfec9643271e3ca4dd980d85b58e7103d299aea3452ac07d8"
+        }
+      ]
+    },
+    {
+      "attempt_id": 190323,
+      "agent_run_id": 190322,
+      "task_id": 404232,
+      "role": "audit",
+      "proposal_revision": 0,
+      "session_id": "01a130da-e60e-7400-bdb4-14eb23b86aa4",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-03-34-01a130da-e60e-7400-bdb4-14eb23b86aa4.jsonl",
+      "range": [
+        0,
+        99
+      ],
+      "native_records": 99,
+      "native_sha256": "c766914f04c02b2ee37f72fce94b76840970f52cf01705ae47b8d1fcecedccce",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "chars": 7523,
+          "body_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "chars": 5514,
+          "body_sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "is_error": false
+        }
+      ],
+      "document_reads": [
+        {
+          "tool": "read_dingtalk_drive_info",
+          "arguments_sha256": "cca449b19e1439b13441c7f648d8a5a3fd80a5fb07430d8c26555d08e9290b21",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_info",
+          "arguments_sha256": "f31d001c4597647971b4c0ce87d13324c1035fca000bcc2de414b653ce3783fb",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_file",
+          "arguments_sha256": "6d86604752e4bf1fe237f4e5f9a2c8c28976d1ceb8e95308625e359b1670538a",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_file",
+          "arguments_sha256": "3594bae141bbea08e30ca15d0c6ebdbb05788573802b0c1759566cecfe301dda",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        }
+      ],
+      "clipped_model_outputs": []
+    },
+    {
+      "attempt_id": 190325,
+      "agent_run_id": 190324,
+      "task_id": 404234,
+      "role": "audit",
+      "proposal_revision": 0,
+      "session_id": "01a130db-97f1-7dc2-bc85-0ba30f610901",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-04-20-01a130db-97f1-7dc2-bc85-0ba30f610901.jsonl",
+      "range": [
+        0,
+        106
+      ],
+      "native_records": 106,
+      "native_sha256": "df9f36368de85188fde88ebe668a1fce8667cd875857bbad80e64140581a2bba",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "chars": 7523,
+          "body_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "chars": 7654,
+          "body_sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "chars": 5514,
+          "body_sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "chars": 11717,
+          "body_sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "chars": 7044,
+          "body_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "chars": 3453,
+          "body_sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "is_error": false
+        }
+      ],
+      "document_reads": [
+        {
+          "tool": "read_dingtalk_document",
+          "arguments_sha256": "b358c56e5753b9cacf9dee9d39b38a38670382758badb21452ddaf8799e01cc5",
+          "source_chars": 7418,
+          "source_sha256": "6b392dfec02e32c2c0b07630740fc30bb4218385fef786c9b52a9c09032804a2",
+          "is_error": false,
+          "provider_complete": null,
+          "markdown": {
+            "chars": 6955,
+            "sha256": "f4f1666d0600f358b28b55b5009c63f8d5ec166d87ffe7d198634ddebc05f560",
+            "full_model_visible": true
+          }
+        },
+        {
+          "tool": "read_dingtalk_drive_info",
+          "arguments_sha256": "cdb1bfe188cab6bb9dabcf6f19bd3b76909b9ce7f73daa2959392d4dbd94f871",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_file",
+          "arguments_sha256": "92cb801d6d39d96bbf7df3f744d73d9e91ca3848b0152df8a97bd2cf7365ac79",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        }
+      ],
+      "clipped_model_outputs": []
+    },
+    {
+      "attempt_id": 190327,
+      "agent_run_id": 190326,
+      "task_id": 404232,
+      "role": "consumer",
+      "proposal_revision": 1,
+      "session_id": "01a130d9-86c7-72e2-b398-c2758bce4411",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-02-04-01a130d9-86c7-72e2-b398-c2758bce4411.jsonl",
+      "range": [
+        147,
+        202
+      ],
+      "native_records": 55,
+      "native_sha256": "9c63113e4cf39e5d47398b944f2eb4ee3556bed0cb94df2f64cdd98aca5ad5ee",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "chars": 7523,
+          "body_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "chars": 5514,
+          "body_sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "chars": 7654,
+          "body_sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "chars": 11717,
+          "body_sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "chars": 7044,
+          "body_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "chars": 3453,
+          "body_sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "is_error": false
+        }
+      ],
+      "document_reads": [],
+      "clipped_model_outputs": []
+    },
+    {
+      "attempt_id": 190329,
+      "agent_run_id": 190328,
+      "task_id": 404232,
+      "role": "audit",
+      "proposal_revision": 1,
+      "session_id": "01a130dc-48c4-7c32-8388-4c8745feb993",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-05-05-01a130dc-48c4-7c32-8388-4c8745feb993.jsonl",
+      "range": [
+        0,
+        123
+      ],
+      "native_records": 123,
+      "native_sha256": "04ff9cd9638f1c21ee08429f08e42673106095f563faa0ebfd460212e206497f",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "chars": 7523,
+          "body_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "chars": 5514,
+          "body_sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "chars": 7654,
+          "body_sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "chars": 11717,
+          "body_sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "chars": 7044,
+          "body_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "chars": 3453,
+          "body_sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "is_error": false
+        }
+      ],
+      "document_reads": [
+        {
+          "tool": "read_dingtalk_drive_info",
+          "arguments_sha256": "cca449b19e1439b13441c7f648d8a5a3fd80a5fb07430d8c26555d08e9290b21",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_info",
+          "arguments_sha256": "f31d001c4597647971b4c0ce87d13324c1035fca000bcc2de414b653ce3783fb",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_file",
+          "arguments_sha256": "6d86604752e4bf1fe237f4e5f9a2c8c28976d1ceb8e95308625e359b1670538a",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        },
+        {
+          "tool": "read_dingtalk_drive_file",
+          "arguments_sha256": "3594bae141bbea08e30ca15d0c6ebdbb05788573802b0c1759566cecfe301dda",
+          "source_chars": 2,
+          "source_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "is_error": true,
+          "provider_complete": null
+        }
+      ],
+      "clipped_model_outputs": []
+    },
+    {
+      "attempt_id": 190331,
+      "agent_run_id": 190330,
+      "task_id": 404234,
+      "role": "consumer",
+      "proposal_revision": 1,
+      "session_id": "01a130da-7b2c-7842-b450-b96751be866b",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-03-07-01a130da-7b2c-7842-b450-b96751be866b.jsonl",
+      "range": [
+        141,
+        212
+      ],
+      "native_records": 71,
+      "native_sha256": "6b2ce431f1ad1cc2e588e5d6f1eeb390760c44e2d46248c91861a377e9b55076",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "chars": 7523,
+          "body_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "chars": 7654,
+          "body_sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "chars": 5514,
+          "body_sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "chars": 11717,
+          "body_sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "chars": 7044,
+          "body_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "chars": 3453,
+          "body_sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "is_error": false
+        }
+      ],
+      "document_reads": [],
+      "clipped_model_outputs": []
+    },
+    {
+      "attempt_id": 190333,
+      "agent_run_id": 190332,
+      "task_id": 404234,
+      "role": "audit",
+      "proposal_revision": 1,
+      "session_id": "01a130dd-0efc-7962-af04-526909f69573",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-05-56-01a130dd-0efc-7962-af04-526909f69573.jsonl",
+      "range": [
+        0,
+        59
+      ],
+      "native_records": 59,
+      "native_sha256": "6f89755294ece049deced2463f7eac3dc18101134746316df14e2e3b0b4e6187",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "chars": 7523,
+          "body_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "is_error": false
+        }
+      ],
+      "document_reads": [],
+      "clipped_model_outputs": []
+    },
+    {
+      "attempt_id": 190335,
+      "agent_run_id": 190334,
+      "task_id": 404232,
+      "role": "consumer",
+      "proposal_revision": 2,
+      "session_id": "01a130d9-86c7-72e2-b398-c2758bce4411",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-02-04-01a130d9-86c7-72e2-b398-c2758bce4411.jsonl",
+      "range": [
+        202,
+        249
+      ],
+      "native_records": 47,
+      "native_sha256": "bf6dc6203eafbad22c4954bdd482a72c1c55f97c94edba17971608fdbd0eef16",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        }
+      ],
+      "document_reads": [],
+      "clipped_model_outputs": []
+    },
+    {
+      "attempt_id": 190339,
+      "agent_run_id": 190338,
+      "task_id": 404232,
+      "role": "audit",
+      "proposal_revision": 2,
+      "session_id": "01a130dd-dd15-7282-bdf4-4c5a41eb095f",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T09-06-48-01a130dd-dd15-7282-bdf4-4c5a41eb095f.jsonl",
+      "range": [
+        0,
+        81
+      ],
+      "native_records": 81,
+      "native_sha256": "065345ea3093b209d0963231467225832d974cbd3992655f10e42b1ba691f50d",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "chars": 37887,
+          "body_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "chars": 7654,
+          "body_sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "chars": 7523,
+          "body_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "chars": 5514,
+          "body_sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "chars": 11717,
+          "body_sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "chars": 7044,
+          "body_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "is_error": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "chars": 3453,
+          "body_sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "is_error": false
+        }
+      ],
+      "document_reads": [],
+      "clipped_model_outputs": []
+    }
+  ],
+  "canonical_execution_ledger": [
+    {
+      "task_id": 404232,
+      "candidate_id": 430,
+      "consumer_run_id": 190326,
+      "proposal_revision": 1,
+      "stage_index": 0,
+      "execution_id": 111,
+      "execution_status": "failed",
+      "action_status": "failed",
+      "failure_code": "business_state_changed",
+      "failure_reason": "oa_task_state_conflict",
+      "provider_task_status": "CANCELED",
+      "provider_task_result": "NONE",
+      "readback_sha256": "0c7c3c84ad7d1568b18ca7aec98cb330be70b2e0075c1b06531e735599183cb3",
+      "durable_external_action_result_present": false
+    },
+    {
+      "task_id": 404234,
+      "candidate_id": 429,
+      "consumer_run_id": 190320,
+      "proposal_revision": 0,
+      "stage_index": 0,
+      "execution_id": 110,
+      "execution_status": "failed",
+      "action_status": "failed",
+      "failure_code": "business_state_changed",
+      "failure_reason": "oa_task_state_conflict",
+      "provider_task_status": "CANCELED",
+      "provider_task_result": "NONE",
+      "readback_sha256": "f80b0ece8229d22d7b737b4d9225b0f9a0378abf01bf76d51eabfedddeb083d3",
+      "durable_external_action_result_present": false
+    }
+  ],
+  "independent_review": {
+    "agent": "native_catalog_review",
+    "mode": "read-only",
+    "sample_window": 60,
+    "document_related_attempts": 14,
+    "document_related_tasks": 5,
+    "latest_call_task": 404232,
+    "latest_successful_text_source_task": 404234
+  },
+  "limits": [
+    "Complete tool result is not proof of complete model-visible raw JSONML.",
+    "Markdown and full JSONML are different views; same node_id does not prove same complete representation.",
+    "No new external action or provider outcome replayed.",
+    "Canceled provider task before dispatch is not a successful revert; later no_action does not retroactively mark failed execution verified.",
+    "No root cause assigned to instruction size merely from repeated Skill reads."
+  ]
+}

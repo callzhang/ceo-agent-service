@@ -1,0 +1,22 @@
+# Document trajectory review — 2026-10-12
+
+This is a read-only review of actual production runs, not a private-document replay or a runtime change. The latest 60 Consumer/Audit attempts included 14 document-related attempts across five tasks. This report follows the complete native chains for task 404232 (latest document tool calls) and task 404234 (latest successful document text source). Versioned metadata, native ranges, hashes and execution-ledger results are in `evals/trajectory_optimization/document_production_source_review.v1.json`.
+
+## Confirmed observations
+
+- Both chains repeat unchanged Skill bodies. Consumer revisions 0 and 1 each read the same seven bodies, totaling 80,792 original body characters per turn, all retained inside model-visible escaped tool outputs. This proves redundant delivery; it does not by itself prove an incorrect business decision.
+- Task 404232's Drive information/file reads return errors. No successful document body is established by those calls. The errors are visible to the model; do not describe a tool invocation as a successful document read.
+- Task 404234 Consumer calls `read_dingtalk_document_full` directly. The server marks its result complete; the MCP text result is 54,526 characters (its compact structured JSON is 54,470 characters), including a 46,046-character JSONML string. The native model-visible output is 41,933 characters and explicitly says 3,569 tokens were truncated. Server completeness therefore does not establish model-visible completeness.
+- Audit reads the same node through `read_dingtalk_document`: its 6,955-character Markdown is fully visible. That response has no completeness flag. Markdown and JSONML are different representations; neither node identity nor shorter output establishes complete semantic equivalence or equal revisions.
+- Canonical executions 111/110, candidates 430/429, fail with `business_state_changed` / `oa_task_state_conflict`. Provider readback says `CANCELED` and `NONE`. The handler returns before dispatching the revert operation. There is no durable external action result for either attempt. Earlier OA-detail reads show RUNNING; later reads show CANCELED. The exact state-change time is not established.
+- Subsequent no_action and task-level done do not turn the earlier failed execution into a successful revert. The canceled state is the confirmed execution-failure reason; document clipping is a separate delivery defect, with no demonstrated causal link to that failure.
+
+## Smallest useful improvements
+
+1. Reuse unchanged, already visible Skill bodies in the same session, while retaining the existing source-version and compaction behavior. This is the scope of the separate frozen-Skill draft; do not claim the installed-Skill wording alone reduces reads, since its controls did not show that benefit.
+2. Test native per-tool output budgets for the full-document tool using an anonymous result with the same structure and size. Compare original and candidate model-visible bytes before changing the adapter. The service already uses native per-tool budgets for Skill tools. Do not increase all tool budgets or add task-specific prompt exceptions.
+3. Keep text reading and editing-revision retrieval distinct in tool descriptions. First establish which representation contains the facts required for the task; do not silently substitute Markdown for full JSONML or assume shorter means complete.
+
+No runtime, prompt, provider, approval or cancellation policy was changed by this review. Fixed anonymous comparisons and focused regression tests are still required before a document-delivery fix can be released.
+
+Independent read-only review verified native/source metrics, canonical execution joins and the pre-dispatch conflict return. Original Skill-body lengths, MCP text lengths and compact structured-JSON lengths are distinct measures; metadata records the latter under document_reads.source_chars.
