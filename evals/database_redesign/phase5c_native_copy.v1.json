@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "acceptance": "Phase5C real native approve lifecycle on constructor-prepared Store17 production copy",
+  "passed": true,
+  "completed_utc": "2026-10-13T17:05:48Z",
+  "candidate_head_at_start": "40dfa5b9c0e50ea07de9d755886531e641151813",
+  "candidate_head_at_readback": "758c5f7feee29fd3aae6c107963168119185dda2",
+  "app_sha256": "8aca0de65e927d703d8271154d81c149899e9fbfe12c2d66662447164fd4c89f",
+  "app_file_count": 332,
+  "app_and_harness_unchanged_through_native_run": true,
+  "harness_sha256": "f4123fc7ce7d8f07510a64bed3bdcfd294c2520da21e51f1018648174fa19e35",
+  "source": {
+    "sha256": "b4e711f44c0d70edb1b2561095921b32747d7f9f86060bf59671bbe588a007da",
+    "source_commit": "db0c2b7331deb80418b959ad0f556f96a9ef96d2",
+    "baseline_kind": "Store17 prepared from immutable online Store16 production capture using actual AutoReplyStore constructor",
+    "migration_acceptance": "separate Phase5C migration evidence; this harness tests native lifecycle on prepared Store17",
+    "candidate_head_at_preparation": "40dfa5b9c0e50ea07de9d755886531e641151813",
+    "app_sha256": "8aca0de65e927d703d8271154d81c149899e9fbfe12c2d66662447164fd4c89f",
+    "native_harness_sha256": "f4123fc7ce7d8f07510a64bed3bdcfd294c2520da21e51f1018648174fa19e35",
+    "raw_production_capture": {
+      "sha256": "02d2877bc28da6418f799cb18c4eeccdd1a5c1337da0e6828376bd47495e84f5",
+      "source_commit": "db0c2b7331deb80418b959ad0f556f96a9ef96d2",
+      "captured_utc": "2026-10-13T16:55:40Z",
+      "bytes": 471347200,
+      "store_marker": [
+        "2026-10-13.2",
+        "2026-10-12 00:20:48"
+      ],
+      "email_schema_version": 51,
+      "table_count": 129,
+      "foreign_key_check": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ],
+      "counts": {
+        "tasks": 25459,
+        "runs": 222184,
+        "actions": 2160
+      }
+    },
+    "prepared_store17": {
+      "sha256": "b4e711f44c0d70edb1b2561095921b32747d7f9f86060bf59671bbe588a007da",
+      "bytes": 471347200,
+      "store_marker": [
+        "2026-10-13.3",
+        "2026-10-12 00:20:48"
+      ],
+      "email_schema_version": 51,
+      "table_count": 126,
+      "foreign_key_check": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ],
+      "counts": {
+        "tasks": 25459,
+        "runs": 222184,
+        "actions": 3919
+      }
+    },
+    "online_capture_source_readonly": true
+  },
+  "production_readback": {
+    "commit": "d7397203df678fd4137c237eb7eb84a671e084f3",
+    "store_marker": "2026-10-13.2",
+    "test_task_rows": 0,
+    "native_session_rows": 0,
+    "test_provider_receipt_rows": 0
+  },
+  "case": "approve",
+  "task_id": 404585,
+  "status": "done",
+  "model": "gpt-5.6-luna",
+  "route": "codex_oauth",
+  "native_home": "/Users/derek/.codex",
+  "native_invocations": [
+    {
+      "role": "consumer",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "cc07284e66bae32023c4a1ef488785ad294d373b53af2f3437760993c8da3b92"
+    },
+    {
+      "role": "audit",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "b55bee11340db32f5811c536b613894389a486c95d745205b2f3aa3d7e13b62b"
+    }
+  ],
+  "native_references": [
+    {
+      "id": 353161,
+      "role": "consumer",
+      "status": "completed",
+      "revision": 0,
+      "parent_id": null,
+      "session_id": "01a13632-4410-7cc1-9035-f14ba26b6a75",
+      "start": 0,
+      "end": 36,
+      "native_exists": true,
+      "tool_events": 5,
+      "error": "",
+      "attempts": [
+        {
+          "id": 353162,
+          "status": "completed",
+          "session_id": "01a13632-4410-7cc1-9035-f14ba26b6a75",
+          "start": 0,
+          "end": 36
+        }
+      ]
+    },
+    {
+      "id": 353163,
+      "role": "audit",
+      "status": "completed",
+      "revision": 0,
+      "parent_id": 353161,
+      "session_id": "01a13632-d06d-7282-ab52-a44eb7301e62",
+      "start": 0,
+      "end": 29,
+      "native_exists": true,
+      "tool_events": 4,
+      "error": "",
+      "attempts": [
+        {
+          "id": 353164,
+          "status": "completed",
+          "session_id": "01a13632-d06d-7282-ab52-a44eb7301e62",
+          "start": 0,
+          "end": 29
+        }
+      ]
+    }
+  ],
+  "in_memory_provider_calls": 1,
+  "in_memory_verification_calls": 1,
+  "real_provider_sends": 0,
+  "external_action_result_rows": 1,
+  "sent_reply_rows": 1,
+  "business_attempt_rows": 1,
+  "terminal_reopen": "executed without new model/provider invocation",
+  "script_original_tables_unchanged": 120,
+  "original_table_fingerprint_manifest_sha256": "b062eb7cc33938566d930fb6fc3585c228d5f0c6b03f78766f3bc7b7fbe0d4e2",
+  "postfix_fact_chain": {
+    "new_parent_rows": 1,
+    "new_receipt_rows": 1,
+    "new_native_reply_dispatch_rows": 0,
+    "composite_parent_identity_matches": true,
+    "parent_physical_id": 3920,
+    "receipt_physical_id": 3925,
+    "tuple_key_sha256": "4712753cd73b4742630c47fa4aba86be26df80e4a5d42c649db0e523536ba195",
+    "provider_result_is_original_text": true,
+    "provider_result_matches_in_memory_substitute": true,
+    "provider_result_sha256": "36ae8ae8b967bbca884248c5060c6b2054a437149f7a844c6b42a488c70e3dc7",
+    "approved_candidate_digest": "5aacbecb35696918ee542752fb85be6e1d0b48ad1433ef520d3dcb5ebb344c9c",
+    "candidate_review_execution_attempt_external_receipt_chain_exact": true,
+    "persisted_statuses": {
+      "execution": "done",
+      "attempt": "verified"
+    },
+    "native_reply_dispatch_coverage": "not exercised: existing approve case selects send_group_message, whose ServiceMessageSender path persists parent and receipt without claim_native_reply_dispatch; no synthetic claim was added"
+  },
+  "source_captures_unchanged": true,
+  "scope_limitations": [
+    "Prepared Store17 native lifecycle; Store16→17 migration acceptance is separate.",
+    "send_group_message exercises postfix parent and provider receipt, not native_reply_dispatch claim.",
+    "In-memory provider; no real DingTalk delivery or live deployment acceptance.",
+    "No branch/retry/failure native case repeated."
+  ],
+  "initial_harness_preconditions": {
+    "requested_temp_prefix_adjusted_to_existing_assertion": true,
+    "store16_raw_capture_separated_from_store17_native_baseline": true,
+    "runtime_and_harness_modified": false,
+    "native_calls_before_valid_preparation": 0
+  },
+  "diagnostics": [
+    "One slow SQLite-context log (2.978 seconds); acceptance assertions passed.",
+    "Independent checker initially assumed every application table had rowid; corrected only this temporary checker to use the declared primary keys of the three existing WITHOUT ROWID tables. Repeated read-only comparison passed; runtime and harness unchanged.",
+    "Independent checker compares parsed proposal.actions[0].payload.content with persisted final_body exactly, without JSON serialization escaping."
+  ],
+  "cleanup": {
+    "owned_root": "/private/tmp/ceo-native-copy.phase5c-jTOQja",
+    "completed": true,
+    "native_home_originals_preserved": true,
+    "credentials_or_native_trajectories_copied": false,
+    "owned_root_absent_verified": true,
+    "removed_file_count": 24,
+    "removed_file_bytes": 1414210391,
+    "retained_metadata_verified_before_removal": true
+  },
+  "independent_original_rows_values_types_exact": {
+    "application_tables": 120,
+    "rowid_tables": 117,
+    "without_rowid_tables_compared_by_primary_key": [
+      "email_category_description_revisions",
+      "email_model_mode_transitions",
+      "email_model_promotion_configs"
+    ],
+    "rowid_and_primary_key_identity_preserved": true,
+    "preexisting_foreign_key_findings_preserved": 1
+  },
+  "verification_scripts_sha256": {
+    "prepare.py": "ad74ca210a871eb6e0688aeaecb7dce0649c6f3d1ace68b4cd19c5c07127de50",
+    "postcheck.py": "0ecfb296b2a9acbb36a1a3f13b45fc3af2ee3bade94c233e0929df2f14e8399b"
+  },
+  "native_artifact_policy": "Only native session IDs, offset ranges, status and prompt digests are retained; no credentials or native trajectory copy."
+}

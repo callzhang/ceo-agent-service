@@ -172,6 +172,11 @@ def full_source_database(path, auxiliary_path):
         for obj in state['objects']:
             if obj['type'] != 'table' and obj['sql']:
                 db.execute(obj['sql'])
+    postfix_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-13-database-redesign-phase5c-postfix-source.json').read_text())['tables']
+    for state in postfix_source.values():
+        for obj in state['objects']:
+            if obj['type'] == 'table':
+                db.execute(obj['sql'])
     # Old source13 independently retained native receipts, even after the
     # auxiliary current constructor has retired their physical declarations.
     receipt_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-13-database-redesign-phase5b-inventory.json').read_text())['tables']

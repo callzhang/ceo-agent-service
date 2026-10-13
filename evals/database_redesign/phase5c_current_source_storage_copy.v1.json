@@ -1,0 +1,561 @@
+{
+  "scope": "standalone storage migration; no runtime marker publication",
+  "source_version": "2026-10-13.2",
+  "source_marker_unchanged": true,
+  "source_constructor_commit": "ebaf0d966ab21fd328be577c0fb8e65a519bd009",
+  "actual_source_deployment_verified": false,
+  "source_physical_tables": 129,
+  "target_physical_tables": 126,
+  "unchanged_tables": {
+    "conversations": {
+      "rows": 509,
+      "sha256_values_types": "d106144d85bd0f646334e09b59cff44a0f2fb264c29363a72ea1138075eb9f92"
+    },
+    "seen_messages": {
+      "rows": 7094,
+      "sha256_values_types": "15a3053e715fce5e48c3af9fbf69c42f09c299999b8eb295c6e0e82f395b4caf"
+    },
+    "sent_replies": {
+      "rows": 2340,
+      "sha256_values_types": "12ecf35d28464989a4ddf0b70dc9327757813829d5859772b3de174e109aa2f0"
+    },
+    "errors": {
+      "rows": 15274,
+      "sha256_values_types": "d86cf9b988e5fa9703c805d337003ab73d2fe0c59949d296e035e83438b3603a"
+    },
+    "corpus_sources": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "org_user_profiles": {
+      "rows": 76,
+      "sha256_values_types": "94f9188112b0374408c705ecf6340608650c2cc2388f59cee498b5b83009601c"
+    },
+    "org_cache_metadata": {
+      "rows": 2,
+      "sha256_values_types": "8b103cb274915bd1e6f23f0fa51b8a4153e6a318964c081a4afb5970d53e33d3"
+    },
+    "reply_attempts": {
+      "rows": 14818,
+      "sha256_values_types": "603ae27066823500c528b37cc098bd52da2da050b41ae9f337e5bf4f58c11f4c"
+    },
+    "service_state": {
+      "rows": 235,
+      "sha256_values_types": "5e7fd7c38d5d362d46366a8177a70dccfb6de1074f25ecb662e493f0809ddcf3"
+    },
+    "memory_write_events": {
+      "rows": 476,
+      "sha256_values_types": "6bd4994c6e9fe6cfe959506f50ffae936949a9e8a1073b4983126162f26b9150"
+    },
+    "feedback_events": {
+      "rows": 48,
+      "sha256_values_types": "3e3926e8071f9f8827e81e691cce37b7690b8390c38016211f0261566a0e3b3a"
+    },
+    "work_todos": {
+      "rows": 3327,
+      "sha256_values_types": "7b776637bf18fbfd85b7978b8de5502f9256d21e7287e89b79f9b4e010482370"
+    },
+    "work_updates": {
+      "rows": 5468,
+      "sha256_values_types": "8f49399214e9a2560997d9c30d6eb3df99fb5092b1b901ed0c666661cf40bb9e"
+    },
+    "follow_up_drafts": {
+      "rows": 2477,
+      "sha256_values_types": "faef6c9d5fe5ab5d5504345b65f46f448ecc5f7827dc1dc1e22e2e353717d7ac"
+    },
+    "daily_scan_state": {
+      "rows": 9,
+      "sha256_values_types": "44bb3ceb45a6d7d6b9fb9a65e1f55c230c851da0dece3adccfb71b64facf74ff"
+    },
+    "codex_session_locks": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "okr_review_items": {
+      "rows": 413,
+      "sha256_values_types": "7555bb82c65b7ec2ce7090f079da9ef1b32a9dbb295b27c839369ff18a3664ff"
+    },
+    "setup_wizard_steps": {
+      "rows": 12,
+      "sha256_values_types": "a4524c3d50da90a357c38cca0823d97bfa46bdd39add891e897ddbe40b00f805"
+    },
+    "setup_wizard_events": {
+      "rows": 22,
+      "sha256_values_types": "0543b75a6b1703e3519806c976a7f08784289c5267c4444f3ff3e37cc09a590f"
+    },
+    "work_todo_dingtalk_links": {
+      "rows": 875,
+      "sha256_values_types": "2e9d79208ee24524e3ac268d7b69654e43c02b51a6f61537856e8ca0eeea97fe"
+    },
+    "wechat_read_state": {
+      "rows": 1,
+      "sha256_values_types": "869f68f10b368f8479e234787c8fc08513f1471cac3674a2b16473c7140da289"
+    },
+    "wechat_reply_scopes": {
+      "rows": 4,
+      "sha256_values_types": "a3e9bb2612a4176e7d6e3ba01b4ce03fabdbce1d33b6df95d1e3b29922b5b750"
+    },
+    "work_projects": {
+      "rows": 975,
+      "sha256_values_types": "6997401847ba94294540ae5486d389f3120bd8a8969c89e34329b5e768234f7d"
+    },
+    "wechat_memory_candidates": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "service_bugfix_candidates": {
+      "rows": 3,
+      "sha256_values_types": "429430b898c1f1425408304373b776d399a5f71c1812081d3e5def769bb538e9"
+    },
+    "channel_login_reservations": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "follow_up_send_attempts": {
+      "rows": 65,
+      "sha256_values_types": "5b2d9424fee0974d93f261c9ca0b2e1b04cefef4b8293a4aba3c18a715a00dcf"
+    },
+    "conversation_runtime_sessions": {
+      "rows": 5296,
+      "sha256_values_types": "204bb6e10e4cc74523033167e1f5726731aa20683f4c6bb36f18c9d3db3c90eb"
+    },
+    "runtime_route_pauses": {
+      "rows": 2,
+      "sha256_values_types": "61b028dd90f657d2f766c1a6ce9b9f1e19429e207abc2242a737c6ef98e668d0"
+    },
+    "wechat_memory_import_jobs": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "feedback_processing_batches": {
+      "rows": 3,
+      "sha256_values_types": "797fdfda45740b5ecdc8d9520f2179f00fe1b38bfc26c1827b26f087c3415359"
+    },
+    "feedback_processing_items": {
+      "rows": 48,
+      "sha256_values_types": "a3bf07c96b26b4cedfeac1aa5cd539424032fa61f453e58491f202de6a089493"
+    },
+    "todo_evidence_candidates": {
+      "rows": 3,
+      "sha256_values_types": "a3de14a7c0ec3f670926a0f8eba047125022b621c304157e1cf39feb321b7d8a"
+    },
+    "feedback_processing_rounds": {
+      "rows": 3,
+      "sha256_values_types": "1ed5d28b5057a701d58c35dbc138de6cb41417d002c9bb6d3a7522e07211d82d"
+    },
+    "feedback_processing_transitions": {
+      "rows": 5,
+      "sha256_values_types": "7ae6bd14b5ec35625ef0d24064daa6d1ae949cecfe7acb307306ed0d8e8e9000"
+    },
+    "email_schema_migrations": {
+      "rows": 38,
+      "sha256_values_types": "63f7dbc438fa989f568e98a61f2a562cb02f9ad9c8351213f76062ce97a3d152"
+    },
+    "email_accounts": {
+      "rows": 2,
+      "sha256_values_types": "7ac5aabd2571ef2916feec6c63692730b78d27fa238bc2f56ba1582f6ebc4bba"
+    },
+    "email_scan_cursors": {
+      "rows": 2,
+      "sha256_values_types": "42fc47e10f6bf39a7c27408c159b7be30630690560dcd4ca2f1850a294e76741"
+    },
+    "email_messages": {
+      "rows": 8734,
+      "sha256_values_types": "7fb8a5d42002c30be2a3df4883c083683ea9ffb388eb9ab4c5a470fce13bf1c2"
+    },
+    "email_reply_receipts": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_reply_dispatch_claims": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_unsubscribe_claims": {
+      "rows": 1076,
+      "sha256_values_types": "bb0718a3f57043d361239aed4e761117d24538f0bdb3fea957e3741b0a375aec"
+    },
+    "email_unsubscribe_continuations": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_unsubscribe_steps": {
+      "rows": 822,
+      "sha256_values_types": "cf1695eb283fc71e3d28b0a8c0e6ebc7d4c9b1aef4e91663b93c8cb13f481566"
+    },
+    "email_unsubscribe_receipts": {
+      "rows": 1076,
+      "sha256_values_types": "e67dc658f5e741ee2da2e63aa31c702005f7defd705ab7e198e7729457b8daf6"
+    },
+    "runtime_skill_configs": {
+      "rows": 18,
+      "sha256_values_types": "ea8992078b460bd6f2f25b81c072f4ad2eedc39942857ebb1d9f5205ce13de7b"
+    },
+    "runtime_skill_bindings": {
+      "rows": 227,
+      "sha256_values_types": "8ad137a1d9ee1a8c88059df058b8fa3cc663cfe051d5acea8f7b6ba0e8d2f71a"
+    },
+    "runtime_skill_load_receipts": {
+      "rows": 3979,
+      "sha256_values_types": "19b215390a41c688745ca61fa7b46312f90a0cf74c2ad9a4aa1eddae3280c76c"
+    },
+    "runtime_feedback_iteration_capabilities": {
+      "rows": 18,
+      "sha256_values_types": "1cf537cd32f6348a06de11b826dc2f66794bd0f93fed1f9cdf9db572d88a8152"
+    },
+    "feedback_iteration_decisions": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "managed_skills": {
+      "rows": 21,
+      "sha256_values_types": "500671518d9fa5b7b7f58f14eeaffc019ca2adea15ffbf4aa19c385862b5e742"
+    },
+    "managed_skill_revisions": {
+      "rows": 152,
+      "sha256_values_types": "c64e23ac9e755a4d3c7bf0d2f6e4a8a8769aee4c5f1622de534f0eeefd6fe9ff"
+    },
+    "managed_skill_export_receipts": {
+      "rows": 1927,
+      "sha256_values_types": "f9f3eb63b4a3c72ad0b11b7ee0490d9993054ef773c3e352ccd018f16a451804"
+    },
+    "feedback_iteration_decision_items": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "scheduled_tasks": {
+      "rows": 15,
+      "sha256_values_types": "332b58502d3b4ae66ca3190901c1a60a44f67e575e116aeb41c9cbf9b2b4f5d2"
+    },
+    "scheduled_task_skill_refs": {
+      "rows": 34,
+      "sha256_values_types": "b8f3b65ac063a0b9c2c293264fca8bec8557c15e864c5bde14455478ec1f70dd"
+    },
+    "dispatcher_claim_leases": {
+      "rows": 10057,
+      "sha256_values_types": "11cb240b419a7e32217a577d7247e81db6a83e45561d6e8e662cd144b8e4cc8c"
+    },
+    "email_training_snapshots": {
+      "rows": 122,
+      "sha256_values_types": "67542f09bb2238cbb7eb2400ab2dd91350376c22f694e5512ccc9caecbff3d76"
+    },
+    "email_provider_observations": {
+      "rows": 72065,
+      "sha256_values_types": "c0137a123a43cb243a71655ab216d7b394ef76f89fc6bb5d3ebc8c07c6ca8583"
+    },
+    "email_agent_classification_tasks": {
+      "rows": 1355,
+      "sha256_values_types": "fd8d06ceb841b510664004269819519ad5a997f955a408d7e32456fc723760ad"
+    },
+    "email_action_plans": {
+      "rows": 9768,
+      "sha256_values_types": "aa65d45882583a6f33e4cbc3a1e9d2d7382d34a29db8fbb05dbe80095756ae54"
+    },
+    "email_classifications": {
+      "rows": 8734,
+      "sha256_values_types": "00313d058d3d4f29335ebb9633faef184048108839aad687e2b5a86f8340f6bd"
+    },
+    "email_historical_classification_history": {
+      "rows": 183,
+      "sha256_values_types": "48b5951516f0c642524d34e7683baef638e119f00e3a663421b6b8974dda30e1"
+    },
+    "email_classifier_runtime_samples": {
+      "rows": 2048,
+      "sha256_values_types": "70b4c7710f5aae108021d2f9eaf0186db612ecd9276282a53d2921774c2aa6f5"
+    },
+    "email_feedback_requests": {
+      "rows": 1413,
+      "sha256_values_types": "6cb2813baebf60b3a6b368dc4381337d9197ca921cecbffb07937dd412ab610c"
+    },
+    "email_category_configs": {
+      "rows": 11,
+      "sha256_values_types": "de6f1124c269472c1407118c7b5447536a3fe319f452bcd3b3f974a93e4ceb4b"
+    },
+    "email_category_folder_bindings": {
+      "rows": 22,
+      "sha256_values_types": "910af7f7a8c5cecb72fcd795822de22e957344e202dbb0f482bd05a8448e8339"
+    },
+    "email_historical_traversals": {
+      "rows": 2,
+      "sha256_values_types": "f1edb9650a025b8088dcbf525199890b12ee36594513ab429c0d61f45180e9fd"
+    },
+    "email_historical_operations": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_historical_candidates": {
+      "rows": 924,
+      "sha256_values_types": "404e34dd8de6fcba5c1ef06379365f0a7f16dc1633f7eae19fc0a2eef1920f97"
+    },
+    "email_model_promotion_configs": {
+      "rows": 4,
+      "sha256_values_types": "5945d2eec0b5c93108d66000f9a9a7dfbc4c0d084f957727e7e5027377ad78f8"
+    },
+    "email_model_mode_transitions": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_category_description_revisions": {
+      "rows": 24,
+      "sha256_values_types": "e8e23e50b7f5cd3c854237c9734bc0352bc7873b03f71972f3ea40dc5719ef3d"
+    },
+    "email_unsubscribe_effects": {
+      "rows": 1163,
+      "sha256_values_types": "8fabb6b3ba1feb6a90d41865729b329c2330b068847f7d81f934dc87e8219e4f"
+    },
+    "email_training_snapshot_observations": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task_todo_sync_outbox": {
+      "rows": 242,
+      "sha256_values_types": "8562e89a9343666b38d90438754c794d1a144f8ba785c7e97f1ddcadbc04dfa3"
+    },
+    "email_actions": {
+      "rows": 10150,
+      "sha256_values_types": "107a10087529157a3993b6ade84c6e90d54ee3cef9fe80f2f1f2e04cb4caa42d"
+    },
+    "email_action_attempts": {
+      "rows": 12140,
+      "sha256_values_types": "654d97c721e5df47c0f41f9bbaa2a7cb9982511d0d47705430341fbd407bad8c"
+    },
+    "business_tasks": {
+      "rows": 584,
+      "sha256_values_types": "ba793df9081712461e092781ddd81bda296285d6886cdfc9c572282ec8f74565"
+    },
+    "business_task_dingtalk_links": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_follow_ups": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_follow_up_send_attempts": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_todo_sync_outbox": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_evidence": {
+      "rows": 885,
+      "sha256_values_types": "c13748ecf0d89335e7749e17b07890119da09a0164f129eae568cd67ff5751b8"
+    },
+    "business_task_date_evidence": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_events": {
+      "rows": 881,
+      "sha256_values_types": "945b1a66d1633ff3923a611ebb1ab914151d731be03f04c5b447799230042f5f"
+    },
+    "business_task_relations": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_work_clusters": {
+      "rows": 16,
+      "sha256_values_types": "bcdfb4c90bb1142ececc249622bd9dbcc021be5206183656a28db3ebf0f51904"
+    },
+    "business_work_cluster_tasks": {
+      "rows": 16,
+      "sha256_values_types": "aca17bc9a42543a85649223379a675507d237e7823871d7d2fc4c8be87927e1f"
+    },
+    "business_anchors": {
+      "rows": 50,
+      "sha256_values_types": "a0abc44fd43a6e0dc240a3c03974fffa37b5a18ae19578711cbe2e3c7b0207b8"
+    },
+    "business_task_anchor_links": {
+      "rows": 96,
+      "sha256_values_types": "8b26925b1aa6482b7b01a102d235912e413481a9794a9be738129575eb23c473"
+    },
+    "business_projects": {
+      "rows": 32,
+      "sha256_values_types": "a5bbbd53903fbe9af3908d79bac527d6e8fbadba48fe34efc9f8c8c2d76a6e46"
+    },
+    "business_project_candidates": {
+      "rows": 10,
+      "sha256_values_types": "9c96a9d9f9efa85de6e8ab6f89c5876e83b4b6d6695f013f2991197e00237e6f"
+    },
+    "business_attention_items": {
+      "rows": 8,
+      "sha256_values_types": "7eb09aea9a77a3326413074272429fd5f5030f078cfa73bf9bb8bb953248c0cb"
+    },
+    "business_attention_tasks": {
+      "rows": 17,
+      "sha256_values_types": "6e68cd3d945f12f315f0f87a8490db7e55d891b3964d8f38d58a509d22a988f9"
+    },
+    "business_attention_proposal_tasks": {
+      "rows": 17,
+      "sha256_values_types": "6e68cd3d945f12f315f0f87a8490db7e55d891b3964d8f38d58a509d22a988f9"
+    },
+    "business_attention_events": {
+      "rows": 13,
+      "sha256_values_types": "e5585f6bc53d98f0611bea8c83afad57d2e0f2b5d140bf2738886c85b75ef1f2"
+    },
+    "business_legacy_links": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "oa_notification_events": {
+      "rows": 17,
+      "sha256_values_types": "a56332c65d95a0394dd78034779a72a526e64d88d713f705b42c6dcac8b6259c"
+    },
+    "business_source_documents": {
+      "rows": 181,
+      "sha256_values_types": "3e30b70c9ddd823391f5de4c9f1ba3321557326010c15345cb312daaaf9a7396"
+    },
+    "business_task_signals": {
+      "rows": 818,
+      "sha256_values_types": "2daf092687708eacf4e2b5ab5cd96b6bd213bab2b16c70819e4eb3d0a9ebf0c8"
+    },
+    "business_project_context_revisions": {
+      "rows": 6,
+      "sha256_values_types": "f05f298b9208bc10f9aa88422c1e2dad256238e96754a512e2bebc1994daa974"
+    },
+    "business_project_evidence": {
+      "rows": 30,
+      "sha256_values_types": "29dd90adc2732211a068788bf33b68670fab92fe15a0e931b68fb75d06b70ae5"
+    },
+    "email_provider_folder_observation_generations": {
+      "rows": 55,
+      "sha256_values_types": "57c65f3e6adcaa831fd7ac15d3242c2ed16be718ca3cc5237d845d3f882f8077"
+    },
+    "scheduled_task_config_versions": {
+      "rows": 68,
+      "sha256_values_types": "0407587de8c72cf293e31f9f02f30554792108b7a3c833cd17ae405353a1b259"
+    },
+    "email_unsubscribe_cancellations": {
+      "rows": 1,
+      "sha256_values_types": "1028e23179fef2fe5d687da4cc32c5a459d57973de935116f05f878ad9c0e46b"
+    },
+    "email_direct_retry_requests": {
+      "rows": 1,
+      "sha256_values_types": "822c063066136ed59c6808e1ceddfd5f23919b4664b7f56d96a00875b76b5e69"
+    },
+    "business_object_tasks": {
+      "rows": 7207,
+      "sha256_values_types": "11d5613c20815818f6fbe76cbc3223368164b3416b4bf0a68cfac24ba461fc06"
+    },
+    "meeting_alignment_delivery_claims": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "meeting_memory_write_events": {
+      "rows": 556,
+      "sha256_values_types": "432715c1b8b154c18d523bd956bd743ea6bb980b7aad6db6764f7d9a0f377154"
+    },
+    "sent_reply_observers": {
+      "rows": 319,
+      "sha256_values_types": "c67885ae5c67aeab8ebdebd1525d94e6e8499a31b171aff5f9162588c04d8e51"
+    },
+    "task_memory_write_events": {
+      "rows": 463,
+      "sha256_values_types": "e8f5947854d0727b4c5bb48e92c8e08a3e0168604b37d140c414a2a59cb636ee"
+    },
+    "wechat_deliveries": {
+      "rows": 132,
+      "sha256_values_types": "df50d2b284702479a3e9aca4ed30d7a39381123dc15208db2534bfeb760590a6"
+    },
+    "tasks": {
+      "rows": 25459,
+      "sha256_values_types": "a31c46c2864fe5cf60ac2ddd2dd8a4675a106f7fd4d9f70ad8c5b0c184dde222"
+    },
+    "runs": {
+      "rows": 222160,
+      "sha256_values_types": "9cc583d2d9b8d285d5cd89a7a2088ab1c9a81ae05d2d20a796d9d4c10efd19e8"
+    },
+    "workbench_attachments": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_artifacts": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_confirmations": {
+      "rows": 0,
+      "sha256_values_types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_session_search_index": {
+      "rows": 683,
+      "sha256_values_types": "67f204a68c7da4221cb03e3f01ee38d0657e79a848a3ad87ff8b4bcb8d632945"
+    },
+    "codex_session_search_fts": {
+      "rows": 683,
+      "sha256_values_types": "99cdb05bcfd62a07c6690085f7ac1050c559266405d4734e9414219f18e80101"
+    },
+    "codex_session_search_fts_data": {
+      "rows": 14,
+      "sha256_values_types": "196876e32573ce993cb0ddf91dcb1cd32cf0637b12f88210a968c9dc7acdf14f"
+    },
+    "codex_session_search_fts_idx": {
+      "rows": 12,
+      "sha256_values_types": "9d9f051871ab2ab83ad281f02cc3123148c39af3b788f1a8b67e8d001425c3d7"
+    },
+    "codex_session_search_fts_docsize": {
+      "rows": 683,
+      "sha256_values_types": "d5dedc5f4fd9c518e5a07948afdcb122ccc598edd8f5c410ca700aafda3a77a2"
+    },
+    "codex_session_search_fts_config": {
+      "rows": 1,
+      "sha256_values_types": "23c9db61698e32fbd7e3f7ee194dd3e8ac55d57f3c74672f0e1e43669e3c1da9"
+    }
+  },
+  "nine_action_facts": {
+    "rows": 2160,
+    "sha256_values_types": "0a6ebc0d433ddedc83eb6ae9e9255c6f9bc5225b2137eb91d2d49df36cd8e23f"
+  },
+  "source_postfix_facts": {
+    "outbound_postfixes": {
+      "rows": 1079,
+      "sha256_values_types": "bfda70d6cf046346d01b9f6c17c9624e9feb7229d7199b0541bd3aa608ac099a"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 613,
+      "sha256_values_types": "86a1af91461df6563b0229b8dfceeb311fbd841c4f5b969fe1c8a19ed2c1eae0"
+    },
+    "native_reply_dispatches": {
+      "rows": 67,
+      "sha256_values_types": "5c0b968cc72318fb79dbe3e5d7027b42a44f8ed4fd79a5c000c886277ce7bf99"
+    }
+  },
+  "current_postfix_facts": {
+    "outbound_postfixes": {
+      "rows": 1081,
+      "sha256_values_types": "8b47611300fd6ad659315d3b40168da10e35297b4964a9c7d2e21bf4380588ca"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 614,
+      "sha256_values_types": "3de120c28f5347b55c7caf0bea55beae3a4176bf6f8b92934b84ac3f5564aee5"
+    },
+    "native_reply_dispatches": {
+      "rows": 68,
+      "sha256_values_types": "f29765c46cc4c35395cd9fc1337037af70907f5aefe1a0ded1d44ced9d7771e0"
+    }
+  },
+  "current_sequences": {
+    "agent_effect_intents": 560,
+    "agent_execution_receipts": 115
+  },
+  "current_fact_inverse": true,
+  "source_constructor": true,
+  "forward_inverse_forward": true,
+  "new_update_rebind_key_change_delete_exercised": true,
+  "source_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "real_sends": 0,
+  "code_sha256": {
+    "app/action_storage.py": "ba2216cbd2c554a5f85d78bdc0e5c593ab5daaa64db792a66cb59875fd92f496",
+    "app/action_postfix_storage.py": "123706c686b7a54bab6976068e49d17aa7d9ed4249f0843102086ae8d77bd8f0",
+    "scripts/validate_action_postfix_copy.py": "d911f4ac3c31106b844334426b429680ee8f3f1ad678adf74a29fd6b5edd29d5"
+  }
+}

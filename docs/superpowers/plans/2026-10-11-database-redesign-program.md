@@ -75,3 +75,15 @@ PR72/31d95f4e formal deployment passed, Store2026-10-13.1/Email51,132 physical/1
 ### 2026-10-13 Phase5B release
 
 PR76／ebaf0d96正式部署通过，Store2026-10-13.2／Email51，129物理表／123普通应用表。完整CI38422492340、当前事实配对逆迁、实际旧代码及真实CLI替身批准／修订证据完成；上线源备份字段值／类型、原六类型、FK诊断、队列、History／Attention读回通过，未测试真实对外发送。证据：database-redesign-phase5b-validation.md及phase5b_release.v1.json。完整10+1仍未完成。C的opt-in十二类型基础与独立当前事实迁移已完成预验证，尚未运行发布；D的18字段源声明及76项独立oracle准备完成，目标存储未实施。下一步以实际已部署Store16来源完成C的caller/bootstrap/release接入与正式副本验收，不重新设计已批准十表目标。
+
+### 2026-10-13 Phase5C integration candidate
+
+PR77开发候选已完成postfix三表十三字段合入十二类型actions、Store17 fresh/bootstrap、
+全部prepare/claim/receipt/echo/meeting/WeChat调用和配对release。合并最新OA改动后
+212项定向检查、100项恢复／发送检查通过（11项明确环境跳过）；3处current marker
+断言RED后校准，128项邻接检查通过。独立SPEC／QUALITY已通过，范围仅5C。
+当前生产仍Store16；目标未发布，CLI替身验收和完整CI仍是发布前门槛。
+实际最新生产副本配对constructor／current-fact inverse／实际旧代码启动／再正迁
+见phase5c_constructor_copy.v1.json；独立所有原九类型值／类型／水位／改绑／删除
+证明见phase5c_current_source_storage_copy.v1.json。临时副本已清理。
+完整10+1仍未完成；5D等其余actions家族与第6–8期仍需实施。

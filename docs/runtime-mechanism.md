@@ -2772,3 +2772,13 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 配对逆迁按捕获的源声明恢复当前事实与当前水位，保留迁移后的新增、修改和删除，不恢复旧备份内容。
 发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
 完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
+
+### Store17 postfix 整合（开发候选，尚未发布）
+
+Store `2026-10-13.3` 将 outbound_postfixes、outbound_postfix_receipts、
+native_reply_dispatches 的十三个实际字段合入十二类型 actions。正常调用与
+WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼容 view 或双写。
+复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
+echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
+配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
+完整十张核心表加迁移表目标仍未完成。此段描述开发候选，上线以正式部署回执为准。
