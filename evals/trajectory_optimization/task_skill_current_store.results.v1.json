@@ -6,7 +6,10 @@
   "case_manifest": "task_skill_on_demand.cases.v1.json",
   "source_results": "task_skill_claude_bridge.results.v1.json",
   "native_session_id": "b885c7ee-5707-42d8-87af-e239be51fb8b",
-  "native_output_lines": [37, 56],
+  "native_output_lines": [
+    37,
+    56
+  ],
   "decision_hash_encoding": "Existing Task parser model_dump(mode=json), ensure_ascii=False, indent=2, no trailing newline",
   "application": "Existing apply_task_agent_decision, record_run=False, fixed now=2026-10-12T10:00:00Z; cold then risk in one new isolated Store",
   "applications": [
@@ -25,7 +28,9 @@
       "projects": 1,
       "tasks": 1,
       "attention_count": 1,
-      "attention_categories": ["watch"],
+      "attention_categories": [
+        "watch"
+      ],
       "overall_owner_preserved": true
     }
   ],
@@ -33,5 +38,10 @@
   "temporary_database_cleaned": true,
   "focused_tests_passed": 347,
   "codex_current_store_reapplication": "not verified: original recorded installed/custom session files absent from current native session inventories",
-  "boundary": "Reapplication of saved anonymous Claude native decisions under current Store17, not a new model run, scheduler run, persisted Task run, provider gate or production acceptance. No external calls or durable Memory writes. Earlier Codex delivery evidence remains historical; its current Store application is not claimed. API, Qwen and Friday native business gates remain open."
+  "boundary": "Reapplication of saved anonymous Claude native decisions under current Store17, not a new model run, scheduler run, persisted Task run, provider gate or production acceptance. No external calls or durable Memory writes. Earlier Codex delivery evidence remains historical; its current Store application is not claimed. API, Qwen and Friday native business gates remain open.",
+  "independent_readonly_review": {
+    "reproduced": true,
+    "case_risk_clock": "2026-10-13T10:00:00Z",
+    "fixed_clock_and_case_clock_same_readback": true
+  }
 }

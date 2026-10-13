@@ -132,3 +132,9 @@ current Store reapplication is unverified, and was not reconstructed from report
 counts. The API, Qwen and Friday native business gates remain open.
 
 Compact evidence: `evals/trajectory_optimization/task_skill_current_store.results.v1.json`.
+
+A read-only reviewer independently reproduced the hashes, Store17 application,
+owner, Attention and integrity readback in a separate temporary database. The
+fixed application clock above differs from the manifest risk clock
+(`2026-10-13T10:00:00Z`); application at that case clock was independently
+checked too and gives the same readback. Neither check is a new native run.
