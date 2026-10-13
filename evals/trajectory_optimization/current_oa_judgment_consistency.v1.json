@@ -470,5 +470,45 @@
     "Whether session continuity improves judgments",
     "Exact external action receipt and state-conflict cause"
   ],
-  "next_evidence": "Compare exact submitted Audit candidate/feedback/Developer and supplemental records before a fixed-case comparison; no Audit policy or prompt patch."
+  "next_evidence": "Compare exact submitted Audit candidate/feedback/Developer and supplemental records before a fixed-case comparison; no Audit policy or prompt patch.",
+  "submitted_input_comparison": {
+    "developer_chars": [
+      29423,
+      29423
+    ],
+    "developer_sha256": [
+      "ae3bebd6be11e2d3aa30f140a0369a898a3a665bb3357cd4e2554cf43841ed3f",
+      "1e077e9f5cca122638eeb20aaecbac50913716afdff8e791d28cf71b69ea0529"
+    ],
+    "developer_only_changed_fields": [
+      "runtime snapshot timestamp",
+      "proposal revision"
+    ],
+    "task_chars": [
+      35743,
+      36176
+    ],
+    "task_sha256": [
+      "3bd48e4e33ca140fae721f439fc7bc426c8f944f354f8b928081b7d45e8009fa",
+      "86eff99a6b693d6d025c84c082bcfd665f3ea82cf7746cc8c3ebec41ed1d8255"
+    ],
+    "original_trigger_equal": true,
+    "json_section_labels": [
+      "Task trigger authority",
+      "Canonical time facts",
+      "Original trigger",
+      "Candidate revision"
+    ],
+    "candidate_changed_top_fields": [
+      "summary",
+      "proposal"
+    ],
+    "previous_feedback_section_present": false,
+    "service_session_lookup": {
+      "claim_source": "app/store.py:claim_agent_run prior_session query scopes role/task/generation/proposal_revision",
+      "route_source": "app/agent_turn_runner.py:_session_for_route Audit uses requested session only on codex_oauth",
+      "observed": "different candidate revisions have separate Audit sessions in this actual task",
+      "causality": "Not isolated; no claim that continuity alone repairs judgment"
+    }
+  }
 }
