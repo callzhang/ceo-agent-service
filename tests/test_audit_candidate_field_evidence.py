@@ -37,8 +37,9 @@ def test_audit_turn_context_includes_field_evidence_for_exact_candidate(monkeypa
     )
     candidate = SimpleNamespace(
         source_bindings=(),
+        decision_options=(),
         model_dump=lambda *, mode: {
-            "proposal": {"actions": [{"target": {"task_id": "104265682397"}}]},
+            "proposal": {"actions": [{"target": {"task_id": "104265682397"}, "payload": {}}]},
         },
     )
     context = AuditTurnContext(
