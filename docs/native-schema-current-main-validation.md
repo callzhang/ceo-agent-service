@@ -161,3 +161,45 @@ controls and the unresolved complete business gates remain required. PR31 is
 still a draft, unmerged and disabled in production.
 
 Independent readonly review found no test/oracle weakening: exact dual-role native generator pinning remains, lifecycle numeric/field/correction assertions are unchanged, and native shape acceptance stays distinct from canonical business acceptance. Schema hashes and changed tool counts were directly checked; test counts were reviewed from the recorded runs without rerunning models/tests.
+
+## Current configured native tool/schema controls
+
+On a34e967c, native Codex0.154.0 uses actual configured qwen_gpu4 and
+codex_oauth, current42/38 registered agent_cli tool declarations and the complete
+unchanged native schemas. All business callbacks are substituted. No Work Profile
+is supplied. Full-role controls use current production role producers and a fixed
+anonymous Audit candidate; a final cohort delegates the actual registered
+read_text_file function to an owned JSON file containing a nonce. API relay was
+not invoked under the consumed one-off diagnosis permission.
+
+Thin diagnostic cohort: OAuth Consumer/Audit cold+same-SID resume all pass exact
+source-read/nonce/canonical/binding checks. Qwen Consumer times out after5 source
+reads; Audit completes valid output after2 reads, failing the singleton requirement.
+Full-role cohort: Qwen Consumer completes after2 reads; Audit reads once but echoes
+only the suffix of the prefixed nonce. Those controls remain failures. The actual
+registered-reader JSON cohort removes that nonce ambiguity; OAuth again passes
+all4 phases. Qwen both cold turns time out. No invalid cold receives a resume.
+
+Full Qwen visible provider reasoning privately confirms it knows the correct
+source nonce and complete result fields but repeatedly invokes invalid CodeMode
+wait cells. Reasoning text is not copied into repository evidence. This locates
+the observed runtime loop, not a proven provider source-code defect. Successful
+source returns do not by themselves establish final output or business acceptance.
+
+A diagnostic disabling the native CodeMode host/only/enabled flags allows one
+Qwen Consumer cold to pass. A stricter comparison reuses the failed registered
+case's exact service Developer/User/schema and unchanged source file: it completes
+canonical no_action with correct nonce, but uses builtin exec_command/cat instead
+of the mandated MCP reader, so it fails the original gate. CodeMode-off changes
+builtin tools and native bootstrap too: actual Developer22003→22927 chars despite
+the same service-submitted Developer hash. Do not call this an otherwise identical
+model-visible prompt or isolated-function experiment. These are diagnostics,
+not an adopted fallback, production mode change or complete provider acceptance.
+
+Evidence/harness:current_native_route_control.v1.json and results. Current Qwen
+full-runtime gate remains open; no provider package/reload, runtime source,
+route/session policy, business rule or production setting was modified. The next
+step is to isolate the CodeMode/native-bootstrap/guidance interaction from the
+complete saved trajectory, not repeat these failures or add another prompt rule.
+
+Independent readonly review confirmed all16 case counts, strict paired failure, native bootstrap differences and absence of reasoning originals in committed evidence. Native session originals remain in the CLI home; all16 file hashes and exact Task texts were verified. Owned probe temporary files were removed after process completion and an empty open-handle check.
