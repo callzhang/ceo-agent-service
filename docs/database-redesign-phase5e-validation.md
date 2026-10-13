@@ -24,15 +24,21 @@ SQLite 3.53.4 runtime; CI/runtime support must be checked before E publication.
 This is a target storage checkpoint, not accepted migration or caller behavior.
 No source row or provider action was changed here.
 
-The final local focused gate ran the frozen reply source oracle, new E target
+The initial local focused gate ran the frozen reply source oracle, new E target
 comparisons, and the existing action, receipt, postfix and delivery storage
-suites: 295 passed, five variant-specific skips. Ruff and `git diff --check`
-passed. The first E test run failed because the opt-in schema flag was absent;
-the final run passed after implementation. The checks cover retained field
-values and SQLite storage classes, both variants, raw BLOB/NUL/nonfinite
-updates, allocator high water and SQLITE_FULL transaction effects, queued
-marker pruning, and indexed lookups with unrelated action volume. Independent
-review, migration, publication and production readback remain separate gates.
+suites: 295 passed, five variant-specific skips. Its initial RED run failed
+because the opt-in schema flag was absent. Independent SPEC review of commit
+`1fa4e4b1` then found gaps in ignored fresh Memory constraints, strict payload
+keys/tags, BLOB JSON audit markers, and native integer-key assignment. The
+repair added source-versus-target RED cases before changing the mechanism:
+allocation now precedes fresh parent resolution; ignored public-key conflicts
+and source NULL constraints preserve SQLite outcomes; both E payloads reject
+unknown keys and malformed encoding tags; direct event arrays accept only
+queued audit markers; and a confined in-memory SQLite primary key applies
+native key affinity. The repaired focused gate passed 342 tests with seven
+variant-specific skips; Ruff and `git diff --check` passed. Independent
+SPEC/QUALITY re-review, migration,
+publication and production readback remain separate gates.
 
 ## Earlier source preparation
 

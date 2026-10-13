@@ -243,6 +243,26 @@ def _payload_check(kind, references):
     return f"check(record_type<>'{kind}' or ({' and '.join('(' + t + ')' for t in terms)}))"
 
 
+def _reply_value_check(field):
+    path = f"$.{field}"
+    field_type = f"json_type(payload_json,'{path}')"
+    tag = f"json_extract(payload_json,'{path}.t')"
+    blob_value = f"json_extract(payload_json,'{path}.v')"
+    obj = f"json_extract(payload_json,'{path}')"
+    blob = (f"({tag}='blob' and json_type(payload_json,'{path}.v')='text' "
+            f"and length({blob_value})%2=0 and unhex({blob_value}) is not null "
+            f"and json_remove({obj},'$.t','$.v')='{{}}')")
+    nonfinite = f"({tag} in ('inf','-inf') and json_remove({obj},'$.t')='{{}}')"
+    return (f"({field_type} is not null and ({field_type} in ('null','text','integer','real','true','false') or "
+            f"({field_type}='object' and json_type(payload_json,'{path}.t')='text' "
+            f"and ({blob} or {nonfinite}))))")
+
+
+def _reply_payload_check(fields):
+    paths = ",".join(repr("$." + field) for field in fields)
+    return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
+
+
 def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
     if include_reply and reply_variant not in REPLY_VARIANTS:
         raise ValueError("reply storage requires one global source variant")
@@ -321,8 +341,11 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if include_reply:
         table += ",check(record_type not in ('reply_attempts','memory_write_events') or (" + " and ".join(f"{field} is null" for field in references) + "))"
         attempt_fields = [field for field in _REPLY_FIELDS["reply_attempts"] if reply_variant == "actual_no_memory_fk" or field not in _ATTEMPT_HISTORICAL]
+        table += ",check(record_type<>'reply_attempts' or (" + _reply_payload_check(attempt_fields) + "))"
         table += ",check(record_type<>'reply_attempts' or (" + " and ".join(f"attempt_{field} is not null" for field in attempt_fields if field not in _ATTEMPT_NULLABLE) + "))"
         memory_parent = "memory_attempt_ref" if reply_variant == "fresh_memory_fk" else "memory_attempt_id"
+        memory_fields = [field for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id" or reply_variant == "actual_no_memory_fk"]
+        table += ",check(record_type<>'memory_write_events' or (" + _reply_payload_check(memory_fields) + "))"
         table += ",check(record_type<>'memory_write_events' or (" + " and ".join([f"{memory_parent} is not null"] + [f"memory_{field} is not null" for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id"]) + "))"
     table += ")"
     numeric_scope = " where record_type<>'external_action_results'" if include_receipts else ""
@@ -397,6 +420,19 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
             triggers += (f"create trigger trg_actions_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
                          f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
                          f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
+        marker_check = (
+            "json_type(new.payload_json,'$.audit_tool_events_json') is not 'text' or "
+            "case when json_valid(new.attempt_audit_tool_events_json) then ("
+            "json_type(new.attempt_audit_tool_events_json) is not 'array' or "
+            "exists(select 1 from json_each(new.attempt_audit_tool_events_json) e where "
+            "case when e.type='object' then (json_extract(e.value,'$.tool') is not 'audit_review' or "
+            "json_extract(e.value,'$.result') is not 'queued' or "
+            "json_remove(e.value,'$.tool','$.result')<>'{}') else 1 end)) else 1 end"
+        )
+        for event, suffix in (("insert", "insert"), ("update of payload_json", "update")):
+            triggers += (f"create trigger trg_actions_reply_markers_{suffix} before {event} on actions "
+                         f"when new.record_type='reply_attempts' and ({marker_check}) "
+                         "begin select raise(abort,'invalid reply audit markers'); end",)
         if reply_variant == "fresh_memory_fk":
             triggers += (
                 "create trigger trg_actions_memory_attempt_insert before insert on actions when new.record_type='memory_write_events' and new.memory_attempt_ref is not null and not exists(select 1 from actions p where p.id=new.memory_attempt_ref and p.record_type='reply_attempts') begin select raise(abort,'memory attempt type mismatch'); end",
@@ -588,7 +624,9 @@ def _parent_id(db, field, public_id):
 def _check_fields(kind, values):
     _require_kind(kind)
     if kind in REPLY_ACTION_TYPES:
-        allowed = set(_REPLY_FIELDS[kind]) | {"id", "payload_json"}
+        allowed = set(_REPLY_FIELDS[kind]) | {"id"}
+        if kind == "memory_write_events":
+            allowed.add("payload_json")
         if set(values) - allowed:
             raise ValueError(f"unknown {kind} source fields")
         return
@@ -635,11 +673,13 @@ def _reply_variant_for(db):
 
 
 def _audit_markers(value):
-    if not isinstance(value, str):
+    if isinstance(value, memoryview):
+        value = bytes(value)
+    if not isinstance(value, (str, bytes, bytearray)):
         return "[]"
     try:
         events = json.loads(value)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, UnicodeError):
         return "[]"
     if not isinstance(events, list):
         return "[]"
@@ -648,7 +688,35 @@ def _audit_markers(value):
 
 
 def _reply_parent(db, public_id):
-    return action_physical_id(db, "reply_attempts", public_id)
+    row = db.execute("select id from actions where " + _identity_predicate("reply_attempts"),
+                     _identity_arguments("reply_attempts", public_id)).fetchone()
+    if row is None:
+        raise sqlite3.IntegrityError("FOREIGN KEY constraint failed")
+    return row[0]
+
+
+def _source_bound_null(value):
+    return value is None or isinstance(value, float) and math.isnan(value)
+
+
+def _reply_auto_id(values):
+    return _source_bound_null(values.get("id"))
+
+
+def _native_integer_primary_key(value, *, update=False):
+    # A scratch SQLite INTEGER PRIMARY KEY supplies SQLite's actual assignment
+    # affinity (2.0, '2.0', booleans, BLOBs), without a Python numeric parser.
+    if type(value) is int:
+        if not -(2**63) <= value < 2**63:
+            raise OverflowError("Python int too large to convert to SQLite INTEGER")
+        return value
+    with closing(sqlite3.connect(":memory:")) as source_key:
+        source_key.execute("create table ids(id integer primary key)")
+        if update:
+            source_key.execute("insert into ids(id) values(1)")
+            source_key.execute("update ids set id=?", (value,))
+            return source_key.execute("select id from ids").fetchone()[0]
+        return source_key.execute("insert into ids(id) values(?) returning id", (value,)).fetchone()[0]
 
 
 def _encoded_sqlite_value(value):
@@ -685,19 +753,29 @@ def _insert_reply_action(db, kind, values, *, ignore=False):
             data = {field: value for field, value in data.items() if field not in _ATTEMPT_HISTORICAL}
     else:
         data = _MEMORY_DEFAULTS | {"created_at": now, "updated_at": now} | {field: value for field, value in values.items() if field in _REPLY_FIELDS[kind]}
-        parent_ref = None
-        if variant == "fresh_memory_fk":
-            parent_ref = _reply_parent(db, data.pop("attempt_id"))
-    public_id = values.get("id")
-    if public_id is None:
+    attempt_id = data.pop("attempt_id", None) if kind == "memory_write_events" and variant == "fresh_memory_fk" else None
+    payload_json = _reply_payload(data)
+    if _reply_auto_id(values):
         maximum = _autoincrement_high_water(db, kind)
         if maximum == 2**63 - 1:
             if db.in_transaction:
                 db.execute("rollback")
             _raise_autoincrement_full()
         public_id = maximum + 1
+    else:
+        public_id = _native_integer_primary_key(values["id"])
+    if ignore and db.execute("select 1 from actions where record_type=? and cast(legacy_key as integer)=?", (kind, public_id)).fetchone():
+        # Source INSERT OR IGNORE resolves its public-key uniqueness before FK
+        # evaluation. The existing ID is at or below this type's high water.
+        return ActionWriteResult(None, 0)
+    parent_ref = None
+    if kind == "memory_write_events" and variant == "fresh_memory_fk":
+        required = (attempt_id, *(data.get(field) for field in ("event_type", "status", "attempts",
+                                                          "last_error", "memory_episode_id", "created_at", "updated_at")))
+        if all(not _source_bound_null(value) for value in required):
+            parent_ref = _reply_parent(db, attempt_id)
     columns = ["record_type", "legacy_key", "payload_json"]
-    arguments = [kind, str(public_id), _reply_payload(data)]
+    arguments = [kind, str(public_id), payload_json]
     if kind == "memory_write_events" and variant == "fresh_memory_fk":
         columns.append("memory_attempt_ref")
         arguments.append(parent_ref)
@@ -718,7 +796,7 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
     for field, value in values.items():
         if field == "id":
             column = "legacy_key"
-            value = str(value)
+            value = str(_native_integer_primary_key(value, update=True))
         elif kind == "memory_write_events" and field == "payload_json":
             continue
         elif kind == "memory_write_events" and field == "attempt_id" and variant == "fresh_memory_fk":
@@ -749,14 +827,16 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
 def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False) -> ActionWriteResult:
     """Allocate automatic receipt IDs under SQLite's writer lock."""
     _check_fields(record_type, values)
-    automatic = (record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies" or record_type in REPLY_ACTION_TYPES) and values.get("id") is None
-    owned = automatic and not db.in_transaction and (
+    automatic = ((record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies") and values.get("id") is None
+                 or record_type in REPLY_ACTION_TYPES and _reply_auto_id(values))
+    locked = automatic or (record_type in REPLY_ACTION_TYPES and ignore)
+    owned = locked and not db.in_transaction and (
         db.isolation_level is None or getattr(db, "autocommit", None) is True
     )
     if owned:
         db.execute("savepoint action_receipt_insert")
     try:
-        if automatic:
+        if locked:
             # A no-row write acquires the lock before reading the allocator.
             # Deferred connections retain their ordinary caller-owned transaction.
             db.execute("update sqlite_sequence set seq=seq where 0")
