@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+| codex-phase5d-foundation-evidence | Phase5D worktree: docs/database-redesign-phase5d-validation.md; database redesign program status; own claim row only | Root records opt-in storage review and source fidelity evidence; distinguishes foundation from migration, activation and production acceptance. No runtime or provider changes. | active 2026-10-13 |
+
 | codex-phase5d-storage-foundation | Isolated database-redesign-phase5d worktree: app/action_storage.py; tests/test_sent_delivery_action_storage.py; own claim row | Opt-in finite fourteen-type sent delivery storage foundation and independent target tests only. Preserve older layouts; no migration, callers, release, version, provider, or production work. | SPEC repair implemented 2026-10-13: physical observer pair uniqueness, indexed numeric lookups, native sent SQLITE_FULL transaction effects; 264 focused checks and Ruff pass; unpublished |
 
 
