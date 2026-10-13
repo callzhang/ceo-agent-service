@@ -1,5 +1,21 @@
 # Current Runtime Mechanism
 
+Audit handoff includes System-produced JSON type facts for each current action's
+target and payload fields, including human-option plans. The facts come from the
+exact validated candidate; they do not authorize an action or prove live
+ownership. New native feedback must explicitly classify its observation and
+include its field-assertion array; omission is a result error, not an implicit
+business judgment. Field-based feedback supplies candidate-relative path,
+literal and JSON type assertions. Before adopting the Audit result, the runner
+checks every assertion against the digest-bound candidate. A missing path,
+unsupported index, changed literal or wrong type corrects Audit via the existing
+technical result repair, not Consumer, business routing or automatic approval.
+Policy, source, authority and full-effect review remain Audit's work. Business
+prose is not parsed with keywords or regex, and historical feedback is not
+reconstructed as new evidence. A business misclassification or unsupported prose
+is still a model-review limitation, not proven factual truth merely because an
+assertion matches.
+
 OA Attention is a business-pending projection: the scanner captures the exact
 principal-owned RUNNING nodes from the authenticated pending list and source
 details. A completed comment or internal `done`/`no_action` does not remove

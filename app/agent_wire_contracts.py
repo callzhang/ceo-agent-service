@@ -13,6 +13,7 @@ from pydantic import (
 from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
+    CandidateFieldAssertion,
     ConsumerAgentResult,
     ConsumerProposal,
     DecisionBasis,
@@ -123,12 +124,19 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
         })
 
 
+class _AuditFeedbackWire(AuditFeedback):
+    observation_basis: Literal["business", "candidate_fields"] = Field(
+        description=AuditFeedback.model_fields["observation_basis"].description)
+    candidate_field_assertions: tuple[CandidateFieldAssertion, ...] = Field(
+        description=AuditFeedback.model_fields["candidate_field_assertions"].description)
+
+
 class _AuditWire(_WireBase):
     outcome: Literal["approve", "return", "reject", "failed"]
     proposal_revision: int = Field(ge=0)
     candidate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evidence_refs: list[str] = Field(default_factory=list)
-    feedback: AuditFeedback | None
+    feedback: _AuditFeedbackWire | None
 
 
 class AuditAgentWireResult(RootModel[_AuditWire]):

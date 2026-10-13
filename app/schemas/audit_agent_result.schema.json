@@ -61,6 +61,25 @@
           "minLength": 1,
           "title": "Requested Revision",
           "type": "string"
+        },
+        "observation_basis": {
+          "default": "business",
+          "description": "Use candidate_fields for claims about current candidate JSON values, types or paths; business for policy, authority and source judgments.",
+          "enum": [
+            "business",
+            "candidate_fields"
+          ],
+          "title": "Observation Basis",
+          "type": "string"
+        },
+        "candidate_field_assertions": {
+          "default": [],
+          "description": "For candidate_fields, supply the exact candidate-relative path, literal value and JSON type; System checks these before adopting feedback.",
+          "items": {
+            "$ref": "#/$defs/CandidateFieldAssertion"
+          },
+          "title": "Candidate Field Assertions",
+          "type": "array"
         }
       },
       "required": [
@@ -81,6 +100,49 @@
       "title": "AuditOutcome",
       "type": "string"
     },
+    "CandidateFieldAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Path",
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "json_type": {
+          "enum": [
+            "null",
+            "boolean",
+            "number",
+            "string",
+            "array",
+            "object"
+          ],
+          "title": "Json Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "value",
+        "json_type"
+      ],
+      "title": "CandidateFieldAssertion",
+      "type": "object"
+    },
+    "JsonValue": {},
     "RiskLevel": {
       "description": "Estimated consequence if the proposed result is acted on incorrectly.",
       "enum": [
