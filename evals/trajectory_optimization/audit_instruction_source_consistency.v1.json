@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "scope": "Read-only actual message Audit input and current public seed/installed Skill consistency investigation; no OA causal proof or runtime/policy/config change.",
+  "actual_attempt_id": 350548,
+  "actual_developer_characters": 29395,
+  "audit_rule_14": {
+    "seed_source": "app/defaults/audit_rules.md:14",
+    "characters": 1513,
+    "sha256": "2f7b43b1acec967c5457fe3adc825117e3b07c6a371ae5fc4c7bd672346a8290",
+    "exact_rendered_seed_present_in_actual_message_audit": true,
+    "action_authority": "rule card sole authority for template action"
+  },
+  "installed_finance_skill": {
+    "name": "stardust-oa-finance-review",
+    "sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+    "action_authority": "generic OA decision table; rule card supplies criteria",
+    "has_live_process_code_registry_scope_gate": true
+  },
+  "confirmed": [
+    "Unrelated OA rule14 is fully injected into natural message-triage Audit350548.",
+    "Current seed rule14 action-authority wording differs from installed finance Skill criteria/action separation."
+  ],
+  "not_proven": [
+    "Whether the exact installed finance body was frozen for a current OA run.",
+    "Whether either instruction causes a wrong OA decision.",
+    "Whether rule14 can be removed from global input without losing any current OA task path."
+  ],
+  "next_evidence": [
+    "Locate latest actual OA Consumer/Audit full trajectory and exact saved frozen Skill revision/hash.",
+    "Trace applicable task configuration and non-scheduled OA paths before moving rule14.",
+    "Preserve source rules and old failures; separately scope any changed Audit business policy before implementation."
+  ]
+}

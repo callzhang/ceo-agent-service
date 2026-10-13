@@ -1,0 +1,9 @@
+# Audit instruction source consistency
+
+Actual post-release message Audit attempt350548 contains29395 Developer characters, including the complete rendered seed Audit rule14. That OA-only rule is currently1502 characters after rendering (the template placeholder changes the size); it is unrelated to this message task. This observation confirms unnecessary task scope, without proving a business judgment error.
+
+The current seed rule14 says the finance rule card is the sole authority for the template action. The installed stardust-oa-finance-review Skill separates criteria sourced from cards from actions supplied by the generic OA decision table. Its processCode registry scope gate also explicitly excludes unregistered templates. These source instructions do not express the same action-authority model. Do not simplify this by assuming the installed Skill silently supersedes a saved Audit rule, or blame a model without the actual OA trajectory.
+
+Before migration, inspect the latest actual OA Consumer/Audit trajectory, exact frozen Skill revision/hash, matching live registry and all task entry paths. The installed Skill SHA alone does not establish the body seen by an older bound task. Move applicable instructions through existing task/Skill assembly only after checking coverage; preserve every required rule. If authority or acceptance policy must change, propose it separately and obtain explicit approval under the repository Audit policy rule. No such change is implemented here.
+
+Metadata and source hashes: evals/trajectory_optimization/audit_instruction_source_consistency.v1.json. No private Profile or message source is copied.
