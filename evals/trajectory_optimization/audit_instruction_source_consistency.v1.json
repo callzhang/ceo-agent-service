@@ -18,16 +18,121 @@
   },
   "confirmed": [
     "Unrelated OA rule14 is fully injected into natural message-triage Audit350548.",
-    "Current seed rule14 action-authority wording differs from installed finance Skill criteria/action separation."
+    "Current seed rule14 action-authority wording differs from installed finance Skill criteria/action separation.",
+    "Two recent actual OA Audit runs read seven installed Skill bodies,83684 combined native-output characters, before live ownership/pending checks and ultimately approve no_action."
   ],
   "not_proven": [
-    "Whether the exact installed finance body was frozen for a current OA run.",
+    "Installed finance Skill was actually read with the recorded exact SHA in these two OA Audits; these runs do not demonstrate a business decision caused by authority inconsistency.",
     "Whether either instruction causes a wrong OA decision.",
     "Whether rule14 can be removed from global input without losing any current OA task path."
   ],
   "next_evidence": [
-    "Locate latest actual OA Consumer/Audit full trajectory and exact saved frozen Skill revision/hash.",
-    "Trace applicable task configuration and non-scheduled OA paths before moving rule14.",
-    "Preserve source rules and old failures; separately scope any changed Audit business policy before implementation."
+    "Compare real applicability/early ownership cases using faithful task source, preserving seven frozen rule sources.",
+    "Do not publish PR67 on the assumption that its generated discovery change removes explicit source-prompt Skill references.",
+    "Trace all task entry paths before moving rule14; separately scope any changed Audit business policy."
+  ],
+  "actual_oa_followup": [
+    {
+      "audit_run_id": 350083,
+      "session_id": "01a1333d-73d4-7fd1-aa26-5ba41bc70585",
+      "installed_skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "native_output_characters": 38965,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "native_output_characters": 7960,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "native_output_characters": 7820,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "native_output_characters": 5819,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "native_output_characters": 12028,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "native_output_characters": 7350,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "native_output_characters": 3742,
+          "truncation_marker": false
+        }
+      ],
+      "total_skill_native_output_characters": 83684,
+      "final_outcome": "approve",
+      "classification": "All seven bodies read before live OA ownership/pending checks; final approves candidate no_action based on live ownership/pending status, without substantive domain review."
+    },
+    {
+      "audit_run_id": 350078,
+      "session_id": "01a13345-05b9-7c60-9d28-92cba1f8acc1",
+      "installed_skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "native_output_characters": 38965,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "native_output_characters": 7820,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "native_output_characters": 7960,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "native_output_characters": 5819,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "native_output_characters": 12028,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "native_output_characters": 7350,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "native_output_characters": 3742,
+          "truncation_marker": false
+        }
+      ],
+      "total_skill_native_output_characters": 83684,
+      "final_outcome": "approve",
+      "classification": "All seven bodies read before live OA ownership/pending checks; final approves candidate no_action based on live ownership/pending status, without substantive domain review."
+    }
   ]
 }
