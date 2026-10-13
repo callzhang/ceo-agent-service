@@ -29,6 +29,8 @@ UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
 UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = 3
 UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS = 0.25
 DEPLOY_BACKUP_MAX_AGE = timedelta(hours=24)
+LAUNCHD_STOP_TIMEOUT_SECONDS = 10.0
+LAUNCHD_STOP_POLL_SECONDS = 0.1
 
 
 class UpgradePreconditionError(RuntimeError):
@@ -192,23 +194,38 @@ def _default_restart() -> None:
 
 
 def _default_stop() -> None:
+    target = f"gui/{_uid()}/com.ceo-agent-service.main"
     result = subprocess.run(
-        ["launchctl", "bootout", f"gui/{_uid()}/com.ceo-agent-service.main"],
+        ["launchctl", "bootout", target],
         check=False,
         capture_output=True,
         text=True,
         timeout=30,
     )
     if result.returncode != 0:
-        state = subprocess.run(
-            ["launchctl", "print", f"gui/{_uid()}/com.ceo-agent-service.main"],
-            check=False, capture_output=True, text=True, timeout=30,
-        )
-        if state.returncode != 0 and "could not find service" in (
-            state.stdout + state.stderr
-        ).lower():
+        if _launchd_service_is_absent(target):
             return
         raise UpgradeFailed("launchd stop failed")
+    deadline = time.monotonic() + LAUNCHD_STOP_TIMEOUT_SECONDS
+    while True:
+        if _launchd_service_is_absent(target):
+            return
+        if time.monotonic() >= deadline:
+            raise UpgradeFailed("launchd service did not finish unloading")
+        time.sleep(LAUNCHD_STOP_POLL_SECONDS)
+
+
+def _launchd_service_is_absent(target: str) -> bool:
+    state = subprocess.run(
+        ["launchctl", "print", target],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return state.returncode != 0 and "could not find service" in (
+        state.stdout + state.stderr
+    ).lower()
 
 
 def _default_start() -> None:

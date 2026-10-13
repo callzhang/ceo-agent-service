@@ -896,7 +896,7 @@ def test_scan_pending_oa_approvals_closes_running_process_after_explicit_return(
     assert "verified return receipt" in resolution
 
 
-def test_scan_keeps_unreturned_process_in_attention_after_leaving_principal_queue(
+def test_scan_clears_attention_when_process_moves_to_another_approver(
     tmp_path,
 ):
     class FakeDws:
@@ -948,12 +948,12 @@ def test_scan_keeps_unreturned_process_in_attention_after_leaving_principal_queu
     assert scan_pending_oa_approvals(store, FakeDws()) == 0
     state = store.get_daily_scan_state("oa_pending")
     assert state is not None
-    assert key in json.loads(state["cursor_json"])["pending_business_object_keys"]
-    assert any(row["category"] == "OA approval" and row["id"] == key
-               for row in _queue_attention_rows(store))
+    assert key not in json.loads(state["cursor_json"])["pending_business_object_keys"]
+    assert not any(row["category"] == "OA approval" and row["id"] == key
+                   for row in _queue_attention_rows(store))
 
 
-def test_scan_restores_attention_for_legacy_oa_task_not_pending_resolution(
+def test_scan_does_not_restore_attention_for_legacy_task_owned_by_another_approver(
     tmp_path,
 ):
     class FakeDws:
@@ -1019,9 +1019,13 @@ def test_scan_restores_attention_for_legacy_oa_task_not_pending_resolution(
     key = "oa:proc-legacy:task-principal"
     state = store.get_daily_scan_state("oa_pending")
     assert state is not None
-    assert key in json.loads(state["cursor_json"])["pending_business_object_keys"]
-    assert any(row["category"] == "OA approval" and row["id"] == key
-               for row in _queue_attention_rows(store))
+    assert key not in json.loads(state["cursor_json"])["pending_business_object_keys"]
+    assert not any(row["category"] == "OA approval" and row["id"] == key
+                   for row in _queue_attention_rows(store))
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert "OA_TASK_NOT_PENDING" in attempt.resolution
 
 
 def test_scan_clears_legacy_attention_for_provider_snake_case_return_receipt(
