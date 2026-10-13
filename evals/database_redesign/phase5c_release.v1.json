@@ -1,0 +1,140 @@
+{
+  "published_commit": "46bfdbe09403238f95c8aece05bf2f6be2c82b88",
+  "store_marker": "2026-10-13.3",
+  "email_version": 51,
+  "tables": 126,
+  "fk_findings_unchanged": true,
+  "old_tables_absent": [
+    "outbound_postfixes",
+    "outbound_postfix_receipts",
+    "native_reply_dispatches"
+  ],
+  "postfix": {
+    "outbound_postfixes": {
+      "before": 1080,
+      "after": 1080,
+      "all_original_values_types_preserved": true
+    },
+    "outbound_postfix_receipts": {
+      "before": 614,
+      "after": 614,
+      "all_original_values_types_preserved": true
+    },
+    "native_reply_dispatches": {
+      "before": 67,
+      "after": 67,
+      "all_original_values_types_preserved": true
+    }
+  },
+  "original_nine_actions": {
+    "rows": 2167,
+    "mismatched": 0
+  },
+  "native_copy_sessions_in_production": 0,
+  "file_bytes": 471347200,
+  "wal_bytes": 22173872,
+  "free_pages": 7890,
+  "page_count": 115075,
+  "page_size": 4096,
+  "action_type_counts": {
+    "agent_effect_intents": 214,
+    "agent_execution_receipts": 115,
+    "candidate_action_attempts": 154,
+    "candidate_executions": 160,
+    "candidate_reviews": 588,
+    "candidate_supplements": 3,
+    "external_action_results": 337,
+    "native_reply_dispatches": 67,
+    "outbound_postfix_receipts": 614,
+    "outbound_postfixes": 1080,
+    "review_candidates": 596
+  },
+  "allocators": {
+    "agent_effect_intents": {
+      "source": 560,
+      "current": 560,
+      "no_rewind": true
+    },
+    "agent_execution_receipts": {
+      "source": 115,
+      "current": 115,
+      "no_rewind": true
+    }
+  },
+  "current_pid": "82712",
+  "ui_readonly": {
+    "history_loaded": true,
+    "attempt_detail_and_email_receipt": true,
+    "message_consumer_audit_and_verified_send_receipt": true,
+    "workbench_loaded": true,
+    "temporary_tab_closed": true,
+    "no_mutating_ui_action": true
+  },
+  "latest_verified_backup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-13.sqlite3",
+    "store_marker": "2026-10-13.3",
+    "email_version": 51,
+    "integrity": "ok",
+    "fk_findings_unchanged": true,
+    "source_backup_replaced_only_after_verification": true
+  },
+  "scope": "Phase5C formal release only; full approved10+1 remains incomplete",
+  "pull_request": "https://github.com/callzhang/ceo-agent-service/pull/77",
+  "tested_commit": "b8fb80da5e7c597bcbf4847278f834a80e108743",
+  "quality_ci": 38445177259,
+  "ci": {
+    "python_passed": 12591,
+    "python_skipped": 110,
+    "python_deselected": 44,
+    "python_warnings": 40,
+    "frontend_files_passed": 46,
+    "frontend_tests_passed": 723,
+    "frontend_skipped": 2,
+    "browser_passed": 2,
+    "workbench_build": "success"
+  },
+  "source_commit": "d7397203df678fd4137c237eb7eb84a671e084f3",
+  "source_version_record": [
+    "2026-10-13.2",
+    "2026-10-12 00:20:48"
+  ],
+  "source_tables": 129,
+  "normal_deploy": "d7397203 -> 46bfdbe0",
+  "full_tested_and_merged_tree_equal": true,
+  "source_postfix_fingerprints": {
+    "outbound_postfixes": {
+      "rows": 1080,
+      "value_type_identity_digest": "ac0ec6cd3829db753171628a17d123c6c5a3a99a9f7af6e718841c7426a54a8f"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 614,
+      "value_type_identity_digest": "d06a0d7861b0a0d02312ac5a9d1d9f86bf0674b0f9864f2b96e9874b8a810a20"
+    },
+    "native_reply_dispatches": {
+      "rows": 67,
+      "value_type_identity_digest": "780d73e7dd5de4f119868fbcc0698e3221ab59fbe97446147f766370a27fe33a"
+    }
+  },
+  "source_original_nine_fingerprint": {
+    "rows": 2167,
+    "value_type_physical_identity_digest": "86b1ac5f25722a829845a7cecae9333ac422965b42c078b806cd0b99d31af415"
+  },
+  "api_readbacks": {
+    "healthz": 200,
+    "console_status": 200,
+    "console_history": 200,
+    "console_attention": 200,
+    "workers_status": 200,
+    "history_items": 20,
+    "attention_items": 4
+  },
+  "paired_inverse_and_native_copy_evidence": [
+    "phase5c_constructor_copy.v1.json",
+    "phase5c_current_source_storage_copy.v1.json",
+    "phase5c_native_copy.v1.json"
+  ],
+  "native_approval_limit": "group-send case does not exercise native dispatch claim; caller/copy tests cover that branch",
+  "test_triggered_real_sends": 0,
+  "vacuum_performed": false,
+  "temporary_artifacts_cleaned": true
+}

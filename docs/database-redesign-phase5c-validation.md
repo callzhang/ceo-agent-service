@@ -148,3 +148,30 @@ Quality CI 38439477577（c2674086）实际完成后报告 1 failed、12,590 pass
 本地复现同一失败后，补齐已有 oa_task_id 字段；保留原有已处理、跳过及等待事项
 断言，不修改运行代码或主线 selector。日报、OA attention 与扫描器合计 66 项通过，
 Ruff 和 diff 检查通过。以上仅为定向检查；最终完整 CI 仍需在新提交上重新通过。
+
+
+## 正式发布与生产读回（2026-10-13）
+
+Quality CI 38445177259在b8fb80da通过：Python 12,591 passed／110 skipped／
+44 deselected／40 warnings，46个前端文件、723项前端测试通过（2项跳过），
+workbench build及2项浏览器检查通过。PR77合并为46bfdbe0，完整树与已测b8fb80da
+一致；没有额外未验证运行代码。正常`python -m app.deploy`完成d7397203→46bfdbe0。
+
+部署前使用在线backup获得当前Store16／Email51一致副本，完整性、准确源声明及
+原FK诊断验证后才替换同流程日备份。生产当前Store2026-10-13.3／Email51，PID82712，
+129→126物理表；旧三表及同名兼容对象不存在。原1080条准备正文、614条回执、
+67条native claim的每个字段值、SQLite/Python类型和复合身份保持相同；原九类
+2167条actions的全部原物理列、ID、引用及payload值／类型一致。两个原生水位
+560／115未回退，原有1条FK诊断原样保留，不宣称不存在历史诊断。
+
+healthz、console status／history／attention及workers status均返回200；History20条、
+Attention4条，服务PID一致。只读实际页面确认History列表、既有Attempt邮件回执、
+既有消息的Consumer／Audit状态及展开的已核验IM发送回执、Agent工作台可读。
+没有创建生产测试任务、点击保存／发送／重试；两条本次native-copy会话在生产为0。
+仅关闭自建临时浏览器页，原用户页保持。当前日备份再经完整性／Store17／Email51／
+准确target声明和相同FK诊断验证后原子替换源日备份，仅留最新已验证版本。
+
+DB471,347,200字节，观测WAL22,173,872字节，7890空闲页、页大小4096；这些是
+读回时点，WAL继续变化。未执行VACUUM，不宣称文件已缩小。简明验收证据见
+`evals/database_redesign/phase5c_release.v1.json`，不保留私有原行或轨迹副本。
+第五期C发布完成，不等于完整10+1目标；下一单元仍需实际Store17来源刷新。
