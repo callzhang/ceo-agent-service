@@ -1129,3 +1129,5 @@ reverts committed work they did not author.
 | codex-oa-frozen-skill-binding | app/task_scanners.py OA scheduled payload only; tests/test_task_scanners.py; architecture/runtime docs and OA binding validation | Actual OA read_task_skill fails after scanner strips frozen materials using Task projection helper; preserve original scheduled wrapper for Consumer/Audit. Keep Task extraction projection, Skill contents, role/policy, route/session and all source names unchanged. | active 2026-10-12 |
 
 | codex-oa-frozen-skill-release | OA binding validation and oa_frozen_skill_binding.release.v1.json only | Record actual PR69 formal deployment and installed full-wrapper/Task-projection boundary, PID, backup and operational reads. No model/provider replay, old snapshot rewrite or business acceptance claim. | verified 2026-10-12 |
+
+| codex-oa-frozen-source-natural-readback | OA binding validation and oa_frozen_skill_binding.post_release.v1.json only | Save actual task404387 frozen Skill reads and same-session reuse; compare source/category honestly, not external-effect completion or PR67 acceptance. | verified 2026-10-13 |
