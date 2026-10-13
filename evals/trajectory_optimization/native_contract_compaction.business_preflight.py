@@ -137,21 +137,21 @@ for case in manifest["cases"]:
             return json.loads(completed.stdout)
 
         assert mail_read("mail", "mailbox", "list", "--format", "json")["result"][
-            "mailboxes"
-        ] == mail["mailboxes"]
-        email = mail["mailboxes"][0]["email"]
+            "emailAccounts"
+        ] == mail["emailAccounts"]
+        email = mail["emailAccounts"][0]["email"]
         assert mail_read(
             "mail", "+thread", "--email", email,
             "--id", mail["conversation"]["id"], "--format", "json",
-        )["result"]["value"] == mail["conversation"]
+        )["data"]["value"] == mail["conversation"]
         for message in mail["messages"]:
             assert mail_read(
                 "mail", "+message", "--email", email,
                 "--id", message["id"], "--format", "json",
-            )["result"]["value"] == message
+            )["data"]["value"] == message
         assert mail_read(
             "mail", "message", "verify", "--email", email,
-            "--internet-message-id", mail["sent_receipt"]["internetMessageId"],
+            "--internet-message-id", mail["sent_receipt"]["message"]["internetMessageId"],
             "--format", "json",
         )["result"] == mail["sent_receipt"]
         for argv in (

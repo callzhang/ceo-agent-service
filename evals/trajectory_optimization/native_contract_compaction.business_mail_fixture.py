@@ -13,7 +13,7 @@ def read_mail(argv: list[str], mail: dict) -> dict:
         parser = argparse.ArgumentParser()
         parser.add_argument("--format", choices=["json"], required=True)
         parser.parse_args(argv[3:])
-        return {"success": True, "result": {"mailboxes": mail["mailboxes"]}}
+        return {"success": True, "result": {"emailAccounts": mail["emailAccounts"]}}
     if argv[:2] in (["mail", "+thread"], ["mail", "+message"]):
         operation = argv[1]
         flags = argv[2:]
@@ -28,17 +28,18 @@ def read_mail(argv: list[str], mail: dict) -> dict:
         parser.add_argument("--internet-message-id", required=True)
         parser.add_argument("--format", choices=["json"], required=True)
         parsed = parser.parse_args(argv[3:])
-        assert parsed.email == mail["mailboxes"][0]["email"]
-        assert parsed.internet_message_id == mail["sent_receipt"]["internetMessageId"]
+        assert parsed.email == mail["emailAccounts"][0]["email"]
+        assert parsed.internet_message_id == mail["sent_receipt"]["message"]["internetMessageId"]
         return {"success": True, "result": mail["sent_receipt"]}
     else:
         raise ValueError("This anonymous fixture supplies readonly mail leaves only")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--email", required=True)
+    parser.add_argument("--email")
     parser.add_argument("--id", required=True)
     parser.add_argument("--format", choices=["json"], required=True)
     parsed = parser.parse_args(flags)
-    assert parsed.email == mail["mailboxes"][0]["email"]
+    if parsed.email is not None:
+        assert parsed.email == mail["emailAccounts"][0]["email"]
     if operation == "+thread":
         value = mail["conversation"]
         assert parsed.id == value["id"]
@@ -46,6 +47,8 @@ def read_mail(argv: list[str], mail: dict) -> dict:
         matches = [message for message in mail["messages"] if message["id"] == parsed.id]
         assert len(matches) == 1
         value = matches[0]
+    if result_key == "value":
+        return {"ok": True, "outcome": "success", "data": {"value": value}}
     return {"success": True, "result": {result_key: value}}
 
 

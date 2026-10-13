@@ -1,0 +1,448 @@
+{
+  "version": 1,
+  "scope": "Two actual native OAuth Audit cold business trajectories; anonymous evidence. No System Executor, business effect, provider repair or service deploy. Not four-domain or continuation acceptance.",
+  "implementation_ref": "ff621dfd",
+  "current_parent_ref": "6f0787e9",
+  "case_manifest": "native_contract_compaction.business_cases.v5.json",
+  "case_manifest_sha256": "7e41338c85c24d3b419fe34076f80f0ba7344719232f986270fe89e6f786cd0e",
+  "model_calls": 2,
+  "records": [
+    {
+      "case": "audit-document-feedback",
+      "variant": "full",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "phase": "cold",
+      "exit_code": 0,
+      "session_id": "01a13674-8577-7df1-ad7f-73d40746e181",
+      "turn_completed": true,
+      "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+      "proposal_revision": 0,
+      "canonical": {
+        "outcome": "return",
+        "summary": "Return for revision. The live document is readable and the reply target is complete, but the proposed response contradicts the document's explicit unresolved conflicts and non-approval status. System execution must not proceed until the candidate is regenerated with an evidence-faithful review message.",
+        "proposal_revision": 0,
+        "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+        "evidence_refs": [
+          "trigger-audit-document-review",
+          "node-doc-audit-1",
+          "dingtalk-chat.reply_to_message"
+        ],
+        "feedback": {
+          "rule": "supported_facts and meaning_preservation; ceo-document-review workflow",
+          "observation": "The current document evidence states that the executive summary reports capacity of 120 units and launch on October 15, while the implementation table reports capacity of 80 units and launch on October 22; it also states that approval status is not approved and the factual conflicts must be reconciled first. Despite this, /summary and /proposal/authored_judgment claim the document is internally consistent and ready for approval. The exact current candidate field /proposal/actions/0/payload/content is a string with value \"No material issues found. The proposal is ready for approval.\" This is an unsupported and directly contradictory business conclusion.",
+          "requested_revision": "Regenerate the candidate so that the summary, authored judgment, and exact reply payload consistently identify the capacity and launch-date discrepancies and state that reconciliation is required before approval. Preserve the verified source document and reply target unless refreshed evidence changes them, and recalculate risk/confidence if appropriate."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "task_sha256": "fe7d361e0a4986a5a8ff539ee1a9d6f17d95b63f1031c552dda7232d11c7ba8f",
+      "developer_sha256": "2ca6ed991c876e235220fe11d00d2383d2ca0bc5468fe422ab4dd9ecae82d1f6",
+      "developer_characters": 26773,
+      "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "outcome": "return",
+        "proposal_revision": 0,
+        "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+        "evidence_refs": [
+          "trigger-audit-document-review",
+          "node-doc-audit-1",
+          "dingtalk-chat.reply_to_message"
+        ],
+        "feedback": {
+          "rule": "supported_facts and meaning_preservation; ceo-document-review workflow",
+          "observation": "The current document evidence states that the executive summary reports capacity of 120 units and launch on October 15, while the implementation table reports capacity of 80 units and launch on October 22; it also states that approval status is not approved and the factual conflicts must be reconciled first. Despite this, /summary and /proposal/authored_judgment claim the document is internally consistent and ready for approval. The exact current candidate field /proposal/actions/0/payload/content is a string with value \"No material issues found. The proposal is ready for approval.\" This is an unsupported and directly contradictory business conclusion.",
+          "requested_revision": "Regenerate the candidate so that the summary, authored judgment, and exact reply payload consistently identify the capacity and launch-date discrepancies and state that reconciliation is required before approval. Preserve the verified source document and reply target unless refreshed evidence changes them, and recalculate risk/confidence if appropriate."
+        },
+        "summary": "Return for revision. The live document is readable and the reply target is complete, but the proposed response contradicts the document's explicit unresolved conflicts and non-approval status. System execution must not proceed until the candidate is regenerated with an evidence-faithful review message."
+      },
+      "full_business_model_valid": true,
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T11-09-28-01a13674-8577-7df1-ad7f-73d40746e181.jsonl",
+        "sha256": "2b29d86297121d60c0433de1928b82c78d486278a9205f4e657aa6bb0de790e4",
+        "developer_exact_text_present": true,
+        "task_exact_text_present": true
+      },
+      "predeclared_reject_label_passed": false,
+      "digest_revision_binding_valid": true,
+      "actual_tool_calls": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result_sha256": "3c0c57c83ff9bd7bc93a806b47136719b6a5c58cdecfe17fa0455498b1b770ce"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-doc"
+          },
+          "result_sha256": "948b589315d22ae5d65905b2cdff054f0935d0b31ae19a1dcdf56673e45bfc1a"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "node-doc-audit-1"
+          },
+          "result_sha256": "71b94ee5c8ed73a7198ecd73b275210fdd2967bdde3c116812510ad1bcb7898b"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message"
+          },
+          "result_sha256": "92bf6ccd04c1e662718635ae55f6da5e84c042d5d9222404adfc8c65cb31d527"
+        }
+      ],
+      "required_action_contract_read": true,
+      "declared_shared_skill_read": false
+    },
+    {
+      "case": "audit-document-feedback",
+      "variant": "compact",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "phase": "cold",
+      "exit_code": 0,
+      "session_id": "01a13674-de16-7b52-9e51-2247844a5604",
+      "turn_completed": true,
+      "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+      "proposal_revision": 0,
+      "canonical": {
+        "outcome": "return",
+        "summary": "Return for revision: the candidate’s factual source already establishes unresolved capacity and launch-date conflicts and a not-approved status, but the proposed summary, judgment, and external reply incorrectly declare consistency and approval readiness. No execution occurred.",
+        "proposal_revision": 0,
+        "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+        "evidence_refs": [
+          "node-doc-audit-1",
+          "trigger-audit-document-review"
+        ],
+        "feedback": {
+          "rule": "Supported facts, meaning preservation, and document-review suitability",
+          "observation": "The exact candidate at /proposal/sourced_facts/0/assertion reports two factual conflicts—capacity 120 versus 80 and launch October 15 versus October 22—and explicitly states that the proposal is not approved until they are reconciled. Despite that evidence, /summary and /proposal/authored_judgment say the document is internally consistent and ready for approval, while /proposal/actions/0/payload/content states “No material issues found. The proposal is ready for approval.” This is a direct contradiction and an unsupported approval conclusion.",
+          "requested_revision": "Regenerate the candidate to preserve the document’s actual unresolved conflicts: do not state that no issues were found or that the proposal is ready for approval. The response should accurately identify the conflicting capacity and launch-date values and request reconciliation before approval, while retaining the original reply target and action identity if the intended action remains a reply."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 0.95,
+        "information_completeness": 1.0
+      },
+      "task_sha256": "fe7d361e0a4986a5a8ff539ee1a9d6f17d95b63f1031c552dda7232d11c7ba8f",
+      "developer_sha256": "9c8c64deed85a8f79fc77ebab4f4ff02b850d24f0710d1ea093c1d30aeef9645",
+      "developer_characters": 25373,
+      "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 0.95,
+        "information_completeness": 1.0,
+        "outcome": "return",
+        "proposal_revision": 0,
+        "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+        "evidence_refs": [
+          "node-doc-audit-1",
+          "trigger-audit-document-review"
+        ],
+        "feedback": {
+          "rule": "Supported facts, meaning preservation, and document-review suitability",
+          "observation": "The exact candidate at /proposal/sourced_facts/0/assertion reports two factual conflicts—capacity 120 versus 80 and launch October 15 versus October 22—and explicitly states that the proposal is not approved until they are reconciled. Despite that evidence, /summary and /proposal/authored_judgment say the document is internally consistent and ready for approval, while /proposal/actions/0/payload/content states “No material issues found. The proposal is ready for approval.” This is a direct contradiction and an unsupported approval conclusion.",
+          "requested_revision": "Regenerate the candidate to preserve the document’s actual unresolved conflicts: do not state that no issues were found or that the proposal is ready for approval. The response should accurately identify the conflicting capacity and launch-date values and request reconciliation before approval, while retaining the original reply target and action identity if the intended action remains a reply."
+        },
+        "summary": "Return for revision: the candidate’s factual source already establishes unresolved capacity and launch-date conflicts and a not-approved status, but the proposed summary, judgment, and external reply incorrectly declare consistency and approval readiness. No execution occurred."
+      },
+      "full_business_model_valid": true,
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T11-09-51-01a13674-de16-7b52-9e51-2247844a5604.jsonl",
+        "sha256": "7293fff7e950a84588b5f1cb12d26c9009d8a91844f8d8fa5e7d298652237808",
+        "developer_exact_text_present": true,
+        "task_exact_text_present": true
+      },
+      "predeclared_reject_label_passed": false,
+      "digest_revision_binding_valid": true,
+      "actual_tool_calls": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result_sha256": "3c0c57c83ff9bd7bc93a806b47136719b6a5c58cdecfe17fa0455498b1b770ce"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-doc"
+          },
+          "result_sha256": "948b589315d22ae5d65905b2cdff054f0935d0b31ae19a1dcdf56673e45bfc1a"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "node-doc-audit-1"
+          },
+          "result_sha256": "71b94ee5c8ed73a7198ecd73b275210fdd2967bdde3c116812510ad1bcb7898b"
+        }
+      ],
+      "required_action_contract_read": false,
+      "declared_shared_skill_read": false
+    }
+  ],
+  "input_segments": {
+    "developer_sections": [
+      {
+        "name": "审核规则",
+        "source": "已保存 Audit Rules",
+        "characters": 7608,
+        "sha256": "c982c21a5fc5c783c0356aa3c021106fad4d780f7d30f6829e03b57e6dd25f3c"
+      },
+      {
+        "name": "角色合同",
+        "source": "服务角色合同",
+        "characters": 785,
+        "sha256": "3d7b8d298142cb8398d483142460f1a8d0c1ce498ce8158e950be2809bf6b9bd"
+      },
+      {
+        "name": "Skill 使用约定",
+        "source": "服务角色合同",
+        "characters": 335,
+        "sha256": "651b1f8557bd948a10f37a74c009b7b69506f40725d16c2bdb3a57893f2406bb"
+      },
+      {
+        "name": "共同工作原则",
+        "source": "已保存 Developer 模板",
+        "characters": 625,
+        "sha256": "74458f269c6cd80af4b901be9b6ab625e96ec1b0291f435a7f3a6e7c2e7c59b3"
+      },
+      {
+        "name": "系统动作目录",
+        "source": "系统动作合同",
+        "characters": 922,
+        "sha256": "1079f80acc9c5131c9655ef0c8cba924ca820ebf5c4adcad3e606c7a67366d86"
+      },
+      {
+        "name": "输出契约",
+        "source": "Pydantic 业务模型",
+        "characters": 1575,
+        "sha256": "88afd58a9be3cfd8b97704ab81d28fa2227f60fb848b1e3822b52520f7ba7923"
+      },
+      {
+        "name": "能力边界",
+        "source": "服务能力合同",
+        "characters": 828,
+        "sha256": "f5ab5947de021491561eb1a7d0467c3e7d0b9b9997f32c8a294c6c4016891466"
+      },
+      {
+        "name": "后台记忆说明",
+        "source": "服务运行合同",
+        "characters": 350,
+        "sha256": "5c80a4dfcdbb2cd0c09c46f19dd37ef91541be5950904fa0ea1b7bb360ebaa61"
+      },
+      {
+        "name": "决策证据",
+        "source": "服务决策质量合同",
+        "characters": 1761,
+        "sha256": "29a5d2db2c02af1810ffda253cee1a03cc929fc0e2dc32fcca9fa6781b91a379"
+      },
+      {
+        "name": "应用结果合同",
+        "source": "服务应用合同",
+        "characters": 3007,
+        "sha256": "6f7fd7f9766782189290c239b2ecb565e1a5322b349ad5cfebd0aec14da123a0"
+      },
+      {
+        "name": "响应完整性",
+        "source": "审核角色合同",
+        "characters": 423,
+        "sha256": "1185b3c9d90c44078661ba61fea32ba66685aeb06af6912c67bfb5a9df06d654"
+      },
+      {
+        "name": "运行环境",
+        "source": "当前运行环境",
+        "characters": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "工作人格",
+        "source": "已保存 Work Profile",
+        "characters": 8532,
+        "sha256": "6e1bab4369c9468c73f2f4951e3088adf679d1d6cf51ab4556d55c478c12afaa"
+      }
+    ],
+    "audit_rules_characters": 7593,
+    "audit_rules_exact_occurrences_developer": 1,
+    "audit_rules_exact_occurrences_task": 1,
+    "submitted_task_characters": 17262,
+    "conclusion": "Exact policy duplication confirmed. Per-turn policy freshness/session behavior must be traced before selecting which placement to remove; no policy or prompt change made."
+  },
+  "setup_failures": [
+    {
+      "stage": "eval assembly before native invocation",
+      "error": "TypeError: cannot unpack non-iterable PromptAssembly object",
+      "model_calls": 0,
+      "correction": "consume native_developer_assembly().text as its declared PromptAssembly type"
+    }
+  ],
+  "fixed_criteria_results": {
+    "reject_label": "0/2; both return with substantive replacement feedback",
+    "read_action_contract": "full yes; compact no",
+    "fact_conflicts": "Both identify capacity120/80 and Oct15/22 and do not approve",
+    "blanket_shared_skill_gate": "Not a confirmed rule: current product Skills contain minimum execution contract; do not count every direct MCP read as requiring shared root",
+    "business_acceptance": "not passed; no broad improvement or regression attribution from a single pair"
+  },
+  "only_service_developer_difference": {
+    "characters_removed": 1400,
+    "full_characters": 26773,
+    "compact_characters": 25373,
+    "task_schema_sources_match": true
+  },
+  "independent_review": {
+    "reviewer": "native_catalog_review",
+    "result": "Native model/role/input/source/canonical boundaries verified; both fail predeclared label and compact misses required action contract; current shared Skill gate interpretation was overbroad"
+  },
+  "artifact_sha256": {
+    "audit-validated-results.json": "59d2c6c850b7b486aefec60bb818722095c1f4bbbb0b52a66ad8b2577c727afe",
+    "setup-failures.json": "ccb7a7f38f55f13444e8a78b416fae165b5d83ca47ec6789f553cde505a6fbbd",
+    "audit-results.json": "02a1394f102208f77d41c847b4715e1ea2cf6304a1414d8c9bd78d6d8784f34b",
+    "preflight.json": "7b4e158db1a826a1fcfb3c157df109e67367fe139def8c8a9d8e6df9f34f6079",
+    "input-segments.json": "95e868a5cfd5b12cbf2fdeb90614d908810dff8ace3017d5740ad8eb7f9cb9b9",
+    "mail-already-handled/mail.calls.jsonl": "cab43090b0e960429b425c6b2bd2c609f5a22d3740ae1bb1aa2358cda1aee407",
+    "mail-already-handled/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "mail-already-handled/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "mail-already-handled/preflight.calls.jsonl": "94c4cd6466bc132c7f505c5311fde564819f9cc4b7176e26eff7f06039b1d015",
+    "mail-already-handled/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "mail-already-handled/mail.json": "5ff1685d7af988552215e66b4dedcd8d13d661fd474a6a54c549e3e8b39c02bd",
+    "mail-already-handled/native-dws-path.txt": "080c6412039a58cd85942fd034223f218ae78cb9a82d53dc71c22fee9b33b3b2",
+    "calendar-cross-midnight/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "calendar-cross-midnight/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "calendar-cross-midnight/preflight.calls.jsonl": "d389473f8e0370469e5bda3e943fc865207e2c483d5f5f25d6af6ef9909c344b",
+    "calendar-cross-midnight/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "calendar-real-overlap/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "calendar-real-overlap/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "calendar-real-overlap/preflight.calls.jsonl": "48730e2c08aa19baf9904b9ef1347611b98c4ff2ca66ddd6ec41df2a96776c45",
+    "calendar-real-overlap/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "document-material-conflicts/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "document-material-conflicts/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "document-material-conflicts/preflight.calls.jsonl": "84dc19d03152851c01330f3e502ae61ea815ff7bb83190fde8dbf092bd2721cb",
+    "document-material-conflicts/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "audit-document-feedback/full.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/compact.output.json": "56ac687240d49d0e5c5bd41028a732555a471914e95265439942cf114667c5d1",
+    "audit-document-feedback/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/preflight.calls.jsonl": "029e8dfebeaa876cefd7afac87d5bfa2246bf3d3b7c06190ac2810104fda00d8",
+    "audit-document-feedback/full.trajectory.jsonl": "ebb4ee8417001589f26fb78659314dce849d87e4c4265e53397d285a5598f3fe",
+    "audit-document-feedback/candidate.json": "03947ded018150d48d063a7948cdde707966f2d9b69501daee2701d45d34a376",
+    "audit-document-feedback/full.calls.jsonl": "3f98ba315351cc4ae6c1029f617b388e5d969b338345bfc1bea8f95285aa299e",
+    "audit-document-feedback/full.developer.txt": "2ca6ed991c876e235220fe11d00d2383d2ca0bc5468fe422ab4dd9ecae82d1f6",
+    "audit-document-feedback/compact.developer.txt": "9c8c64deed85a8f79fc77ebab4f4ff02b850d24f0710d1ea093c1d30aeef9645",
+    "audit-document-feedback/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/compact.trajectory.jsonl": "dd8a91135469648f90e7d80117b330728077e8d9836b7d025151818107025fd4",
+    "audit-document-feedback/compact.calls.jsonl": "0ec4eed83fecce824a8aebaf21ec217bf1a5d3bf483fcd992ce0d0b5cd281532",
+    "audit-document-feedback/compact.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/submitted-task.txt": "fe7d361e0a4986a5a8ff539ee1a9d6f17d95b63f1031c552dda7232d11c7ba8f",
+    "audit-document-feedback/full.output.json": "d2c985e961086ab39063371109dc94e3a9bc0462b978eb328c0a0525880aea20",
+    "work-tracking-existing-remediation/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "work-tracking-existing-remediation/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "work-tracking-existing-remediation/preflight.calls.jsonl": "7e37a4239d7519f2ba9996ab2358436a418351a49767f08da853f1b2701d0225",
+    "work-tracking-existing-remediation/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "mail_native_source_proof": {
+    "installed_version": "v1.0.63",
+    "commit": "4cd5d05393a8748e89d9265eb9f7ec85745a0331",
+    "before_regression": {
+      "before_ref": "6f0787e9",
+      "native_required_top_level": [
+        "ok",
+        "outcome",
+        "data"
+      ],
+      "actual_old_top_level": [
+        "success",
+        "result"
+      ],
+      "assertion_passes_before": false,
+      "current_focused_tests": {
+        "passed": 6
+      }
+    },
+    "focused_tests_passed": 6,
+    "source_sha256": {
+      "internal/shortcut/runner.go": "2542c1edfac4f1ef76a59934c9ad006928c8a92a13f7d77faad4d72a5d96068c",
+      "internal/shortcut/types.go": "14f070d2d48b6c90eb271a27c52a66b37087e367f128ec50333856be2540d5f7",
+      "internal/output/envelope.go": "6d15bab86abc1cac94903349e07f44f70ee414995994ca69d70663d6f219e89a",
+      "internal/helpers/mail.go": "8c156365e47f34196900c1593480058a47e6a5783b16319f3c170525cfc9f9d3",
+      "internal/helpers/output.go": "fd668cc57a46ddb8acd408635dc948293a3d77c3276b172ad0263804f7685c7f",
+      "internal/shortcut/mail/common.go": "73047a9ec6272dbd9bca946ddb19d301b4251f77603b33c5602d985500d53b40",
+      "internal/shortcut/mail/mail_strict_cross_platform_coverage_test.go": "44560aabd1e792b591200fb6a3237440ccbad20c55944a3f3f4d3e2956e2c0cb",
+      "internal/shortcut/mail/reads.go": "d3dbb137121d87ee5771205aceae51e0f295771e005078317f7a98ae78441fe8"
+    }
+  },
+  "next_required": [
+    "Trace duplicated7593-char Audit policy placements and per-turn session freshness before removing a copy",
+    "Run all Consumer domains and standalone TaskAgent acceptance",
+    "Verify native mail CLI fixture binding and production publication/readback"
+  ],
+  "temporary_cleanup": [
+    {
+      "path": "/tmp/ceo-native-business-audit-model.CraS6z",
+      "removed": true,
+      "bytes_removed": 10158178,
+      "open_handles_before_cleanup": 0
+    },
+    {
+      "path": "/tmp/ceo-native-mail-envelope.FzamJx",
+      "removed": true,
+      "bytes_removed": 300127,
+      "open_handles_before_cleanup": 0
+    }
+  ],
+  "original_native_sessions_retained": true
+}
