@@ -1,0 +1,768 @@
+{
+  "version": 1,
+  "runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": "01a13566-3f4d-7092-bbf0-ea6e7e16bb2c",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 4629,
+      "task_sha256": "ea8c64ac5fc044d4737e208dbf62762a4f4dc7f710d8da5b727f9f1db56e6976",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": "no_action",
+      "has_proposal": false,
+      "candidate_digest": null,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-14-15-01a13566-3f4d-7092-bbf0-ea6e7e16bb2c.jsonl",
+      "native_sha256": "21ab3bf21f56cfe24487682600b183057770cca49d07c04481c2f92e7589155c",
+      "native_record_count": 66,
+      "native_response_item_count": 25,
+      "native_task_exact": true,
+      "completed_calls": [
+        {
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          }
+        },
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          }
+        },
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-message-triage"
+          }
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "cid-closed",
+            "limit": 100,
+            "single_chat": false,
+            "title": "Anonymous material exchange"
+          }
+        }
+      ],
+      "returned_outputs": [
+        {
+          "name": "read_text_file",
+          "characters": 136,
+          "sha256": "9465fac8b03dbda2d5aafdea6c03b4be034419dfaf3ab18f76ee648afaca7062",
+          "error_marker": true,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_task_skill",
+          "characters": 14011,
+          "sha256": "935cd3dc00bd8f93acce5679e9d6390d49df1284822b9dbfadfb2bd4eafd74e1",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_task_skill",
+          "characters": 16442,
+          "sha256": "fb43b84532f91a926b3aa68e5d9b44591bb5be1332c79fa713a790735432062c",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "characters": 1077,
+          "sha256": "1291b085bd781318503532f02cb23b6a9b7eed7ef23ea2ca1e9c83663aedf5c5",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        }
+      ],
+      "tool_error_names": [
+        "read_text_file"
+      ],
+      "independent_conversation_read": true,
+      "all_response_items_examined": true,
+      "acceptance": true,
+      "native_turn_tool_calls": [
+        {
+          "type": "function_call",
+          "name": "read_text_file",
+          "arguments_sha256": "b29b66c11bc650cc43176d16fd7b3ada07f6934853b49f496013b98044378829",
+          "mentions_shared_agents_path": true
+        },
+        {
+          "type": "function_call",
+          "name": "read_task_skill",
+          "arguments_sha256": "10f6dae99b817df3b1a9fc4e85ee4a7a0a8b5e09acfd2d3d415e76e63a6fbf0e",
+          "mentions_shared_agents_path": false
+        },
+        {
+          "type": "function_call",
+          "name": "read_task_skill",
+          "arguments_sha256": "8be43ddd2831e0e1e4bbb51c670bc2b066009a1379a4ae42959bcbbc4e9b0332",
+          "mentions_shared_agents_path": false
+        },
+        {
+          "type": "function_call",
+          "name": "read_dingtalk_messages",
+          "arguments_sha256": "c6883bfddb35ad9bb7325553d80c3659e0ff6830ea6427acc38ce4e98b487698",
+          "mentions_shared_agents_path": false
+        }
+      ],
+      "native_command_executions": [],
+      "completed_calls_scope": "stdout completed MCP calls only; native_turn_tool_calls and native_command_executions cover additional native calls separately"
+    },
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "resume",
+      "source_session_id": "01a13566-3f4d-7092-bbf0-ea6e7e16bb2c",
+      "session_id": "01a13566-3f4d-7092-bbf0-ea6e7e16bb2c",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 4752,
+      "task_sha256": "efb3c4c16ce77fd23a5abcd2a3cad4efcd4bcfca9e6cc43d76b36f7c2d1edfbe",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": "no_action",
+      "has_proposal": false,
+      "candidate_digest": null,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-14-15-01a13566-3f4d-7092-bbf0-ea6e7e16bb2c.jsonl",
+      "native_sha256": "21ab3bf21f56cfe24487682600b183057770cca49d07c04481c2f92e7589155c",
+      "native_record_count": 66,
+      "native_response_item_count": 25,
+      "native_task_exact": true,
+      "completed_calls": [
+        {
+          "name": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "cid-closed",
+            "limit": 100,
+            "single_chat": false,
+            "title": "Anonymous material exchange"
+          }
+        }
+      ],
+      "returned_outputs": [
+        {
+          "name": "read_dingtalk_messages",
+          "characters": 1077,
+          "sha256": "1291b085bd781318503532f02cb23b6a9b7eed7ef23ea2ca1e9c83663aedf5c5",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        }
+      ],
+      "tool_error_names": [],
+      "independent_conversation_read": true,
+      "all_response_items_examined": true,
+      "acceptance": true,
+      "native_turn_tool_calls": [
+        {
+          "type": "function_call",
+          "name": "read_dingtalk_messages",
+          "arguments_sha256": "c6883bfddb35ad9bb7325553d80c3659e0ff6830ea6427acc38ce4e98b487698",
+          "mentions_shared_agents_path": false
+        }
+      ],
+      "native_command_executions": [],
+      "completed_calls_scope": "stdout completed MCP calls only; native_turn_tool_calls and native_command_executions cover additional native calls separately"
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": "01a13566-aa6f-7d61-bc3c-bd5ffee2ac90",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 4870,
+      "task_sha256": "9307dad6f4f081453505701e406d8687fd81b15d6de3643a6304c4ad56754ce8",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": "no_action",
+      "has_proposal": false,
+      "candidate_digest": null,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-14-43-01a13566-aa6f-7d61-bc3c-bd5ffee2ac90.jsonl",
+      "native_sha256": "16c9e190958dfc2cc90bdbc75315830337ca969647218ecdf76c199b1f2e4056",
+      "native_record_count": 59,
+      "native_response_item_count": 22,
+      "native_task_exact": true,
+      "completed_calls": [
+        {
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          }
+        },
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          }
+        },
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-message-triage"
+          }
+        }
+      ],
+      "returned_outputs": [
+        {
+          "name": "read_text_file",
+          "characters": 136,
+          "sha256": "9465fac8b03dbda2d5aafdea6c03b4be034419dfaf3ab18f76ee648afaca7062",
+          "error_marker": true,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_task_skill",
+          "characters": 14011,
+          "sha256": "935cd3dc00bd8f93acce5679e9d6390d49df1284822b9dbfadfb2bd4eafd74e1",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_task_skill",
+          "characters": 16442,
+          "sha256": "fb43b84532f91a926b3aa68e5d9b44591bb5be1332c79fa713a790735432062c",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        }
+      ],
+      "tool_error_names": [
+        "read_text_file"
+      ],
+      "independent_conversation_read": false,
+      "all_response_items_examined": true,
+      "acceptance": true,
+      "native_turn_tool_calls": [
+        {
+          "type": "function_call",
+          "name": "read_text_file",
+          "arguments_sha256": "b29b66c11bc650cc43176d16fd7b3ada07f6934853b49f496013b98044378829",
+          "mentions_shared_agents_path": true
+        },
+        {
+          "type": "custom_tool_call",
+          "name": "exec",
+          "arguments_sha256": "64380bd9a864f4ae8664a85543a6b0850cbb76703872f811e5f522b4782c6fd3",
+          "mentions_shared_agents_path": true
+        },
+        {
+          "type": "function_call",
+          "name": "read_task_skill",
+          "arguments_sha256": "10f6dae99b817df3b1a9fc4e85ee4a7a0a8b5e09acfd2d3d415e76e63a6fbf0e",
+          "mentions_shared_agents_path": false
+        },
+        {
+          "type": "function_call",
+          "name": "read_task_skill",
+          "arguments_sha256": "8be43ddd2831e0e1e4bbb51c670bc2b066009a1379a4ae42959bcbbc4e9b0332",
+          "mentions_shared_agents_path": false
+        }
+      ],
+      "native_command_executions": [
+        {
+          "command_sha256": "21562b03307e80129ca9245077ad29a10f80030533f7a7539cd1af31f1897b51",
+          "mentions_shared_agents_path": true,
+          "output_characters": 18500,
+          "output_sha256": "403c707a3074488455629b7532a66803640f19db2c3240263a57993ea76c1fd7",
+          "exit_code": 0
+        }
+      ],
+      "completed_calls_scope": "stdout completed MCP calls only; native_turn_tool_calls and native_command_executions cover additional native calls separately"
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "resume",
+      "source_session_id": "01a13566-aa6f-7d61-bc3c-bd5ffee2ac90",
+      "session_id": "01a13566-aa6f-7d61-bc3c-bd5ffee2ac90",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 4993,
+      "task_sha256": "188c8ccb39bb79f4c5f4a4a9d7ca0cbf223d8518633edf71cd588bfcf8ad4c1d",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": "no_action",
+      "has_proposal": false,
+      "candidate_digest": null,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-14-43-01a13566-aa6f-7d61-bc3c-bd5ffee2ac90.jsonl",
+      "native_sha256": "16c9e190958dfc2cc90bdbc75315830337ca969647218ecdf76c199b1f2e4056",
+      "native_record_count": 59,
+      "native_response_item_count": 22,
+      "native_task_exact": true,
+      "completed_calls": [],
+      "returned_outputs": [],
+      "tool_error_names": [],
+      "independent_conversation_read": false,
+      "all_response_items_examined": true,
+      "acceptance": true,
+      "native_turn_tool_calls": [],
+      "native_command_executions": [],
+      "completed_calls_scope": "stdout completed MCP calls only; native_turn_tool_calls and native_command_executions cover additional native calls separately"
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": "01a13567-276e-7fe3-b329-0b97cd4fa542",
+      "returncode": 0,
+      "canonical_valid": false,
+      "parse_error": "ResultParseError: typed result contains invalid JSON",
+      "task_chars": 6316,
+      "task_sha256": "df2fac5285db52aa1bd5bafd66f317203467063ef647c568e6f2f842b50d2971",
+      "developer_chars": 27107,
+      "developer_sha256": "346fc27370345a9c21430d164bc492894e1d6958cfbc44e9a1137faff9de89b5",
+      "outcome": null,
+      "has_proposal": null,
+      "candidate_digest": null,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-15-15-01a13567-276e-7fe3-b329-0b97cd4fa542.jsonl",
+      "native_sha256": "a12fd37402406cc941e45117445193f2abf464fa51327406dbd84e330f230469",
+      "native_record_count": 45,
+      "native_response_item_count": 18,
+      "native_task_exact": true,
+      "completed_calls": [
+        {
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          }
+        },
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-message-triage"
+          }
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          }
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "cid-closed",
+            "limit": 50,
+            "single_chat": false,
+            "title": "Anonymous material exchange"
+          }
+        }
+      ],
+      "returned_outputs": [
+        {
+          "name": "read_text_file",
+          "characters": 136,
+          "sha256": "9465fac8b03dbda2d5aafdea6c03b4be034419dfaf3ab18f76ee648afaca7062",
+          "error_marker": true,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_task_skill",
+          "characters": 16442,
+          "sha256": "fb43b84532f91a926b3aa68e5d9b44591bb5be1332c79fa713a790735432062c",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_skill",
+          "characters": 13886,
+          "sha256": "f9a9f10b697a21b927b6bc7ec01dc64bc49c95a6ebb5add6552f1dd52ad38d13",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "characters": 1077,
+          "sha256": "1291b085bd781318503532f02cb23b6a9b7eed7ef23ea2ca1e9c83663aedf5c5",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        }
+      ],
+      "tool_error_names": [
+        "read_text_file"
+      ],
+      "independent_conversation_read": true,
+      "all_response_items_examined": true,
+      "acceptance": false,
+      "native_turn_tool_calls": [
+        {
+          "type": "function_call",
+          "name": "read_text_file",
+          "arguments_sha256": "b29b66c11bc650cc43176d16fd7b3ada07f6934853b49f496013b98044378829",
+          "mentions_shared_agents_path": true
+        },
+        {
+          "type": "function_call",
+          "name": "read_task_skill",
+          "arguments_sha256": "8be43ddd2831e0e1e4bbb51c670bc2b066009a1379a4ae42959bcbbc4e9b0332",
+          "mentions_shared_agents_path": false
+        },
+        {
+          "type": "function_call",
+          "name": "read_skill",
+          "arguments_sha256": "10f6dae99b817df3b1a9fc4e85ee4a7a0a8b5e09acfd2d3d415e76e63a6fbf0e",
+          "mentions_shared_agents_path": false
+        },
+        {
+          "type": "function_call",
+          "name": "read_dingtalk_messages",
+          "arguments_sha256": "b84f2f6a8b23ed4de36139a12751130f827b4f9cd0e972aaa8852592e096658a",
+          "mentions_shared_agents_path": false
+        }
+      ],
+      "native_command_executions": [],
+      "completed_calls_scope": "stdout completed MCP calls only; native_turn_tool_calls and native_command_executions cover additional native calls separately"
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": "01a13567-652f-7243-9ab4-d6755cad1eab",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 6557,
+      "task_sha256": "9072cf529a1b4b2b3b383168dde05368ce0f2d031908fde8ac7976665079dd68",
+      "developer_chars": 27107,
+      "developer_sha256": "346fc27370345a9c21430d164bc492894e1d6958cfbc44e9a1137faff9de89b5",
+      "outcome": "approve",
+      "has_proposal": false,
+      "candidate_digest": "819bc7f285dd70548abd0104711219af001bd200488b4a81af9a2ec0302e51ea",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-15-30-01a13567-652f-7243-9ab4-d6755cad1eab.jsonl",
+      "native_sha256": "13602f8ff27a148546cd2f186d92e4bbceb0d0229455743fee2c1e357317456b",
+      "native_record_count": 48,
+      "native_response_item_count": 17,
+      "native_task_exact": true,
+      "completed_calls": [
+        {
+          "name": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          }
+        },
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-message-triage"
+          }
+        },
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          }
+        }
+      ],
+      "returned_outputs": [
+        {
+          "name": "read_text_file",
+          "characters": 136,
+          "sha256": "9465fac8b03dbda2d5aafdea6c03b4be034419dfaf3ab18f76ee648afaca7062",
+          "error_marker": true,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_task_skill",
+          "characters": 16442,
+          "sha256": "fb43b84532f91a926b3aa68e5d9b44591bb5be1332c79fa713a790735432062c",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        },
+        {
+          "name": "read_task_skill",
+          "characters": 14011,
+          "sha256": "935cd3dc00bd8f93acce5679e9d6390d49df1284822b9dbfadfb2bd4eafd74e1",
+          "error_marker": false,
+          "explicit_clipping_marker": false
+        }
+      ],
+      "tool_error_names": [
+        "read_text_file"
+      ],
+      "independent_conversation_read": false,
+      "all_response_items_examined": true,
+      "acceptance": false,
+      "native_turn_tool_calls": [
+        {
+          "type": "function_call",
+          "name": "read_text_file",
+          "arguments_sha256": "b29b66c11bc650cc43176d16fd7b3ada07f6934853b49f496013b98044378829",
+          "mentions_shared_agents_path": true
+        },
+        {
+          "type": "function_call",
+          "name": "read_task_skill",
+          "arguments_sha256": "8be43ddd2831e0e1e4bbb51c670bc2b066009a1379a4ae42959bcbbc4e9b0332",
+          "mentions_shared_agents_path": false
+        },
+        {
+          "type": "function_call",
+          "name": "read_task_skill",
+          "arguments_sha256": "10f6dae99b817df3b1a9fc4e85ee4a7a0a8b5e09acfd2d3d415e76e63a6fbf0e",
+          "mentions_shared_agents_path": false
+        }
+      ],
+      "native_command_executions": [],
+      "completed_calls_scope": "stdout completed MCP calls only; native_turn_tool_calls and native_command_executions cover additional native calls separately"
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "resume",
+      "source_session_id": "01a13567-652f-7243-9ab4-d6755cad1eab",
+      "session_id": "01a13567-652f-7243-9ab4-d6755cad1eab",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 6680,
+      "task_sha256": "83df7a10e9d0a94fceb7d3808de8e39199ec1036f8c2bbbf9abc10af3febb0c6",
+      "developer_chars": 27107,
+      "developer_sha256": "346fc27370345a9c21430d164bc492894e1d6958cfbc44e9a1137faff9de89b5",
+      "outcome": "approve",
+      "has_proposal": false,
+      "candidate_digest": "819bc7f285dd70548abd0104711219af001bd200488b4a81af9a2ec0302e51ea",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-15-30-01a13567-652f-7243-9ab4-d6755cad1eab.jsonl",
+      "native_sha256": "13602f8ff27a148546cd2f186d92e4bbceb0d0229455743fee2c1e357317456b",
+      "native_record_count": 48,
+      "native_response_item_count": 17,
+      "native_task_exact": true,
+      "completed_calls": [],
+      "returned_outputs": [],
+      "tool_error_names": [],
+      "independent_conversation_read": false,
+      "all_response_items_examined": true,
+      "acceptance": false,
+      "native_turn_tool_calls": [],
+      "native_command_executions": [],
+      "completed_calls_scope": "stdout completed MCP calls only; native_turn_tool_calls and native_command_executions cover additional native calls separately"
+    }
+  ],
+  "initial_excluded": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": null,
+      "returncode": 2,
+      "canonical_valid": false,
+      "parse_error": "ResultParseError: no valid typed result JSON found in Codex JSONL",
+      "task_chars": 4629,
+      "task_sha256": "ea8c64ac5fc044d4737e208dbf62762a4f4dc7f710d8da5b727f9f1db56e6976",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": null,
+      "startup_error": "error: the argument '--skip-git-repo-check' cannot be used multiple times\n\nUsage: codex exec [OPTIONS] [PROMPT]\n       codex exec [OPTIONS] <COMMAND> [ARGS]\n\nFor more information, try '--help'."
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": null,
+      "returncode": 2,
+      "canonical_valid": false,
+      "parse_error": "ResultParseError: no valid typed result JSON found in Codex JSONL",
+      "task_chars": 4870,
+      "task_sha256": "9307dad6f4f081453505701e406d8687fd81b15d6de3643a6304c4ad56754ce8",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": null,
+      "startup_error": "error: the argument '--skip-git-repo-check' cannot be used multiple times\n\nUsage: codex exec [OPTIONS] [PROMPT]\n       codex exec [OPTIONS] <COMMAND> [ARGS]\n\nFor more information, try '--help'."
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": "01a13562-9335-7783-8e28-9bf5a85ece6b",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 6316,
+      "task_sha256": "df2fac5285db52aa1bd5bafd66f317203467063ef647c568e6f2f842b50d2971",
+      "developer_chars": 27107,
+      "developer_sha256": "346fc27370345a9c21430d164bc492894e1d6958cfbc44e9a1137faff9de89b5",
+      "outcome": "approve",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-10-15-01a13562-9335-7783-8e28-9bf5a85ece6b.jsonl",
+      "native_sha256": "385febf95043fb503447207be927f3ed2054eeb555aff9bb9d272be4dd6253e5"
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "resume",
+      "source_session_id": "01a13562-9335-7783-8e28-9bf5a85ece6b",
+      "session_id": null,
+      "returncode": 2,
+      "canonical_valid": false,
+      "parse_error": "ResultParseError: no valid typed result JSON found in Codex JSONL",
+      "task_chars": 6439,
+      "task_sha256": "6b4c539244d2ab0d7b427ff8891cdebe6b3f14b292a1d7d17a963aa8cdbebef9",
+      "developer_chars": 27107,
+      "developer_sha256": "346fc27370345a9c21430d164bc492894e1d6958cfbc44e9a1137faff9de89b5",
+      "outcome": null,
+      "startup_error": "error: a value is required for '--config <key=value>' but none was supplied\n\nFor more information, try '--help'."
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": "01a13563-22c9-7ae0-b897-d3744f5c0526",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 6557,
+      "task_sha256": "9072cf529a1b4b2b3b383168dde05368ce0f2d031908fde8ac7976665079dd68",
+      "developer_chars": 27107,
+      "developer_sha256": "346fc27370345a9c21430d164bc492894e1d6958cfbc44e9a1137faff9de89b5",
+      "outcome": "failed",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-10-51-01a13563-22c9-7ae0-b897-d3744f5c0526.jsonl",
+      "native_sha256": "6311f5ccd290f8e0bb21bce848d41e0bb8545c23d99fda9f44745ce0fbe3a3e3"
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "resume",
+      "source_session_id": "01a13563-22c9-7ae0-b897-d3744f5c0526",
+      "session_id": null,
+      "returncode": 2,
+      "canonical_valid": false,
+      "parse_error": "ResultParseError: no valid typed result JSON found in Codex JSONL",
+      "task_chars": 6680,
+      "task_sha256": "83df7a10e9d0a94fceb7d3808de8e39199ec1036f8c2bbbf9abc10af3febb0c6",
+      "developer_chars": 27107,
+      "developer_sha256": "346fc27370345a9c21430d164bc492894e1d6958cfbc44e9a1137faff9de89b5",
+      "outcome": null,
+      "startup_error": "error: a value is required for '--config <key=value>' but none was supplied\n\nFor more information, try '--help'."
+    }
+  ],
+  "fixture_error_cohort_excluded": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": "01a13564-6655-71e0-82c2-38aa929c3227",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 4629,
+      "task_sha256": "ea8c64ac5fc044d4737e208dbf62762a4f4dc7f710d8da5b727f9f1db56e6976",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": "no_action",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-12-14-01a13564-6655-71e0-82c2-38aa929c3227.jsonl",
+      "native_sha256": "b79524d1045a4d556af5ebe6dc2058c4bdcc9bb3086ccdd74aa9dff874d1ce1e"
+    },
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "resume",
+      "source_session_id": "01a13564-6655-71e0-82c2-38aa929c3227",
+      "session_id": "01a13564-6655-71e0-82c2-38aa929c3227",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 4752,
+      "task_sha256": "efb3c4c16ce77fd23a5abcd2a3cad4efcd4bcfca9e6cc43d76b36f7c2d1edfbe",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": "no_action",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-12-14-01a13564-6655-71e0-82c2-38aa929c3227.jsonl",
+      "native_sha256": "b79524d1045a4d556af5ebe6dc2058c4bdcc9bb3086ccdd74aa9dff874d1ce1e"
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "source_session_id": null,
+      "session_id": "01a13564-d4d4-72c2-ac7d-1e22c43c69cc",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 4870,
+      "task_sha256": "9307dad6f4f081453505701e406d8687fd81b15d6de3643a6304c4ad56754ce8",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": "no_action",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-12-42-01a13564-d4d4-72c2-ac7d-1e22c43c69cc.jsonl",
+      "native_sha256": "3076b2c20180901471518c8fbb020ac4926bc2bb417a9321830db562e9aa7ff7"
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "resume",
+      "source_session_id": "01a13564-d4d4-72c2-ac7d-1e22c43c69cc",
+      "session_id": "01a13564-d4d4-72c2-ac7d-1e22c43c69cc",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 4993,
+      "task_sha256": "188c8ccb39bb79f4c5f4a4a9d7ca0cbf223d8518633edf71cd588bfcf8ad4c1d",
+      "developer_chars": 29879,
+      "developer_sha256": "97fc52a484c1507f3fe9a3c02bed6e72ef173d4fb346f61b4228369bd1b6e204",
+      "outcome": "no_action",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-12-42-01a13564-d4d4-72c2-ac7d-1e22c43c69cc.jsonl",
+      "native_sha256": "3076b2c20180901471518c8fbb020ac4926bc2bb417a9321830db562e9aa7ff7"
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "resume",
+      "source_session_id": "01a13562-9335-7783-8e28-9bf5a85ece6b",
+      "session_id": "01a13562-9335-7783-8e28-9bf5a85ece6b",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 6439,
+      "task_sha256": "6b4c539244d2ab0d7b427ff8891cdebe6b3f14b292a1d7d17a963aa8cdbebef9",
+      "developer_chars": 27107,
+      "developer_sha256": "346fc27370345a9c21430d164bc492894e1d6958cfbc44e9a1137faff9de89b5",
+      "outcome": "approve",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-10-15-01a13562-9335-7783-8e28-9bf5a85ece6b.jsonl",
+      "native_sha256": "385febf95043fb503447207be927f3ed2054eeb555aff9bb9d272be4dd6253e5"
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "resume",
+      "source_session_id": "01a13563-22c9-7ae0-b897-d3744f5c0526",
+      "session_id": "01a13563-22c9-7ae0-b897-d3744f5c0526",
+      "returncode": 0,
+      "canonical_valid": true,
+      "parse_error": null,
+      "task_chars": 6680,
+      "task_sha256": "83df7a10e9d0a94fceb7d3808de8e39199ec1036f8c2bbbf9abc10af3febb0c6",
+      "developer_chars": 27107,
+      "developer_sha256": "346fc27370345a9c21430d164bc492894e1d6958cfbc44e9a1137faff9de89b5",
+      "outcome": "failed",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-10-51-01a13563-22c9-7ae0-b897-d3744f5c0526.jsonl",
+      "native_sha256": "6311f5ccd290f8e0bb21bce848d41e0bb8545c23d99fda9f44745ce0fbe3a3e3"
+    }
+  ],
+  "limits": [
+    "Pure production composition functions, actual role native helpers and registered readers; not deployed service lookup/scheduler or provider action.",
+    "Baseline initial JSON syntax failure preserved, no valid cold Audit result; baseline resume not run.",
+    "Candidate Consumer correctly uses the complete supplied current snapshot; no extra provider read is required for that Consumer judgment. Candidate Audit omits the independently read current conversation required by the unchanged Skill and this comparison oracle.",
+    "Both Consumer cold arms read only two relevant Skill bodies; no claim baseline forces all five or candidate reduces reads here.",
+    "Candidate Task is 241 characters longer due exact source hashes; no submitted-length or global-quality reduction claim for this case.",
+    "Native same-session continuity established only for runs with valid cold result; service session lookup is untested.",
+    "Candidate Consumer cold additionally reads shared AGENTS via native exec (18500-character body). Baseline lacks that read. Initial service Developer/Profile equality does not imply equal later model-visible context.",
+    "Audit uses a fixed synthetic no_action candidate, not any Consumer native output produced in this comparison. This is paired independent role controls, not an end-to-end Consumer to Audit pipeline."
+  ],
+  "independent_review": "Native Task equality, counts/hashes, every successful MCP structured return versus callback, and acceptance boundaries reviewed. Added omitted native exec/global AGENTS read and fixed synthetic Audit candidate boundary."
+}

@@ -128,3 +128,63 @@ anonymous closed-exchange case. No shared instruction or Audit policy change is
 justified by this inventory alone.
 
 Independent readonly review verified native hashes/counts, all calls and canonical results; its output-block representation correction is reflected in the artifact and counts above.
+
+## Closed-message native applicability and continuation control
+
+Source020e54ba, OAuthgpt-5.6-luna/medium, native output schema off in both arms.
+The pure production Developer/Task composers use complete current production
+Profile/Rules; actual Consumer/Audit CLI helpers retain native home and fixed
+catalog. Five complete installed Skill bodies are frozen unchanged in an owned
+SQLite task input. Registered readonly readers return exact content/SHA for all
+five in both roles before the accepted cohort starts (10 checks). The current
+conversation is anonymous and readonly; no provider action is exposed.
+
+Baseline is the actualb9572061 renderer: it says Selected Task Skills and repeats
+frozen names. It does not literally require every source to be read. Candidate
+uses available applicable source entries and content hashes. Do not characterize
+this control as an explicit mandatory-five-versus-two rule change. Candidate Task
+is241 characters longer in each role because hashes make source identity visible.
+Developer text is identical within each role's comparison (Consumer29,879 chars,
+Audit27,107); full private text remains temporary/native only.
+
+Seven accepted-input native turns retain all originals. Four Consumer turns
+(cold/resume for both arms) return canonical no_action with no proposal and read
+only the two relevant Skills on cold start. Candidate Consumer uses the complete
+supplied current snapshot without a provider read; that is sufficient for its
+business disposition, not a failure. Baseline independently reads the conversation
+on both rounds. Audit baseline cold reads Skills and current conversation but its
+final JSON contains unescaped quotation marks, failing parsing; it has no valid
+cold result and no resume is marked passed. Candidate Audit cold/resume parse as
+approve but omit the independent current-conversation read required by the
+unchanged workflow. They fail this comparison's Audit acceptance requirement.
+No body/read-count reduction or full release acceptance is claimed.
+
+Each submitted Task exactly matches a native User input. Consumer continuations
+and candidate Audit continuation retain their respective SIDs. This is manual
+native SID continuation, not service route/session-binding acceptance. The source
+callbacks and original native outputs are retained for independent review.
+Metadata/harness sources:closed_message_source_control.native.v1.json and results.
+
+Early startup failures are excluded: duplicated Consumer skip-git flag and
+misplaced resume SID prevented native model invocation. A separate fixture-error
+cohort had an empty required saved skill_protocol, and the registered reader
+correctly refused frozen Skill reads. All those records are retained and excluded;
+one baseline Audit nevertheless approved on provided facts after failed reads,
+which is not acceptance. The corrected owned DB supplies the generated protocol;
+no source body, production rule, route, session policy or prompt patch changed.
+Shared AGENTS material-reader refusals remain visible in Audit tool results.
+
+The next action follows these actual failures: inspect why independent state
+verification is omitted despite the complete unchanged Skill and why the native
+JSON result is malformed; do not add another reminder or silently normalize the
+invalid JSON. Native output-schema work stays independent. Production remains
+unchanged and this additional source-binding gate remains open.
+
+Independent review verifies native inputs/counts/hashes and all successful MCP
+structured returns against callbacks. It also identifies an additional candidate
+Consumer cold native exec reading shared AGENTS (18,500-character body), absent
+from baseline. This is separate from MCP Skill outputs; native command inventory
+now retains it. Initial submitted Developer/Profile equality does not mean later
+retrieved model context is equal. Audit reviews the same fixed synthetic no_action
+candidate in both arms, not either actual Consumer output; this is independent
+role comparison, not end-to-end Consumer-to-Audit execution acceptance.

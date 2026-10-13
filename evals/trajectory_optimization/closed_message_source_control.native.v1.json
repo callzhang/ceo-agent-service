@@ -1,0 +1,143 @@
+{
+  "source_commit": "020e54baf2040a78b2cd7145192261a1ab04e862",
+  "baseline_renderer_ref": "b9572061",
+  "clock": "2026-10-13T13:09:29.940764+00:00",
+  "names": [
+    "ceo-message-triage",
+    "dingtalk-chat",
+    "ceo-calendar-invite",
+    "ceo-document-review",
+    "ceo-work-tracking"
+  ],
+  "sources": [
+    {
+      "name": "ceo-message-triage",
+      "characters": 7918,
+      "sha256": "5465cfa1b71eea25d2c25f5e699ebca984ac2b841739c1665cc6f391898e60e4"
+    },
+    {
+      "name": "dingtalk-chat",
+      "characters": 6672,
+      "sha256": "6dbc2e8872c25ec223338715994fb17717f68efc0d2f4862f7b22a633403a6f6"
+    },
+    {
+      "name": "ceo-calendar-invite",
+      "characters": 7495,
+      "sha256": "53b30be83bf4db45dcb745ebd6bae846f8e3c5fb23de2bc225846fdafed609b3"
+    },
+    {
+      "name": "ceo-document-review",
+      "characters": 3841,
+      "sha256": "3c26efed114be906f67092f35d8d6c3e64debe304e7aa60b180d1cb67ecfa346"
+    },
+    {
+      "name": "ceo-work-tracking",
+      "characters": 23579,
+      "sha256": "4f66c28b1bfc19c5cb5df1fb3abdbe3ccad9f0c83ef447f5c89005a752607029"
+    }
+  ],
+  "scope": "Production pure role/Task composer functions and full current Profile/Rules, synthetic readonly conversation, actual registered frozen readers; manual SID continuation, not service scheduler/session lookup.",
+  "reader_preflight": [
+    {
+      "role": "consumer",
+      "name": "ceo-message-triage",
+      "exact_content": true,
+      "exact_sha256": true
+    },
+    {
+      "role": "consumer",
+      "name": "dingtalk-chat",
+      "exact_content": true,
+      "exact_sha256": true
+    },
+    {
+      "role": "consumer",
+      "name": "ceo-calendar-invite",
+      "exact_content": true,
+      "exact_sha256": true
+    },
+    {
+      "role": "consumer",
+      "name": "ceo-document-review",
+      "exact_content": true,
+      "exact_sha256": true
+    },
+    {
+      "role": "consumer",
+      "name": "ceo-work-tracking",
+      "exact_content": true,
+      "exact_sha256": true
+    },
+    {
+      "role": "audit",
+      "name": "ceo-message-triage",
+      "exact_content": true,
+      "exact_sha256": true
+    },
+    {
+      "role": "audit",
+      "name": "dingtalk-chat",
+      "exact_content": true,
+      "exact_sha256": true
+    },
+    {
+      "role": "audit",
+      "name": "ceo-calendar-invite",
+      "exact_content": true,
+      "exact_sha256": true
+    },
+    {
+      "role": "audit",
+      "name": "ceo-document-review",
+      "exact_content": true,
+      "exact_sha256": true
+    },
+    {
+      "role": "audit",
+      "name": "ceo-work-tracking",
+      "exact_content": true,
+      "exact_sha256": true
+    }
+  ],
+  "harness_sources": {
+    "prepare.py": "import sys,os,json,hashlib,ast,subprocess\nfrom pathlib import Path\nfrom datetime import datetime,timezone\nfrom dataclasses import replace\nsys.path.insert(0,'/private/tmp/ceo-skill-source-bindings')\nfrom app.config import load_env_file\nfrom app.prompt_composition import load_prompt_configuration,compose_consumer_task\nfrom app.consumer_agent import consumer_developer_instructions,audit_developer_instructions\nfrom app.audit_rules import render_audit_rules\nfrom app.store import AgentRole\nfrom app.business_skills import render_task_skill_discovery\nfrom app.consumer_agent import default_task_skill_catalog\nimport app.business_skills as bs\nfrom app.agent_context import AgentTaskContext,AuditTurnContext\nfrom app.agent_contracts import ConsumerAgentResult\nfrom app.reviewed_candidates import candidate_digest\nfrom app.agent_cron.commands import ServiceCommandConsumerContext,ServiceCommandSkillMaterial\nfrom tests.test_frozen_task_skill_discovery import _task_db\nroot=Path(__file__).parent\nload_env_file(Path('/Users/derek/Services/ceo-agent-service/.env'))\nnames=('ceo-message-triage','dingtalk-chat','ceo-calendar-invite','ceo-document-review','ceo-work-tracking')\nmaterials=[]\nfor n in names:\n body=(Path('/Users/derek/.agents/skills')/n/'SKILL.md').read_text()\n content=f'## Managed Skill: {n}\\nrevision_id: 41\\nsha256: {hashlib.sha256(body.encode()).hexdigest()}\\n\\n'+body\n materials.append(ServiceCommandSkillMaterial(name=n,content=content))\nclock=datetime.now(timezone.utc).isoformat()\nmessages=[{'message_id':'msg-material','sender':'Alex','sender_user_id':'anonymous-alex','text':'资料清单已发在上一条，不需要回复。','create_time':clock},{'message_id':'msg-closed','sender':'Avery','sender_user_id':'anonymous-avery','text':'收到，谢谢。','create_time':clock}]\nsnapshot={'messages':messages,'complete':True,'has_more':False,'captured_at':clock}\nctx=AgentTaskContext(task_id=7,channel='dingtalk',conversation_id='cid-closed',conversation_title='Anonymous material exchange',single_chat=False,trigger_message_id='msg-closed',trigger_sender='Avery',trigger_text='收到，谢谢。',trigger_create_time=clock,messages=(),materials=(),prior_receipts=(),trigger_raw_payload=snapshot,skill_names=names,consumer_prompt='Review the current triggering message in its complete current conversation context.',skill_protocol_source='generated')\nsc=ServiceCommandConsumerContext(scheduled_task_id=11,scheduled_task_run_id=29,prompt=ctx.consumer_prompt,skill_names=names,skill_protocol='',skill_materials=tuple(materials))\n_task_db(root/'reader.sqlite3',scheduled_consumer=sc.to_payload())\n(root/'snapshot.json').write_text(json.dumps(snapshot,ensure_ascii=False))\n(root/'materials.json').write_text(json.dumps([{'name':m.name,'content':m.content} for m in materials],ensure_ascii=False))\nold=subprocess.check_output(['git','show','b9572061:app/business_skills.py'],cwd='/private/tmp/ceo-skill-source-bindings',text=True)\nnode=next(n for n in ast.parse(old).body if isinstance(n,ast.FunctionDef) and n.name=='render_task_skill_discovery')\nnamespace=dict(vars(bs));exec(compile(ast.Module(body=[node],type_ignores=[]),'<baseline renderer>','exec'),namespace)\nbaseline=namespace['render_task_skill_discovery'];catalog=default_task_skill_catalog(names)\nhashes={m.name:hashlib.sha256(m.content.encode()).hexdigest() for m in materials}\nprotocols={'baseline':baseline(names,catalog=catalog,frozen_names=names),'candidate':render_task_skill_discovery(names,catalog=catalog,frozen_names=names,frozen_hashes=hashes)}\nconfig=load_prompt_configuration(create_missing=False);auditconfig=load_prompt_configuration(role='audit',create_missing=False)\nfor role in ('consumer','audit'):\n developer=(consumer_developer_instructions(prompt_configuration=config) if role=='consumer' else audit_developer_instructions(render_audit_rules(AgentRole.AUDIT,create_missing=False),prompt_configuration=auditconfig))\n (root/(role+'.developer.txt')).write_text(developer)\n for arm,protocol in protocols.items():\n  if role=='consumer':\n   with_patch=bs.render_task_skill_discovery\n   bs.render_task_skill_discovery=lambda *args,**kwargs:protocol\n   prompt=compose_consumer_task(config,task_context=ctx.render(current_time=clock),scheduled_prompt=ctx.consumer_prompt,skill_names=names,frozen_skill_names=names,skill_protocol_is_custom=False,skill_catalog=catalog)\n   bs.render_task_skill_discovery=with_patch\n  else:\n   result=ConsumerAgentResult.model_validate({'outcome':'no_action','summary':'The current acknowledgment completes the exchange; no new request or responsibility change.','proposal':None,'decision_options':[],'error':{'code':'','retryable':False,'authorization_required':False},'risk':'low','confidence':0.99,'rule_coverage':1.0,'information_completeness':1.0})\n   turn=AuditTurnContext(task=ctx,proposal_revision=0,operation_id='audit-closed-exchange',candidate=result,candidate_digest=candidate_digest(result),audit_rules='')\n   prompt=protocol+'\\n\\n## Task-specific instructions\\n'+ctx.consumer_prompt+'\\n\\n'+turn.render(current_time=clock)\n  (root/f'{role}.{arm}.task.txt').write_text(prompt)\nmetadata={'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd='/private/tmp/ceo-skill-source-bindings',text=True).strip(),'baseline_renderer_ref':'b9572061','clock':clock,'names':list(names),'sources':[{'name':m.name,'characters':len(m.content),'sha256':hashes[m.name]} for m in materials],'scope':'Production pure role/Task composer functions and full current Profile/Rules, synthetic readonly conversation, actual registered frozen readers; manual SID continuation, not service scheduler/session lookup.'}\n(root/'metadata.json').write_text(json.dumps(metadata,ensure_ascii=False,indent=2))\nprint(json.dumps({'sources':len(materials),'developer_chars':{r:len((root/(r+'.developer.txt')).read_text()) for r in ('consumer','audit')},'task_chars':{r+'.'+a:len((root/f'{r}.{a}.task.txt').read_text()) for r in ('consumer','audit') for a in protocols}}))\n",
+    "server.py": "import sys,json\nfrom pathlib import Path\nsys.path.insert(0,'/private/tmp/ceo-skill-source-bindings')\nfrom app.agent_cli import build_role_server\nfrom mcp.server.fastmcp import FastMCP\nfrom mcp.types import ToolAnnotations\nroot=Path(__file__).parent;role=sys.argv[1];arm=sys.argv[2]\nregistered=build_role_server(role,task_id=7,db_path=root/'reader.sqlite3',execution_generation='first')\nmcp=FastMCP('agent_cli');ann=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False)\ndef log(name,args,result):\n with (root/f'{role}.{arm}.calls.jsonl').open('a') as f:f.write(json.dumps({'name':name,'args':args,'result':result},ensure_ascii=False)+'\\n')\n return result\n@mcp.tool(annotations=ann)\ndef read_task_skill(name:str)->dict[str,object]:\n return log('read_task_skill',{'name':name},registered._tool_manager.get_tool('read_task_skill').fn(name=name))\n@mcp.tool(annotations=ann)\ndef read_skill(path:str|None=None,name:str|None=None)->dict[str,object]:\n return log('read_skill',{'path':path,'name':name},registered._tool_manager.get_tool('read_skill').fn(path=path,name=name))\n@mcp.tool(annotations=ann)\ndef read_text_file(path:str)->dict[str,object]:\n return log('read_text_file',{'path':path},registered._tool_manager.get_tool('read_text_file').fn(path=path))\n@mcp.tool(annotations=ann)\ndef read_dingtalk_messages(conversation_id:str,title:str='',single_chat:bool=False,limit:int=50)->dict[str,object]:\n if conversation_id!='cid-closed':raise ValueError('unknown anonymous conversation')\n return log('read_dingtalk_messages',{'conversation_id':conversation_id,'title':title,'single_chat':single_chat,'limit':limit},json.loads((root/'snapshot.json').read_text()))\nif __name__=='__main__':mcp.run(transport='stdio')\n"
+  },
+  "corrected_runner_source": "import sys,json,subprocess,tomllib,hashlib\nfrom pathlib import Path\nsys.path.insert(0,'/private/tmp/ceo-skill-source-bindings')\nfrom app.business_skills import codex_skill_config_override\nfrom app.wechat.codex_safety import make_consumer_agent_command,make_audit_agent_command,ControlledCliConfig\nfrom app.agent_wire_contracts import parse_consumer_agent_wire_result,parse_audit_agent_wire_result\nroot=Path(__file__).parent;catalog=codex_skill_config_override([]);results=[]\nfor role in (sys.argv[1:] or ('consumer','audit')):\n for arm in ('baseline','candidate'):\n  sid=None\n  phases=('cold','resume')\n  for phase in phases:\n   developer=(root/(role+'.developer.txt')).read_text();prompt=(root/f'{role}.{arm}.task.txt').read_text()\n   if phase=='resume':prompt+='\\n\\nCurrent source update: the same complete current conversation remains unchanged. This is the next check of that exchange.'\n   command=['codex','exec']+(['resume'] if sid else [])+['--json','-m','gpt-5.6-luna','-c','model_reasoning_effort=\"medium\"','-c','approval_policy=\"never\"','-c',catalog,'-c','developer_instructions='+json.dumps(developer)]\n   if role=='audit':command+=['--skip-git-repo-check']\n   for name in tomllib.loads(Path('/Users/derek/.codex/config.toml').read_text()).get('mcp_servers',{}):command+=['-c',f'mcp_servers.{name}.enabled=false']\n   command+=['-c','mcp_servers.agent_cli.default_tools_approval_mode=\"approve\"','-c','features.code_mode.enabled=true','-c','direct_only_tool_namespaces=[\"mcp__agent_cli\"]']+([sid,'-'] if sid else ['-'])\n   cli=ControlledCliConfig(command='/Users/derek/miniforge3/bin/python',args=(str(root/'server.py'),role,arm),cwd=str(root))\n   if role=='consumer':make_consumer_agent_command(command,task_workspace=str(root),controlled_cli=cli)\n   else:make_audit_agent_command(command,controlled_cli=cli)\n   command=[catalog if x.startswith('skills.config=') else x for x in command]\n   stem=f'{role}.{arm}.{phase}'\n   with (root/(stem+'.stdout.jsonl')).open('w') as out,(root/(stem+'.stderr.txt')).open('w') as err:\n    proc=subprocess.run(command,input=prompt,text=True,stdout=out,stderr=err,cwd=root,timeout=240)\n   raw=(root/(stem+'.stdout.jsonl')).read_text();events=[json.loads(x) for x in raw.splitlines()];observed=next((x.get('thread_id') for x in events if x.get('type')=='thread.started'),None)\n   try:result=(parse_consumer_agent_wire_result if role=='consumer' else parse_audit_agent_wire_result)(raw).model_dump(mode='json');error=None\n   except Exception as e:result=None;error=type(e).__name__+': '+str(e)\n   record={'role':role,'arm':arm,'phase':phase,'source_session_id':sid,'session_id':observed,'returncode':proc.returncode,'canonical_valid':result is not None,'result':result,'parse_error':error,'task_chars':len(prompt),'task_sha256':hashlib.sha256(prompt.encode()).hexdigest(),'developer_chars':len(developer),'developer_sha256':hashlib.sha256(developer.encode()).hexdigest()}\n   results.append(record);(root/('results.corrected-'+role+'.json')).write_text(json.dumps(results,ensure_ascii=False,indent=2));print(json.dumps({k:record[k] for k in ('role','arm','phase','session_id','returncode','canonical_valid','parse_error')}),flush=True)\n   if not result or not observed:break\n   sid=observed\n",
+  "initial_input_defect": "Scheduled saved context skill_protocol was empty; original registered reader correctly refused all frozen Skill reads. Corrected DB only sets nonempty generated discovery protocol. No rule or body changed.",
+  "case": {
+    "request": "Review current message in complete conversation context.",
+    "conversation": {
+      "messages": [
+        {
+          "message_id": "msg-material",
+          "sender": "Alex",
+          "sender_user_id": "anonymous-alex",
+          "text": "资料清单已发在上一条，不需要回复。",
+          "create_time": "2026-10-13T13:09:29.940764+00:00"
+        },
+        {
+          "message_id": "msg-closed",
+          "sender": "Avery",
+          "sender_user_id": "anonymous-avery",
+          "text": "收到，谢谢。",
+          "create_time": "2026-10-13T13:09:29.940764+00:00"
+        }
+      ],
+      "complete": true,
+      "has_more": false,
+      "captured_at": "2026-10-13T13:09:29.940764+00:00"
+    },
+    "oracle": {
+      "consumer": "canonical no_action with no action plan, complete supplied current context and applicable Skill content; independent provider read not required for Consumer when complete context is supplied",
+      "audit": "canonical approve for exact no_action digest after independent current conversation read"
+    },
+    "baseline_semantics": "Actual b9572061 renderer labels list Selected Task Skills and repeats frozen names; does not literally say always read every source.",
+    "candidate_semantics": "Available applicable sources plus exact frozen-content hashes; all full bodies retained."
+  },
+  "private_boundary": "Complete current Developer/Profile remains temporary/native only, not in repository artifact. Registered full Skill bodies preserved by native records and exact source hashes, not copied into this manifest.",
+  "corrected_saved_protocol": {
+    "skill_protocol": "Available frozen task sources; read applicable content through agent_cli.read_task_skill(name).",
+    "skill_protocol_source": "generated_discovery"
+  }
+}
