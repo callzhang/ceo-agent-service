@@ -304,3 +304,19 @@ def test_codex_role_preserves_long_skill_output(tmp_path, monkeypatch, role, res
     assert not any(value.startswith("tool_output_token_limit=") for value in command)
     assert command[-1] == "-"
     assert ("resume" in command) is resume
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+@pytest.mark.parametrize("resume", [False, True])
+def test_codex_role_preserves_full_document_output(tmp_path, monkeypatch, role, resume):
+    from app.wechat.codex_safety import make_role_agent_command
+
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    command = ["codex", "exec", *(["resume", "session-id"] if resume else []), "--json", "-"]
+    make_role_agent_command(command, role=role,
+                            task_workspace=str(tmp_path) if role == "consumer" else None)
+
+    assert command.count("mcp_servers.agent_cli.tools.read_dingtalk_document_full.output_token_limit=30000") == 1
+    assert not any(value.startswith("tool_output_token_limit=") for value in command)
+    assert command[-1] == "-"
+    assert ("resume" in command) is resume

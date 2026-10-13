@@ -182,7 +182,7 @@ class CodexCommandFactory:
     use_output_schema: bool = False
     image_paths: tuple[Path, ...] = ()
     skill_paths: tuple[Path, ...] = ()
-    skill_names: tuple[str, ...] = ()
+    skill_names: tuple[str, ...] | None = None
     inlined_skill_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -198,7 +198,7 @@ class CodexCommandFactory:
         use_output_schema: bool = False,
         image_paths: Sequence[Path] = (),
         skill_paths: Sequence[Path] = (),
-        skill_names: Sequence[str] = (),
+        skill_names: Sequence[str] | None = None,
         inlined_skill_names: Sequence[str] = (),
     ) -> "CodexCommandFactory":
         return cls(
@@ -207,7 +207,7 @@ class CodexCommandFactory:
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
             skill_paths=tuple(skill_paths),
-            skill_names=tuple(skill_names),
+            skill_names=tuple(skill_names) if skill_names is not None else None,
             inlined_skill_names=tuple(inlined_skill_names),
         )
 
@@ -232,11 +232,10 @@ class CodexCommandFactory:
             use_approval_bypass=False,
             sandbox_mode=None,
         )
-        skill_names = self.skill_names + tuple(
-            path.parent.name for path in self.skill_paths
-        )
-        if skill_names:
-            build_options["skill_names"] = skill_names
+        if self.skill_names is not None or self.skill_paths:
+            build_options["skill_names"] = (self.skill_names or ()) + tuple(
+                path.parent.name for path in self.skill_paths
+            )
         if skip_git_repo_check:
             build_options["skip_git_repo_check"] = True
         command = adapter.build_command(**build_options)

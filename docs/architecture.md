@@ -1,5 +1,14 @@
 # CEO Agent Service Architecture
 
+Email unsubscribe page judgement explicitly selects an empty task Skill catalog
+through the existing native per-path Skill configuration. Unspecified standard
+turns retain the native default catalog, while an explicit selection (including
+empty) filters the catalog through the existing per-path helper. Existing
+always-on/plugin entries may remain visible; empty does not mean zero native Skills.
+The page states, verbatim evidence contract, route, approval, sandbox and
+unsubscribe execution rules are unchanged. Native global memory and AGENTS
+instructions remain CLI-owned and are not represented as service prompt text.
+
 Console manual rerun loads only the terminal Agent run metadata used by the
 existing refusal check. It does not discover sessions or read/parse native
 trajectory/result files before queueing. Refusal behavior, original-input
@@ -1807,7 +1816,7 @@ Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex 
 
 ### Task Skill 按需读取
 
-Task 每轮服务输入保留 `ceo-work-tracking` 极简用途及当前 `WORK_TRACKING_SKILL_PATH` 的确切原生链接 `[$ceo-work-tracking](/exact/SKILL.md)`，Codex 不再指定 shell cat。Codex 对已加载 Skill 按链接路径选择正文；未加载文件不能通过该原生选择机制注入。本次 custom 样本中，Agent 按链接读取了确切文件，未采用已安装同名正文；这是样本行为，不是服务强制读取保证。Claude 本次原生目录未加载该文件；既有单消息适配器根据 factory 的同一 skill_paths 添加原有完整文件读取入口，不内联全文。其他角色未提供 skill_paths 时消息保持不变。既有文件加载 preflight 保留。command factory 保存同一源路径：Codex 的目录启用仍按既有名称配置，具体选择由原生路径链接完成；Friday 无本机文件读取入口，其既有单消息桥从该确切路径读取并内联全文一次，不按名称重新解析另一根目录。历史 scheduled Skill 快照仍不作为当前协议。任务专属动态事实和当前入口每轮提交，复用既有 session。结果 schema、业务校验、路由、工具权限不变。服务输入长度下降不代表总上下文/token 等量下降：原生 Skill 消息或按需读取的全文仍进入模型输入。验证与路线证据边界见 `docs/task-skill-on-demand-validation.md`。
+Task 每轮服务输入保留 `ceo-work-tracking` 极简用途及当前 `WORK_TRACKING_SKILL_PATH` 的确切原生链接 `[$ceo-work-tracking](/exact/SKILL.md)`，Codex 不再指定 shell cat。Codex 对已加载 Skill 按链接路径选择正文；未加载文件不能通过该原生选择机制注入。本次 custom 样本中，Agent 按链接读取了确切文件，未采用已安装同名正文；这是样本行为，不是服务强制读取保证。Claude 本次原生目录未加载该文件；既有单消息适配器根据 factory 的同一 skill_paths 添加原有完整文件读取入口，不内联全文。其他角色未提供 skill_paths 时消息保持不变。既有文件加载 preflight 保留。command factory 保留未指定目录（None）与明确空目录（空 tuple）的区别；提供 skill_paths 时将其既有目录名与显式选择合并，无路径时不把默认目录改成空目录。command factory 保存同一源路径：Codex 的目录启用仍按既有名称配置，具体选择由原生路径链接完成；Friday 无本机文件读取入口，其既有单消息桥从该确切路径读取并内联全文一次，不按名称重新解析另一根目录。历史 scheduled Skill 快照仍不作为当前协议。任务专属动态事实和当前入口每轮提交，复用既有 session。结果 schema、业务校验、路由、工具权限不变。服务输入长度下降不代表总上下文/token 等量下降：原生 Skill 消息或按需读取的全文仍进入模型输入。验证与路线证据边界见 `docs/task-skill-on-demand-validation.md`。
 
 ## Unified reply and work-input storage (Store 2026-10-11.3)
 
@@ -1940,3 +1949,8 @@ work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选�
 已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
+
+
+### Full document native output delivery
+
+Consumer/Audit Codex commands use the existing per-tool native output budget of30,000 for `agent_cli.read_dingtalk_document_full`, on cold and continued turns. The server's complete result can otherwise be clipped in the native model-visible output. This preserves the selected JSONML/revision result without substituting Markdown, changing all-tool budgets or adding prompt rules. The source may still exceed that finite budget; server complete=true alone is not proof of complete model visibility. Regression/native evidence is recorded in `docs/document-native-output-validation.md`.

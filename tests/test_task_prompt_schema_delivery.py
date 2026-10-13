@@ -97,7 +97,7 @@ def test_codex_task_schema_is_out_of_band_and_business_input_remains(
     assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
 
 
-@pytest.mark.parametrize("extra_skill_names", [(), ("ceo-calendar-invite",)])
+@pytest.mark.parametrize("extra_skill_names", [None, (), ("ceo-calendar-invite",)])
 def test_task_factory_forwards_its_native_skill_selection(
     monkeypatch, tmp_path, extra_skill_names
 ):
@@ -114,4 +114,4 @@ def test_task_factory_forwards_its_native_skill_selection(
         prompt=prompt,
         session_id=None,
     )
-    assert calls[0]["skill_names"] == extra_skill_names + ("ceo-work-tracking",)
+    assert calls[0]["skill_names"] == (extra_skill_names or ()) + ("ceo-work-tracking",)

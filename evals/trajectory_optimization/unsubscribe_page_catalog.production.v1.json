@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "production_checkout_at_read": "6ab876e938d1e0986b0ca6d4985f57e2364b043a",
+  "scope": "metadata-only exact native input/full record and persisted receipt readback; no provider replay",
+  "attempts": [
+    {
+      "attempt_id": 190350,
+      "session_id": "01a1311c-48be-7080-99e4-c93d977637ff",
+      "route": "codex_oauth",
+      "native_records": 15,
+      "native_sha256": "5160cb2eba8ffc97d36412ddfbfb2c6423af4773f1c3a0a31a78b61e5b619074",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        18653
+      ],
+      "skill_file_mentions": 171,
+      "shared_user_chars": 7060,
+      "service_task_chars": 1345,
+      "task_sha256": "c5d17b83891a3c7a14be233e89cc3d888ae0f03a49d3123aab663cfe9365c4f7",
+      "state": "action_required",
+      "evidence_verbatim_in_page": true,
+      "tool_call_count": 0,
+      "receipt": {
+        "outcome": "done",
+        "completed_at": "2026-10-12T17:15:05+00:00"
+      },
+      "provider_readback": "not performed; durable receipt only"
+    },
+    {
+      "attempt_id": 190351,
+      "session_id": "01a13121-9cf8-7160-bd5a-194487992774",
+      "route": "codex_oauth",
+      "native_records": 15,
+      "native_sha256": "b7a24e4cbc771399ab841c9c90f5d82e5530080b3f47411fffc9f1fa41897ca2",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        21488
+      ],
+      "skill_file_mentions": 266,
+      "shared_user_chars": 7060,
+      "service_task_chars": 1228,
+      "task_sha256": "982ff103c64ef5de289e5ba06753c28dd3beab50709496932c304da0f31a30eb",
+      "state": "unknown",
+      "evidence_verbatim_in_page": true,
+      "tool_call_count": 0,
+      "receipt": {
+        "outcome": "skipped_no_reliable_entry",
+        "completed_at": "2026-10-12T17:20:54+00:00"
+      },
+      "provider_readback": "not performed; durable receipt only"
+    }
+  ]
+}
