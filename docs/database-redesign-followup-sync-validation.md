@@ -22,6 +22,19 @@ unselected storage candidate. The eventual release must bind the then-published
 predecessor and complete caller conversion, actual-copy/old-code, CI,
 performance, and live readback gates before any publication claim.
 
+SPEC review of the first pure-conversion commit found two inverse preflight
+gaps. A target `sqlite_sequence` row with an unknown or differently cased
+`actions:` name could survive inverse and make the restored source fail its own
+capture. A newly added table FK to one of the nine absent source names could
+become an unsupported inbound dependency when inverse recreated that table.
+The inverse now applies the source's canonical allocator-name rule to its
+target namespaces and checks declared inbound FKs against all eleven affected
+names before any mutation. Literal unrelated sequence entries remain intact.
+Focused actual/fresh tests reproduce both original failures and verify refusal
+leaves the caller's transaction, schema and sequence rows unchanged. Views and
+triggers naming an absent future source table already fail in the existing
+read-only SQLite schema probe; that shared helper was not changed.
+
 Task 1A is an unselected, disabled candidate. The explicit `include_followup_sync=True` declaration extends only the reviewed Email29 actual/fresh action scaffold. It defines nine typed record kinds, source-affinity `sync_` projections for the 150 source fields, 24 corresponding index declarations, eight source CHECKs, four retained external business foreign keys and one typed internal draft foreign key. The internal draft public ID is projected through its parent action. Existing shared task, run, candidate and Email reference slots are NULL for the nine kinds. The default flag leaves earlier manifests unchanged.
 
 The source of truth is the accepted actual/fresh capture and 150-row field map in `docs/superpowers/specs/`. Direct target SQL tests cover every field in both layouts, index key shape, unique business dedupe, provider ID uniqueness distinction, the typed draft relationship, source public-ID blocking while referenced, raw JSON bytes, NUL, BLOB and nonfinite scalar values. The focused test started RED because the new definitions module was absent, then passed after implementation. SPEC review found that the legacy send-attempt `draft_id` NOT NULL check had been skipped with the business physical-FK exception. A native source comparison reproduced four RED cases (NULL and SQLite-bound NaN in both variants); the scoped correction and six legal zero/negative/dangling scalar cases passed. The final follow-up storage, source oracle and Email storage command passed 47 selected tests. All eight earlier declaration variants (6/9/12/14/actual and fresh 16/actual and fresh Email29) compared byte-identical with committed HEAD source before this scoped correction, which changes only the opt-in declaration. Ruff and diff checks passed. This is declaration and projection evidence only: source-shaped omitted defaults, writer locking, native allocation, mutation parity, migration and live caller behavior belong to later tasks. No constructor selects this schema, and no Store version or production migration is claimed.

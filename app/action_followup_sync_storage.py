@@ -89,6 +89,15 @@ def _sequence(db, table):
     return rows[0][0] if rows else None
 
 
+def _validate_allocator_names(db, *, action_names, table_names, context):
+    reserved_tables = {storage.sqlite_schema_name(name) for name in
+                       ("actions", *SOURCE_TABLES, "business_legacy_links")}
+    for (name,) in db.execute("select name from main.sqlite_sequence"):
+        if (name.casefold().startswith("actions:") and name not in action_names or
+                storage.sqlite_schema_name(name) in reserved_tables and name not in table_names):
+            raise ValueError(f"unsupported {context} allocator alias")
+
+
 def _legacy_objects(db):
     return [dict(zip(("type", "name", "tbl_name", "sql"), tuple(row), strict=True)) for row in db.execute(
         "select type,name,tbl_name,sql from main.sqlite_schema where tbl_name='business_legacy_links' order by type,name")]
@@ -150,11 +159,9 @@ def capture_followup_sync_source(db: sqlite3.Connection) -> dict:
                               {storage.DELIVERY_SEQUENCE_NAME} |
                               set(storage.REPLY_SEQUENCE_NAMES.values()) |
                               {"actions:" + kind for kind in EMAIL_AUTOINCREMENT_TYPES})
-    for (name,) in db.execute("select name from main.sqlite_sequence"):
-        if (name.casefold().startswith("actions:") and name not in action_allocator_names or
-                name.casefold() in {table.casefold() for table in (*SOURCE_TABLES, "business_legacy_links", "actions")}
-                and name not in (*SOURCE_TABLES, "business_legacy_links", "actions")):
-            raise ValueError("unsupported source allocator alias")
+    _validate_allocator_names(db, action_names=action_allocator_names,
+                              table_names={"actions", *SOURCE_TABLES, "business_legacy_links"},
+                              context="source")
     sequences = {name: _sequence(db, name) for name in (
         *SOURCE_TABLES, "business_legacy_links", "actions", *sorted(action_allocator_names))}
     counts = {name: db.execute(f"select count(*) from main.{_quote(name)}").fetchone()[0]
@@ -359,11 +366,21 @@ def restore_followup_sync_schema(db: sqlite3.Connection, state: dict) -> dict:
     for kind in SOURCE_TABLES:
         if db.execute("select 1 from main.sqlite_schema where name=? collate nocase", (kind,)).fetchone():
             raise ValueError("unsupported inverse source name collision")
+    target_action_names = (set(storage.ACTION_SEQUENCE_NAMES.values()) |
+                           {storage.DELIVERY_SEQUENCE_NAME} |
+                           set(storage.REPLY_SEQUENCE_NAMES.values()) |
+                           {"actions:" + kind for kind in EMAIL_AUTOINCREMENT_TYPES} |
+                           {"actions:" + kind for kind in SOURCE_TABLES})
+    _validate_allocator_names(db, action_names=target_action_names,
+                              table_names={"actions", "business_legacy_links"},
+                              context="inverse action")
+    target_names = {storage.sqlite_schema_name(name) for name in
+                    ("actions", *SOURCE_TABLES, "business_legacy_links")}
     for (name,) in db.execute("select name from main.sqlite_schema where type='table' "
                               "and name not glob 'sqlite_*'"):
         if name in ("actions", "business_legacy_links"):
             continue
-        if any(fk[2].casefold() in ("actions", "business_legacy_links")
+        if any(storage.sqlite_schema_name(fk[2]) in target_names
                for fk in db.execute(f"pragma main.foreign_key_list({_quote(name)})")):
             raise ValueError("unsupported inverse inbound foreign key")
     _external_dependencies(db, targets=("actions", "business_legacy_links"),

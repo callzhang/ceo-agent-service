@@ -33,6 +33,59 @@ def test_target_zero_water_remains_distinct_from_absent_after_inverse(migration_
         db.rollback()
 
 
+@pytest.mark.parametrize("alias", ("actions:WORK_UPDATES", "actions:unknown", "ACTIONS:work_updates"))
+def test_inverse_refuses_unknown_action_allocator_alias_before_mutation(migration_source, alias):
+    path, _ = migration_source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin")
+        state = migrate_followup_sync_schema(db, capture_followup_sync_source(db))
+        db.execute("insert into main.sqlite_sequence(name,seq) values(?,77)", (alias,))
+        before_schema = db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall()
+        before_sequences = db.execute("select name,seq from main.sqlite_sequence order by name").fetchall()
+        with pytest.raises(ValueError, match="unsupported inverse action allocator alias"):
+            restore_followup_sync_schema(db, state)
+        assert db.in_transaction
+        assert db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall() == before_schema
+        assert db.execute("select name,seq from main.sqlite_sequence order by name").fetchall() == before_sequences
+        db.rollback()
+
+
+def test_inverse_preserves_unrelated_literal_sequence_entry(migration_source):
+    path, _ = migration_source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin")
+        state = migrate_followup_sync_schema(db, capture_followup_sync_source(db))
+        db.execute("insert into main.sqlite_sequence(name,seq) values('unrelated_counter',91)")
+        restore_followup_sync_schema(db, state)
+        assert db.execute("select seq from main.sqlite_sequence where name='unrelated_counter'").fetchone() == (91,)
+        assert capture_followup_sync_source(db)["source_variant"] == state["source_variant"]
+        db.rollback()
+
+
+@pytest.mark.parametrize("dependency", (
+    "create table extra_child(id integer references work_updates(id))",
+    "create view extra_view as select summary from work_updates",
+    "create trigger extra_trigger after insert on work_todos begin select summary from work_updates; end",
+))
+def test_inverse_refuses_future_source_dependency_before_mutation(migration_source, dependency):
+    path, _ = migration_source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin")
+        state = migrate_followup_sync_schema(db, capture_followup_sync_source(db))
+        db.execute(dependency)
+        before_schema = db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall()
+        before_sequences = db.execute("select name,seq from main.sqlite_sequence order by name").fetchall()
+        with pytest.raises((ValueError, sqlite3.OperationalError), match="unsupported|no such table"):
+            restore_followup_sync_schema(db, state)
+        assert db.in_transaction
+        assert db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall() == before_schema
+        assert db.execute("select name,seq from main.sqlite_sequence order by name").fetchall() == before_sequences
+        db.rollback()
+
+
 @pytest.mark.parametrize("initial", (False, True))
 def test_current_facts_all_families_and_legacy_link_survive_inverse_and_reforward(migration_source, initial):
     path, variant = migration_source
