@@ -1875,3 +1875,7 @@ unchanged, scoped Ruff and diff-check pass, and both run-owned
 Transaction fault injection, dynamic cursor counts, historical H, shared
 native rebuild S, composite effect/retry and other current T tests remain
 deferred; this is not full Task5 or publication acceptance.
+
+### Task5B5 independent acceptance, 2026-10-14
+
+Root accepts2eb474032f4d878427685fae58da010c2b257a6d over492be677d320e3547f2d975b553915721e8bd662. Fresh SPEC independently ran8 cases:8 passed3.89s, lint/diff exit0, unchanged assertions/raises and nonselected AST verified, six helper callers exactly selected current tests; owned temp absent. Subsequent fresh QUALITY checked native identity/all matchingrows, attempt gap[1,3], exact two count-trigger capture/drop/restore, SQL-legal business-corruption values, valid processing retry, feedback mislink and acyclic rejection. It did not repeat sufficient tests or create temps. Both PASS and frozen cleanHEAD confirmed. Remaining dynamic/transaction/query-view, metadata/shared/history/composite fixtures, broader copy/native/CI/publication and full10+1 remain open.
