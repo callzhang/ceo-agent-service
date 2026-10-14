@@ -2385,6 +2385,28 @@ tables, then passed four times against Store20/Email52. No runtime, schema,
 provider, production, or historical-test behavior changed. This is one bounded
 Task7 test-debt unit; remaining Task7/CI/publication gates are open.
 
+### Task7 current fixture writes: independent acceptance, 2026-10-14
+
+Root acceptsb16b4b21 over70292310 after fresh sequential SPEC then QUALITY PASS.
+Both confirmed original field values, source predicates and intentionally absent
+parents remain with the original FK-off fixture domain. Source ROWIDs are read
+from legacy keys, not physical Action IDs. The account-change predicate and
+readonly write error remain effective. The attempt ledger correctly uses the
+existing automatic-ID `insert_action` dispatch, while the direct action uses its
+ROWID writer; the0→1→0 drift check still fails immediately in the translated
+SQLite trigger and then rolls back. No application-level drift exception,
+invented parent/ledger facts, new helpers or runtime changes were introduced.
+SPEC independently checked all unselected function/class ASTs and selected
+signatures/decorators/assertions unchanged. QUALITY found no new risk requiring
+redundant test execution; both left clean frozen HEAD.
+
+Accepted implementation evidence: RED8 removed-table failures14.79s, intermediate
+7pass/1fail identifying the existing automatic-ID insert API, final GREEN8pass
+4.45s, scoped Ruff/diff/AST checks and owned-temp removal/absence verification.
+This closes only seven named functions/eight cases. Shared snapshot/History/Store
+fixtures, genuine historical owners, browser/e2e reads, current markers and the
+coherent source13 caller fixture remain Task7 work before CI and publication.
+
 ### Task7 current Email action fixture writes
 
 Seven existing functions (eight parametrized behavior cases) now create Email
