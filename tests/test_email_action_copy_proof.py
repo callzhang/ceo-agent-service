@@ -15,6 +15,7 @@ from scripts import validate_action_email_copy as proof
 from scripts.validate_action_email_copy import _case, _old_process, run
 
 PUBLISHED_OLD_REF = "9cd41bcf5ea43a275eeb1376817d37f7cef6bd21"
+LATEST_OLD_REF = "d06c148b90aaeee74c14bbabf0183ffd65f34048"
 
 
 @pytest.fixture
@@ -272,3 +273,86 @@ def test_email_auto_allocator_exhaustion_at_signed_max(old_fresh):
         db.commit()
         with pytest.raises(sqlite3.OperationalError, match="database or disk is full"):
             proof.action_storage._email_auto_next(db, "email_action_attempts")
+
+
+@pytest.fixture
+def latest_fresh(tmp_path):
+    repo = Path(__file__).resolve().parents[1]
+    old = tmp_path / "latest-old"
+    old.mkdir()
+    archive = subprocess.check_output([
+        "git", "-C", str(repo), "archive", LATEST_OLD_REF, "app",
+        "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json",
+    ])
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        tar.extractall(old, filter="data")
+    path = tmp_path / "latest-fresh.sqlite3"
+    subprocess.run([
+        sys.executable, "-c",
+        "from pathlib import Path; import sys; from app.store import AutoReplyStore; "
+        "from app.email_store import EmailStore; p=Path(sys.argv[1]); AutoReplyStore(p); EmailStore(p)",
+        str(path),
+    ], cwd=old, env={**os.environ, "PYTHONPATH": str(old)},
+        capture_output=True, text=True, check=True, timeout=300)
+    return old, path, repo
+
+
+def test_latest_paired_publication_current_public_inverse_and_reforward(latest_fresh):
+    old, path, repo = latest_fresh
+    result = proof._paired_case(path, old, repo)
+    assert result["paired_default_constructors"]
+    assert result["target_public_writes"]
+    assert result["old_public_cold_writes"]
+    assert result["current_fact_inverse"]
+    assert result["reforward_current_facts"]
+
+
+def test_latest_paired_copy_requires_real_publication_before_default_constructors(
+    latest_fresh, monkeypatch
+):
+    from app.action_email_schema_release import ActionEmailSchemaRelease
+
+    old, path, repo = latest_fresh
+    monkeypatch.setattr(ActionEmailSchemaRelease, "publish", lambda self: None)
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="Store19/Email51 requires the paired schema release before target constructors",
+    ):
+        proof._paired_case(path, old, repo)
+
+
+def test_latest_paired_copy_cannot_substitute_donor_for_target_public_writes(
+    latest_fresh, monkeypatch
+):
+    old, path, repo = latest_fresh
+    # Even a success-shaped report cannot replace the missing durable facts.
+    monkeypatch.setattr(
+        proof, "_current_public_writes",
+        lambda *args, **kwargs: dict.fromkeys(
+            ("receipt_enriched", "direct_completed", "failed_visible", "attempt_water_advanced",
+             "unsubscribe_terminal", "unsubscribe_step", "explicit_retry", "history_source_id"),
+            True,
+        ),
+    )
+    with pytest.raises(AssertionError):
+        proof._paired_case(path, old, repo)
+
+
+def test_latest_paired_copy_rejects_rollback_fact_loss(latest_fresh, monkeypatch):
+    from app.action_email_schema_release import ActionEmailSchemaRelease
+
+    old, path, repo = latest_fresh
+    rollback = ActionEmailSchemaRelease.rollback
+
+    def corrupt_after_rollback(release):
+        rollback(release)
+        with closing(sqlite3.connect(release.database_path)) as db:
+            db.execute(
+                "update email_actions set updated_at='2001-01-01T00:00:00+00:00' "
+                "where account_id='copy-only-account' and action_type='mark_read'"
+            )
+            db.commit()
+
+    monkeypatch.setattr(ActionEmailSchemaRelease, "rollback", corrupt_after_rollback)
+    with pytest.raises(AssertionError):
+        proof._paired_case(path, old, repo)

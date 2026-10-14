@@ -28,6 +28,9 @@ from app.action_email_definitions import (EMAIL_AUTOINCREMENT_TYPES, EMAIL_COMPO
 PUBLISHED_SCHEMA_REF = "eb797e6bd35de695c269054a2e697af8fde2baa5"
 PRODUCTION_ROOT = Path.home() / "Services/ceo-agent-service"
 BINDING = Path(__file__).resolve().parents[1] / "docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json"
+SOURCE_ARCHIVE_PATHS = (
+    "app", "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json",
+)
 
 
 def _quote(name):
@@ -85,6 +88,22 @@ def _unrelated(db, fixture_ids=None):
         "select name from main.sqlite_schema where type='table' and name not like 'sqlite_%' order by name")]
     return {name: _digest(db, name, fixture_ids) for name in names
             if name not in (*SOURCE_TABLES, "actions")}
+
+
+def _paired_unrelated(db, fixture_ids):
+    """Keep all other facts; the two changing markers are checked separately."""
+    facts = _unrelated(db, fixture_ids)
+    del facts["service_state"]
+    del facts["email_schema_migrations"]
+    columns = _columns(db, "service_state")
+    selected = ",".join(map(_quote, columns))
+    storage = ",".join(f"typeof({_quote(column)})" for column in columns)
+    rows = tuple(db.execute(
+        f"select {selected},{storage} from main.service_state "
+        "where key<>'store_schema_version' order by rowid"
+    ))
+    facts["service_state_other_rows"] = (len(rows), hashlib.sha256(pickle.dumps(rows, protocol=4)).digest())
+    return facts
 
 
 def _fixture_rows(db, fixture_ids):
@@ -361,14 +380,14 @@ if mode == 'seed':
                       'direct_action_id':direct_ids['mark_read'],
                       'failed_action_id':direct_ids['label'],
                       'retry_action_id':retry_id}))
-elif mode == 'read':
+elif mode in ('read', 'prewrite_read'):
     classification_id=int(sys.argv[3]); identity=sys.argv[4]
     direct_id=sys.argv[5]; failed_id=sys.argv[6]; retry_id=sys.argv[7]
     assert email.get_classification(classification_id) is not None
     assert email.get_email_reply_receipt(identity)['provider_receipt']['smtp_acceptance_id']
     assert len(email.list_action_attempts(direct_id))==1
     assert len(email.list_action_attempts(failed_id))==1
-    assert len(email.list_action_attempts(retry_id))==2
+    assert len(email.list_action_attempts(retry_id))==(1 if mode=='prewrite_read' else 2)
     assert len(email.list_failed_direct_actions(account_id='copy-only-account',
         action_types=(EmailAction.LABEL,),limit=10,action_id=failed_id))==1
     with sqlite3.connect(path) as db:
@@ -406,6 +425,18 @@ elif mode == 'write':
     assert retry_done['status']=='done' and len(email.list_action_attempts(retry_id))==2
     print(json.dumps({'feedback_applied':first.applied,'feedback_replayed':not second.applied,
                       'receipt_public_replay':True,'retry_completed':True}))
+elif mode == 'counters':
+    from app.audit_web import _email_action_queue_snapshot
+    with sqlite3.connect(path) as db:
+        db.row_factory=sqlite3.Row
+        queue=_email_action_queue_snapshot(db)
+    history=store.list_operation_logs_with_count(limit=1,source_tables=('email_actions',))[0]
+    attention=len(email.list_failed_direct_actions(account_id='copy-only-account',
+        action_types=(EmailAction.LABEL,EmailAction.TRASH),limit=10000))
+    print(json.dumps({'queue_counts':queue['counts'],'queue_pending':queue['pending'],
+        'queue_processing':queue['processing'],'queue_failed':queue['failed'],
+        'queue_retryable':queue['retryable'],'history_count':history,
+        'attention_failed':attention}))
 elif mode == 'current':
     classification_id=int(sys.argv[3]); identity=sys.argv[4]
     direct_id=sys.argv[5]; failed_id=sys.argv[6]; retry_id=sys.argv[7]
@@ -529,6 +560,149 @@ def _seed_blank_receipt(db, receipt_id, receipt_plan):
         "created_at":"2026-10-14T00:00:00+00:00"}
     db.execute("insert into email_reply_receipts(" + ",".join(map(_quote, values)) +
                ") values(" + ",".join("?" for _ in values) + ")", tuple(values.values()))
+
+
+def _current_public_writes(path, seeded):
+    """Make the post-publication facts through current public Store methods."""
+    from app.email_classifier_contracts import EmailAction
+    from app.email_store import (
+        EmailStore, EMAIL_DIRECT_ACTION_LOCATOR_SQL, EMAIL_RETRY_SQL,
+        EMAIL_UNSUBSCRIBE_STEP_SQL, email_action_identity,
+        email_imap_configuration_snapshot, email_unsubscribe_effect_digest,
+    )
+    from app.email_unsubscribe import extract_unsubscribe_entries
+    from app.store import AutoReplyStore
+
+    store = AutoReplyStore(path)
+    email = EmailStore(path)
+    identity = "copy-only-reply"
+    direct_id = seeded["direct_action_id"]
+    failed_id = seeded["failed_action_id"]
+    retry_id = seeded["retry_action_id"]
+    receipt = email.get_email_reply_receipt(identity)
+    assert receipt is not None and receipt["provider_receipt"]["smtp_acceptance_id"] == ""
+    enriched = email.persist_email_reply_receipt(
+        action_identity=identity, effect_digest=receipt["effect_digest"],
+        action_plan_id=receipt["action_plan_id"], classification_id=receipt["classification_id"],
+        account_id=receipt["account_id"], stable_message_identity=receipt["stable_message_identity"],
+        outgoing_message_id=receipt["outgoing_message_id"], provider_operation=receipt["provider_operation"],
+        provider_target=receipt["provider_target"], provider_result_id=receipt["provider_result_id"],
+        sent_folder="Sent", sent_uidvalidity=42, sent_uid=123, smtp_acceptance_id="copy-only-smtp",
+    )
+    assert enriched["provider_receipt"]["smtp_acceptance_id"] == "copy-only-smtp"
+    claimed = email.claim_direct_action(action_id=direct_id, claimed_at="2026-10-14T01:00:00+00:00")
+    assert claimed is not None and claimed.action_id == direct_id
+    completed = email.complete_direct_action_attempt(
+        claimed, status="done", provider_operation="mark_read",
+        provider_target=claimed.locator.stable_message_identity,
+        provider_result_id="copy-only-direct-result", error="",
+        finished_at="2026-10-14T01:00:01+00:00",
+    )
+    assert completed["status"] == "done" and len(email.list_action_attempts(direct_id)) == 1
+    failed_claim = email.claim_direct_action(action_id=failed_id, claimed_at="2026-10-14T01:01:00+00:00")
+    assert failed_claim is not None
+    failed = email.complete_direct_action_attempt(
+        failed_claim, status="failed", provider_operation="label",
+        provider_target=failed_claim.locator.stable_message_identity,
+        provider_result_id="", error="copy-only-failure", retryable=False,
+        finished_at="2026-10-14T01:01:01+00:00",
+    )
+    assert failed["status"] == "failed" and failed["id"] > completed["id"]
+    visible = email.list_failed_direct_actions(
+        account_id=failed_claim.account_id, action_types=(EmailAction.LABEL,),
+        limit=10, action_id=failed_id,
+    )
+    assert len(visible) == 1 and visible[0].action.action_id == failed_id
+    entry = extract_unsubscribe_entries(list_unsubscribe="<https://copy.example.test/unsubscribe>")[0]
+    binding = dict(
+        action_identity=email_action_identity(
+            account_id="copy-only-account",
+            stable_message_identity=claimed.locator.stable_message_identity,
+            action_type=EmailAction.UNSUBSCRIBE, action_plan_version=1,
+        ),
+        action_plan_id=claimed.action_plan_id, action_plan_version=1,
+        classification_id=claimed.classification_id, account_id=claimed.account_id,
+        stable_message_identity=claimed.locator.stable_message_identity,
+        thread_identity="copy-only-thread", entry_reference=entry.reference,
+    )
+    operations = [{"operation_reference":"unsubscribe-operation:open-entry",
+                   "kind":"open_entry", "target_reference":entry.reference}]
+    digest = email_unsubscribe_effect_digest(**binding, operations=operations)
+    terminal = email.persist_email_unsubscribe_terminal(
+        **binding, effect_digest=digest, operations=operations,
+        outcome="skipped_login_required", receipt_id="unsubscribe-receipt:copy-login",
+        evidence="copy-only-terminal-page",
+        journal_steps=[{"sequence":1, "operation":"open_entry", "state":"done",
+                       "reference":"copy-only-step"}],
+    )
+    assert terminal["outcome"] == "skipped_login_required"
+    assert email.get_email_unsubscribe_receipt(binding["action_identity"])["outcome"] == "skipped_login_required"
+    retry_claim = email.claim_direct_action(action_id=retry_id, claimed_at="2026-10-14T01:02:00+00:00")
+    assert retry_claim is not None
+    retry_failed = email.complete_direct_action_attempt(
+        retry_claim, status="failed", provider_operation="trash",
+        provider_target=retry_claim.locator.stable_message_identity,
+        provider_result_id="", error="copy-only-source-uncertain", retryable=False,
+        finished_at="2026-10-14T01:02:01+00:00",
+    )
+    assert retry_failed["status"] == "failed"
+    retry_visible = email.list_failed_direct_actions(
+        account_id=retry_claim.account_id, action_types=(EmailAction.TRASH,),
+        limit=10, action_id=retry_id,
+    )
+    assert len(retry_visible) == 1 and retry_visible[0].action.action_id == retry_id
+    account_snapshot = email_imap_configuration_snapshot(email.get_account(retry_claim.account_id))
+    assert email.release_source_verified_direct_action(
+        retry_visible[0], source_locator=retry_visible[0].action.locator,
+        source_revision="copy-only-synthetic-revision", requested_at="2026-10-14T01:03:00+00:00",
+        apply=True, account_configuration_snapshot=account_snapshot,
+    )
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute(
+            f"select count(*) from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) where action_identity=?",
+            (binding["action_identity"],),
+        ).fetchone() == (1,)
+        assert db.execute(
+            f"select count(*) from ({EMAIL_RETRY_SQL}) where action_id=? and attempt_number=2",
+            (retry_id,),
+        ).fetchone() == (1,)
+        source_rowid = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
+            (failed_id,),
+        ).fetchone()[0]
+    assert any(
+        item.source_id == source_rowid and item.status == "failed"
+        for item in store.list_operation_logs(source_tables=("email_actions",))
+    )
+    return {name: True for name in (
+        "receipt_enriched", "direct_completed", "failed_visible", "attempt_water_advanced",
+        "unsubscribe_terminal", "unsubscribe_step", "explicit_retry", "history_source_id",
+    )}
+
+
+def _current_counters(path):
+    from app.audit_web import _email_action_queue_snapshot
+    from app.email_classifier_contracts import EmailAction
+    from app.email_store import EmailStore
+    from app.store import AutoReplyStore
+
+    with closing(sqlite3.connect(path)) as db:
+        db.row_factory = sqlite3.Row
+        queue = _email_action_queue_snapshot(db)
+    store = AutoReplyStore(path)
+    email = EmailStore(path)
+    return {
+        "queue_counts":queue["counts"], "queue_pending":queue["pending"],
+        "queue_processing":queue["processing"], "queue_failed":queue["failed"],
+        "queue_retryable":queue["retryable"],
+        "history_count":store.list_operation_logs_with_count(
+            limit=1, source_tables=("email_actions",)
+        )[0],
+        "attention_failed":len(email.list_failed_direct_actions(
+            account_id="copy-only-account", action_types=(EmailAction.LABEL, EmailAction.TRASH),
+            limit=10000,
+        )),
+    }
 
 
 def _case(path, oldroot, *, fresh, null_plans):
@@ -799,6 +973,178 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
             "reforward_values_types_locators_waters_equal":True}
 
 
+def _paired_case(path, oldroot, repo):
+    """Prove real paired publication and public writes on an owned old-code copy."""
+    from app.email_store import EmailStore
+    from app.store import AutoReplyStore
+    from app.store_schema_release import prepare_database_schema_release
+
+    with closing(sqlite3.connect(path)) as db:
+        baseline = _source_facts(db)
+        original_unrelated = _paired_unrelated(db, ())
+        original_actions = _actions(db, _columns(db, "actions"))
+        action_columns = _columns(db, "actions")
+        marker, ledger = _marker(db), _email_ledger(db)
+        original_fk = _consistency(db)
+        assert marker[0] == "2026-10-13.5" and ledger[-1][0] == 51
+        assert db.execute(
+            "select count(*) from email_classifications where account_id='copy-only-account'"
+        ).fetchone() == (0,)
+        initial_tables = db.execute(
+            "select count(*) from main.sqlite_schema where type='table' and name not like 'sqlite_%'"
+        ).fetchone()[0]
+    seeded = _old_process_genuine(oldroot, path, "seed")
+    fixture_ids = (seeded["classification_id"], seeded["receipt_classification_id"],
+                   seeded["retry_classification_id"])
+    with closing(sqlite3.connect(path)) as db:
+        _seed_blank_receipt(db, seeded["receipt_classification_id"], seeded["receipt_plan_id"])
+        db.commit()
+        seeded_source = _source_facts(db)
+        seeded_fixture = _fixture_rows(db, fixture_ids)
+        other_sequences = _other_sequences(db)
+        seeded_waters = _source_waters(db)
+        assert _paired_unrelated(db, fixture_ids) == original_unrelated
+        assert _actions(db, action_columns) == original_actions
+        _original_source_rows_unchanged({"declarations":capture_email_action_source(db)["source_tables"],
+                                         "facts":baseline}, seeded_source, fixture_ids)
+        assert (_marker(db), _email_ledger(db), _consistency(db)) == (marker, ledger, original_fk)
+    seeded_counters = _old_process(oldroot, path, "counters")
+
+    release = prepare_database_schema_release(repo, path)
+    assert release is not None and release.original_version == marker and release.versions == ledger
+    state = release.source_schema
+    assert len(SOURCE_TABLES) == 13
+    assert sum(len(_columns_from_state(state, name)) for name in SOURCE_TABLES) == 144
+    assert len(action_storage.ALL_ACTION_TYPES_WITH_REPLY) + len(EMAIL_TYPES_ORDER) == 29
+    release.publish()  # The coordinator's real child opens both default constructors.
+    AutoReplyStore(path)
+    EmailStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        target_marker, target_ledger = _marker(db), _email_ledger(db)
+        assert target_marker[0] == "2026-10-14.1"
+        assert target_ledger == ledger + ((52, target_marker[1]),)
+        initial_target = _target_facts(db, state["email_variant"])
+        for name in SOURCE_TABLES:
+            assert initial_target[name] == (
+                (("rowid",) if name in EMAIL_ROWID_TYPES else ()) + _columns_from_state(state, name),
+                *seeded_source[name],
+            )
+        assert _target_waters(db) == seeded_waters
+        assert _paired_unrelated(db, fixture_ids) == original_unrelated
+        assert _fixture_rows(db, fixture_ids) == seeded_fixture
+        assert _actions(db, action_columns) == original_actions
+        assert db.execute(
+            "select count(*) from main.sqlite_schema where type='table' and name not like 'sqlite_%'"
+        ).fetchone() == (initial_tables - 13,)
+        assert not set(SOURCE_TABLES).intersection(
+            name for (name,) in db.execute("select name from main.sqlite_schema where type='table'")
+        )
+        _consistency(db, original_fk)
+    assert _current_counters(path) == seeded_counters
+
+    writes = _current_public_writes(path, seeded)
+    assert all(writes.get(name) is True for name in (
+        "receipt_enriched", "direct_completed", "failed_visible", "attempt_water_advanced",
+        "unsubscribe_terminal", "unsubscribe_step", "explicit_retry", "history_source_id",
+    ))
+    with closing(sqlite3.connect(path)) as db:
+        current = _target_facts(db, state["email_variant"])
+        current_waters = _target_waters(db)
+        assert len(current["email_action_attempts"][1]) == len(seeded_source["email_action_attempts"][0]) + 3
+        for name in ("email_unsubscribe_steps", "email_unsubscribe_receipts", "email_direct_retry_requests"):
+            assert len(current[name][1]) == len(seeded_source[name][0]) + 1
+        assert current["email_reply_receipts"][1:] != seeded_source["email_reply_receipts"]
+        assert current_waters["email_action_attempts"] > (seeded_waters["email_action_attempts"] or 0)
+        assert current_waters["email_unsubscribe_steps"] > (seeded_waters["email_unsubscribe_steps"] or 0)
+        assert _marker(db) == target_marker and _email_ledger(db) == target_ledger
+        assert _other_sequences(db) == other_sequences
+        assert _paired_unrelated(db, fixture_ids) == original_unrelated
+        assert _fixture_rows(db, fixture_ids) == seeded_fixture
+        assert _actions(db, action_columns) == original_actions
+        _consistency(db, original_fk)
+    current_counters = _current_counters(path)
+
+    release.rollback()
+    with closing(sqlite3.connect(path)) as db:
+        assert (_marker(db), _email_ledger(db)) == (marker, ledger)
+        assert capture_email_action_source(db)["source_tables"] == state["source_tables"]
+        assert capture_email_action_source(db)["source_actions"] == state["source_actions"]
+        assert _source_facts(db) == {name: current[name][1:] for name in SOURCE_TABLES}
+        assert _source_waters(db) == current_waters
+        assert _other_sequences(db) == other_sequences
+        assert _paired_unrelated(db, fixture_ids) == original_unrelated
+        assert _fixture_rows(db, fixture_ids) == seeded_fixture
+        assert _actions(db, action_columns) == original_actions
+        assert db.execute(
+            "select count(*) from main.sqlite_schema where type='table' and name not like 'sqlite_%'"
+        ).fetchone() == (initial_tables,)
+        _original_source_rows_preserved(baseline, _source_facts(db))
+        _consistency(db, original_fk)
+    assert _old_process(oldroot, path, "counters") == current_counters
+    _old_process(oldroot, path, "prewrite_read", seeded["classification_id"], "copy-only-reply",
+                 seeded["direct_action_id"], seeded["failed_action_id"], seeded["retry_action_id"])
+    donor = path.with_name(path.stem + "-paired-old-donor.sqlite3")
+    assert not donor.exists()
+    _copy(path, donor)
+    feedback_started = datetime.now(timezone.utc)
+    donor_write = _old_process_genuine(oldroot, donor, "write", seeded["classification_id"],
+                                       "copy-only-reply", seeded["retry_action_id"])
+    old_write = _old_process(oldroot, path, "write", seeded["classification_id"],
+                             "copy-only-reply", seeded["retry_action_id"])
+    feedback_finished = datetime.now(timezone.utc)
+    assert donor_write == old_write == {
+        "feedback_applied":True, "feedback_replayed":True,
+        "receipt_public_replay":True, "retry_completed":True,
+    }
+    _old_process(oldroot, path, "read", seeded["classification_id"], "copy-only-reply",
+                 seeded["direct_action_id"], seeded["failed_action_id"], seeded["retry_action_id"])
+    with closing(sqlite3.connect(path)) as db, closing(sqlite3.connect(donor)) as donor_db:
+        after_old = _source_facts(db)
+        after_old_waters = _source_waters(db)
+        assert _normalized_feedback_source(db, after_old, feedback_started, feedback_finished) == \
+            _normalized_feedback_source(donor_db, _source_facts(donor_db), feedback_started, feedback_finished)
+        assert _normalized_feedback_fixture(db, fixture_ids, feedback_started, feedback_finished) == \
+            _normalized_feedback_fixture(donor_db, fixture_ids, feedback_started, feedback_finished)
+        assert after_old_waters == _source_waters(donor_db)
+        assert after_old_waters["email_action_attempts"] > current_waters["email_action_attempts"]
+        assert after_old_waters["email_unsubscribe_steps"] == current_waters["email_unsubscribe_steps"]
+        assert (_marker(db), _email_ledger(db), _other_sequences(db)) == (marker, ledger, other_sequences)
+        assert _paired_unrelated(db, fixture_ids) == original_unrelated
+        assert _actions(db, action_columns) == original_actions
+        after_old_fixture = _fixture_rows(db, fixture_ids)
+        _original_source_rows_preserved(baseline, after_old)
+        _consistency(db, original_fk)
+    after_old_counters = _old_process(oldroot, path, "counters")
+
+    reforward = prepare_database_schema_release(repo, path)
+    assert reforward is not None
+    reforward.publish()
+    AutoReplyStore(path)
+    EmailStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        final_marker, final_ledger = _marker(db), _email_ledger(db)
+        assert final_marker[0] == "2026-10-14.1"
+        assert final_ledger == ledger + ((52, final_marker[1]),)
+        assert _target_facts(db, state["email_variant"]) == {
+            name: ((("rowid",) if name in EMAIL_ROWID_TYPES else ()) + _columns_from_state(state, name),
+                   *after_old[name]) for name in SOURCE_TABLES
+        }
+        assert _target_waters(db) == after_old_waters
+        assert _other_sequences(db) == other_sequences
+        assert _paired_unrelated(db, fixture_ids) == original_unrelated
+        assert _actions(db, action_columns) == original_actions
+        assert _fixture_rows(db, fixture_ids) == after_old_fixture
+        assert not set(SOURCE_TABLES).intersection(
+            name for (name,) in db.execute("select name from main.sqlite_schema where type='table'")
+        )
+        _consistency(db, original_fk)
+    assert _current_counters(path) == after_old_counters
+    return {"paired_default_constructors":True, "target_public_writes":True,
+            "old_public_cold_writes":True, "current_fact_inverse":True,
+            "reforward_current_facts":True, "source_tables":initial_tables,
+            "target_tables":initial_tables - 13, "preserved_fk_findings":len(original_fk)}
+
+
 def run(source, source_ref, repo):
     binding = json.loads(BINDING.read_text())
     assert binding["production_checkout_head_after"] == PUBLISHED_SCHEMA_REF
@@ -820,11 +1166,15 @@ def run(source, source_ref, repo):
         root = Path(temp)
         oldroot = root / "published-code"
         oldroot.mkdir()
-        archive = subprocess.check_output(["git", "-C", str(repo), "archive", source_ref, "app"])
+        archive = subprocess.check_output(["git", "-C", str(repo), "archive", source_ref,
+                                           *SOURCE_ARCHIVE_PATHS])
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
             tar.extractall(oldroot, filter="data")
         old_hashes = {name: hashlib.sha256((oldroot / name).read_bytes()).hexdigest()
                       for name in module_paths if (oldroot / name).is_file()}
+        old_dependencies = {name: hashlib.sha256((oldroot / name).read_bytes()).hexdigest()
+                            for name in SOURCE_ARCHIVE_PATHS if (oldroot / name).is_file()}
+        assert set(old_dependencies) == set(SOURCE_ARCHIVE_PATHS) - {"app"}
         original = root / "online-backup.sqlite3"
         _copy(source, original)
         with closing(sqlite3.connect(original)) as db:
@@ -838,6 +1188,9 @@ def run(source, source_ref, repo):
             assert db.execute("select count(*) from sqlite_schema where type='table' "
                               "and name not like 'sqlite_%'").fetchone() == (binding["schema_user_table_count"],)
             _consistency(db)
+        paired = root / "paired-actual-work.sqlite3"
+        _copy(original, paired)
+        paired_case = _paired_case(paired, oldroot, repo)
         actual = root / "actual-work.sqlite3"
         _copy(original, actual)
         actual_case = _case(actual, oldroot, fresh=False, null_plans=False)
@@ -855,20 +1208,22 @@ def run(source, source_ref, repo):
         fresh_application_case = _case(fresh_application, oldroot, fresh=True, null_plans=False)
     production_after = subprocess.check_output(["git", "-C", str(PRODUCTION_ROOT), "rev-parse", "HEAD"], text=True).strip()
     assert production_after == production_before
-    return {"status":"passed","scope":"offline Email13 copy and genuine published old code",
+    return {"status":"passed","scope":"offline Email13 SQL boundary and real paired copy/public APIs",
             "observed_at_utc":datetime.now(timezone.utc).isoformat(),
             "published_source_ref":source_ref,"schema_binding_ref":PUBLISHED_SCHEMA_REF,
             "executed_candidate_commit":candidate_commit,"candidate_module_sha256":candidate_hashes,
             "published_old_module_sha256":old_hashes,
+            "published_old_dependency_sha256":old_dependencies,
             "production_head_before":production_before,
             "production_head_after":production_after,
             "source_binding":"Non-atomic checkout HEAD and SQLite online backup observations",
-            "cases":{"actual_online_backup":actual_case,
+            "cases":{"paired_actual_online_backup":paired_case,
+                     "actual_online_backup_sql_boundary":actual_case,
                      "published_old_fresh_sql_legal":fresh_sql_case,
                      "published_old_fresh_application":fresh_application_case},
             "checks":{"temporary_copies_cleaned":True,"production_mutations":0,
                       "provider_calls":0,"native_cli_calls":0},
-            "limit":"Offline storage only; no constructor activation, native role, CI, publication or live provider acceptance."}
+            "limit":"Offline owned copies only; paired target constructor/public-DAO proof is not native role, CI, production publication or live provider acceptance."}
 
 
 if __name__ == "__main__":
