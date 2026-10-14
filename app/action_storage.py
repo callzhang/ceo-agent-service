@@ -1273,7 +1273,7 @@ def _no_inbound(db, target_tables):
         if sqlite_schema_name(table) in target_names:
             continue
         quoted = table.replace('"', '""')
-        if any(sqlite_schema_name(fk[2]) in target_names for fk in db.execute(f'pragma foreign_key_list("{quoted}")')):
+        if any(sqlite_schema_name(fk[2]) in target_names for fk in db.execute(f'pragma main.foreign_key_list("{quoted}")')):
             raise ValueError(f"unsupported inbound action source reference from {table}")
 
 

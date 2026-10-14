@@ -61,7 +61,7 @@ def _quote(name):
 
 
 def _sequence(db, name):
-    rows = db.execute("select seq from sqlite_sequence where name=?", (name,)).fetchall()
+    rows = db.execute("select seq from main.sqlite_sequence where name=?", (name,)).fetchall()
     if len(rows) > 1 or rows and (type(rows[0][0]) is not int or not 0 <= rows[0][0] < 2**63):
         raise ValueError("unsupported Email sequence metadata")
     return rows[0][0] if rows else None
@@ -85,7 +85,7 @@ def _external_dependencies(db):
                                       {storage.sqlite_schema_name(t) for t in REPLACED_TABLES}):
                 continue
             if kind == "table" and storage.sqlite_schema_name(name) in virtual:
-                columns = [row[1] for row in db.execute(f"pragma table_xinfo({_quote(name)})")]
+                columns = [row[1] for row in db.execute(f"pragma main.table_xinfo({_quote(name)})")]
                 sql = f"create table {_quote(name)} (" + ",".join(map(_quote, columns)) + ")"
             parser.execute(sql)
         storage._no_sql_dependencies(parser, set(REPLACED_TABLES))
@@ -101,7 +101,7 @@ def capture_email_action_source(db: sqlite3.Connection) -> dict:
                  if hashes == (action_fingerprint, email_fingerprint)), None)
     if pair is None:
         raise ValueError("unsupported sixteen-type actions or Email source declaration pair")
-    if db.execute("select 1 from actions where record_type not in (" +
+    if db.execute("select 1 from main.actions where record_type not in (" +
                   ",".join("?" for _ in storage.ALL_ACTION_TYPES_WITH_REPLY) +
                   ") limit 1", storage.ALL_ACTION_TYPES_WITH_REPLY).fetchone():
         raise ValueError("unsupported mixed Email or unknown action record type")
@@ -126,7 +126,7 @@ def capture_email_action_source(db: sqlite3.Connection) -> dict:
     allowed_sequences = set(storage.ACTION_SEQUENCE_NAMES.values()) | {
         storage.DELIVERY_SEQUENCE_NAME, *storage.REPLY_SEQUENCE_NAMES.values(),
     }
-    if db.execute("select 1 from sqlite_sequence where name like 'actions:%' and name not in (" +
+    if db.execute("select 1 from main.sqlite_sequence where name like 'actions:%' and name not in (" +
                   ",".join("?" for _ in allowed_sequences) + ") limit 1",
                   tuple(sorted(allowed_sequences))).fetchone():
         raise ValueError("unsupported action allocator alias")
@@ -135,7 +135,7 @@ def capture_email_action_source(db: sqlite3.Connection) -> dict:
     if any(sequences[name] is not None for name in SOURCE_TABLES
            if name not in EMAIL_AUTOINCREMENT_TYPES):
         raise ValueError("unsupported Email non-allocator sequence metadata")
-    counts = {name: db.execute(f"select count(*) from {_quote(name)}").fetchone()[0]
+    counts = {name: db.execute(f"select count(*) from main.{_quote(name)}").fetchone()[0]
               for name in SOURCE_TABLES}
     return {
         "action_variant": pair[0], "email_variant": pair[1],

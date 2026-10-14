@@ -23,6 +23,20 @@ the existing native FK and schema-only rename checks. All six cases are GREEN;
 the selected suite reports 269 passed and 6 skipped. This changes only
 candidate source refusal; no runtime route or migration DDL was added.
 
+Independent QUALITY review then found that a TEMP table can shadow a MAIN
+source name during unqualified PRAGMA, row-count or `sqlite_sequence` reads.
+Six tests were RED across the two frozen variants: a TEMP same-name child hid
+a MAIN inbound FK, a TEMP Email cancellation row changed the captured MAIN
+count, and TEMP sequence metadata hid a MAIN attempt high-water of 57. The
+source capture and its two shared metadata helpers now qualify these reads
+with `main`. A separate regression confirms changed TEMP declarations and
+TEMP `actions` rows leave the MAIN capture and caller transaction intact.
+All 40 focused capture cases and the selected Email/reply/action storage set
+passed (339 passed, 6 skipped); scoped Ruff and diff checks passed. The six
+default-disabled action schemas retain the same factory declarations because
+only source-introspection helpers changed. Actual published-source binding,
+forward/inverse DDL and release integration remain pending.
+
 The synthetic tests cover empty sources, colliding existing action IDs and
 original Email ROWIDs, deleted high ROWIDs, preserved sequence zero/high-water,
 and refusal without changing source schema or action rows. The first capture

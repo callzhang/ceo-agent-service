@@ -116,6 +116,52 @@ def test_rejects_cross_pair_variant(db, source):
     assert _schema(db) == before
 
 
+def test_main_inbound_reference_cannot_be_hidden_by_temp_table(db):
+    db.execute("create table external_child(id integer references email_action_attempts(id))")
+    db.execute("create temp table external_child(id integer)")
+    before = _schema(db)
+    with pytest.raises(ValueError, match="inbound"):
+        capture_email_action_source(db)
+    assert _schema(db) == before
+
+
+def test_temp_source_row_does_not_change_main_count(db, source):
+    sql = PARENTS[source]["tables"]["email_unsubscribe_cancellations"]["sql"]
+    db.execute(sql.replace("CREATE TABLE", "CREATE TEMP TABLE", 1))
+    db.execute("insert into temp.email_unsubscribe_cancellations values('shadow','{}')")
+    before = _schema(db)
+    captured = capture_email_action_source(db)
+    assert captured["counts"]["email_unsubscribe_cancellations"] == 0
+    assert db.execute("select count(*) from temp.email_unsubscribe_cancellations").fetchone()[0] == 1
+    assert _schema(db) == before
+
+
+def test_temp_sequence_cannot_hide_main_highwater(db):
+    db.execute("insert into main.sqlite_sequence(name,seq) values('email_action_attempts',57)")
+    db.execute("create temp table staging(id integer primary key autoincrement)")
+    db.execute("insert into temp.staging default values")
+    before = _schema(db)
+    captured = capture_email_action_source(db)
+    assert captured["sequences"]["email_action_attempts"] == 57
+    assert _schema(db) == before
+
+
+def test_temp_declaration_and_actions_rows_cannot_replace_main_capture(db):
+    db.execute("create temp table email_action_plans(other text)")
+    db.execute("create temp table actions(record_type text)")
+    db.execute("insert into temp.actions values('outside')")
+    main_before = _schema(db)
+    temp_before = list(db.execute("select type,name,sql from temp.sqlite_schema order by type,name"))
+    transaction_before = db.in_transaction
+    captured = capture_email_action_source(db)
+    assert len(captured["source_tables"]["email_action_plans"]["columns"]) == len(
+        PARENTS[captured["email_variant"]]["tables"]["email_action_plans"]["columns"])
+    assert db.execute("select record_type from temp.actions").fetchone()[0] == "outside"
+    assert _schema(db) == main_before
+    assert list(db.execute("select type,name,sql from temp.sqlite_schema order by type,name")) == temp_before
+    assert db.in_transaction == transaction_before
+
+
 @pytest.mark.parametrize("mutation", (
     "changed_table", "inbound_table", "outside_view", "outside_trigger",
     "inbound_action_table", "outside_action_view", "outside_action_trigger",

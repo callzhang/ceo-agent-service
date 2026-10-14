@@ -39,17 +39,17 @@ def _source_declaration(db: sqlite3.Connection, table: str) -> dict:
                          (table,)).fetchone()
     quoted = '"' + table.replace('"', '""') + '"'
     columns = [dict(zip(("cid", "name", "type", "notnull", "dflt_value", "pk", "hidden"), row,
-                        strict=True)) for row in db.execute(f"pragma table_xinfo({quoted})")]
+                        strict=True)) for row in db.execute(f"pragma main.table_xinfo({quoted})")]
     foreign_keys = [dict(zip(("id", "seq", "table", "from", "to", "on_update", "on_delete", "match"),
-                             row, strict=True)) for row in db.execute(f"pragma foreign_key_list({quoted})")]
+                             row, strict=True)) for row in db.execute(f"pragma main.foreign_key_list({quoted})")]
     indexes = []
-    for seq, name, unique, origin, partial in db.execute(f"pragma index_list({quoted})"):
+    for seq, name, unique, origin, partial in db.execute(f"pragma main.index_list({quoted})"):
         index_quoted = '"' + name.replace('"', '""') + '"'
         index_sql = db.execute("select sql from sqlite_schema where type='index' and name=?", (name,)).fetchone()
         indexes.append({
             "seq": seq, "name": name, "unique": unique, "origin": origin, "partial": partial,
             "columns": [dict(zip(("seqno", "cid", "name", "desc", "coll", "key"), row,
-                                 strict=True)) for row in db.execute(f"pragma index_xinfo({index_quoted})")],
+                                 strict=True)) for row in db.execute(f"pragma main.index_xinfo({index_quoted})")],
             "sql": index_sql[0] if index_sql else None,
         })
     triggers = [dict(zip(("name", "sql"), row, strict=True)) for row in db.execute(
