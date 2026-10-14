@@ -2891,3 +2891,16 @@ retry an invalid `null` response through the recent-message fallback; valid but
 unrecognized object envelopes retain the existing fallback behavior. Read-only
 message commands make only the configured bounded retry for JSON `null`; if it
 persists, the typed failure remains visible to normal recovery and Attention.
+
+### Email actions: isolated storage declaration
+
+`app/action_storage.py` can explicitly build a twenty-nine-type `actions`
+declaration when `include_email=True` is paired with the current reply variant.
+The default factories still build their prior declarations. The Email addition
+defines the 13 original families, their source-field projections and their
+own native constraints/indexes/triggers. It does not route live Email reads or
+writes through `actions`; no Store/Email initializer selects this option.
+Signed source ROWID allocation, AUTOINCREMENT writer semantics, external Email
+trigger closure and source/current-fact migration remain to be implemented
+before an Email schema release. The candidate is local storage preparation,
+not a production Store/Email version.

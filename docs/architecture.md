@@ -2094,3 +2094,18 @@ retry an invalid `null` response through the recent-message fallback; valid but
 unrecognized object envelopes retain the existing fallback behavior. Read-only
 message commands make only the configured bounded retry for JSON `null`; if it
 persists, the typed failure remains visible to normal recovery and Attention.
+
+### Email action storage preparation (opt-in only)
+
+The isolated Email action storage factory accepts `include_email=True` only with
+the sixteen-type reply schema. It adds thirteen finite Email record types and
+generated projections for the 144 frozen source fields. Nine ordinary source
+ROWID families retain their signed locator in `legacy_key` and nullable public
+TEXT key in the payload; two AUTOINCREMENT families retain numeric public IDs;
+effects and retry requests retain two-component keys. Native generated columns,
+CHECKs, unique indexes, parent-key foreign keys, count triggers and immutable
+retry triggers enforce the source declarations. The Email option is disabled in
+all Store/Email constructors and runtime callers. Allocation/writer helpers,
+external source-table triggers, migration and publication are separate pending
+units; the focused validation boundary is recorded in
+`docs/database-redesign-email-actions-validation.md`.

@@ -13,6 +13,13 @@ import math
 import sqlite3
 from string import ascii_lowercase, ascii_uppercase
 
+from app.action_email_definitions import (
+    EMAIL_ACTION_PROJECTIONS as EMAIL_ACTION_PROJECTIONS,
+    EMAIL_COMPOSITE_KEYS, EMAIL_TYPES_ORDER,
+    email_action_projection as email_action_projection,
+    email_schema_parts,
+)
+
 
 _SCHEMA_NAME_CASE = str.maketrans(ascii_uppercase, ascii_lowercase)
 
@@ -263,7 +270,9 @@ def _reply_payload_check(fields):
     return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False):
+    if include_email and not include_reply:
+        raise ValueError("Email action storage requires the sixteen-type reply schema")
     if include_reply and reply_variant not in REPLY_VARIANTS:
         raise ValueError("reply storage requires one global source variant")
     if not include_reply and reply_variant is not None:
@@ -272,8 +281,12 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     include_postfix = include_postfix or include_delivery
     include_receipts = include_receipts or include_postfix
     kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else CANDIDATE_ACTION_TYPES
-    references = _references_for(kinds)
-    payload_fields = dict.fromkeys(c for kind in kinds if kind not in REPLY_ACTION_TYPES for c in PAYLOAD_FIELDS[kind] if c not in references and not (include_delivery and c == "channel"))
+    old_kinds = kinds
+    if include_email:
+        kinds += EMAIL_TYPES_ORDER
+        email_generated, email_checks, email_fks, email_indexes, email_triggers = email_schema_parts(_reply_value_check)
+    references = _references_for(old_kinds)
+    payload_fields = dict.fromkeys(c for kind in old_kinds if kind not in REPLY_ACTION_TYPES for c in PAYLOAD_FIELDS[kind] if c not in references and not (include_delivery and c == "channel"))
     generated = []
     for column in payload_fields:
         expression = f"json_extract(payload_json,'$.{column}')"
@@ -316,15 +329,19 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
                         "and json_array_length(legacy_key)=2 and json_type(legacy_key,'$[0]')='integer' "
                         "and json_type(legacy_key,'$[1]')='integer' else 0 end")
         key_check = f"case when record_type='sent_reply_observers' then ({observer_key}) else ({key_check}) end"
+    if include_email:
+        email_composites = ",".join(repr(kind) for kind in EMAIL_COMPOSITE_KEYS)
+        key_check = f"case when record_type in ({email_composites}) then json_valid(legacy_key) else ({key_check}) end"
     table = (
         "create table actions (id integer primary key, record_type text not null check(record_type in ("
         + ",".join(repr(k) for k in kinds)
         + f")),legacy_key text not null check({key_check}),"
         + ",".join(f"{column} integer references {parent}(id)" for column, (parent, _) in references.items())
         + ("," + ",".join(reply_columns) if reply_columns else "")
+        + ("," + ",".join(email_generated) if include_email else "")
         + ",payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),"
         + ",".join(generated)
-        + "," + ",".join(_payload_check(kind, references) for kind in kinds if kind not in REPLY_ACTION_TYPES)
+        + "," + ",".join(_payload_check(kind, references) for kind in old_kinds if kind not in REPLY_ACTION_TYPES)
         + "," + ",".join(f"check(record_type<>'{kind}' or {field} in ({','.join(repr(v) for v in options)}))"
                           for kind, (field, options) in ENUMS.items() if kind in kinds)
     )
@@ -347,14 +364,19 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         memory_fields = [field for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id" or reply_variant == "actual_no_memory_fk"]
         table += ",check(record_type<>'memory_write_events' or (" + _reply_payload_check(memory_fields) + "))"
         table += ",check(record_type<>'memory_write_events' or (" + " and ".join([f"{memory_parent} is not null"] + [f"memory_{field} is not null" for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id"]) + "))"
+    if include_email:
+        table += "," + ",".join((*email_checks, *email_fks))
     table += ")"
     numeric_scope = " where record_type<>'external_action_results'" if include_receipts else ""
     if include_postfix:
         numeric_scope += f" and record_type not in ({postfix_scope})"
     if include_delivery:
         numeric_scope += " and record_type<>'sent_reply_observers'"
+    if include_email:
+        numeric_scope += " and record_type not in (" + ",".join(repr(kind) for kind in EMAIL_COMPOSITE_KEYS) + ")"
+    numeric_columns = "record_type,cast(legacy_key as integer)" if include_email else "cast(legacy_key as integer),record_type"
     indexes = (
-        "create unique index idx_actions_public_id on actions(cast(legacy_key as integer),record_type)" + numeric_scope,
+        f"create unique index idx_actions_public_id on actions({numeric_columns})" + numeric_scope,
         "create unique index idx_actions_consumer_run on actions(consumer_run_id) where record_type='review_candidates'",
         "create index idx_actions_candidates_task on actions(task_id,execution_generation,cast(legacy_key as integer)) where record_type='review_candidates'",
         "create unique index idx_actions_audit_run on actions(audit_run_id) where record_type='candidate_reviews'",
@@ -398,6 +420,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
             f"create index idx_actions_memory_attempt on actions({memory_parent},cast(legacy_key as integer)) where record_type='memory_write_events'",
             f"create index idx_actions_memory_status on actions(memory_status,{'memory_updated_at' if reply_variant == 'fresh_memory_fk' else 'cast(legacy_key as integer)'}) where record_type='memory_write_events'",
         )
+    if include_email:
+        indexes += tuple(email_indexes)
     triggers = (
         "create trigger trg_actions_record_type_immutable before update of record_type on actions when new.record_type<>old.record_type begin select raise(abort,'action record type is immutable'); end",
         "create trigger trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
@@ -441,6 +465,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
                 "create trigger trg_actions_memory_attempt_update before update of memory_attempt_ref on actions when new.record_type='memory_write_events' and new.memory_attempt_ref is not null and not exists(select 1 from actions p where p.id=new.memory_attempt_ref and p.record_type='reply_attempts') begin select raise(abort,'memory attempt type mismatch'); end",
                 "create trigger trg_actions_reply_public_reference_update before update of legacy_key on actions when old.record_type='reply_attempts' and new.legacy_key<>old.legacy_key and exists(select 1 from actions c where c.record_type='memory_write_events' and c.memory_attempt_ref=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
             )
+    if include_email:
+        triggers += tuple(email_triggers)
     return table, indexes, triggers
 
 
@@ -540,24 +566,24 @@ SENT_REPLY_SQL = ACTION_PROJECTIONS["sent_replies"]
 SENT_REPLY_OBSERVER_SQL = ACTION_PROJECTIONS["sent_reply_observers"]
 
 
-def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None) -> None:
+def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False) -> None:
     """Create the declared schema, or repair only its missing auxiliary objects."""
     existing = db.execute("select 1 from sqlite_master where name='actions' collate nocase").fetchone()
     if existing:
-        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery, include_reply=include_reply, reply_variant=reply_variant):
+        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery, include_reply=include_reply, reply_variant=reply_variant, include_email=include_email):
             raise ValueError("unsupported current actions schema declaration")
         names = {sqlite_schema_name(obj["name"]) for obj in _objects(db, "actions")}
-        for obj in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant):
+        for obj in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email):
             if sqlite_schema_name(obj["name"]) not in names:
                 db.execute(obj["sql"])
     else:
         if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in ACTION_TYPES):
             capture_action_schema(db)
-        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant))
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant)
+        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email))
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email)
 
 
-def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
+def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False):
     if (include_receipts or include_postfix or include_delivery or include_reply) and not db.execute("select 1 from sqlite_master where type='table' and name='sqlite_sequence'").fetchone():
         # SQLite creates its native sequence metadata on the first declaration
         # of an AUTOINCREMENT table. The initializer has no rows and is removed;
@@ -567,24 +593,26 @@ def _create_action_objects(db, include_receipts=False, include_postfix=False, in
             name += "_"
         db.execute(f'create table "{name}"(id integer primary key autoincrement)')
         db.execute(f'drop table "{name}"')
-    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant)
+    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email)
     for sql in (table, *indexes, *triggers):
         db.execute(sql)
 
 
-@lru_cache(maxsize=12)
-def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
+@lru_cache(maxsize=16)
+def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False):
     with closing(sqlite3.connect(":memory:")) as db:
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant)
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email)
         return _objects(db, "actions")
 
 
-def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None) -> bool:
+def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False) -> bool:
     kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
+    if include_email:
+        kinds += EMAIL_TYPES_ORDER
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in kinds):
         return False
     actual = {sqlite_schema_name(o["name"]): o for o in _objects(db, "actions")}
-    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant)}
+    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email)}
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase and tbl_name<>'actions' collate nocase", (name,)).fetchone() for name in expected):
         return False
     return not (actual.keys() - expected.keys()) and all(
