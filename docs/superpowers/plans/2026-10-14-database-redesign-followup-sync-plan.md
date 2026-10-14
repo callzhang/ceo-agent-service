@@ -224,3 +224,12 @@ release marker or target version selects this preparation. Both current index
 gates (native child-FK scans and physical-parent public-ID lookup) remain
 mandatory before activation; the source-shaped writer acceptance does not
 claim they are solved. Actual published predecessor binding remains Task3.
+
+### Task2A acceptance
+
+Task2A b6214a28 passed sequential independent SPEC then QUALITY after fixing
+caller-specific trigger exemptions and qualifying MAIN/TEMP metadata. The
+read-only capture/refusal unit is accepted; Task2B pure forward/current-fact
+inverse may now proceed on the same disabled scaffold. This does not bind a
+published predecessor, reserve versions, select runtime constructors or resolve
+the existing performance gates.

@@ -175,3 +175,16 @@ also enumerates virtual tables through explicit `main.table_list` and
 before this change and GREEN afterward. The focused follow-up source and Email
 migration selection passed 132 tests. This remains an unselected, read-only
 candidate pending fresh SPEC then QUALITY review.
+
+### Root Task2A acceptance
+
+Read-only capture at b6214a28 passed sequential independent SPEC then QUALITY.
+SPEC reran132 scoped checks and eight additional actual/fresh inbound-FK and
+caller-state probes. QUALITY ran123 follow-up checks plus86 Email migration
+checks, and16 independent native parser probes covering quoted/indirect MAIN
+and TEMP dependencies, harmless CTE/literal names, local TEMP shadows/FTS and
+the historical MAIN-owner TEMP trigger followed by a shadow. No caller
+transaction/settings, schema, sequences or total_changes changed in those
+probes. The earlier two blockers are resolved. Task2B forward/current-fact
+inverse, actual published predecessor binding and runtime activation remain
+unimplemented; this accepts only disabled Task2A.
