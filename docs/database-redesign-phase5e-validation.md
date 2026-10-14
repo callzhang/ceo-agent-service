@@ -510,3 +510,21 @@ checks; 12 deployment-maintenance checks; 98 historical workbench/task/meeting
 checks. These are local implementation gates. Independent SPEC/QUALITY review,
 latest production-copy/current-fact proof, original-code cold constructor,
 native role paths, complete CI, push, deployment and live readback remain open.
+
+## Task 5 independent acceptance
+
+Commit `8d4b1e6d` passed fresh sequential SPEC and QUALITY reviews. SPEC
+independently ran 548 focused publication, quality, recovery, native-boundary,
+page, History and historical fixture checks. QUALITY independently ran 398
+caller checks and two native checks, and compared Memory queue snapshots and
+email public-ID lookups before and after migration on both captured source
+variants, including mixed-case statuses, timestamp ties and NUL receipts.
+Neither review found a blocking issue. Root separately ran 439 Store/native
+boundary checks, built the candidate frontend and passed both existing real
+browser regressions with synthetic isolated data and a non-executing executor.
+These counts overlap and are not a summed unique-test count. Every owned
+temporary test directory was cleaned; all reviews checked the exact clean
+commit. Task5 is accepted locally. Actual production-copy current-fact inverse,
+separate-process original-code cold read and write, native substituted execution,
+final CI, normal deployment and live readback remain required. Production still
+declares Store18 / Email51, and the full ten-table-plus-ledger goal is unfinished.
