@@ -48,8 +48,22 @@ from 309 to 13,301 steps and sorted the type's whole set. Adding only a
 cast-public-ID partial index did not change the chosen plan. A scoped
 `(record_type, cast(legacy_key as integer))` partial index selected a covering
 ordered plan and reduced the 1,020-row query to 83 steps. This source primary-key
-access regression requires a confined target-index correction and growth
-regression before activation. No production index was changed.
+access regression was the reason for the confined target-index correction and
+growth regression below. No production index was changed.
+
+The opt-in sixteen-type action definition now adds one partial
+`(record_type, cast(legacy_key as integer))` ordering index for each reply
+type. Against both captured source variants, the target projection returns the
+same ascending, descending, bounded-range and paginated full rows as the
+source tables, including negative, high and deleted-then-reused public IDs, while Attempt and
+Memory share public IDs and unrelated action rows grow. The focused regression
+checks SQLite plans for ordered index use without a temporary sort and counts
+VM work at 20 and 1,020 records: every five-row target query remains within
+100 VM steps of its small-table cost. Full-row projection has a fixed JSON
+extraction cost; the growth comparison, rather than absolute parity with the
+source's direct table read, is the relevant ordered-access bound. These
+indexes affect only opt-in E schema creation; existing frozen layouts and
+production remain unchanged.
 
 ## Task 3A independent and online-copy acceptance
 

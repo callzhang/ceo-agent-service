@@ -385,6 +385,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if include_reply:
         memory_parent = "memory_attempt_ref" if reply_variant == "fresh_memory_fk" else "memory_attempt_id"
         indexes += (
+            "create index idx_actions_reply_public_order on actions(record_type,cast(legacy_key as integer)) where record_type='reply_attempts'",
+            "create index idx_actions_memory_public_order on actions(record_type,cast(legacy_key as integer)) where record_type='memory_write_events'",
             "create index idx_actions_reply_trigger_message on actions(attempt_trigger_message_id) where record_type='reply_attempts'",
             "create index idx_actions_reply_status on actions(attempt_send_status,attempt_created_at) where record_type='reply_attempts'",
             "create index idx_actions_reply_created on actions(attempt_created_at,cast(legacy_key as integer)) where record_type='reply_attempts'",
