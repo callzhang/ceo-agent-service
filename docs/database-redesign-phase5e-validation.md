@@ -467,3 +467,12 @@ or old-table fallback was added.
 This accepts internal Store integration only. The real production-copy,
 current-fact inverse, actual old-code cold constructor, current factory,
 external callers, native substitute, CI and deployment gates remain outstanding.
+
+After these reviews, merge `57942b54` integrated published main `9cdcddae`,
+preserving the read-only original DingTalk mail tools and their release evidence.
+Only the append-only claim ledger conflicted; both sets of rows were retained.
+There was no Store, action storage or reply migration code increment in that
+main delta. The combined current mail-source, new Store integration, Memory
+completion and source-preflight gate passed 48 cases after the merge. Its owned
+temporary directory was cleaned. This is an integration check, not a repeated
+production copy or native business acceptance.
