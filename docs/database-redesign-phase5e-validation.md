@@ -1,5 +1,30 @@
 # Phase5E source refresh and execution boundary
 
+## CI integration fixture repair
+
+GitHub Actions run 38515824334 passed 13,080 tests and failed three after
+the Phase5E branch incorporated the published DingTalk send verifier. Two OKR
+CLI tests replaced DwsClient with a fake that omitted the now-required
+`verify_message_send_result` method. Their fake send results also contained
+only `processQueryKey`, which identifies a recall operation, not an outgoing
+message. The fakes now use the real verifier against an explicit outgoing
+`openMessageId`; the existing request, persisted reply and send assertions
+remain in place.
+
+The third failure was in a same-timestamp successor-claim test. The test wrote
+the first claim's `locked_at` into the row after acquiring the second claim,
+but still passed the second claim object with its original timestamp to the
+release method. If those claims crossed a SQLite one-second boundary, the
+release correctly left the lock in place. The fixture now first forces the
+captured claim times one second apart, confirms the second time in the row,
+then aligns the second claim object with the deliberately rewritten row time.
+The two distinct claim tokens and original release assertions remain. Removing
+that final object alignment produced a deterministic local failure; restoring
+it passed. No runtime code or delivery policy changed. The two OKR tests failed
+locally before repair; all three reported tests passed afterward. The eight
+nearby OKR tests, four delivery-cleanup tests, full 422 affected-file tests,
+Ruff and diff checks also passed.
+
 ## Task 3B1 paired release unit acceptance
 
 Independent SPEC review found that rollback read its marker before taking the
@@ -722,3 +747,45 @@ The still-running CI `38513634960` is bound to earlier `b23fbcdd`; it cannot
 establish merged-head acceptance. A separate complete merged-head CI is required
 before normal publication. This reconciliation made no provider or production
 mutation and does not claim a fresh native lifecycle run.
+
+
+## Merged-main native copy acceptance and complete CI result
+
+The complete earlier `b23fbcdd` CI `38513634960` passed 13,062 Python
+checks, 729 frontend checks and two browser checks. The merged-main
+`a0b60ba6` CI `38515824334` subsequently completed with 13,080 Python
+checks passing and three integration-fixture failures; build/browser steps
+were consequently skipped. The separate bounded repair is recorded above.
+No complete passing merged-head CI or production publication is claimed.
+
+Before those fixture-only repairs, root actually reran native approval and
+settlement recovery on `a0b60ba6`, against separate copies of a latest online
+production backup prepared by the candidate Store19 constructor. Source HEAD
+`9a2a23fc` was observed separately from backup capture; the prepared baseline
+is candidate evidence, not a published Store19 predecessor. Both cases ended
+`done`, each with real Consumer and Audit CLI runs, one in-memory substitute
+send, one verification, one receipt and one business attempt. All 116 original
+non-FTS tables remained unchanged, and reopening added no model invocations.
+The exact four native session references and nonempty line ranges are in
+`evals/database_redesign/phase5e_native_copy.v1.json`; native files remain
+only in the CLI-owned home. All owned database/workspace copies were removed.
+
+The same artifact retains the eleven scripted cases with their original
+`c47e6f4a` binding rather than implying a merged-head rerun. No true outbound
+send, trajectory copy or production database mutation occurred. Final CI,
+normal publication and production readback remain separate requirements.
+
+
+### Independent acceptance of the merged-main CI fixture correction
+
+Fresh SPEC accepted `5a635f6f`: three exact repaired cases and ten nearby
+checks passed. Independent mutation probes reproduced the meeting failure
+when the final DTO alignment was removed and confirmed that substituting the
+successor token violates the preserved stale-owner assertions. Fresh QUALITY
+then accepted clean `d51d9cdd`: twelve focused current-head checks passed, both
+fakes demonstrably bind the real verifier, and the native/scripted evidence
+bindings and false publication flags were checked. Ruff and diff checks passed
+in both reviews. The one-line CI count correction is `a50bd1ac`; main
+`df61056d` was normally merged with only its deployment checkpoint document.
+No runtime changes were added by these fixture corrections. Final complete CI
+and normal production publication are still required.
