@@ -347,7 +347,7 @@ class OaRevertHandler(OaDecisionHandler):
         response = prior.get("provider_response")
         principal = self.dws.get_current_user_id()
         dispatch_started = self._utc_instant(prior.get("dispatch_started_at"))
-        accepted_at = self._utc_instant(prior.get("accepted_at"))
+        accepted_at = self._utc_instant(prior.get("accepted_at") or prior.get("response_received_at"))
         observed_at = datetime.now(timezone.utc)
         if (boundary is None or dispatch_started is None or accepted_at is None or not self._accepted(response)
             or not boundary <= dispatch_started <= accepted_at <= observed_at

@@ -173,6 +173,24 @@ def test_dingtalk_success_envelope_and_millisecond_dates_verify_without_replay(p
     assert len(source.calls) == 0
 
 
+def test_prior_success_response_uses_persisted_response_received_at_when_accepted_at_is_absent(provider_read_clock):
+    source = Source()
+    source.returned = True
+    source.records[0]["date"] = 1791939988000
+    source.destination["create_time"] = 1791939988000
+    proof = acceptance()
+    proof.pop("accepted_at")
+    proof["provider_response"] = {"dingOpenErrcode": 0, "result": True, "success": True}
+    proof["dispatch_started_at"] = "2026-10-14T01:06:25.641Z"
+    proof["response_received_at"] = "2026-10-14T01:06:29.001Z"
+    provider_read_clock.current = datetime.fromisoformat("2026-10-14T01:07:00+00:00")
+    candidate = attempt("uncertain", proof)
+    candidate["action_attempt"]["created_at"] = "2026-10-14T01:06:25.641Z"
+    outcome = OaRevertHandler(source).reconcile(action(), action_key="key", candidate=candidate)
+    assert outcome.status == "verified"
+    assert len(source.calls) == 0
+
+
 @pytest.mark.parametrize("response", [
     {"success": True, "result": True, "errorCode": 0},
     {"success": True, "result": True, "dingOpenErrcode": 1},
