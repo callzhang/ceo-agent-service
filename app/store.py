@@ -213,6 +213,8 @@ SQLITE_READ_CACHE_SIZE = -65536
 SQLITE_MMAP_SIZE_BYTES = 0
 STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
 STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
+DONE_FAILED_RUN_RECONCILE_BATCH_SIZE = 100
+SETTLED_REPLY_RECONCILE_BATCH_SIZE = 100
 AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
 AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
@@ -20404,30 +20406,70 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return cursor.rowcount == 1
 
     def reconcile_unresolved_reply_tasks_with_settlement_evidence(self) -> int:
-        """Close stale tasks whose exact trigger has resolved settlement evidence."""
-        with self._immediate_write_transaction() as db:
-            compact_ids = db.execute(
-                """
-                update tasks as tasks
-                set status='done', error='', available_at='', locked_at=null,
-                    updated_at=current_timestamp
-                where tasks.record_type='reply_tasks' and tasks.status in ('failed', 'needs_human')
-                  and tasks.error not in ('external_action_uncertain', 'external_action_failed')
-                  and exists (
-                      select 1
-                      from errors as settled
-                      where settled.conversation_id=tasks.conversation_id
-                        and settled.message_id=tasks.trigger_message_id
-                        and settled.kind='reply_task_already_settled'
-                        and trim(coalesce(settled.resolved_at, ''))<>''
-                        and trim(coalesce(settled.resolution, ''))<>''
-                  )
-                returning id
-                """
-            ).fetchall()
-            for row in compact_ids:
-                self._compact_settled_reply_task_input(db, int(row["id"]))
-            return len(compact_ids)
+        """Close stale tasks with exact settlement evidence in bounded writes."""
+        candidate_sql = """
+            select tasks.id, tasks.execution_generation
+            from tasks
+            where tasks.record_type='reply_tasks'
+              and tasks.status in ('failed', 'needs_human')
+              and tasks.error not in ('external_action_uncertain', 'external_action_failed')
+              and exists (
+                  select 1
+                  from errors as settled
+                  where settled.conversation_id=tasks.conversation_id
+                    and settled.message_id=tasks.trigger_message_id
+                    and settled.kind='reply_task_already_settled'
+                    and trim(coalesce(settled.resolved_at, ''))<>''
+                    and trim(coalesce(settled.resolution, ''))<>''
+              )
+        """
+        with self._connect() as db:
+            candidates = db.execute(candidate_sql + " order by tasks.id").fetchall()
+
+        reconciled = 0
+        for offset in range(0, len(candidates), SETTLED_REPLY_RECONCILE_BATCH_SIZE):
+            batch = candidates[offset:offset + SETTLED_REPLY_RECONCILE_BATCH_SIZE]
+            predicates = " or ".join(
+                "(tasks.id=? and tasks.execution_generation=?)" for _ in batch
+            )
+            parameters = [
+                value
+                for row in batch
+                for value in (row["id"], row["execution_generation"])
+            ]
+            with self._immediate_write_transaction() as db:
+                rows = db.execute(
+                    candidate_sql
+                    + f" and ({predicates}) order by tasks.id",
+                    parameters,
+                ).fetchall()
+                for row in rows:
+                    cursor = db.execute(
+                        """
+                        update tasks as tasks
+                        set status='done', error='', available_at='', locked_at=null,
+                            updated_at=current_timestamp
+                        where tasks.record_type='reply_tasks' and tasks.id=?
+                          and tasks.status in ('failed', 'needs_human')
+                          and tasks.error not in ('external_action_uncertain', 'external_action_failed')
+                          and tasks.execution_generation=?
+                          and exists (
+                              select 1
+                              from errors as settled
+                              where settled.conversation_id=tasks.conversation_id
+                                and settled.message_id=tasks.trigger_message_id
+                                and settled.kind='reply_task_already_settled'
+                                and trim(coalesce(settled.resolved_at, ''))<>''
+                                and trim(coalesce(settled.resolution, ''))<>''
+                          )
+                        returning id
+                        """,
+                        (row["id"], row["execution_generation"]),
+                    ).fetchone()
+                    if cursor is not None:
+                        self._compact_settled_reply_task_input(db, int(cursor["id"]))
+                        reconciled += 1
+        return reconciled
 
     def has_sent_reply_for_trigger(
         self,
@@ -23882,9 +23924,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         receipt_placeholders = ", ".join(
             "?" for _ in terminal_unsubscribe_outcomes
         )
-        with self._immediate_write_transaction() as db:
-            receipt_exclusion = ""
-            receipt_parameters: list[str] = []
+        receipt_exclusion = ""
+        receipt_parameters: list[str] = []
+        with self._connect() as db:
             if self._email_unsubscribe_receipts_table_exists(db):
                 receipt_exclusion = f"""
                   and not exists (
@@ -23896,9 +23938,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                 """
                 receipt_parameters = terminal_unsubscribe_outcomes
-            rows = db.execute(
-                f"""
-                select tasks.id, tasks.execution_generation, runs.structured_error_json
+            candidate_sql = f"""
+                select tasks.id, tasks.execution_generation, runs.id as run_id,
+                       runs.structured_error_json
                 from ({REPLY_TASK_SQL}) as tasks
                 join ({AGENT_RUN_SQL}) as runs on runs.id=(
                     select latest.id
@@ -23927,27 +23969,47 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         and trim(coalesce(settled.resolution, ''))<>''
                   )
                   {receipt_exclusion}
-                order by tasks.id
-                """,
+            """
+            candidates = db.execute(
+                candidate_sql + " order by tasks.id",
                 receipt_parameters,
             ).fetchall()
-            repaired = 0
-            for row in rows:
-                cursor = db.execute(
-                    """
-                    update tasks as reply_tasks
-                    set status='failed', error=?, available_at='', locked_at=null,
-                        updated_at=current_timestamp
-                    where reply_tasks.record_type='reply_tasks' and id=? and status='done' and execution_generation=?
-                    """,
-                    (
-                        self._agent_run_failure_code(row["structured_error_json"]),
-                        row["id"],
-                        row["execution_generation"],
-                    ),
-                )
-                repaired += cursor.rowcount
-            return repaired
+
+        repaired = 0
+        for offset in range(0, len(candidates), DONE_FAILED_RUN_RECONCILE_BATCH_SIZE):
+            batch = candidates[offset:offset + DONE_FAILED_RUN_RECONCILE_BATCH_SIZE]
+            batch_predicates = " or ".join(
+                "(tasks.id=? and tasks.execution_generation=? and runs.id=?)"
+                for _ in batch
+            )
+            batch_parameters = [
+                value
+                for row in batch
+                for value in (row["id"], row["execution_generation"], row["run_id"])
+            ]
+            with self._immediate_write_transaction() as db:
+                rows = db.execute(
+                    candidate_sql
+                    + f" and ({batch_predicates}) order by tasks.id",
+                    [*receipt_parameters, *batch_parameters],
+                ).fetchall()
+                for row in rows:
+                    cursor = db.execute(
+                        """
+                        update tasks as reply_tasks
+                        set status='failed', error=?, available_at='', locked_at=null,
+                            updated_at=current_timestamp
+                        where reply_tasks.record_type='reply_tasks' and id=?
+                          and status='done' and execution_generation=?
+                        """,
+                        (
+                            self._agent_run_failure_code(row["structured_error_json"]),
+                            row["id"],
+                            row["execution_generation"],
+                        ),
+                    )
+                    repaired += cursor.rowcount
+        return repaired
 
     def reconcile_failed_reply_tasks_with_confirmation_required_runs(self) -> int:
         """Repair old confirmation projections as truthful technical failures.

@@ -32,7 +32,11 @@ def test_sent_crud_preserves_raw_fields_public_ids_and_feedback_reads(tmp_path):
     recalled = store.get_sent_reply("conversation", "first")
     assert recalled is not None and recalled.recalled_at is not None
     with store._connect() as db:
-        assert recalled.recalled_at == db.execute("select current_timestamp").fetchone()[0]
+        persisted_recalled_at = db.execute(
+            f"select recalled_at from ({SENT_REPLY_SQL}) where id=?",
+            (first.id,),
+        ).fetchone()[0]
+        assert recalled.recalled_at == persisted_recalled_at
         assert db.execute(f"select count(*) from ({SENT_REPLY_SQL})").fetchone()[0] == 1
         assert db.execute("select 1 from sqlite_master where name='sent_replies'").fetchone() is None
     store.update_sent_reply_recall(first.id, recall_status="failed", recall_error="provider")
