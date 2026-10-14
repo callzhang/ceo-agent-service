@@ -17,6 +17,7 @@ import pytest
 from app import audit_web, history_types
 from app.agent_cron.commands import SERVICE_COMMAND_OPTIONS
 from app.agent_cron.scheduler import PREVIOUS_EXECUTION_ACTIVE
+from app.action_storage import insert_email_action
 from app.dingtalk_models import DingTalkMessage
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
@@ -356,36 +357,37 @@ def _email_action(
                 plan_id if current else "email-action-plan:newer",
             ),
         )
-        db.execute(
-            "insert into email_action_plans ("
-            "action_plan_id, action_plan_version, classification_id, account_id, "
-            "category, classification_source, confidence, model_id, config_version, "
-            "actions_json, action_parameters_json, created_at) "
-            "values (?, 1, ?, 'acct', 'work', 'model', 0.9, 'model-1', 'v1', "
-            "'[\"move\"]', '{\"move\":{\"target_folder\":\"工作\"}}', "
-            "'2026-09-16T07:27:13+00:00')",
-            (plan_id, classification_id),
-        )
-        db.execute(
-            "insert into email_actions ("
-            "action_id, action_plan_id, classification_id, account_id, action_type, "
-            "parameters_json, config_version, status, attempt_count, next_attempt_at, "
-            "provider_operation, provider_target, error, created_at, updated_at) "
-            "values (?, ?, ?, 'acct', ?, '{\"target_folder\":\"工作\"}', 'v1', "
-            "?, ?, ?, 'MOVE', 'acct:mid', ?, "
-            "'2026-09-16T07:27:13+00:00', ?)",
-            (
-                f"email-action:{number}",
-                plan_id,
-                classification_id,
-                action_type,
-                status,
-                attempt_count,
-                next_attempt_at,
-                error,
-                f"2026-09-16T07:{number:02d}:00+00:00",
-            ),
-        )
+        insert_email_action(db, "email_action_plans", {
+            "action_plan_id": plan_id,
+            "action_plan_version": 1,
+            "classification_id": classification_id,
+            "account_id": "acct",
+            "category": "work",
+            "classification_source": "model",
+            "confidence": 0.9,
+            "model_id": "model-1",
+            "config_version": "v1",
+            "actions_json": '["move"]',
+            "action_parameters_json": '{"move":{"target_folder":"工作"}}',
+            "created_at": "2026-09-16T07:27:13+00:00",
+        })
+        insert_email_action(db, "email_actions", {
+            "action_id": f"email-action:{number}",
+            "action_plan_id": plan_id,
+            "classification_id": classification_id,
+            "account_id": "acct",
+            "action_type": action_type,
+            "parameters_json": '{"target_folder":"工作"}',
+            "config_version": "v1",
+            "status": status,
+            "attempt_count": attempt_count,
+            "next_attempt_at": next_attempt_at,
+            "provider_operation": "MOVE",
+            "provider_target": "acct:mid",
+            "error": error,
+            "created_at": "2026-09-16T07:27:13+00:00",
+            "updated_at": f"2026-09-16T07:{number:02d}:00+00:00",
+        })
 
 
 def test_email_provider_actions_appear_with_the_attention_failure_rule(

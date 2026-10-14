@@ -2426,3 +2426,27 @@ checks passed; an AST comparison found every nonselected function/class and all
 selected assertions unchanged. No runtime, schema, provider, production, CI,
 push or deployment was part of this unit. The rest of Task7 and full10+1
 redesign remain open.
+
+### Task7 shared current Email fixtures
+
+Two History callers now seed the same classification, plan and provider-action
+facts through the existing finite Email action writer. The classification SQL,
+Store-only empty History check before Email initialization, current/superseded
+plan cases, retry window, failed Attention identity and all assertions remain
+unchanged. The isolated queue-summary test now gives the current Email
+projection its 18 real `email_*` columns and `email_actions` discriminator,
+using the current field/type declarations. Its original seven input rows still
+include uppercase `FAILED`, an invalid retry date, retired/inactive plans, a
+latest-row tie and a Unicode unit separator in the error. This small query
+fixture is intentionally permissive; it does not establish canonical storage
+or schema-validation behavior. The Store retry fixture no longer creates four
+retired, empty unsubscribe tables because the current Store already supplies
+the finite projections the method reads.
+
+The focused baseline was 4 failed and 5 passed, with failures at the removed
+History plan table and absent `actions` table in the snapshot fixture. The same
+nine cases passed after the changes. The complete History and snapshot modules
+plus the selected Store retry case passed 27/27. Scoped Ruff, diff and AST
+checks passed: unselected functions/classes and selected assertions did not
+change. This is local fixture coverage only; no runtime, provider, CI,
+production, push or deployment work is claimed.

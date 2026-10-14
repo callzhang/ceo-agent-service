@@ -4882,14 +4882,6 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
         channel="email",
     )
     with store._connect() as db:
-        db.executescript(
-            """
-            create table email_unsubscribe_claims (action_identity text primary key);
-            create table email_unsubscribe_receipts (action_identity text);
-            create table email_unsubscribe_effects (action_identity text);
-            create table email_unsubscribe_steps (action_identity text);
-            """
-        )
         db.execute(
             "update tasks set status='failed', error=? where record_type='reply_tasks' and trigger_message_id=?",
             (
