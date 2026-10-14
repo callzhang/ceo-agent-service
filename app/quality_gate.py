@@ -846,7 +846,7 @@ def _check_external_delivery_queues(
         ),
     ):
         source_sql = (
-            f"({reply_action_projection('memory_write_events', validated_reply_variant(db))})"
+            f"({reply_action_projection('memory_write_events', validated_reply_variant(db, include_email=True))})"
             if source == "memory_write_events" else source
         )
         if source == "work_todo_dingtalk_links":

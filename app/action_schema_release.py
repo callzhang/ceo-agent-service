@@ -39,6 +39,8 @@ def publication_candidate_source(db: sqlite3.Connection) -> str:
         return REVIEW_CANDIDATE_SQL
     if version == "2026-10-13.5" and reply_schema_is_current(db):
         return REVIEW_CANDIDATE_SQL
+    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True):
+        return REVIEW_CANDIDATE_SQL
     raise ValueError("unknown or mixed action publication source schema")
 
 

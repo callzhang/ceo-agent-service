@@ -19,8 +19,9 @@ import app.store as store_module
 from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mutation
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
 from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, insert_action, update_action
+from app.action_storage import insert_email_action, update_email_action
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, SCHEDULED_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression, task_physical_id
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression, task_physical_id
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -29,12 +30,12 @@ from app.store import (
 )
 
 
-def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts():
-    with sqlite3.connect(":memory:") as db:
-        create_task_schema(db)
-        db.execute(
-            "create table email_unsubscribe_receipts (action_identity text, outcome text)"
-        )
+def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_path):
+    from tests.test_email_action_external_consumers import _two_failed_actions
+    from tests.test_email_action_storage import _cases
+
+    store = _two_failed_actions(tmp_path / "unsubscribe-parent.sqlite3")
+    with store._connect() as db:
         identity = "email-action:" + "a" * 64
         key = "email-unsubscribe-page:" + identity + ":" + "b" * 64
         insert_task(db, "reply_tasks", {
@@ -46,19 +47,25 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts():
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
-        db.execute(
-            "insert into email_unsubscribe_receipts values (?, 'skipped_no_reliable_entry')",
-            (identity,),
+        receipt = insert_email_action(
+            db, "email_unsubscribe_receipts",
+            _cases()["email_unsubscribe_receipts"] | {
+                "action_identity": identity,
+                "outcome": "skipped_no_reliable_entry",
+            },
         )
         assert store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
-        db.execute("update email_unsubscribe_receipts set outcome='done'")
+        update_email_action(db, "email_unsubscribe_receipts", receipt.lastrowid, {"outcome": "done"})
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
         db.execute("update tasks set status='failed' where record_type='reply_tasks'")
-        db.execute("update email_unsubscribe_receipts set outcome='skipped_no_reliable_entry'")
+        update_email_action(
+            db, "email_unsubscribe_receipts", receipt.lastrowid,
+            {"outcome": "skipped_no_reliable_entry"},
+        )
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )

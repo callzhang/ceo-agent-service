@@ -1539,3 +1539,48 @@ this unit. The frozen handoff contains48 F tests in total: the first47 passed in
 the initial focused batch, and the added single current-repair case passed in the
 final3-case batch. The two validation modes in that case are not counted as two
 parameterized tests.
+
+### Task5A finite external consumers, local candidate
+
+Task5A converts active Store unsubscribe receipt/recovery, History (including
+the PR87 failed-candidate fast path), audit queue/Attention, quality memory
+queue, deployment maintenance and exact current publication readers. It uses
+existing typed Email projections and writes. `validated_reply_variant` and
+`reply_schema_is_current` keep their Store19 default; only the two active memory
+queue callers and the selected Store20 publication branches explicitly request
+Email29 validation. Store20-first remains valid for generic publication readers,
+whereas Email runtime availability requires Email52 and the Email-specific quiet
+reader accepts only exact 19/51 or 20/52 pairs. Historical
+`publication_postfix_sources` has no active `app/` caller and remains unselected;
+`publication_run_sources` has no version boundary to extend.
+
+The source/target History oracle archives the actual published-main `0441cf15`
+`app/` reader under an owned test temp root, creates a valid Store19/Email51
+source, then uses the real paired child migration to compare full rows,
+failed-only rows, count, one-row pages, detail and mixed 16/Email ordering against
+Store20/Email52. An independent signed-ROWID case inserts failed target actions
+at -7 and 42 with NULL public action IDs: History retains
+`email-action:-7`/`email-action:42` and matching `source_id`; Attention retains
+both rows. That target SQL boundary is separate from genuine old-source strict
+constructor/source oracle behavior; no historical markers, validators or source
+rows were altered to force a false NULL migration success.
+
+Current-plan direct polling refuses the retry before its due time, claims after
+the window, and excludes a retired plan. With 1,200 unrelated sent-reply actions,
+the poll plan searches `idx_actions_email_public_key (record_type=?)` then the
+classification primary key; Attention uses the same typed index and primary-key
+lookup. Neither scans classifications. Measured progress-handler count was 0
+1,000-step buckets for each query (fewer than 1,000 VM steps), below the 300,000
+limit. This is a bounded synthetic plan check, not a production latency claim.
+
+Focused RED cases initially failed on old physical reads/current validators.
+After conversion, the scoped command over `test_email_action_external_consumers.py`,
+`test_email_action_attention_query_plan.py`, `test_store_history_pagination.py`,
+`test_store.py`'s direct parent and retry cases, and `test_audit_web.py` reported
+`355 passed in 98.23s`, exit 0. After a lint-only fixture registration change,
+the new external-consumer file reran `10 passed in 24.65s`, exit 0. Each run
+owned and removed its `/tmp/email13-task5a-*` root. This is not the full named
+Task5 matrix: broader old fixture H/T/S conversion, console/worker/CLI/direct
+delivery/reconcile tests and Task4/5 final acceptance remain open. Task6/7
+copy/native/CI/publication/live readback also remain open; this branch is not
+ready for deployment.

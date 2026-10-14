@@ -3196,5 +3196,14 @@ column helper before validation, preserving the existing missing-column repair.
 Local tests cover real constructors, both orders/concurrency, child fault/crash,
 current-fact inverse and the actual RepositoryUpdater lifecycle using the newly
 loaded selector. They do not establish selector reload in an already-running old
-UI/updater process. Remaining Task5 old-table consumers mean the entire branch is
-not deployable; source-copy/native/provider/CI/publication gates remain open.
+UI/updater process. Task5A now reads current Email action History (including the
+failed candidate path), Attention, unsubscribe receipts and deployment quiet
+state through finite source-shaped projections. History identity uses the
+signed source ROWID even when the public action ID is NULL. Attention retains
+current-plan, status and retry-window predicates; the current Email runtime
+requires both Store20 and Email52, while generic publication readers accept
+Store20-first before the Email ledger is initialized. Deployment quiet checks
+read the exact Store19/Email51 native source or Store20/Email52 target.
+Historical/default fixture adaptation and the remaining Task5 selected paths
+are still open. The branch is not deployable; source-copy/native/provider/CI/
+publication gates remain open.

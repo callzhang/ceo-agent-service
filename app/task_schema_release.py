@@ -59,6 +59,10 @@ def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
             REPLY_TASK_SQL,
             "select status from tasks where record_type='work_summary_inputs'",
         )
+    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True)
+            and {"tasks", "runs"} <= tables
+            and not (old | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
+        return REPLY_TASK_SQL, "select status from tasks where record_type='work_summary_inputs'"
     raise ValueError("unknown or mixed task publication source schema")
 
 
@@ -89,6 +93,10 @@ def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
             }
         ).intersection(tables)
     ):
+        return MEETING_JOB_SQL, MEETING_RUN_SQL
+    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True)
+            and {"tasks", "runs"} <= tables
+            and not (set(RETIRED_TASK_TABLES) | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
         return MEETING_JOB_SQL, MEETING_RUN_SQL
     raise ValueError("unknown or mixed meeting publication source schema")
 

@@ -567,13 +567,14 @@ def reply_action_projection(kind, reply_variant):
 REPLY_ATTEMPT_COMMON_SQL = reply_action_projection("reply_attempts", "fresh_memory_fk")
 
 
-def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=False) -> str:
+def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=False,
+                            include_email=False) -> str:
     """Select one complete canonical E declaration, including its FK and indexes."""
     matches = [
         variant for variant in REPLY_VARIANTS
         if action_schema_is_current(
             db, allow_missing_objects=allow_missing_objects,
-            include_reply=True, reply_variant=variant,
+            include_reply=True, reply_variant=variant, include_email=include_email,
         )
     ]
     if len(matches) != 1:
@@ -581,9 +582,10 @@ def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=Fal
     return matches[0]
 
 
-def reply_schema_is_current(db: sqlite3.Connection) -> bool:
-    """Recognize either complete Store19 declaration, without altering the DB."""
-    return any(action_schema_is_current(db, include_reply=True, reply_variant=variant)
+def reply_schema_is_current(db: sqlite3.Connection, *, include_email=False) -> bool:
+    """Recognize the selected complete reply declaration without altering the DB."""
+    return any(action_schema_is_current(db, include_reply=True, reply_variant=variant,
+                                        include_email=include_email)
                for variant in REPLY_VARIANTS)
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]

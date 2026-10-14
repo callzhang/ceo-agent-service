@@ -34,6 +34,7 @@ from app.reviewed_candidate_store import (
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.email_classification_schema import create_current_email_classifications
 from app.action_email_schema_release import require_current_email_pair, TARGET_EMAIL_VERSION
+from app.email_publication_sources import current_email_actions_available
 from app.run_storage import (
     SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
     create_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
@@ -193,6 +194,7 @@ from app.action_storage import (
     update_action,
     delete_action,
     reply_action_projection,
+    email_action_projection,
     _reply_variant_for,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
@@ -9587,7 +9589,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     ]
                     placeholders = ",".join("?" for _ in outcomes)
                     settled = db.execute(
-                        f"select 1 from email_unsubscribe_receipts "
+                        f"select 1 from ({email_action_projection('email_unsubscribe_receipts')}) "
                         f"where ?='email' and action_identity=? "
                         f"and outcome in ({placeholders}) limit 1",
                         (task["channel"], task["trigger_message_id"], *outcomes),
@@ -11180,7 +11182,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             from app.email_unsubscribe_direct import _RETRYABLE_SKIP_OUTCOMES
 
             query = (
-                "select 1 from email_unsubscribe_receipts "
+                f"select 1 from ({email_action_projection('email_unsubscribe_receipts')}) "
                 "where action_identity=? and outcome in ("
                 + ",".join("?" for _ in _RETRYABLE_SKIP_OUTCOMES)
                 + ")"
@@ -13936,7 +13938,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise AgentRunLeaseLostError("unsubscribe execution identity changed")
             if db.execute("select 1 from service_state where key=?", (key,)).fetchone():
                 raise ValueError("unsubscribe execution requires reconciliation")
-            receipt = db.execute("select effect_digest,outcome from email_unsubscribe_receipts where action_identity=?", (action_identity,)).fetchone()
+            receipt = db.execute(f"select effect_digest,outcome from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=?", (action_identity,)).fetchone()
             if receipt is not None and (
                 receipt["effect_digest"] != previous_receipt_digest or receipt["outcome"] not in _RETRYABLE_SKIP_OUTCOMES
             ):
@@ -13957,7 +13959,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def settle_direct_email_unsubscribe_execution(self, action_identity: str, execution_record: str) -> None:
         """Clear only this attempt's fence after a real terminal receipt exists."""
         with self._immediate_write_transaction() as db:
-            if db.execute("select 1 from email_unsubscribe_receipts where action_identity=?", (action_identity,)).fetchone() is None:
+            if db.execute(f"select 1 from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=?", (action_identity,)).fetchone() is None:
                 raise ValueError("unsubscribe terminal receipt is unavailable")
             db.execute(
                 "delete from service_state where key=? and value=?",
@@ -14260,10 +14262,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                   and coalesce(json_extract(tasks.trigger_message_json, '$.action_identity'), '')=tasks.trigger_message_id
                   and not exists (select 1 from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=tasks.id)
-                  and not exists (select 1 from email_unsubscribe_claims where action_identity=tasks.trigger_message_id)
-                  and not exists (select 1 from email_unsubscribe_receipts where action_identity=tasks.trigger_message_id)
-                  and not exists (select 1 from email_unsubscribe_effects where action_identity=tasks.trigger_message_id)
-                  and not exists (select 1 from email_unsubscribe_steps where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from ({email_action_projection('email_unsubscribe_claims')}) where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from ({email_action_projection('email_unsubscribe_effects')}) where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from ({email_action_projection('email_unsubscribe_steps')}) where action_identity=tasks.trigger_message_id)
                 order by tasks.id
                 """,
                 (retryable_errors[0], retryable_errors[1], retryable_errors[2]),
@@ -20194,13 +20196,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     @staticmethod
     def _email_unsubscribe_receipts_table_exists(db: sqlite3.Connection) -> bool:
         """Whether the independently initialized Email receipt ledger exists."""
-        return (
-            db.execute(
-                "select 1 from sqlite_master where type='table' and name=?",
-                ("email_unsubscribe_receipts",),
-            ).fetchone()
-            is not None
-        )
+        return current_email_actions_available(db)
 
     def reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts(self) -> int:
         """Project durable email unsubscribe receipts onto their failed tasks.
@@ -20233,11 +20229,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     end,
                     error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
-                from email_unsubscribe_receipts as receipts
+                from ({email_action_projection('email_unsubscribe_receipts')}) as receipts
                 where tasks.record_type='reply_tasks' and tasks.id in (
                     select current_tasks.id
                     from ({REPLY_TASK_SQL}) as current_tasks
-                    join email_unsubscribe_receipts as current_receipts
+                    join ({email_action_projection('email_unsubscribe_receipts')}) as current_receipts
                       on current_receipts.action_identity=current_tasks.trigger_message_id
                     where current_tasks.channel='email'
                       and current_tasks.status='failed'
@@ -23944,7 +23940,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 receipt_exclusion = f"""
                   and not exists (
                       select 1
-                      from email_unsubscribe_receipts as receipts
+                      from ({email_action_projection('email_unsubscribe_receipts')}) as receipts
                       where tasks.channel='email'
                         and receipts.action_identity=tasks.trigger_message_id
                         and receipts.outcome in ({receipt_placeholders})
@@ -30546,7 +30542,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             candidate_queries["email_actions"] = f"""
                 select actions.rowid as source_id,
                        coalesce(datetime(actions.updated_at), actions.updated_at) as occurred_at
-                from email_actions as actions
+                from ({email_action_projection('email_actions', include_rowid=True)}) as actions
                 join email_classifications as messages
                   on messages.id=actions.classification_id
                 where actions.status='failed'
@@ -30718,18 +30714,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return int(row["count"] or 0)
 
     def _email_actions_history_available(self) -> bool:
-        """Whether EmailStore's action tables exist in this database yet."""
-        if getattr(self, "_email_actions_history_tables_seen", False):
-            return True
+        """Whether EmailStore has initialized the selected Email schema."""
         with self._connect() as db:
-            found = db.execute(
-                "select count(*) from sqlite_master where type='table' "
-                "and name in ('email_actions', 'email_classifications')"
-            ).fetchone()[0]
-        if int(found) == 2:
-            self._email_actions_history_tables_seen = True
-            return True
-        return False
+            return current_email_actions_available(db)
 
     def _operation_logs_base_query(
         self,
@@ -31200,7 +31187,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from email_actions as actions
+                from ({email_action_projection('email_actions', include_rowid=True)}) as actions
                 join email_classifications as messages
                   on messages.id=actions.classification_id
             """
@@ -31212,7 +31199,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             match = re.search(r"'([^']+)' as source_table", branch)
             if match and match.group(1) in requested:
                 branches.append(branch)
-        return "union all".join(branches)
+        return "union all".join(branches) if branches else f"select * from ({query}) where 0"
 
     def _operation_log_filters(
         self,

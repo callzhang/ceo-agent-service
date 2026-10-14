@@ -2422,9 +2422,18 @@ source identities/ROWIDs/allocator waters and exact source markers/ledger; it do
 not restore an old database snapshot. The source SQL NULL/application policy
 remains method-specific and unchanged.
 
-Task5 external consumers still contain native old-table SQL, including Store
-unsubscribe recovery/receipt helpers, History/Attention and maintenance reads.
-Those consumers and the remaining old-default test fixtures are open. The whole
-branch is not deployable. Latest-source-copy binding, genuine native fake-provider
-acceptance, CI/publication/live readback remain Tasks6/7; none is established by
-this candidate's constructor and DAO tests.
+Task5A converts the active Store unsubscribe receipt/recovery reads, History
+(including the failed-only candidate path), queue/Attention, and deployment
+quiet read to finite source-shaped Email projections. History keeps the signed
+native source ROWID as `email-action:<rowid>`/`source_id`, independently of the
+nullable public action ID; failed Attention keeps current-plan and retry-window
+filters. Publication readers explicitly accept the exact Store20 action shape,
+including valid Store-first databases without an Email ledger. The Email quiet
+reader accepts only the exact Store19/Email51 source or Store20/Email52 target;
+runtime Email availability requires the initialized target pair. Existing audit,
+recovery, outbound and quality policies are unchanged.
+
+Task5A is a bounded local consumer conversion, not final Task5 acceptance.
+Remaining historical/current fixture adaptation, all selected console/worker
+tests and source-copy/native/CI/publication/live readback gates remain open.
+The whole branch is not deployable.
