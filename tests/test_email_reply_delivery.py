@@ -10,6 +10,7 @@ import threading
 
 import pytest
 
+from app.action_storage import delete_email_action, update_email_action
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
@@ -27,6 +28,10 @@ from app.email_reply_delivery import (
     outgoing_message_id,
 )
 from app.email_store import (
+    EMAIL_REPLY_CLAIM_LOCATOR_SQL,
+    EMAIL_REPLY_CLAIM_SQL,
+    EMAIL_REPLY_RECEIPT_LOCATOR_SQL,
+    EMAIL_REPLY_RECEIPT_SQL,
     EmailReplyDispatchConflict,
     EmailReplyReceiptConflict,
     EmailStore,
@@ -349,7 +354,7 @@ def _update_account(
 def _claim_status(store: EmailStore, action_identity: str) -> str:
     with sqlite3.connect(store.path) as db:
         row = db.execute(
-            "select status from email_reply_dispatch_claims where action_identity=?",
+            f"select status from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
             (action_identity,),
         ).fetchone()
     assert row is not None
@@ -952,13 +957,14 @@ def test_receipt_replay_self_heals_matching_unfinished_claim(
     store, harness, effect = _delivery_setup(tmp_path)
     first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            """
-            update email_reply_dispatch_claims set status=?
-            where action_identity=?
-            """,
-            (claim_status, effect.action_identity),
-        )
+        rows = db.execute(
+            f"select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=?",
+            (effect.action_identity,),
+        ).fetchall()
+        for (source_rowid,) in rows:
+            update_email_action(
+                db, "email_reply_dispatch_claims", source_rowid, {"status": claim_status}
+            )
 
     replay = EmailReplyDelivery(store, harness, owner=OWNER_B).deliver(effect)
 
@@ -974,22 +980,27 @@ def test_receipt_insert_and_claim_done_roll_back_as_one_transaction(
     first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
     assert first.status == "done"
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "delete from email_reply_receipts where action_identity=?",
+        receipt_rows = db.execute(
+            f"select rowid from ({EMAIL_REPLY_RECEIPT_LOCATOR_SQL}) where action_identity=?",
             (effect.action_identity,),
-        )
-        db.execute(
-            """
-            update email_reply_dispatch_claims set status='uncertain'
-            where action_identity=?
-            """,
+        ).fetchall()
+        for (source_rowid,) in receipt_rows:
+            delete_email_action(db, "email_reply_receipts", source_rowid)
+        claim_rows = db.execute(
+            f"select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=?",
             (effect.action_identity,),
-        )
+        ).fetchall()
+        for (source_rowid,) in claim_rows:
+            update_email_action(
+                db, "email_reply_dispatch_claims", source_rowid, {"status": "uncertain"}
+            )
         db.execute(
             """
             create trigger test_abort_reply_claim_done
-            before update of status on email_reply_dispatch_claims
-            when new.status='done'
+            before update of payload_json on actions
+            when old.record_type='email_reply_dispatch_claims'
+              and new.record_type='email_reply_dispatch_claims'
+              and new.email_status='done'
             begin
                 select raise(abort, 'simulated_claim_done_crash');
             end
@@ -1076,7 +1087,7 @@ def test_concurrent_reconcilers_share_one_receipt_and_finish_same_claim(
     with sqlite3.connect(store.path) as db:
         assert (
             db.execute(
-                "select count(*) from email_reply_receipts where action_identity=?",
+                f"select count(*) from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                 (effect.action_identity,),
             ).fetchone()[0]
             == 1

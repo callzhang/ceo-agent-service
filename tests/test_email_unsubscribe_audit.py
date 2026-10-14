@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.agent_cli as agent_cli
+from app.action_storage import insert_action, update_action, update_email_action
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
@@ -21,6 +22,9 @@ from app.email_classifier_contracts import (
     build_versioned_email_action_plan,
 )
 from app.email_store import (
+    EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL,
+    EMAIL_UNSUBSCRIBE_EFFECT_SQL,
+    EMAIL_UNSUBSCRIBE_STEP_SQL,
     EmailPersistenceCorruption,
     EmailStore,
     EmailUnsubscribeClaimConflict,
@@ -760,11 +764,18 @@ def test_two_step_terminal_snapshot_rejects_earlier_effect_audit_tamper(
         )
         replacement_run_id = other_audit.id
     with sqlite3.connect(fixture.email_store.path) as db:
-        db.execute(
-            "update email_unsubscribe_effects set audit_agent_run_id=? "
+        rows = db.execute(
+            f"select action_identity, effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=? and audit_agent_run_id=?",
-            (replacement_run_id, ACTION_IDENTITY, first_audit.id),
-        )
+            (ACTION_IDENTITY, first_audit.id),
+        ).fetchall()
+        for action_identity, effect_digest in rows:
+            update_action(
+                db,
+                "email_unsubscribe_effects",
+                (action_identity, effect_digest),
+                {"audit_agent_run_id": replacement_run_id},
+            )
 
     claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
     assert claim is not None
@@ -789,7 +800,7 @@ def test_two_step_terminal_snapshot_rejects_orphan_effect_branch(
     with sqlite3.connect(fixture.email_store.path) as db:
         db.row_factory = sqlite3.Row
         root = db.execute(
-            "select * from email_unsubscribe_effects "
+            f"select * from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=? and audit_agent_run_id=?",
             (ACTION_IDENTITY, first_audit.id),
         ).fetchone()
@@ -814,19 +825,17 @@ def test_two_step_terminal_snapshot_rejects_orphan_effect_branch(
             operations=branch_operations,
             previous_effect_digest=root["effect_digest"],
         )
-        db.execute(
-            "insert into email_unsubscribe_effects ("
-            "action_identity, effect_digest, previous_effect_digest, "
-            "operations_json, audit_agent_run_id, created_at"
-            ") values (?, ?, ?, ?, ?, ?)",
-            (
-                ACTION_IDENTITY,
-                branch_digest,
-                root["effect_digest"],
-                json.dumps(branch_operations, sort_keys=True),
-                second_consumer.id,
-                "2026-09-02T08:00:03+00:00",
-            ),
+        insert_action(
+            db,
+            "email_unsubscribe_effects",
+            {
+                "action_identity": ACTION_IDENTITY,
+                "effect_digest": branch_digest,
+                "previous_effect_digest": root["effect_digest"],
+                "operations_json": json.dumps(branch_operations, sort_keys=True),
+                "audit_agent_run_id": second_consumer.id,
+                "created_at": "2026-09-02T08:00:03+00:00",
+            },
         )
 
     claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
@@ -848,17 +857,22 @@ def test_two_step_terminal_snapshot_binds_claim_owner_to_head_audit_run(
         _complete_two_step_terminal(fixture)
     )
     with sqlite3.connect(fixture.email_store.path) as db:
-        db.execute(
-            "update email_unsubscribe_claims "
-            "set owner_id=?, owner_generation=?, lease_token=? "
+        rows = db.execute(
+            f"select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) "
             "where action_identity=?",
-            (
-                f"email-unsubscribe-audit:{first_audit.id}",
-                999,
-                "unsubscribe-audit-lease:tampered",
-                ACTION_IDENTITY,
-            ),
-        )
+            (ACTION_IDENTITY,),
+        ).fetchall()
+        for (source_rowid,) in rows:
+            update_email_action(
+                db,
+                "email_unsubscribe_claims",
+                source_rowid,
+                {
+                    "owner_id": f"email-unsubscribe-audit:{first_audit.id}",
+                    "owner_generation": 999,
+                    "lease_token": "unsubscribe-audit-lease:tampered",
+                },
+            )
 
     claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
     assert claim is not None
@@ -1093,18 +1107,27 @@ def test_executor_persisted_receipt_rejects_changed_audit_or_owner_binding(
 
     def change_binding(result, _owner):
         with sqlite3.connect(fixture.email_store.path) as db:
+            rows = db.execute(
+                f"select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) "
+                "where action_identity=?",
+                (ACTION_IDENTITY,),
+            ).fetchall()
             if race == "other_audit":
-                db.execute(
-                    "update email_unsubscribe_claims set audit_agent_run_id=? "
-                    "where action_identity=?",
-                    (fixture.consumer_run.id, ACTION_IDENTITY),
-                )
+                for (source_rowid,) in rows:
+                    update_email_action(
+                        db,
+                        "email_unsubscribe_claims",
+                        source_rowid,
+                        {"audit_agent_run_id": fixture.consumer_run.id},
+                    )
             else:
-                db.execute(
-                    "update email_unsubscribe_claims set lease_token=? "
-                    "where action_identity=?",
-                    ("unsubscribe-audit-lease:stale", ACTION_IDENTITY),
-                )
+                for (source_rowid,) in rows:
+                    update_email_action(
+                        db,
+                        "email_unsubscribe_claims",
+                        source_rowid,
+                        {"lease_token": "unsubscribe-audit-lease:stale"},
+                    )
         return result
 
     result = _execute_with_durable_executor(
@@ -1123,11 +1146,14 @@ def test_executor_persisted_receipt_rejects_step_effect_digest_tamper(
 
     def tamper_step(result, _owner):
         with sqlite3.connect(fixture.email_store.path) as db:
-            db.execute(
-                "update email_unsubscribe_steps set effect_digest=? "
-                "where action_identity=?",
-                ("f" * 64, ACTION_IDENTITY),
-            )
+            rows = db.execute(
+                f"select id from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) where action_identity=?",
+                (ACTION_IDENTITY,),
+            ).fetchall()
+            for (step_id,) in rows:
+                update_action(
+                    db, "email_unsubscribe_steps", step_id, {"effect_digest": "f" * 64}
+                )
         return result
 
     result = _execute_with_durable_executor(
@@ -1230,7 +1256,7 @@ def test_current_running_audit_executes_one_operation_and_persists_exact_run_id(
     assert claim["audit_agent_run_id"] == fixture.audit_run.id
     with sqlite3.connect(fixture.email_store.path) as db:
         effect_run_id = db.execute(
-            "select audit_agent_run_id from email_unsubscribe_effects "
+            f"select audit_agent_run_id from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=?",
             (ACTION_IDENTITY,),
         ).fetchone()[0]
@@ -1364,7 +1390,7 @@ def test_audited_continuation_executes_only_appended_operation_from_blank_browse
     with sqlite3.connect(fixture.email_store.path) as db:
         durable_steps = db.execute(
             "select sequence, effect_digest, operation from "
-            "email_unsubscribe_steps where action_identity=? order by sequence",
+            f"({EMAIL_UNSUBSCRIBE_STEP_SQL}) where action_identity=? order by sequence",
             (ACTION_IDENTITY,),
         ).fetchall()
     assert [(step[0], step[2]) for step in durable_steps] == [
@@ -1407,10 +1433,11 @@ def test_preclaimed_audit_prefix_or_effect_tamper_fails_before_browser(
     prefix = 1 if tamper == "prefix" else 0
     if tamper == "effect_audit_run":
         with sqlite3.connect(fixture.email_store.path) as db:
-            db.execute(
-                "update email_unsubscribe_effects set audit_agent_run_id=? "
-                "where action_identity=? and effect_digest=?",
-                (fixture.audit_run.id + 999, ACTION_IDENTITY, effect.effect_digest),
+            update_action(
+                db,
+                "email_unsubscribe_effects",
+                (ACTION_IDENTITY, effect.effect_digest),
+                {"audit_agent_run_id": fixture.audit_run.id + 999},
             )
 
     class ForbiddenBrowser:
@@ -1823,7 +1850,7 @@ def test_unbound_historical_claim_and_effect_rows_keep_null_audit_run_id(
     assert claim is not None and claim["audit_agent_run_id"] is None
     with sqlite3.connect(store.path) as db:
         effect_run_id = db.execute(
-            "select audit_agent_run_id from email_unsubscribe_effects "
+            f"select audit_agent_run_id from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=?",
             (ACTION_IDENTITY,),
         ).fetchone()[0]
