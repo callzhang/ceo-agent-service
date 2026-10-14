@@ -2689,6 +2689,39 @@ def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> N
     assert updated.error == "codex_process_failed"
 
 
+def test_reconciliation_candidate_scan_uses_receipt_lookup_indexes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    statements: list[str] = []
+    original_connect = store._connect
+
+    @contextmanager
+    def traced_connect():
+        with original_connect() as db:
+            db.set_trace_callback(statements.append)
+            try:
+                yield db
+            finally:
+                db.set_trace_callback(None)
+
+    monkeypatch.setattr(store, "_connect", traced_connect)
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
+
+    [candidate_query] = [
+        statement
+        for statement in statements
+        if statement.lstrip().lower().startswith(
+            "select tasks.id, tasks.execution_generation"
+        )
+    ]
+    with store._connect() as db:
+        plan = db.execute(f"explain query plan {candidate_query}").fetchall()
+    details = " ".join(str(row[3]) for row in plan)
+    assert "idx_actions_global_business" in details
+    assert "idx_actions_sent_external_key" in details
+
+
 def test_reconcile_done_failed_runs_commits_between_bounded_batches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

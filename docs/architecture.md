@@ -367,8 +367,9 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 服务启动时，`reconcile_done_reply_tasks_with_failed_current_run` 只把当前执行代的最新 run 确为
 `failed`、且没有成功外部动作或已收口错误的 `done` task 改回真实失败投影。此恢复按
 `external_action_results.business_object_key`、`sent_replies.external_action_key` 和
-`errors(conversation_id, message_id, kind)` 索引反查，不在写事务中为每条 task 扫描整张回执和
-错误表。候选扫描在只读连接完成，写入按固定大小分批；每批短写事务只按候选 task ID、执行代和
+`errors(conversation_id, message_id, kind)` 索引反查；成功外部动作检查直接使用 typed `actions`
+表，并固定走已有业务对象键与发送回执键索引，避免 SQLite 对嵌套投影连接选择按 record_type
+反复扫描回执。候选扫描在只读连接完成，写入按固定大小分批；每批短写事务只按候选 task ID、执行代和
 最新 run ID 查询并重核外部成功动作、已收口错误及终态回执，不在写锁内重跑全历史候选查询。
 并发变化的候选会跳过，不会被旧扫描结果覆盖；历史保留规则不变。
 
@@ -701,7 +702,7 @@ Status 的 Reply task 当前业务对象投影和 Email 当前计划动作投影
 随后计算计数、重试、最新时间和错误。每次请求仍使用新的只读快照；当前对象范围、大小写与空值
 处理、失败／重试划分以及更新时间和 ID 的最新行排序均沿用原口径。
 
-History 分页先在同一数据库快照中筛选、计数和排序记录标识，再只读取本页记录的展示正文；总数与内容保持同一时点，正文读取量随页大小变化。
+History 分页先在同一数据库快照中筛选、计数和排序记录标识，再只读取本页记录的展示正文；总数与内容保持同一时点，正文读取量随页大小变化。Reply Attempt 的操作日志按每个任务全部关联 Attempt 的最大公开 ID 排除较早记录，另按运行与任务的当前 execution generation 排除过时代次；最新 ID 汇总不限制代次。
 
 History 是任务和执行记录的单一展示入口。同一个任务不得被拆成多条当前队列记录；
 队列任务与执行记录都必须保留各自真实状态。筛选条件的业务含义固定如下：
@@ -2312,3 +2313,13 @@ real target markers and coordinator/subprocess remain E/F work. The unsubscribe
 cancellation preview still invokes that deferred startup shape validation.
 External direct consumers remain Task5, and full-copy/native/provider/production
 acceptance remains Task6. Default Store19/Email51 and action flags are unchanged.
+
+History latest-task lookup publication666f4078 passed exact-tree full Quality
+and normal deployment on2026-10-14. Production PID31985 and healthz were read
+back; live History list/chart, type/status controls, pagination and an existing
+Attempt detail were opened. Initial20s combined-request timeout and variable
+Status latency remain recorded; system health still reported degraded and
+unavailable historical native delivery evidence. This is scoped read acceptance,
+not proof of all task execution or provider outcomes. See
+`docs/database-redesign-history-query-validation.md` for exact evidence.
+No schema or retention change is part of this History release.

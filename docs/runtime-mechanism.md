@@ -1608,7 +1608,9 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 `failed`、但 task 投影误为 `done` 的回复任务，并保留成功外部动作和已收口错误的排除条件。
 候选扫描在只读连接完成；写入按固定大小分批，每批在短写事务内重新核对 task ID、执行代、
 最新失败 run、成功外部动作、已收口错误及适用的邮件终态回执。外部读取或扫描不会持有全局写锁，
-并发改变或已收口的候选在写入前被排除；候选状态条件和历史保留规则不变。
+并发改变或已收口的候选在写入前被排除；候选状态条件和历史保留规则不变。成功外部动作的
+只读核验使用 typed `actions` 表，并显式选择既有 `idx_actions_global_business` 与
+`idx_actions_sent_external_key` 索引，避免 SQLite 对嵌套投影连接退化为按类型反复扫描。
 
 ## 进程、租约和恢复
 
@@ -2131,7 +2133,7 @@ out of the latest-row window.
 Audit web startup does not scan and cache History lists or charts. History
 pages are computed when requested. The list counts and sorts compact source
 keys, then hydrates only the requested page in the same read snapshot; it does
-not materialize every historical display body to compute the total. Attempt detail loads tool events in one
+not materialize every historical display body to compute the total. The reply-attempt History branch computes each task's latest associated public Attempt ID once per query and applies the separate current-generation exclusion; source-specific list, count, chart, and page hydration use that same branch. Attempt detail loads tool events in one
 batched read for the historical generation shown on the page. If the task has
 since moved to a newer execution generation, its runs are read without event
 payloads because only their status is needed for the current projection. The
@@ -3098,3 +3100,13 @@ E/F work. Cancellation preview depends on the deferred shape validator. External
 consumers and native/full-copy/production acceptance remain separate Task5/6
 work. This is partial unpublished preparation; dormant SMTP remains disabled and
 Store19/Email51 is still selected by default.
+
+History latest-task lookup publication666f4078 passed exact-tree full Quality
+and normal deployment on2026-10-14. Production PID31985 and healthz were read
+back; live History list/chart, type/status controls, pagination and an existing
+Attempt detail were opened. Initial20s combined-request timeout and variable
+Status latency remain recorded; system health still reported degraded and
+unavailable historical native delivery evidence. This is scoped read acceptance,
+not proof of all task execution or provider outcomes. See
+`docs/database-redesign-history-query-validation.md` for exact evidence.
+No schema or retention change is part of this History release.

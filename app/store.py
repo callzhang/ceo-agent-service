@@ -23941,11 +23941,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             shared_exclusions = f"""
                 and not exists (
                     select 1
-                    from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
-                    join ({SENT_REPLY_SQL}) as replies
-                      on replies.external_action_key=actions.external_action_key
-                    where actions.business_object_key=tasks.business_object_key
+                    from actions as actions
+                    indexed by idx_actions_global_business
+                    where actions.record_type='external_action_results'
+                      and actions.business_object_key=tasks.business_object_key
                       and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
+                      and exists (
+                          select 1
+                          from actions as replies
+                          indexed by idx_actions_sent_external_key
+                          where replies.record_type='sent_replies'
+                            and replies.external_action_key<>''
+                            and replies.external_action_key=actions.legacy_key
+                      )
                 )
                 and not exists (
                     select 1
@@ -30599,14 +30607,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and attempt_run.execution_generation<>current_task.execution_generation
                 )
                   and not exists (
+                    with latest_task_attempt as materialized (
+                        select runs.task_id,
+                               max(cast(attempts.legacy_key as integer)) as attempt_id
+                        from actions as attempts
+                        join runs on runs.id=attempts.attempt_agent_run_id
+                                 and runs.record_type='agent_runs'
+                        where attempts.record_type='reply_attempts'
+                        group by runs.task_id
+                    )
                     select 1
                     from ({AGENT_RUN_SQL}) as historical_run
-                    join ({REPLY_ATTEMPT_COMMON_SQL}) as newer_attempt
-                      on newer_attempt.id > reply_attempts.id
-                    join ({AGENT_RUN_SQL}) as newer_run
-                      on newer_run.id = newer_attempt.agent_run_id
+                    join latest_task_attempt as latest
+                      on latest.task_id=historical_run.reply_task_id
                     where historical_run.id = reply_attempts.agent_run_id
-                      and newer_run.reply_task_id = historical_run.reply_task_id
+                      and latest.attempt_id > reply_attempts.id
                 )
                 union all
                 select
