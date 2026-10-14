@@ -219,6 +219,7 @@ STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
 STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 DONE_FAILED_RUN_RECONCILE_BATCH_SIZE = 100
 SETTLED_REPLY_RECONCILE_BATCH_SIZE = 100
+OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE = 100
 AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
 AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
@@ -26211,7 +26212,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def backfill_oa_audit_metadata(self) -> int:
         """Recover OA identity for historical agent attempts by exact task key."""
         with self._connect() as db:
-            db.execute("update sqlite_sequence set seq=seq where 0")
             rows = db.execute(
                 f"""
                 select reply_attempts.id, reply_attempts.oa_action, reply_tasks.oa_url,
@@ -26225,33 +26225,51 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         reply_tasks.oa_url<>''
                         or reply_tasks.business_object_key like 'oa:%'
                     )
+                order by reply_attempts.id
                 """
             ).fetchall()
-            repaired = 0
-            for row in rows:
-                process_instance_id, task_id = self._oa_identifiers_from_url(
-                    str(row["oa_url"] or "")
+
+        candidates = []
+        for row in rows:
+            process_instance_id, task_id = self._oa_identifiers_from_url(
+                str(row["oa_url"] or "")
+            )
+            if not process_instance_id:
+                business_key = str(row["business_object_key"] or "").strip()
+                if business_key.startswith("oa:") and ":" in business_key[3:]:
+                    process_instance_id, task_id = business_key[3:].rsplit(":", 1)
+            if not process_instance_id:
+                continue
+            oa_url = str(row["oa_url"] or "").strip()
+            if not oa_url:
+                oa_url = (
+                    "https://aflow.dingtalk.com/detail?"
+                    f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
                 )
-                if not process_instance_id:
-                    business_key = str(row["business_object_key"] or "").strip()
-                    if business_key.startswith("oa:") and ":" in business_key[3:]:
-                        process_instance_id, task_id = business_key[3:].rsplit(":", 1)
-                if not process_instance_id:
-                    continue
-                oa_url = str(row["oa_url"] or "").strip()
-                if not oa_url:
-                    oa_url = (
-                        "https://aflow.dingtalk.com/detail?"
-                        f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
-                    )
-                cursor = update_action(db, "reply_attempts", int(row["id"]), {
-                    "oa_process_instance_id": process_instance_id,
-                    "oa_task_id": task_id, "oa_url": oa_url,
-                    "oa_action": "review" if row["oa_action"] == "" else row["oa_action"],
-                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
-                }, where_sql="oa_process_instance_id=''")
-                repaired += cursor.rowcount
-            return repaired
+            candidates.append((
+                int(row["id"]),
+                process_instance_id,
+                task_id,
+                oa_url,
+                "review" if row["oa_action"] == "" else row["oa_action"],
+            ))
+
+        repaired = 0
+        for offset in range(0, len(candidates), OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE):
+            batch = candidates[offset:offset + OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE]
+            with self._immediate_write_transaction() as db:
+                for attempt_id, process_instance_id, task_id, oa_url, oa_action in batch:
+                    cursor = update_action(db, "reply_attempts", attempt_id, {
+                        "oa_process_instance_id": process_instance_id,
+                        "oa_task_id": task_id,
+                        "oa_url": oa_url,
+                        "oa_action": oa_action,
+                        "updated_at": db.execute(
+                            "select current_timestamp"
+                        ).fetchone()[0],
+                    }, where_sql="oa_process_instance_id=''")
+                    repaired += cursor.rowcount
+        return repaired
 
     @staticmethod
     def _oa_identifiers_from_url(url: str) -> tuple[str, str]:

@@ -10319,6 +10319,71 @@ def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(
     assert attempt.oa_action == "review"
 
 
+def test_backfill_oa_audit_metadata_scans_before_opening_write_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for number in range(2):
+        trigger_message_id = f"oa-pending:proc-{number}:revision-1"
+        assert store.enqueue_reply_task(
+            conversation_id="oa_pending_scan",
+            conversation_title="审批待办",
+            single_chat=True,
+            trigger_message_id=trigger_message_id,
+            trigger_create_time="2026-08-06T05:41:00+00:00",
+            trigger_sender="Derek OA",
+            trigger_text="审批待办扫描",
+            oa_url=(
+                "https://aflow.dingtalk.com/dingtalk/mobile/query/formService"
+                f"#/detail?procInstId=proc-{number}&taskId=task-{number}"
+            ),
+        )
+        with store._connect() as db:
+            db.execute(
+                "update tasks set oa_url='' where record_type='reply_tasks' and trigger_message_id=?",
+                (trigger_message_id,),
+            )
+        store.record_reply_attempt(
+            conversation_id="oa_pending_scan",
+            conversation_title="审批待办",
+            trigger_message_id=trigger_message_id,
+            trigger_sender="Derek OA",
+            trigger_text="审批待办扫描",
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status="needs_human",
+        )
+
+    read_transaction_states: list[bool] = []
+    statements: list[str] = []
+    original_connect = store._connect
+    monkeypatch.setattr(store_module, "OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE", 1)
+
+    @contextmanager
+    def traced_connect():
+        with original_connect() as db:
+            def trace(statement: str) -> None:
+                statements.append(statement)
+                if statement.lstrip().lower().startswith(
+                    "select reply_attempts.id, reply_attempts.oa_action"
+                ):
+                    read_transaction_states.append(db.in_transaction)
+
+            db.set_trace_callback(trace)
+            try:
+                yield db
+            finally:
+                db.set_trace_callback(None)
+
+    monkeypatch.setattr(store, "_connect", traced_connect)
+
+    assert store.backfill_oa_audit_metadata() == 2
+    assert read_transaction_states == [False]
+    assert sum(
+        statement.strip().upper() == "BEGIN IMMEDIATE" for statement in statements
+    ) == 2
+
+
 def test_completed_oa_needs_human_attempt_is_closed_as_skipped(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(

@@ -7155,6 +7155,62 @@ def test_meeting_delivery_loop_resolves_service_error_after_successful_cycle(
     ]
 
 
+@pytest.mark.parametrize("process_error", [None, ValueError("still failing")])
+def test_wechat_sender_loop_resolves_old_errors_only_after_successful_tick(
+    monkeypatch, tmp_path, process_error
+):
+    class StopLoop(Exception):
+        pass
+
+    calls = []
+
+    class FakeStore:
+        def __init__(self, _path):
+            pass
+
+        def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
+            calls.append(("resolve", kind, resolution))
+
+        def record_error(self, *args):
+            calls.append(("error", *args))
+
+    from app import config
+    from app.wechat import accessibility, service
+
+    monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
+    monkeypatch.setattr(config, "wechat_send_mode", lambda: "confirm")
+    monkeypatch.setattr(config, "wechat_sender_enabled", lambda: True)
+    monkeypatch.setattr(service, "ready_account_state", lambda _store: object())
+    monkeypatch.setattr(service, "account_from_state", lambda _state: object())
+    monkeypatch.setattr(service, "build_reader", lambda: object())
+    monkeypatch.setattr(service, "build_sender", lambda: object())
+
+    def process(*_args, **_kwargs):
+        if process_error is not None:
+            raise process_error
+        return 0
+
+    monkeypatch.setattr(service, "process_ready_wechat_deliveries", process)
+    monkeypatch.setattr(accessibility, "WechatSender", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        "time.sleep", lambda _seconds: (_ for _ in ()).throw(StopLoop())
+    )
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_sender_loop(WorkerSettings(db_path=tmp_path / "worker.sqlite3"))
+
+    if process_error is None:
+        assert calls == [(
+            "resolve",
+            "wechat_sender_loop_error",
+            "recovered by later successful WeChat sender tick",
+        )]
+    else:
+        assert calls == [
+            ("error", "wechat", "", "wechat_sender_loop_error", str(process_error))
+        ]
+
+
 def test_meeting_memory_write_loop_processes_sent_conclusions(
     monkeypatch, tmp_path
 ):
