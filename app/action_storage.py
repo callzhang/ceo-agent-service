@@ -804,10 +804,11 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
         projection = reply_action_projection(kind, variant)
         predicate += f" and cast(legacy_key as integer) in (select id from ({projection}) where id=? and ({where_sql}))"
         identity_arguments.extend((public_id, *parameters))
-    # SQLite binds every SET and WHERE input before it scans rows, but applies
-    # row-level affinity and FK constraints only to selected rows.
+    # Bind through a write statement: SQLite opens its deferred transaction,
+    # binds every SET/WHERE input, then takes the writer lock when it executes.
+    # The zero-row write keeps that lock through the scan and actual UPDATE.
     bound = (*values.values(), *identity_arguments)
-    db.execute("select " + ",".join("?" for _ in bound), bound)
+    db.execute("update sqlite_sequence set seq=seq where 0" + " and ? is null" * len(bound), bound)
     if db.execute(f"select 1 from actions where {predicate} limit 1", identity_arguments).fetchone() is None:
         return db.execute("update actions set legacy_key=legacy_key where 0")
     assignments, arguments, paths = [], [], []
@@ -850,7 +851,10 @@ def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ign
     if owned:
         db.execute("savepoint action_receipt_insert")
     try:
-        if locked:
+        if record_type in REPLY_ACTION_TYPES:
+            bound = tuple(values.values())
+            db.execute("update sqlite_sequence set seq=seq where 0" + " and ? is null" * len(bound), bound)
+        elif locked:
             # A no-row write acquires the lock before reading the allocator.
             # Deferred connections retain their ordinary caller-owned transaction.
             db.execute("update sqlite_sequence set seq=seq where 0")
@@ -929,9 +933,6 @@ def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIde
         if owned:
             db.execute("savepoint action_reply_update")
         try:
-            # Keep native UPDATE's writer transaction from binding through the
-            # predicate scan and row write, including on autocommit connections.
-            db.execute("update sqlite_sequence set seq=seq where 0")
             result = _update_reply_action(db, record_type, public_id, values,
                                           where_sql=where_sql, parameters=parameters)
         except BaseException:

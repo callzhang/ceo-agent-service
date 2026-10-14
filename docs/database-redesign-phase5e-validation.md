@@ -51,8 +51,8 @@ publication and production readback remain separate gates.
 The subsequent independent QUALITY review found two write-ordering differences.
 Source `UPDATE` acquires a writer transaction and binds all inputs before
 checking row constraints; a missing row or false predicate returns zero even
-for an invalid public ID or unknown fresh Memory parent. The E update path now
-locks, binds inputs and checks the exact predicate before row-specific key or
+for an invalid public ID or unknown fresh Memory parent. That E update path
+bound inputs, locked and checked the exact predicate before row-specific key or
 parent resolution. Fresh Memory explicit insert likewise acquires its writer
 transaction before resolving a typed parent, retaining native failure state
 for deferred, autocommit, outer transaction and savepoint callers. Focused
@@ -66,8 +66,8 @@ to bind an unbindable SET or WHERE value; the prior finite path bound first
 and left no transaction. In autocommit mode, its no-row writer lock ended
 before the predicate scan, allowing another writer to change the candidate.
 Source-versus-target bad-binding regressions and a two-connection lock probe
-failed before the repair. The finite update now acquires the writer lock before
-binding and keeps it through predicate scan and UPDATE, with a savepoint owned
+failed before the repair. The intermediate finite update acquired the writer
+lock before binding and kept it through predicate scan and UPDATE, with a savepoint owned
 only for legacy/Python 3.12 autocommit connections. Ten new parameterized
 cases pass across deferred, legacy autocommit, caller transaction/savepoint and Python 3.12
 `autocommit=True`; the exact six-file reply source, reply target, action,
@@ -76,6 +76,21 @@ variant-specific skips. The three corresponding schema-release files also
 passed in a separate 326-pass, eight-skip gate that included the reply/source
 and action storage files. Ruff and
 `git diff --check` passed. This remains an isolated, unpublished storage unit.
+
+The independent SPEC review then found the intermediate lock ordering still
+differed from native SQLite. A failed SET/WHERE bind opens a deferred transaction
+without acquiring the writer lock, so a second connection can begin a write;
+the intermediate E update held that lock. E insert had the same gap for automatic
+or explicit public IDs, and an explicit actual Attempt insert could return a
+binding error without opening the native deferred transaction. Six update and
+12 insert source-versus-target cases exposed those differences across deferred,
+outer transaction, savepoint and autocommit scopes. The permanent repair binds
+all original inputs on the same zero-row SQLite write statement that acquires
+the writer lock. SQLite now handles implicit transaction creation, binding and
+lock acquisition in its native order; the existing owned savepoint keeps a
+successful autocommit update locked through its predicate scan and final write.
+The seven-file storage and published-source preflight gate passed 436 tests
+with eight variant-specific skips. No E migration or caller activation occurred.
 
 ## Earlier source preparation
 
