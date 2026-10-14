@@ -585,6 +585,24 @@ the normal native home. Concise references and aggregate evidence are in
 `evals/database_redesign/phase5e_native_copy.v1.json`. No real outbound action,
 production mutation, complete CI, deployment or live readback is claimed here.
 
+After the two E-only index corrections in `c47e6f4a`, root repeated the entire
+prepared-production-copy lifecycle gate: all eleven scripted cases passed in
+159.15 seconds. Root also repeated both actual Codex CLI approval and forced
+settlement-recovery cases on separate freshly prepared copies of that same
+runtime revision. Each used two real Consumer/Audit invocations and exactly one
+fake provider call/verification, receipt, sent delivery and business Attempt.
+The interrupted case recovered without another provider or model invocation.
+All 116 pre-existing non-FTS baseline tables retained their original rows,
+compacted input provenance survived, role-native slices existed, and all owned
+copies/workspaces were cleaned. The concise native artifact now binds to
+`c47e6f4a`; it supersedes the earlier pre-index-correction run and contains no
+trajectory bodies. No real external business operation or production write
+occurred. Independent SPEC subsequently accepted the repaired index and copy
+harness: 226 focused checks passed, six source-variant skips, the three original
+failures were independently reproduced on pre-repair code, and an independent
+production-copy/old-code-fresh inverse/read/write/republish run passed. QUALITY,
+complete CI and publication readback remain separate gates.
+
 ## Task 6 source index matrix and bounded-growth repair
 
 The captured actual and fresh source DDL supplied all seven Attempt and both
