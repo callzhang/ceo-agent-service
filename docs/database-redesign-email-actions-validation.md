@@ -903,3 +903,66 @@ owned temporary root was cleaned and absence verified. No source/target markers,
 constructor/default activation, providers or production database changed.
 E target validators/current seeds is the next implementation; F and later gates
 remain open. Final publication still requires immediate-predecessor binding.
+
+
+### Task4E1 current fresh-seed preparation, 2026-10-14
+
+Parent671de0c95d841beec04ecf7e609b00975980bea3. E is split into E1 seeds and
+later E2 target validators/metadata; E1 stops for sequential SPEC then QUALITY
+before E2 begins. The only changed existing methods are `_migrate_v19_to_v20`
+and `_migrate_v33_to_v34`, extracting the original seed blocks into private
+helpers. Expanding those calls reproduces both original method ASTs exactly.
+The new `_seed_current_fresh_state` is unselected and caller-transactional;
+no constructor/default/marker, coordinator, action schema, validator, source
+capture or storage helper changes are part of E1.
+
+Preflight examined v35–51: no later migration rewrites category/threshold/config
+or description-revision seed facts. The v38→39 promotion-column rename affects
+`macro_f1_min` only when present; genuine fresh v34 already creates
+`micro_f1_min`. The main independent oracle still runs genuine archived2773
+AutoReplyStore and default EmailStore all the way from fresh0→51. With fixed
+clocks and deterministic UUIDs it compares every final category-config,
+promotion-config and revision row, including JSON text and ordered UUID calls.
+The source's populated Email business tables are exactly these three. Final
+seed facts match; this is archived fresh-source proof, not a latest actual-copy
+or current target-constructor claim. The target setup explicitly calls the
+accepted neutral nonaction factory and the new private helper, with no old
+migration chain or action/ledger creation.
+
+Additional helper-boundary cases preserve existing configured sets and promotion
+rows, add only missing initial category revisions, preserve existing revision
+snapshots, and allocate no IDs/clocks or writes on repeat. These cases describe
+the new fresh helper's boundary; they do not claim that an already structured
+empty table is the historical v19 migration input. Unpatched UUID4 and original
+second-precision category/promotion clocks plus the existing monotonic revision
+clock are exercised separately. Caller savepoint success/rollback and a native
+trigger failure late in revision insertion demonstrate caller-controlled whole
+transaction/savepoint rollback without a new commit or recovery layer.
+
+RED: the genuine fresh51 oracle completed, then the target test failed with the
+missing `_seed_current_fresh_state` AttributeError (1 failed in2.46s). GREEN
+first passed that comparison (1 passed in2.21s). An expanded test initially
+exposed the test's microsecond bound mismatch with the existing second-precision
+`_now`; the bound was corrected without changing runtime clock behavior.
+Final complete captured run, exit0:
+
+```text
+python -m pytest -q tests/test_email_current_seeds.py tests/test_email_current_schema.py::test_current_retained_objects_match_archived_native_metadata tests/test_email_current_schema.py::test_current_retained_schema_is_caller_transactional_and_unseeded tests/test_email_store.py::test_v19_category_config_migration_maps_active_rows_and_preserves_history tests/test_email_store.py::test_fresh_category_configs_seed_structured_approved_boundaries --basetemp=/tmp/email13-seeds-e1.XMngdA/final-green -s
+............
+12 passed in 3.32s
+```
+
+Ruff and diff checks passed. Existing v19 legacy/history and structured fresh
+category tests and the retained native49-object/unseeded-factory checks passed
+alongside eight new seed cases. No full suite, environment mutation, providers,
+native Agent CLI, production, push or deploy was used. F must call the new
+seeder only on new-database creation, never current reopen, Email51 migration
+or a read path to fill empty configuration. E2/F and external Task5/full-copy/
+native/publication gates remain open; no default runtime readiness is claimed.
+
+Protected-surface verification found only the two historical migration bodies
+changed among existing methods, with exact AST expansion, unchanged existing
+signatures/module-level declarations and zero runtime calls of the new entry
+point. The exact owned `/tmp/email13-seeds-e1.XMngdA` root was inspected
+(1,683 files under red/green/final/final-green and the factoring intermediate),
+removed, and verified absent. No historical archive or test database is retained.

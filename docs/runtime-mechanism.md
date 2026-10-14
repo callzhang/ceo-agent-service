@@ -3110,3 +3110,21 @@ unavailable historical native delivery evidence. This is scoped read acceptance,
 not proof of all task execution or provider outcomes. See
 `docs/database-redesign-history-query-validation.md` for exact evidence.
 No schema or retention change is part of this History release.
+
+
+### Unselected current Email fresh seeds (Task4E1)
+
+A private fresh-seed entry point now reuses the original category insertion,
+model-promotion defaults and initial description-revision logic without running
+the historical migration chain. The original v19→20 and v33→34 migrations call
+the factored bodies at the same points, retaining their clock, UUID, legacy
+conversion, DDL and ledger behavior. The fresh entry point requires retained
+tables and leaves transactions, savepoints and rollback to its caller.
+
+No constructor or reopen path calls it. F must select it only for a newly created
+database, never as repair on reopen, Email51 migration or reads. Repeated calls
+on seeded facts allocate no new IDs or clocks; existing configured sets and
+promotion/revision facts are preserved. Tests use an explicit neutral factory
+and genuine archived2773 default fresh0→51 facts, not a current default-constructor
+proof. Metadata/durable validators and coupled default activation remain E2/F;
+Store19/Email51 selection, production and dormant SMTP behavior are unchanged.

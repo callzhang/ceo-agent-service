@@ -4172,81 +4172,7 @@ class EmailStore:
         )
         self._create_category_config_tables(db)
         now = self._now()
-        has_enabled_account = (
-            db.execute(
-                "select 1 from email_accounts where enabled=1 limit 1"
-            ).fetchone()
-            is not None
-        )
-        migrated_keys = set(INITIAL_CATEGORY_CONFIGS)
-        migrated_keys.update(
-            key
-            for key in legacy_rows
-            if key not in {"important", "subscription", "billing"}
-        )
-        for category_key in sorted(migrated_keys):
-            try:
-                validated_key = validate_email_category_key(category_key)
-            except ValueError as exc:
-                raise EmailPersistenceCorruption(
-                    "invalid configured email category"
-                ) from exc
-            legacy = legacy_rows.get(category_key)
-            if category_key == "external_billing" and legacy is None:
-                legacy = legacy_rows.get("billing")
-            definition = INITIAL_CATEGORY_CONFIGS.get(category_key)
-            if definition is None:
-                assert legacy is not None
-                legacy_description = str(legacy["description"]).strip()
-                core = legacy_description or f"Messages classified as {validated_key}."
-                display_name = validated_key.replace("_", " ").title()
-                include = (core,)
-                exclude = ("Messages outside this category.",)
-            else:
-                display_name = str(definition["display_name"])
-                core = str(definition["core"])
-                include = tuple(definition["include"])
-                exclude = tuple(definition["exclude"])
-            db.execute(
-                """
-                insert into email_category_configs (
-                    category_key, display_name, core_description,
-                    include_json, exclude_json, threshold, actions_json,
-                    action_parameters_json, enabled, description_version,
-                    config_version, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    validated_key,
-                    display_name,
-                    core,
-                    _json_dump(list(include)),
-                    _json_dump(list(exclude)),
-                    (
-                        float(legacy["threshold"])
-                        if legacy is not None
-                        else SEEDED_THRESHOLD
-                    ),
-                    str(legacy["actions_json"]) if legacy is not None else "[]",
-                    (
-                        str(legacy["action_parameters_json"])
-                        if legacy is not None
-                        else "{}"
-                    ),
-                    (
-                        int(bool(legacy["enabled"]) and not has_enabled_account)
-                        if legacy is not None
-                        else int(not has_enabled_account)
-                    ),
-                    DESCRIPTION_VERSION,
-                    (
-                        str(legacy["config_version"])
-                        if legacy is not None
-                        else SEEDED_CONFIG_VERSION
-                    ),
-                    str(legacy["updated_at"]) if legacy is not None else now,
-                ),
-            )
+        self._insert_initial_category_configs(db, legacy_rows, now=now)
         db.execute("drop table email_category_configs_v19")
         if replace_version:
             db.execute(
@@ -4969,11 +4895,7 @@ class EmailStore:
                 foreign key(promotion_config_version) references email_model_promotion_configs(config_version) on delete restrict
             ) without rowid
         """)
-        if db.execute("select 1 from email_model_promotion_configs").fetchone() is None:
-            db.execute(
-                "insert into email_model_promotion_configs values (?, ?, ?, ?, ?, ?)",
-                (str(uuid4()), 0.95, 0.95, 20, 500.0, self._now()),
-            )
+        self._seed_model_promotion_config(db)
         db.execute("""
             create table if not exists email_category_description_revisions (
                 revision_id text primary key not null check(trim(revision_id) != ''),
@@ -4983,17 +4905,7 @@ class EmailStore:
                 created_at text not null check(trim(created_at) != '')
             ) without rowid
         """)
-        for row in db.execute(
-            "select * from email_category_configs order by category_key"
-        ).fetchall():
-            if (
-                db.execute(
-                    "select 1 from email_category_description_revisions where category_key=?",
-                    (row["category_key"],),
-                ).fetchone()
-                is None
-            ):
-                self._append_category_description_revision(db, row)
+        self._seed_initial_category_description_revisions(db)
         for sql in _MODEL_CONTROL_IMMUTABLE_TRIGGER_SQL.values():
             db.execute(
                 sql.replace("create trigger ", "create trigger if not exists ", 1)
@@ -5008,6 +4920,117 @@ class EmailStore:
                 "insert into email_schema_migrations(version, applied_at) values (34, ?)",
                 (self._now(),),
             )
+
+    def _insert_initial_category_configs(
+        self, db: sqlite3.Connection, legacy_rows: Mapping[str, Any], *, now: str
+    ) -> None:
+        """Insert the existing v19 category conversion, with caller-owned DDL/TX."""
+        has_enabled_account = (
+            db.execute(
+                "select 1 from email_accounts where enabled=1 limit 1"
+            ).fetchone()
+            is not None
+        )
+        migrated_keys = set(INITIAL_CATEGORY_CONFIGS)
+        migrated_keys.update(
+            key
+            for key in legacy_rows
+            if key not in {"important", "subscription", "billing"}
+        )
+        for category_key in sorted(migrated_keys):
+            try:
+                validated_key = validate_email_category_key(category_key)
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    "invalid configured email category"
+                ) from exc
+            legacy = legacy_rows.get(category_key)
+            if category_key == "external_billing" and legacy is None:
+                legacy = legacy_rows.get("billing")
+            definition = INITIAL_CATEGORY_CONFIGS.get(category_key)
+            if definition is None:
+                assert legacy is not None
+                legacy_description = str(legacy["description"]).strip()
+                core = legacy_description or f"Messages classified as {validated_key}."
+                display_name = validated_key.replace("_", " ").title()
+                include = (core,)
+                exclude = ("Messages outside this category.",)
+            else:
+                display_name = str(definition["display_name"])
+                core = str(definition["core"])
+                include = tuple(definition["include"])
+                exclude = tuple(definition["exclude"])
+            db.execute(
+                """
+                insert into email_category_configs (
+                    category_key, display_name, core_description,
+                    include_json, exclude_json, threshold, actions_json,
+                    action_parameters_json, enabled, description_version,
+                    config_version, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    validated_key,
+                    display_name,
+                    core,
+                    _json_dump(list(include)),
+                    _json_dump(list(exclude)),
+                    (
+                        float(legacy["threshold"])
+                        if legacy is not None
+                        else SEEDED_THRESHOLD
+                    ),
+                    str(legacy["actions_json"]) if legacy is not None else "[]",
+                    (
+                        str(legacy["action_parameters_json"])
+                        if legacy is not None
+                        else "{}"
+                    ),
+                    (
+                        int(bool(legacy["enabled"]) and not has_enabled_account)
+                        if legacy is not None
+                        else int(not has_enabled_account)
+                    ),
+                    DESCRIPTION_VERSION,
+                    (
+                        str(legacy["config_version"])
+                        if legacy is not None
+                        else SEEDED_CONFIG_VERSION
+                    ),
+                    str(legacy["updated_at"]) if legacy is not None else now,
+                ),
+            )
+
+    def _seed_model_promotion_config(self, db: sqlite3.Connection) -> None:
+        if db.execute("select 1 from email_model_promotion_configs").fetchone() is None:
+            db.execute(
+                "insert into email_model_promotion_configs values (?, ?, ?, ?, ?, ?)",
+                (str(uuid4()), 0.95, 0.95, 20, 500.0, self._now()),
+            )
+
+    def _seed_initial_category_description_revisions(self, db: sqlite3.Connection) -> None:
+        for row in db.execute(
+            "select * from email_category_configs order by category_key"
+        ).fetchall():
+            if (
+                db.execute(
+                    "select 1 from email_category_description_revisions where category_key=?",
+                    (row["category_key"],),
+                ).fetchone()
+                is None
+            ):
+                self._append_category_description_revision(db, row)
+
+    def _seed_current_fresh_state(self, db: sqlite3.Connection) -> None:
+        """Prepare only a new database; caller owns tables and transaction.
+
+        This is unselected until the coupled fresh constructor integration.
+        Current reopen and verified-source migration must not invoke it.
+        """
+        if db.execute("select 1 from email_category_configs limit 1").fetchone() is None:
+            self._insert_initial_category_configs(db, {}, now=self._now())
+        self._seed_model_promotion_config(db)
+        self._seed_initial_category_description_revisions(db)
 
     def _migrate_v34_to_v35(
         self, db: sqlite3.Connection, *, replace_version: bool = False

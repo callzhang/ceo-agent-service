@@ -2323,3 +2323,24 @@ unavailable historical native delivery evidence. This is scoped read acceptance,
 not proof of all task execution or provider outcomes. See
 `docs/database-redesign-history-query-validation.md` for exact evidence.
 No schema or retention change is part of this History release.
+
+
+### Email current fresh-seed preparation, Task4E1 (unselected)
+
+The unpublished Email candidate factors the existing category conversion and
+model-promotion/initial-description-revision seed loops into private helpers.
+Both historical migration bodies preserve their prior behavior. A separate
+`EmailStore._seed_current_fresh_state` prepares seed facts after the neutral
+retained-table factory, under its caller's transaction. It reuses the existing
+category definitions, thresholds/config versions, promotion values
+0.95/0.95/20/500.0, UUID allocation and revision clock/snapshot helper.
+
+This entry point is currently unselected. F may invoke it only on the new-database
+creation branch; current reopen, verified Email51 migration and read paths must
+not invoke it to populate an existing empty configuration. It creates no schema,
+ledger or action objects, and adds no commit/savepoint/repair policy. Existing
+configured sets, promotion rows and existing category revision history remain
+intact at this helper boundary. E1 tests compare its new-database seed facts
+with genuine archived2773 default initialization through Email51. E2 validators
+and F constructors/locking/markers/coordinator remain pending; defaults are
+still Store19/Email51 and this partial candidate is not runtime-ready.
