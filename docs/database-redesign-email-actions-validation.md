@@ -1,5 +1,11 @@
 # Email action storage preparation: Tasks 2A and 2B
 
+## Task5B0 independent acceptance, 2026-10-14
+
+Root accepts bounded correction `4a9de75282745d6abec01d6cf3d493456c9572a0` over `7dc87561536c55ebd1c6f1f9411f6029fe779eb3`. Fresh SPEC passed39 metadata cases in92.68s and10 retained-path cases in52.75s. Fresh QUALITY passed8 focused cases in7.53s plus independent malformed-SQL probes for each32 auxiliaries through warmed-cache fast Email and Store constructors. Facts, DB bytes and DELETE journal remained unchanged on refusal. MAIN ownership, TEMP shadows, unexpected full-manifest objects and preserved shared-index repair were independently checked. All final commands exited0; both reviewers verified unchanged clean HEAD and exact owned temporary-directory removal. These receipts are separate from the implementation batches.
+
+The parent-F defect described below is resolved by this accepted local correction; original Email refusal and original Store/provider repairs remain distinct. Next5B1 is limited to six existing current scan/plan/feedback tests using existing finite projections while preserving their assertions. Historical-source and shared-rebuild fixtures remain separate. No broad gate, latest production-copy/native proof, CI, publication, or full10+1 completion is claimed.
+
 ## Task5A acceptance and required5B0 correction, 2026-10-14
 
 Sequential independent SPEC then QUALITY accepted the external-consumer diff

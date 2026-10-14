@@ -447,3 +447,7 @@ Separate5B0 must fix this mechanism before old-test adaptation, preserving the
 existing Store repairs and Email refusal/provider-column repair. The earlier F
 acceptance is qualified by this confirmed open issue. No publication occurred;
 complete Task4/5, latest-copy/native/CI/deploy/live and the full10+1 goal are open.
+
+### Task5B0 accepted, 2026-10-14
+
+Sequential fresh SPEC then QUALITY accepted4a9de752: SPEC39+10 cases; QUALITY8 cases plus independent each32 malformed-metadata/cache probes, MAIN/TEMP ownership and preserved repair paths. Exact commands, exits and cleanup are in Email validation. Parent-F auxiliary-repair defect is corrected locally. Next5B1 is only six existing current scan/plan/feedback tests with finite existing projections and unchanged business assertions. Historical native migrations/shared corruption helpers need separate scope. Remaining Task4/5 gates, latest-copy/native acceptance, CI/deploy and full10+1 consolidation remain open.

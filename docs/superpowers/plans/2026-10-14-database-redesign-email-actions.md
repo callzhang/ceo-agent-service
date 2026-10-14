@@ -540,3 +540,7 @@ document.5B0 must retain original Store repair and original Email refusal/provid
 repair behavior, with source RED/target GREEN evidence and independent reviews;
 do not turn the new repair into policy by weakening old tests. No new recovery,
 authorization, schema field or retention feature is proposed.
+
+### Task5B0 accepted, 2026-10-14
+
+Sequential fresh SPEC then QUALITY accepted4a9de752: SPEC39+10 cases; QUALITY8 cases plus independent each32 malformed-metadata/cache probes, MAIN/TEMP ownership and preserved repair paths. Exact commands, exits and cleanup are in Email validation. Parent-F auxiliary-repair defect is corrected locally. Next5B1 is only six existing current scan/plan/feedback tests with finite existing projections and unchanged business assertions. Historical native migrations/shared corruption helpers need separate scope. Remaining Task4/5 gates, latest-copy/native acceptance, CI/deploy and full10+1 consolidation remain open.
