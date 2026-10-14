@@ -1,6 +1,8 @@
 | codex-phase5d-delivery-migration | Isolated phase5d worktree: app/action_delivery_storage.py; tests/test_action_delivery_migration.py; own claim row | Finite opt-in twelve-type plus sent-reply/observer source to fourteen-type actions and inverse, preserving current facts and native watermarks; no Store, release, provider, push or deploy. | active 2026-10-13 |
 # Concurrent agent file claims
 
+| codex-phase5e-lifecycle-acceptance | Phase5e-resume: E validation and plan, evals/database_redesign/phase5e_native_copy.v1.json, this claim | Root records prepared-current-constructor production-copy scripted and actual native CLI acceptance with in-memory outbound substitutes; continues independent final proof review and CI. No real outbound operation or production migration. | active 2026-10-13 |
+
 | codex-phase5e-copy-acceptance | Isolated phase5e-resume: new scripts/validate_action_reply_copy.py, new evals/database_redesign/phase5e_constructor_copy.v1.json, scoped docs/database-redesign-phase5e-validation.md, this claim row | Offline latest online SQLite backup, genuine old-code fresh constructor/read/write, current-fact inverse/re-forward acceptance. Task-owned temporary copies cleaned. No app/runtime/provider/push/deploy changes. | verified 2026-10-13; both copy variants pass, 86 focused passed / 2 skipped, Ruff and diff clean; pending root integration |
 
 | codex-phase5e-callers-acceptance | Phase5e-resume: E plan and validation, this claim; merge published Skill metadata increment | Root records independent Task5 SPEC and QUALITY acceptance and focused synthetic browser evidence before Task6 copy/old-code/native publication gates. No production writes or provider action. | active 2026-10-13 |

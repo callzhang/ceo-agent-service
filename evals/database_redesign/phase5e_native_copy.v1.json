@@ -1,0 +1,83 @@
+{
+  "candidate_commit": "6c7b7a719414c24e3d89e75134e93b643094aa27",
+  "scripted": {
+    "passed": 11,
+    "seconds": 163.32,
+    "network_and_subprocess_refused": true,
+    "baseline_original_rows_unchanged": true,
+    "temporary_copies_cleaned": true
+  },
+  "native": {
+    "model": "gpt-5.6-luna",
+    "cases": [
+      {
+        "case": "approve",
+        "passed": true,
+        "completed": true,
+        "status": "done",
+        "interrupted": false,
+        "native_invocations": 2,
+        "fake_provider_calls": 1,
+        "verification_calls": 1,
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "original_nonfts_tables_unchanged": 116,
+        "sessions": [
+          {
+            "role": "consumer",
+            "session_id": "01a1387c-cef5-7592-b370-0513de4f742b",
+            "start": 0,
+            "end": 40
+          },
+          {
+            "role": "audit",
+            "session_id": "01a1387d-0b53-7332-a6a9-d6660120fd8f",
+            "start": 0,
+            "end": 29
+          }
+        ]
+      },
+      {
+        "case": "settlement_recovery",
+        "passed": true,
+        "completed": true,
+        "status": "done",
+        "interrupted": true,
+        "native_invocations": 2,
+        "fake_provider_calls": 1,
+        "verification_calls": 1,
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "original_nonfts_tables_unchanged": 116,
+        "sessions": [
+          {
+            "role": "consumer",
+            "session_id": "01a1387d-ef03-74f0-aa4f-9334b164445a",
+            "start": 0,
+            "end": 36
+          },
+          {
+            "role": "audit",
+            "session_id": "01a1387e-336d-7671-b556-b06ec0cc3c32",
+            "start": 0,
+            "end": 29
+          }
+        ]
+      }
+    ],
+    "native_sessions_present": true,
+    "reopen_without_more_model_calls": true,
+    "retained_input_provenance_and_compaction": true,
+    "prepared_baseline": "latest read-only online backup constructed by candidate Store19 before baseline hashing",
+    "original_store": "2026-10-13.4",
+    "prepared_store": "2026-10-13.5",
+    "email": 51,
+    "temporary_copies_cleaned": true,
+    "actual_outbound_sends": 0,
+    "native_files_copied": 0
+  },
+  "observed_at": "2026-10-14 03:42:44 UTC",
+  "scope": "Phase5E root copy-only lifecycle acceptance; no production business action"
+}

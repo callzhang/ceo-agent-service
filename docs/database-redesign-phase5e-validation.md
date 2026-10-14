@@ -554,3 +554,33 @@ The separate focused release, public-ID and source checks passed 86 tests
 with two fixture-dependent skips; Ruff and diff checks passed. This proves
 offline storage compatibility only; native role, final CI, deployment and live
 readback remain separate gates.
+
+## Task 6 scripted and actual native role acceptance
+
+Root independently created a new read-only online production backup, ran the
+actual candidate Store19 constructor on that owned copy, verified integrity,
+and hashed the prepared Store19 baseline before running the opt-in lifecycle
+suite. All eleven cases passed in 163.32 seconds: approve, audit return/reject
+and correction, no action, technical retry, provider failure/uncertainty,
+scheduled dispatch, work-summary business adoption and provenance, settlement
+interruption/reuse, and Workbench creation/idempotency. The fixture refused real
+network and subprocess access and checked all pre-existing non-FTS baseline
+rows and FK diagnostics. Its whole task-owned temporary directory was cleaned.
+
+On two separate freshly backed-up and constructor-prepared Store19 copies,
+root ran the real OAuth Codex CLI Consumer and Audit roles using
+`scripts/validate_native_copy_lifecycle.py`: ordinary approval and settlement
+recovery after a forced interruption following a fake provider receipt. Both
+finished `done`, each with two native model invocations, one in-memory provider
+call/verification, one business Attempt, one durable action receipt and one sent
+delivery. Reopening required no new model call and recovery did not repeat the
+fake provider operation. All 116 pre-existing non-FTS baseline tables retained
+their original rows, input compaction/provenance survived, and every completed
+role had an existing native session with the exact stored nonempty slice.
+The injected SQLite trigger failure in the recovery case was the intended
+interruption, followed by successful receipt-based settlement, not a runtime
+failure hidden by the harness. Copies, local artifacts and workspace material
+were cleaned; no native transcript was copied and native sessions remain in
+the normal native home. Concise references and aggregate evidence are in
+`evals/database_redesign/phase5e_native_copy.v1.json`. No real outbound action,
+production mutation, complete CI, deployment or live readback is claimed here.
