@@ -195,6 +195,7 @@ def _default_restart() -> None:
 
 def _default_stop() -> None:
     target = f"gui/{_uid()}/com.ceo-agent-service.main"
+    known_processes = _launchd_service_processes(target)
     result = subprocess.run(
         ["launchctl", "bootout", target],
         check=False,
@@ -203,16 +204,71 @@ def _default_stop() -> None:
         timeout=30,
     )
     if result.returncode != 0:
-        if _launchd_service_is_absent(target):
-            return
-        raise UpgradeFailed("launchd stop failed")
+        if not _launchd_service_is_absent(target):
+            raise UpgradeFailed("launchd stop failed")
     deadline = time.monotonic() + LAUNCHD_STOP_TIMEOUT_SECONDS
     while True:
-        if _launchd_service_is_absent(target):
+        if _launchd_service_is_absent(target) and _known_processes_exited(known_processes):
             return
         if time.monotonic() >= deadline:
-            raise UpgradeFailed("launchd service did not finish unloading")
+            raise UpgradeFailed("launchd service processes did not finish stopping")
         time.sleep(LAUNCHD_STOP_POLL_SECONDS)
+
+
+def _launchd_service_processes(target: str) -> tuple[int, ...]:
+    """Capture the supervisor and its direct children before bootout reparents them."""
+    state = subprocess.run(
+        ["launchctl", "print", target],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if state.returncode != 0:
+        return ()
+    pid = next(
+        (
+            int(value)
+            for line in state.stdout.splitlines()
+            if (value := line.strip().removeprefix("pid = ")).isdigit()
+            and line.strip().startswith("pid = ")
+        ),
+        None,
+    )
+    if pid is None:
+        return ()
+    processes = subprocess.run(
+        ["ps", "-axo", "pid=,ppid="],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if processes.returncode != 0:
+        raise UpgradeFailed("could not list launchd service children before stop")
+    children = {
+        int(columns[0])
+        for line in processes.stdout.splitlines()
+        if len(columns := line.split()) == 2
+        and all(column.isdigit() for column in columns)
+        and int(columns[1]) == pid
+    }
+    return tuple(sorted({pid, *children}))
+
+
+def _known_processes_exited(process_ids: tuple[int, ...]) -> bool:
+    if not process_ids:
+        return True
+    state = subprocess.run(
+        ["ps", "-p", ",".join(map(str, process_ids)), "-o", "pid="],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if state.returncode not in (0, 1) or state.stderr.strip():
+        raise UpgradeFailed("could not verify launchd service process exit")
+    return not state.stdout.strip()
 
 
 def _launchd_service_is_absent(target: str) -> bool:

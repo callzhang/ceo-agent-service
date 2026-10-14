@@ -316,7 +316,7 @@ def test_failed_stop_accepts_only_native_absent_label_readback(monkeypatch, abse
     else:
         with pytest.raises(UpgradeFailed, match='stop failed'):
             module._default_stop()
-    assert calls == ['bootout', 'print']
+    assert calls == (['print', 'bootout', 'print', 'print'] if absent else ['print', 'bootout', 'print'])
 
 
 def test_partial_asset_failure_rolls_back_asset_then_schema_before_old_start(tmp_path):
