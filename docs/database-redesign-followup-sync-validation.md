@@ -35,7 +35,35 @@ type growth before release; existing Email29 cost is a separate baseline, not
 evidence that native FK access is already bounded. Task6 must include native
 FK parent DELETE/public-key mutation as well as explicit application SELECTs.
 
-This accepts only disabled declarations/projections. Source-shaped writers,
-omitted defaults, lock/allocation semantics and mutation parity remain1B.
+Task 1A accepted only disabled declarations/projections. Source-shaped writers,
+omitted defaults, lock/allocation semantics and mutation parity were assigned
+to Task 1B below.
 No constructor/version/migration/caller/provider or publication is accepted.
 All review fixtures were in memory or cleaned owned temporary directories.
+
+## Task 1B disabled writer candidate
+
+The nine-family writer API is `insert_sync_action`, `update_sync_action`, and
+`delete_sync_action` in `app/action_storage.py`. It accepts the original field
+names and returns source public IDs, row counts, or SQLite update/delete cursors.
+The actual/fresh source variant is inferred only from the two accepted Email29
+action declarations. Omitted defaults are evaluated after the writer lock;
+explicit NULL and SQLite-bound NaN remain explicit values. Each source family
+has a separate `actions:<kind>` sequence that advances on source-shaped
+inserts and does not advance on public-key updates. The business send-attempt
+draft ID is resolved against the source-affinity public parent ID and stored as
+one physical action reference. Legacy send-attempt draft IDs remain raw source
+scalars.
+
+The first focused writer test run was RED with six setup failures: its minimal
+task/run FK stubs lacked the `record_type` columns required by the existing
+action triggers. After correcting the fixture, the native source comparisons
+passed. The writer/source/declaration/Email selection is 95 passed, including
+48 writer comparisons across actual and fresh layouts. They cover all nine
+families' omitted defaults, source storage classes, update/delete/CAS, raw
+BLOB/NUL/nonfinite values, independent IDs, signed/explicit IDs, ignored
+unique conflicts and sequence rollback, source-affinity draft references, and
+native SQLITE_FULL whole-transaction rollback. Ruff and diff checks passed.
+These are synthetic database checks; source migration, caller conversion and
+live behavior remain unselected. The measured physical child-FK scan described
+above remains a Task 6 performance gate before activation.

@@ -2,9 +2,12 @@
 
 The nine follow-up/Todo-sync action declarations are available only through an
 explicit disabled-by-default candidate flag on the Email29 actual/fresh action
-scaffold. No Store constructor, release router, writer or caller selects them.
-Task 1A supplies finite constraints and projections; allocation, source-shaped
-mutations, migration and runtime selection remain separate follow-up work.
+scaffold. No Store constructor, release router or caller selects them. Task 1A
+supplies finite constraints and projections. Task 1B supplies source-shaped
+insert, update, delete and optional projected CAS, with SQLite-lock-held defaults
+and one public-ID allocator per source family. Business send attempts resolve
+the exact draft public ID to their physical parent action. Migration and runtime
+selection remain separate follow-up work.
 
 DingTalk delivery verification reads outgoing identifiers only from the native
 send `result`, never referencedMessage or nested action metadata. An openTaskId

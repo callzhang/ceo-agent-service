@@ -15,7 +15,8 @@ from string import ascii_lowercase, ascii_uppercase
 
 from app.action_followup_sync_definitions import (
     SYNC_ACTION_PROJECTIONS as SYNC_ACTION_PROJECTIONS,
-    SYNC_TYPES_ORDER, sync_schema_parts,
+    SYNC_DEFAULTS, SYNC_FIELDS, SYNC_TYPES_ORDER, sync_action_projection,
+    sync_schema_parts,
 )
 
 from app.action_email_definitions import (
@@ -496,6 +497,11 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
                          f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
     if include_followup_sync:
         triggers += tuple(sync_triggers)
+        for kind in SYNC_TYPES_ORDER:
+            name = f"actions:{kind}"
+            triggers += (f"create trigger trg_actions_sync_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
+                         f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
+                         f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
     return table, indexes, triggers
 
 
@@ -736,13 +742,13 @@ class ActionWriteResult:
 
 
 def _autoincrement_high_water(db, kind):
-    name = (f"actions:{kind}" if kind in EMAIL_AUTOINCREMENT_TYPES else
+    name = (f"actions:{kind}" if kind in EMAIL_AUTOINCREMENT_TYPES or kind in SYNC_TYPES_ORDER else
             REPLY_SEQUENCE_NAMES[kind] if kind in REPLY_ACTION_TYPES else
             DELIVERY_SEQUENCE_NAME if kind == "sent_replies" else ACTION_SEQUENCE_NAMES[kind])
     rows = db.execute("select seq from sqlite_sequence where name=?", (name,)).fetchall()
     if len(rows) > 1 or any(type(row[0]) is not int or row[0] < 0 for row in rows):
         raise ValueError(f"invalid {kind} allocator metadata")
-    maximum = (_email_max_id(db, kind) if kind in EMAIL_AUTOINCREMENT_TYPES else
+    maximum = (_email_max_id(db, kind) if kind in EMAIL_AUTOINCREMENT_TYPES or kind in SYNC_TYPES_ORDER else
                db.execute("select max(cast(legacy_key as integer)) from actions where record_type=?", (kind,)).fetchone()[0])
     return max(rows[0][0] if rows else 0, maximum or 0)
 
@@ -1017,6 +1023,112 @@ def delete_email_action(db: sqlite3.Connection, kind: str, source_rowid) -> sqli
         predicate, args = _email_identity(kind, source_rowid)
         return db.execute("delete from actions where " + predicate, args)
     return _email_unit(db, "action_email_delete", operation)
+
+
+def _sync_fields(kind, values):
+    if kind not in SYNC_TYPES_ORDER:
+        raise ValueError(f"unsupported follow-up/Todo kind: {kind}")
+    if set(values) - set(SYNC_FIELDS[kind]):
+        raise ValueError(f"unknown {kind} source fields")
+
+
+def _sync_variant(db):
+    return "actual" if _reply_variant_for(db) == "actual_no_memory_fk" else "fresh_candidate"
+
+
+def _sync_payload(db, kind, values):
+    defaults = SYNC_DEFAULTS[_sync_variant(db)][kind]
+    return _reply_payload({
+        field: values[field] if field in values else
+        db.execute("select " + defaults[field]).fetchone()[0] if field in defaults else None
+        for field in SYNC_FIELDS[kind]
+        if field != "id" and not (kind == "business_task_follow_up_send_attempts" and field == "draft_id")
+    })
+
+
+def _sync_parent(db, value):
+    if _source_bound_null(value):
+        return None
+    row = db.execute(
+        "select id from actions where record_type='business_task_follow_ups' "
+        "and cast(legacy_key as integer)=?", (value,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def insert_sync_action(db: sqlite3.Connection, kind: str, values: dict, *, ignore=False) -> ActionWriteResult:
+    """Insert one source-shaped row into the disabled follow-up/Todo layout."""
+    _sync_fields(kind, values)
+
+    def operation():
+        _email_lock(db, tuple(values.values()))
+        payload = _sync_payload(db, kind, values)
+        public_id = (_email_auto_next(db, kind) if _source_bound_null(values.get("id"))
+                     else _native_integer_primary_key(values["id"]))
+        columns = ["record_type", "legacy_key", "payload_json"]
+        arguments = [kind, str(public_id), payload]
+        if kind == "business_task_follow_up_send_attempts":
+            columns.append("sync_draft_action_id")
+            arguments.append(_sync_parent(db, values.get("draft_id")))
+        cursor = db.execute(
+            f"insert {'or ignore ' if ignore else ''}into actions({','.join(columns)}) "
+            f"values({','.join('?' for _ in arguments)}) returning cast(legacy_key as integer)", arguments,
+        )
+        row = cursor.fetchone()
+        cursor.fetchall()
+        return ActionWriteResult(row[0] if row else None, cursor.rowcount)
+
+    return _email_unit(db, "action_sync_insert", operation)
+
+
+def update_sync_action(db: sqlite3.Connection, kind: str, public_id, values: dict, *,
+                       where_sql="", parameters=()) -> sqlite3.Cursor:
+    """Update literal source fields, optionally guarded by a projected CAS."""
+    _sync_fields(kind, values)
+    if not values:
+        raise ValueError("action update requires fields")
+
+    def operation():
+        _email_lock(db, (*values.values(), public_id, *parameters))
+        predicate = "record_type=? and " + _EMAIL_NUMERIC_SCOPE + " and cast(legacy_key as integer)=?"
+        identity_args = [kind, public_id]
+        if where_sql:
+            projection = sync_action_projection(kind, source_variant=_sync_variant(db))
+            predicate += (" and cast(legacy_key as integer) in "
+                          f"(select id from ({projection}) where id=? and ({where_sql}))")
+            identity_args.extend((public_id, *parameters))
+        if db.execute("select 1 from actions where " + predicate, identity_args).fetchone() is None:
+            return db.execute("update actions set legacy_key=legacy_key where 0")
+        assignments, arguments, paths = [], [], []
+        if "id" in values:
+            assignments.append("legacy_key=?")
+            arguments.append(str(_native_integer_primary_key(values["id"], update=True)))
+        if kind == "business_task_follow_up_send_attempts" and "draft_id" in values:
+            assignments.append("sync_draft_action_id=?")
+            arguments.append(_sync_parent(db, values["draft_id"]))
+        for field, value in values.items():
+            if field == "id" or kind == "business_task_follow_up_send_attempts" and field == "draft_id":
+                continue
+            paths.extend(("$." + field, json.dumps(_encoded_sqlite_value(value), ensure_ascii=False,
+                                                   allow_nan=False, separators=(",", ":"))))
+        if paths:
+            assignments.append("payload_json=json_set(payload_json," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")")
+            arguments.extend(paths)
+        return db.execute("update actions set " + ",".join(assignments) + " where " + predicate,
+                          (*arguments, *identity_args))
+
+    return _email_unit(db, "action_sync_update", operation)
+
+
+def delete_sync_action(db: sqlite3.Connection, kind: str, public_id) -> sqlite3.Cursor:
+    _sync_fields(kind, {})
+
+    def operation():
+        _email_lock(db, (public_id,))
+        return db.execute("delete from actions where record_type=? and " + _EMAIL_NUMERIC_SCOPE +
+                          " and cast(legacy_key as integer)=?", (kind, public_id))
+
+    return _email_unit(db, "action_sync_delete", operation)
 
 
 def _insert_reply_action(db, kind, values, *, ignore=False):
