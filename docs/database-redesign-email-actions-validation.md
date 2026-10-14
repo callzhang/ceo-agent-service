@@ -326,8 +326,10 @@ run was also unaccepted because its last re-forward check omitted complete
 fixture rows. These are proof-harness gaps; no pure-migration corruption was
 demonstrated. Both runs are historical, not the current Task3B result.
 
-The repaired, committed harness at
-`5099c2ab3366e3dfa861b73e50f6a49074856f50` passed all three cases:
+QUALITY found one further proof gap in the `5099c2ab` run: a write-only
+change to the old attempt allocator water could be accepted after inverse. That
+run remains narrow and unaccepted. The corrected, committed harness at
+`e9314a50530c7615cdde1ad76e091bc2dd5b22fa` passed all three cases:
 actual owned online backup (121 source user tables to 108 target), an archived
 old-created SQL-legal fresh case with two distinct NULL ActionPlan IDs, and a
 separate archived old-created application-valid fresh case. On an unmigrated
@@ -348,7 +350,8 @@ before inverse. Inverse restores that current state; in application-valid
 cases strict archived constructors/public readers then verify it, and old
 public methods apply and replay feedback, replay the receipt and complete the
 second TRASH retry attempt using a fake DAO-only result. A separate donor
-checks the expected public-write delta. Re-forward again checks complete
+checks the expected public-write delta and the complete resulting native Email
+allocator-water map before that state becomes the re-forward oracle. Re-forward again checks complete
 source projections, original sixteen-action facts, native allocators, unrelated
 original rows and fixture rows, schema markers and existing FK findings. The
 actual source had one pre-existing FK finding, preserved unchanged.
@@ -357,8 +360,9 @@ The aggregate-only artifact is
 `evals/database_redesign/email_actions_copy.v1.json`; it binds exact executed
 commit, source ref, source and candidate module hashes, observed checkout HEAD
 before/after, per-case counts and assertions. `source_counts_after_fixture_seed`
-are explicitly fixture-inclusive. Twenty-two selected focused checks passed,
-including the independent SPEC false-pass regressions and absent/zero/high,
+are explicitly fixture-inclusive. Twenty-three selected focused checks passed,
+including the independent SPEC false-pass regressions, the QUALITY write-only
+allocator +999 regression and absent/zero/high,
 deleted-highest ordinary ROWID and signed-max AUTO-water cases. Ruff and diff
 checks passed. Owned temporary databases, archived code and intermediate
 aggregate copy were cleaned. The proof uses no provider, native CLI,

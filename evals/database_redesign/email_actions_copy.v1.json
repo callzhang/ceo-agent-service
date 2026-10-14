@@ -1,10 +1,10 @@
 {
   "status": "passed",
   "scope": "offline Email13 copy and genuine published old code",
-  "observed_at_utc": "2026-10-14T11:26:38.021863+00:00",
+  "observed_at_utc": "2026-10-14T11:36:15.431407+00:00",
   "published_source_ref": "2773d6f43518b64c85f1d4bed9d520bd5563df07",
   "schema_binding_ref": "eb797e6bd35de695c269054a2e697af8fde2baa5",
-  "executed_candidate_commit": "5099c2ab3366e3dfa861b73e50f6a49074856f50",
+  "executed_candidate_commit": "e9314a50530c7615cdde1ad76e091bc2dd5b22fa",
   "candidate_module_sha256": {
     "app/store.py": "991cbfe946843546455d0a5e2285f86482c6e0264710780973986c243c986c44",
     "app/email_store.py": "262b41745c2afd5f535c2cd3043b147f14aaf60ffd6496ea0b6862299c893062",
@@ -26,9 +26,9 @@
       "initial_tables": 121,
       "target_tables": 108,
       "source_counts_after_fixture_seed": {
-        "email_action_plans": 9865,
-        "email_actions": 10256,
-        "email_action_attempts": 12248,
+        "email_action_plans": 9867,
+        "email_actions": 10258,
+        "email_action_attempts": 12250,
         "email_unsubscribe_cancellations": 1,
         "email_unsubscribe_claims": 1082,
         "email_unsubscribe_continuations": 0,
