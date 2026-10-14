@@ -32,7 +32,7 @@ from app.email_action_reconcile import (
 )
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
 from app.email_provider_actions import ImapDeterministicProvider
-from app.email_store import EmailStore
+from app.email_store import EMAIL_ATTEMPT_SQL, EMAIL_DIRECT_ACTION_SQL, EmailStore
 from tests.test_email_provider_actions import FakeWritableImapSession
 from tests.test_email_store import _classification, _persist_scan
 
@@ -147,8 +147,13 @@ def _snapshot(path: Path) -> list[tuple]:
     with sqlite3.connect(path) as db:
         return [
             tuple(row)
-            for table in ("email_actions", "email_action_attempts", "email_classifications", "email_messages")
-            for row in db.execute(f"select * from {table} order by 1")
+            for query in (
+                f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by 1",
+                f"select * from ({EMAIL_ATTEMPT_SQL}) order by 1",
+                "select * from email_classifications order by 1",
+                "select * from email_messages order by 1",
+            )
+            for row in db.execute(query)
         ]
 
 
@@ -156,7 +161,7 @@ def _action_row(path: Path, action_id: str) -> sqlite3.Row:
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         return db.execute(
-            "select * from email_actions where action_id=?", (action_id,)
+            f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?", (action_id,)
         ).fetchone()
 
 
@@ -408,20 +413,20 @@ def test_store_reopens_cleanly_and_keeps_its_invariants_after_apply(
 
     with sqlite3.connect(db_path) as db:
         pending_with_history = db.execute(
-            """
-            select count(*) from email_actions as a
+            f"""
+            select count(*) from ({EMAIL_DIRECT_ACTION_SQL}) as a
             where a.status='pending' and (a.attempt_count != 0 or exists (
-                select 1 from email_action_attempts t where t.action_id=a.action_id))
+                select 1 from ({EMAIL_ATTEMPT_SQL}) t where t.action_id=a.action_id))
             """
         ).fetchone()[0]
         drift = db.execute(
-            """
-            select count(*) from email_actions as a
+            f"""
+            select count(*) from ({EMAIL_DIRECT_ACTION_SQL}) as a
             where a.attempt_count != (
-                select count(*) from email_action_attempts t where t.action_id=a.action_id)
+                select count(*) from ({EMAIL_ATTEMPT_SQL}) t where t.action_id=a.action_id)
             """
         ).fetchone()[0]
-        statuses = sorted(r[0] for r in db.execute("select status from email_actions"))
+        statuses = sorted(r[0] for r in db.execute(f"select status from ({EMAIL_DIRECT_ACTION_SQL})"))
     assert pending_with_history == 0
     assert drift == 0
     assert statuses == ["done", "failed", "failed"]
