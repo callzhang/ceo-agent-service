@@ -438,3 +438,32 @@ QUALITY review; its focused gate was 217 passed, six skipped, with Ruff and
 diff checks clean. This Task 4 candidate is awaiting its own independent
 reviews and the remaining Task 5/6 publication gates. Retiring these two
 tables does not complete the larger ten-core-table-plus-ledger redesign.
+
+## Task 4 independent acceptance at d7c62241
+
+Independent SPEC and then QUALITY reviews accepted the exact Task4 commit
+`d7c62241d89c98e62b36d00e10901e16f46d7758` against `0436c399`.
+SPEC independently passed 39 integration/migration/completion and 81 selected
+Store cases; QUALITY independently passed 35 target/completion/reviewed-human
+and 36 selected Store cases. Both used owned temporary pytest directories,
+cleaned them, and confirmed a clean worktree and diff check.
+
+The implementer's complete Store-file gate was 436 passed and one historical
+fixture failure. Its source13 fixture borrows unrelated current constructor
+tables, which no longer include the retired Attempt/Memory source objects;
+its explicit chain also stops at Store17. Task5 must reconstruct these old
+objects from the independent frozen source, supply Email51 metadata and take
+the exact Store17 to Store18 step without weakening the lease-value assertions.
+The reviewed-human Attention failure is the known external `audit_web` old
+table reader, also Task5 scope. Neither remaining failure is waived for final
+integration or publication.
+
+The original known-universal-runtime repair regression passed unchanged after
+removing an overbroad startup exclusion discovered during implementation:
+only mixed retired E tables are excluded, while the existing conversion of
+unreferenced business history remains supported. No new source guard policy
+or old-table fallback was added.
+
+This accepts internal Store integration only. The real production-copy,
+current-fact inverse, actual old-code cold constructor, current factory,
+external callers, native substitute, CI and deployment gates remain outstanding.
