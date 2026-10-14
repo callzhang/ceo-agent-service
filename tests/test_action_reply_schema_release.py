@@ -289,3 +289,42 @@ def test_inverse_checks_original_layout_before_accepting_noop(tmp_path):
         release.rollback()
     with closing(sqlite3.connect(path)) as db:
         assert tuple(db.iterdump()) == before
+
+
+def test_rollback_binds_marker_after_writer_lock(tmp_path, monkeypatch):
+    """A concurrent marker change immediately before BEGIN must remain untouched."""
+    path, release = _source(tmp_path, "actual")
+    release.publish()
+    real_connect = sqlite3.connect
+    changed = False
+
+    class InterleavedConnection:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def execute(self, sql, *args):
+            nonlocal changed
+            if sql.lower() == "begin immediate" and not changed:
+                changed = True
+                with closing(real_connect(path)) as other:
+                    other.execute("update service_state set value='unknown-concurrent',"
+                                  "updated_at='concurrent' where key='store_schema_version'")
+                    other.commit()
+            return self.connection.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+    def connect(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        return InterleavedConnection(connection) if kwargs.get("isolation_level") is None else connection
+
+    monkeypatch.setattr(release_module.sqlite3, "connect", connect)
+    with pytest.raises(ValueError, match="source version mismatch"):
+        release.rollback()
+    assert changed
+    with closing(real_connect(path)) as db:
+        assert _marker(db) == ("unknown-concurrent", "concurrent")
+        assert storage.action_schema_is_current(db, include_reply=True,
+                                                 reply_variant=release.source_schema["target_variant"])
+        assert db.execute("select count(*) from actions where record_type='reply_attempts'").fetchone() == (1,)

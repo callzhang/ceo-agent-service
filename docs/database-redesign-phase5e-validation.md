@@ -2,6 +2,18 @@
 
 ## Task 3B paired release unit checkpoint
 
+Independent SPEC review found that rollback read its marker before taking the
+writer lock. A deterministic second-connection regression reproduced the
+interleaving: the old code overwrote a concurrently changed, unknown marker.
+Rollback now begins the FK-off writer transaction before reading or acting on
+the marker, including the unchanged-source branch. The regression confirms it
+refuses the inverse and preserves the concurrent marker and target facts.
+Loaded readback now begins one read transaction so its marker, target objects,
+Email version and integrity observations share a snapshot. After this repair,
+the new release suite and six migration/preceding-release files passed together:
+132 tests, with Ruff and diff checks clean. Fresh independent SPEC and QUALITY
+reviews are still required before the unit is accepted.
+
 The unpublished Store18→Store19 release unit captures the exact validated
 published Attempt/Memory source declarations and the original marker value and
 raw timestamp in a read transaction. Its injected publisher must produce the

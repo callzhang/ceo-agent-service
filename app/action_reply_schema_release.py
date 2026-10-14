@@ -40,6 +40,7 @@ class ActionReplySchemaRelease:
 
     def verify_loaded(self):
         with closing(sqlite3.connect(self.database_path.as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
             marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
             if marker != (ACTION_REPLY_VERSION,) or _email_version(db) != PUBLISHED_EMAIL_VERSION or \
                     not action_schema_is_current(
@@ -50,17 +51,19 @@ class ActionReplySchemaRelease:
 
     def rollback(self):
         with closing(sqlite3.connect(self.database_path, isolation_level=None)) as db:
-            current = db.execute("select value,updated_at from service_state where key=?", (VERSION_KEY,)).fetchone()
-            if current == self.original_version:
-                if capture_action_reply_schema(db) != self.source_schema or _foreign_keys(db) != self.source_fk or \
-                        db.execute("pragma quick_check").fetchone()[0] != "ok":
-                    raise ValueError("Attempt/Memory inverse source declaration mismatch")
-                return
-            if current is None or current[0] != ACTION_REPLY_VERSION:
-                raise ValueError("Attempt/Memory inverse source version mismatch")
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
             try:
+                current = db.execute("select value,updated_at from service_state where key=?", (VERSION_KEY,)).fetchone()
+                if current == self.original_version:
+                    if capture_action_reply_schema(db) != self.source_schema or \
+                            _foreign_keys(db) != self.source_fk or \
+                            db.execute("pragma quick_check").fetchone()[0] != "ok":
+                        raise ValueError("Attempt/Memory inverse source declaration mismatch")
+                    db.commit()
+                    return
+                if current is None or current[0] != ACTION_REPLY_VERSION:
+                    raise ValueError("Attempt/Memory inverse source version mismatch")
                 if _email_version(db) != PUBLISHED_EMAIL_VERSION or _foreign_keys(db) != self.source_fk:
                     raise ValueError("Attempt/Memory inverse integrity/FK mismatch")
                 restore_action_reply_schema(db, self.source_schema)
