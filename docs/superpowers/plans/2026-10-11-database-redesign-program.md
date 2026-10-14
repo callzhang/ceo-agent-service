@@ -300,3 +300,14 @@ original CSV, and current writer paths including its three zero-row families.
 Root independently verified native metadata and original-map column coverage.
 This is preparation only; it neither activates a migration nor establishes
 that all historical payload values must be retained. Full10+1 remains open.
+
+
+Task3B exposed an old-application/source-SQL validation distinction: genuine
+published old EmailStore rejects NULL ActionPlan IDs even on an unmigrated
+fresh source, while SQLite permits them. The independently accepted docs-only
+clarification6729b596+d87d88e8 requires separate full SQL-edge preservation
+and strict default old-code application cases, on both actual and fresh sources.
+No NULL or original actual row can be deleted/sanitized, and source validation
+cannot be bypassed. Harness preparation894ac40e is not an actual-copy pass.
+Before the final run, preserve current published9cd41bcf recovery batching;
+its source DDL and Email implementation remain unchanged from the bound schema.

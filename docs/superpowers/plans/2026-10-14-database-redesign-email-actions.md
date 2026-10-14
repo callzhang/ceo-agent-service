@@ -223,7 +223,7 @@ and any activation require both units and that real binding to pass. This is
 an implementation scheduling change, not an alternate migration or production
 publication path. Full Task3 remains incomplete until3B passes.
 
-**Copy proof contract clarification (2026-10-14, review pending):** run two
+**Copy proof contract clarification (2026-10-14, accepted plan only):** run two
 separate cases. The SQL-boundary case preserves the two NULL-PK plans and all
 other legal SQLite edge facts through forward/current-fact inverse/re-forward;
 it does not claim those rows are valid immutable application ActionPlans.
@@ -238,7 +238,8 @@ source contains any application-invalid state, report it and stop this gate.
 See `docs/database-redesign-email-copy-contract-boundary.md` for the reproduced
 unmigrated old-code counterexample; this changes proof composition only, not
 source/target schema, validation, retention or runtime behavior. Independent
-SPEC then QUALITY must accept this clarification before the split proof runs.
+SPEC then QUALITY accepted6729b596+d87d88e8; this accepts proof composition,
+not Task3B implementation or execution evidence.
 
 
 **Files:** new `app/action_email_storage.py`; new `tests/test_email_action_migration.py`.

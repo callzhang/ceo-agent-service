@@ -2,8 +2,9 @@
 
 This is a verification-plan clarification only. No source or target field,
 constraint, validation rule, retained data, task lifecycle, provider action or
-production behavior changes. Execution of the split proof remains pending
-sequential independent SPEC then QUALITY review.
+production behavior changes. The plan clarification passed
+sequential independent SPEC then QUALITY review at6729b596+d87d88e8;
+execution and Task3B evidence acceptance remain pending.
 
 ## Expected versus observed
 
@@ -60,3 +61,14 @@ lossless preservation of SQL boundary facts. No constructor/caller integration,
 release marker, target version or production activation is authorized by this
 clarification or by either case alone. It does not establish native CLI, UI,
 provider outcome or performance acceptance.
+
+
+## Independent plan acceptance
+
+Independent SPEC and then QUALITY each inspected the unchanged published9cd
+constructor/model chain and accepted this clarification. Root removed the one
+ambiguous introductory actual-or-fresh phrase atd87d88e8: both are mandatory,
+as already required by the operative checklist. These are static plan reviews,
+not reruns of the baseline experiment or acceptance of the uncompleted actual
+application copy proof. Source/harness preparation894ac40e remains unaccepted
+until the real cases and subsequent implementation reviews complete.
