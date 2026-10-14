@@ -16,7 +16,17 @@ This is a docs-only implementation plan, not target code or migration acceptance
 
 The approved structure is `docs/superpowers/specs/2026-10-11-database-redesign-design.md`. Source contracts are the two frozen 2026-10-13 Email action JSON/map pairs: nine tables/103 fields and four children/41 fields. Their measured actual source was Store16/Email51 at `d7397203`; those are historical observations, never the publication predecessor. The accompanying `2026-10-14-database-redesign-email-actions-field-map.csv` independently names all 144 actual source columns and their exact target path. No field is retired in this plan.
 
-Implementation starts only after E is normally published and root captures the actual immediate predecessor commit, Store/Email markers, literal actions/Email declarations, generated columns, FKs, indexes, triggers and native sequence metadata. Record those verified values in a new `docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json` and source map. Refuse a changed declaration outside the enumerated source variants before mutation. Do not assign a target Store/Email version until that binding exists. A numeric release name is deliberately absent here; assigning one now would falsely reserve an unpublished predecessor.
+Migration, constructor integration and publication start only after E is normally published and root captures the actual immediate predecessor commit, Store/Email markers, literal actions/Email declarations, generated columns, FKs, indexes, triggers and native sequence metadata. Record those verified values in a new `docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json` and source map. Refuse a changed declaration outside the enumerated source variants before mutation. Do not assign a target Store/Email version until that binding exists. A numeric release name is deliberately absent here; assigning one now would falsely reserve an unpublished predecessor.
+
+Task2's opt-in storage unit may proceed independently against the frozen thirteen
+source declarations and the reviewed E candidate's exact sixteen-type manifest
+while remote E CI runs. Its default remains disabled, and no Store/Email
+initializer, migration entry point, release selector or marker is changed by
+that unit. Integrate reviewed E increments first; preserve all preceding
+manifests and compare the actual published source again in Task1 before any
+source migration or activation. This scheduling distinction does not mark the
+published-source binding complete or allow candidate data to masquerade as
+production evidence.
 
 ## File responsibilities and ownership
 
@@ -214,7 +224,7 @@ Target counterparts call the interfaces defined above with the same values and a
 - [ ] Run exact old published code in a fresh process on inverse-derived current facts, including fresh source constructor and meaningful read/write: classification feedback replay, direct action attempt completion with a fake result, native receipt enrichment, sequence continuation, History source IDs and failed action visibility. Then current-code re-forward and compare current facts again. Merely importing old classes is insufficient.
 - [ ] Run `pytest -q tests/test_email_action_copy_proof.py`; expected all copied synthetic failure/current-fact/inverse/old-process cases pass. Then run the new copy harness against the owned backup and exact source ref selected in Task1. The evidence result must say `passed` only after each read/type/rowid/sequence comparison and cold old-process test succeeds.
 - [ ] Add confined native cases to the existing lifecycle harness: actual Consumer/Audit produce a persisted accepted action on the migrated copy, provider writes are replaced in memory, resulting business receipt/context/History readback is verified. Run both approval and revision cases; no live SMTP/IMAP/browser/DingTalk mutation is allowed. The ordinary deterministic Email source/claim/receipt chain is tested with its existing native provider substitutes; this does not activate auto reply.
-- [ ] Create the owned directory with `EMAIL_ACTION_NATIVE_ROOT=$(mktemp -d /tmp/ceo-email-native.XXXXXX)`. Run `python scripts/validate_native_copy_lifecycle.py --owned-temp-root "$EMAIL_ACTION_NATIVE_ROOT" --case approve` and the same command with `--case revision` after the harness's explicit Email setup is added. The named variable must resolve to the verified task-owned temporary directory. Expect actual native CLI completion, fake-provider receipts, unchanged original rows and no real external effects. Record scripted tests, actual native model evidence and untested live provider outcomes separately. Clean owned temporary copies/native outputs after concise accepted evidence is saved. Commit harness/evidence independently.
+- [ ] Create the owned directory with `EMAIL_ACTION_NATIVE_ROOT=$(mktemp -d /tmp/ceo-email-native.XXXXXX)`. Run `python -m scripts.validate_native_copy_lifecycle --owned-temp-root "$EMAIL_ACTION_NATIVE_ROOT" --case approve` and the same command with `--case revision` after the harness's explicit Email setup is added. The named variable must resolve to the verified task-owned temporary directory. Expect actual native CLI completion, fake-provider receipts, unchanged original rows and no real external effects. Record scripted tests, actual native model evidence and untested live provider outcomes separately. Clean owned temporary copies/native outputs after concise accepted evidence is saved. Commit harness/evidence independently.
 
 ## Task 7: CI, publication and live readback
 
@@ -251,3 +261,8 @@ the implementation direction within the already approved redesign; no target
 schema or migration has been implemented, no version allocated, and no
 production transition follows from planning acceptance. Task1 still requires
 the actually published Phase5E predecessor.
+
+Sequential SPEC/QUALITY also accepted the scheduling clarification allowing
+only disabled opt-in Task2 storage preparation before that publication.
+Task1, source migration, constructor integration, marker allocation and release
+retain their actual-predecessor requirements.
