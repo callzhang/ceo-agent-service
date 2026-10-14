@@ -227,8 +227,8 @@ publication path. Full Task3 remains incomplete until3B passes.
 separate cases. The SQL-boundary case preserves the two NULL-PK plans and all
 other legal SQLite edge facts through forward/current-fact inverse/re-forward;
 it does not claim those rows are valid immutable application ActionPlans.
-The application case starts from the complete latest actual source (or a fresh
-genuine-old-code source) and creates only public-API-valid fixture facts. It
+The application proof uses both the complete latest actual source and a separate
+fresh genuine-old-code source, creating only public-API-valid fixture facts. It
 must pass strict default old AutoReplyStore/EmailStore cold constructors and
 meaningful public read/write/re-forward with provider substitutes. Never delete,
 filter or rewrite NULL rows to convert one case into the other, skip real
