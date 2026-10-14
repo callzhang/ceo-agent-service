@@ -747,3 +747,30 @@ The still-running CI `38513634960` is bound to earlier `b23fbcdd`; it cannot
 establish merged-head acceptance. A separate complete merged-head CI is required
 before normal publication. This reconciliation made no provider or production
 mutation and does not claim a fresh native lifecycle run.
+
+
+## Merged-main native copy acceptance and complete CI result
+
+The complete earlier `b23fbcdd` CI `38513634960` passed 13,062 Python
+checks, 729 frontend checks and two browser checks. The merged-main
+`a0b60ba6` CI `38515824334` subsequently completed with 13,080 Python
+checks passing and three integration-fixture failures; build/browser steps
+were consequently skipped. The separate bounded repair is recorded above.
+No complete passing merged-head CI or production publication is claimed.
+
+Before those fixture-only repairs, root actually reran native approval and
+settlement recovery on `a0b60ba6`, against separate copies of a latest online
+production backup prepared by the candidate Store19 constructor. Source HEAD
+`9a2a23fc` was observed separately from backup capture; the prepared baseline
+is candidate evidence, not a published Store19 predecessor. Both cases ended
+`done`, each with real Consumer and Audit CLI runs, one in-memory substitute
+send, one verification, one receipt and one business attempt. All 116 original
+non-FTS tables remained unchanged, and reopening added no model invocations.
+The exact four native session references and nonempty line ranges are in
+`evals/database_redesign/phase5e_native_copy.v1.json`; native files remain
+only in the CLI-owned home. All owned database/workspace copies were removed.
+
+The same artifact retains the eleven scripted cases with their original
+`c47e6f4a` binding rather than implying a merged-head rerun. No true outbound
+send, trajectory copy or production database mutation occurred. Final CI,
+normal publication and production readback remain separate requirements.

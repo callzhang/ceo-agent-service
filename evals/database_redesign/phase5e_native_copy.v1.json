@@ -1,9 +1,10 @@
 {
   "schema_version": 1,
-  "candidate_commit": "c47e6f4ab1f83b2d3c323662b77c45bb3f0649fb",
-  "observed_at": "2026-10-14T04:02:25Z",
-  "scope": "Phase5E root copy-only lifecycle acceptance after the E-only selective-index repair",
+  "candidate_commit": "a0b60ba6123aac8326ed740ef92546e91e12b729",
+  "source_production_commit_observed": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
+  "scope": "Merged-main Phase5E copy-only native approval and settlement recovery; candidate-prepared baseline, not a published predecessor",
   "scripted": {
+    "candidate_commit": "c47e6f4ab1f83b2d3c323662b77c45bb3f0649fb",
     "passed": 11,
     "seconds": 159.15,
     "network_and_subprocess_refused": true,
@@ -24,38 +25,38 @@
             "role": "consumer",
             "returncode": 0,
             "timed_out": false,
-            "prompt_sha256": "08b826d22e408ba108b76a9fcf4389fb8988e871d6de2abd7c39ce77e8975c47"
+            "prompt_sha256": "238c8684c07a3c3d05cbcb03e568d79a9c3d65a88ae70f3615d247949feaea3e"
           },
           {
             "role": "audit",
             "returncode": 0,
             "timed_out": false,
-            "prompt_sha256": "96696a7149ebc3602e32a646b3b7e2f160146621d600da57368026218b9955fc"
+            "prompt_sha256": "7908ddd8d966dd573c80966ee0f8f0fb612e1198bb2d67290fe20c5c61dc95d3"
           }
         ],
-        "fake_provider_calls": 1,
         "verification_calls": 1,
         "receipts": 1,
         "sent_replies": 1,
         "business_attempts": 1,
-        "original_nonfts_tables_unchanged": 116,
-        "reopen_invocation_count": 2,
         "sessions": [
           {
             "role": "consumer",
-            "session_id": "01a1388f-ff8a-7282-ab17-55a5d931a901",
+            "session_id": "01a138e8-15ec-79a0-96f6-106638cb9157",
             "start": 0,
-            "end": 46,
+            "end": 36,
             "native_exists": true
           },
           {
             "role": "audit",
-            "session_id": "01a13890-47b3-7280-9d47-3f43b61d6ccb",
+            "session_id": "01a138e8-5ad3-77b2-9b3a-e6956ae22f96",
             "start": 0,
             "end": 29,
             "native_exists": true
           }
-        ]
+        ],
+        "fake_provider_calls": 1,
+        "original_nonfts_tables_unchanged": 116,
+        "reopen_invocation_count": 2
       },
       {
         "case": "settlement_recovery",
@@ -68,49 +69,48 @@
             "role": "consumer",
             "returncode": 0,
             "timed_out": false,
-            "prompt_sha256": "a7571f267fc74436348d4ceda6d7755a6dc4ba83615f8685ea7b0d1f40dd6ff0"
+            "prompt_sha256": "f8548c1f08930da90dc35482ee6f1b09cf725827c4bea4667755e38ec3934cec"
           },
           {
             "role": "audit",
             "returncode": 0,
             "timed_out": false,
-            "prompt_sha256": "9ad23afbf73be15ef0455b5f0e272b4c7c0f0c85dd56af90c6f7dac7db8a9030"
+            "prompt_sha256": "a5328077b3a09dfc83ed90e3416dde73c7722c50ff4936c1847e8756882a279d"
           }
         ],
-        "fake_provider_calls": 1,
         "verification_calls": 1,
         "receipts": 1,
         "sent_replies": 1,
         "business_attempts": 1,
-        "original_nonfts_tables_unchanged": 116,
-        "reopen_invocation_count": 2,
         "sessions": [
           {
             "role": "consumer",
-            "session_id": "01a13891-12cd-7e43-b889-dcc446a65a73",
+            "session_id": "01a138e8-c315-7a41-909f-04bbd5072bab",
             "start": 0,
-            "end": 29,
+            "end": 44,
             "native_exists": true
           },
           {
             "role": "audit",
-            "session_id": "01a13891-43bc-7d12-ab5d-c0f1d6bf5dcd",
+            "session_id": "01a138e8-fca7-7853-acd3-836e2d0450e5",
             "start": 0,
             "end": 29,
             "native_exists": true
           }
-        ]
+        ],
+        "fake_provider_calls": 1,
+        "original_nonfts_tables_unchanged": 116,
+        "reopen_invocation_count": 2
       }
     ],
-    "native_sessions_present": true,
-    "reopen_without_more_model_calls": true,
-    "retained_input_provenance_and_compaction": true,
-    "prepared_baseline": "latest read-only online backup constructed by candidate Store19 before baseline hashing",
+    "prepared_baseline": "Latest read-only online backup constructed by candidate Store19 before baseline hashing; production HEAD observation and online backup are separate observations",
     "original_store": "2026-10-13.4",
     "prepared_store": "2026-10-13.5",
     "email": 51,
     "temporary_copies_cleaned": true,
     "actual_outbound_sends": 0,
     "native_files_copied": 0
-  }
+  },
+  "complete_ci_passed": false,
+  "production_deployed": false
 }
