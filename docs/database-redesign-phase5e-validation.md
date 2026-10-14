@@ -708,3 +708,17 @@ provider, production write or native role ran. The native lifecycle artifact
 remains explicitly bound to `c47e6f4a`; the later runtime delta is this one
 status-index declaration, not a new native-model verification. Final Linux CI,
 normal publication and live readback are still required.
+
+## Final concurrent-main reconciliation
+
+Before publication, root fetched the newer published remote main `dec96517`
+and merged it normally as `0f69b0d2`. Its native-input diagnostic documents and
+DingTalk receipt corrections are retained. The only conflict was the append-only
+claim list; both branches' rows remain. No E storage, migration, Store/Email
+constructor or schema-release module changed in this merge. The merged candidate
+passed 78 focused DingTalk delivery/repair/sender, finite Attempt Store and E
+release checks; diff checks passed and task-owned test databases were removed.
+The still-running CI `38513634960` is bound to earlier `b23fbcdd`; it cannot
+establish merged-head acceptance. A separate complete merged-head CI is required
+before normal publication. This reconciliation made no provider or production
+mutation and does not claim a fresh native lifecycle run.
