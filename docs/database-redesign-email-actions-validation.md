@@ -1,5 +1,35 @@
 # Email action storage preparation: Tasks 2A and 2B
 
+## Task5A acceptance and required5B0 correction, 2026-10-14
+
+Sequential independent SPEC then QUALITY accepted the external-consumer diff
+7dcbe2278e615341effc10790d097ef4a22453dc over4957997d. SPEC ran13 focused cases
+(14.40s) and independently compared complete OperationLog model dumps from real
+0441 source through the real paired child, including detail/timestamps/pages.
+QUALITY ran17 focused cases (15.48s) and independent same-Store initialization,
+queue/maintenance/quiet, strict-default/current-explicit variant, receipt fence/
+settlement/recovery and full genuine-source History probes. All final runs exited0;
+both reviewers verified unchanged HEAD/clean status and all owned temps absent.
+These are independent of the implementation's355-pass and10-pass rerun receipts.
+
+QUALITY also confirmed a parent-existing F contract defect which must be fixed
+before broad old-test adaptation. Genuine0441 Email51 refuses a missing
+`idx_email_actions_status` or
+`idx_email_unsubscribe_receipts_classification_action` with
+EmailPersistenceCorruption and leaves it missing. After real paired publication,
+the corresponding `idx_actions_email_email_actions_1` and
+`idx_actions_email_email_unsubscribe_receipts_0` are automatically recreated by
+the shared Store known-repair path. The same behavior was reproduced with the
+archived parent4957997d, so5A did not introduce it. This broadens the original
+Email repair contract and qualifies the earlier F review; it is not approval of
+a new repair policy. Do not weaken the old refusal assertions to make them pass.
+
+Next is a separately scoped5B0 regression and mechanism repair preserving both
+original Store known repairs and Email strict refusal/its one existing provider
+column repair. General fixture work waits for that correction and sequential
+review. Remaining Task4/5 named gates, latest-copy/native evidence, CI/deployment
+and the full10+1 goal remain open. No production or provider mutation occurred.
+
 ## Task4F independent acceptance, 2026-10-14
 
 Root accepts only the coupled F unit at20bebe37265c17041732f149d1e4da7da0376ef8

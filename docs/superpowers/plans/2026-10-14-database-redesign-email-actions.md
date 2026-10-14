@@ -524,3 +524,19 @@ Only this coupled unit is accepted. Task5 consumers and the deferred old-SQL
 test adaptations remain required, then fresh actual-copy/native evidence and
 CI/publication. Do not close the complete Task4 named test gate or deploy this
 branch on the strength of F review alone. Task5 is the next implementation unit.
+
+### Task5A accepted;5B0 source-contract repair first, 2026-10-14
+
+SPEC and QUALITY independently accepted7dcbe227 external consumers, with13 and17
+focused cases respectively plus full genuine0441 History model/receipt/quiet
+probes. The implementation's355-case pass remains a separate receipt.5A does not
+close the complete Task4/5 test gates or authorize publication.
+
+Before broad H/T/S fixture adaptation, correct the independently demonstrated
+parent-F missing-Email-index behavior: genuine51 refuses and leaves the native
+index absent, whereas target52 shared Store repair recreates its mapped canonical
+index. Two exact native/canonical pairs and parent binding are in the validation
+document.5B0 must retain original Store repair and original Email refusal/provider
+repair behavior, with source RED/target GREEN evidence and independent reviews;
+do not turn the new repair into policy by weakening old tests. No new recovery,
+authorization, schema field or retention feature is proposed.

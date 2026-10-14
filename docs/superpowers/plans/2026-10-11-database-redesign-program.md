@@ -432,3 +432,18 @@ normal deploy/readback. Last production readback remains Store19/Email51/121
 tables at666f4078; source main4eb7abb8 is its documentation-only successor.
 HistoryPR86 is separately deployed with its limited UI/degraded-health boundary;
 it does not change Email schema. The full10-core-table plus ledger goal is open.
+
+
+2026-10-14: after normal main0441/PR87 merge4957997d, Task5A external-consumer
+candidate7dcbe227 passed sequential independent SPEC13 and QUALITY17 cases plus
+their own real0441 full-History, receipt, quiet and initialization probes.5A's
+implementation355-case pass remains separately recorded. Current readers now
+select29 explicitly; original source16/default publication behavior remains.
+
+QUALITY exposed a parent-F contract defect: native Email51 missing-action and
+receipt-classification indexes are refused, while target52 shared Store startup
+recreates their canonical counterparts. The archived parent reproduces it.
+Separate5B0 must fix this mechanism before old-test adaptation, preserving the
+existing Store repairs and Email refusal/provider-column repair. The earlier F
+acceptance is qualified by this confirmed open issue. No publication occurred;
+complete Task4/5, latest-copy/native/CI/deploy/live and the full10+1 goal are open.
