@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "scope": "OFFLINE Phase5E paired constructor copy acceptance",
-  "observed_at": "2026-10-14T03:41:24.123091+00:00",
-  "candidate_commit": "6c7b7a719414c24e3d89e75134e93b643094aa27",
+  "observed_at": "2026-10-14T03:56:38.201016+00:00",
+  "candidate_commit": "c47e6f4ab1f83b2d3c323662b77c45bb3f0649fb",
   "actual_old_source_ref": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
   "production_head_start": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
   "production_head_end": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
@@ -10,7 +10,7 @@
   "candidate_source_sha256": {
     "app/action_reply_storage.py": "72e84e6c8d6be31e39115bcaea1432b4ba6267bbb091610666ad75653415e10c",
     "app/action_reply_schema_release.py": "eed6dc3ec404e58d52b1562da8c10fcb1a94823698f009f9758fd7997b0ad6fd",
-    "app/action_storage.py": "426334f1ce22ed12f6b32b01911cdefb6d763a99726141a4d14ea84ac5da4555",
+    "app/action_storage.py": "ff6fd09fc21875d26732db5b63d7b95b51302eb98f0b23b90406977563227024",
     "app/store.py": "aed6789f0206d39b417fc839dce846ca597a89e0ec3daaf3d81c643c33fae10d",
     "app/store_schema_release.py": "d0605e18dcbeffcbda904d2177559db5ff312ad3e203f07c0ab30447b8605c8f"
   },
@@ -18,7 +18,7 @@
     "actual_online_backup": {
       "source_variant": "actual",
       "source_schema_sha256": "9f4b174573596030e0716d4360b8f445049691ead1e39ac6e979f61676815b98",
-      "source_attempts": 14830,
+      "source_attempts": 14831,
       "source_memory_events": 476,
       "source_tables": 123,
       "target_tables": 121,

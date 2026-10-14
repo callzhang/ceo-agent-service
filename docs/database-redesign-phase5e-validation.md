@@ -545,7 +545,7 @@ All source copies and archived code are owned by one temporary directory and
 cleaned after the run. Exact aggregate results and non-atomic production HEAD
 binding are recorded in
 `evals/database_redesign/phase5e_constructor_copy.v1.json`. The final run
-passed on the actual source (14,830 Attempts, 476 Memory events, 123 to 121
+passed on the actual source (14,831 Attempts, 476 Memory events, 123 to 121
 noninternal tables, one unchanged source FK finding) and genuinely old fresh
 source (zero initial reply facts, 123 to 121 tables, zero FK findings). The
 actual-copy SQLite file stayed 471,347,200 bytes after republishing, so the
@@ -614,3 +614,13 @@ and fresh Memory parent; after repair the nine-file focused gate passed 325
 tests with eight fixture-dependent skips. Ruff and diff checks passed. This
 remains an unpublished candidate correction; final CI, push, deployment and
 live readback are separate gates.
+
+The exact clean index-repair commit `c47e6f4a` was then rerun through the
+offline paired-constructor harness. The latest online backup held 14,831
+Attempts and 476 Memory events; actual and archived-old fresh variants again
+passed forward/current-fact inverse, old-code cold read and public fake-receipt
+write, and re-forward with the repaired manifest. Production HEAD remained
+`9a2a23fc` at the separate start/end observations. The refreshed concise
+evidence replaces the prior code binding in
+`evals/database_redesign/phase5e_constructor_copy.v1.json`; no native role
+or production write was performed in this rerun.
