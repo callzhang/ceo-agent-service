@@ -158,6 +158,25 @@ def test_fixture_account_row_corruption_is_not_excluded(old_fresh, monkeypatch):
         _case(path, old, fresh=True, null_plans=False)
 
 
+def test_second_forward_fixture_corruption_is_rejected(old_fresh, monkeypatch):
+    old, path = old_fresh
+    original = proof.migrate_email_action_schema
+    calls = []
+
+    def corrupt_only_reforward(db):
+        state = original(db)
+        calls.append(True)
+        if len(calls) == 2:
+            db.execute("update email_accounts set display_name='REFORWARD CORRUPTION' "
+                       "where account_id='copy-only-account'")
+        return state
+
+    monkeypatch.setattr(proof, "migrate_email_action_schema", corrupt_only_reforward)
+    with pytest.raises(AssertionError):
+        _case(path, old, fresh=True, null_plans=False)
+    assert len(calls) == 2
+
+
 def test_unexplained_fixture_message_water_is_rejected(old_fresh, monkeypatch):
     old, path = old_fresh
     original = proof._old_process

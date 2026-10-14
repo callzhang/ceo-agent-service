@@ -730,6 +730,7 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
         after_old_email = _source_facts(db)
         _original_source_rows_preserved(preseed_source_facts, after_old_email)
         after_old_waters = _source_waters(db)
+        after_old_fixture = seeded_fixture
     else:
         feedback_started = datetime.now(timezone.utc)
         _old_process_genuine(oldroot, donor_path, "write", classification_id, identity,
@@ -757,6 +758,7 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
                                                 feedback_finished) == _normalized_feedback_fixture(
                                                     donor_db, fixture_ids, feedback_started,
                                                     feedback_finished)
+        after_old_fixture = _fixture_rows(db, fixture_ids)
         after_old_waters = _source_waters(db)
         assert after_old_waters["email_action_attempts"] > current_waters["email_action_attempts"]
         assert after_old_waters["email_unsubscribe_steps"] == current_waters["email_unsubscribe_steps"]
@@ -777,6 +779,7 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
     assert _target_waters(db) == after_old_waters
     assert _other_sequences(db) == after_old_other_sequences
     assert _unrelated(db, fixture_ids) == after_old_unrelated
+    assert _fixture_rows(db, fixture_ids) == after_old_fixture
     assert _actions(db, action_columns) == after_old_actions
     assert _marker(db) == marker and _email_ledger(db) == ledger
     _consistency(db, initial_fk)
