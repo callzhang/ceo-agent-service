@@ -304,3 +304,39 @@ code cold read/write/re-forward are still required. Full Task3, constructor/
 caller integration, paired release/version selection and production acceptance
 remain incomplete. No provider, native CLI or production mutation was used in
 these independent reviews, and task-owned temporary artifacts were cleaned.
+
+## Task3B copy harness preparation (acceptance pending)
+
+The offline harness `scripts/validate_action_email_copy.py` is prepared for the
+actual published Store19/Email51 source. It reads the source through SQLite's
+read-only URI and online backup API into a task-owned temporary directory,
+archives an exact published Git ref there, and operates only on copied files.
+It compares original sixteen-action facts, all thirteen Email source
+projections including SQLite storage classes and signed ROWIDs, allocator
+waters, unrelated-table contents, source markers and existing FK findings
+across forward/current-fact inverse/re-forward. Its evidence output is
+aggregate-only and is written only after all assertions pass. No Store/Email
+constructor or release selector activates the candidate target.
+
+A genuine baseline contradiction was reproduced before any migration: the
+published old EmailStore cold constructor rejects two SQL-legal
+`email_action_plans.action_plan_id=NULL` rows with
+`EmailPersistenceCorruption: invalid immutable ActionPlan None`. The actual
+production source read-only aggregate had 9,857 action plans and zero NULL
+plan IDs at this observation. The proposed plan amendment separates a
+lossless SQL-legal NULL-row proof from an application-valid actual-copy cold
+read/write proof. The former passed a local fresh-source forward/inverse/
+re-forward exercise with two distinct NULL rowids/versions; the latter remains
+pending full execution and review. These are source/fixture observations, not
+a migration failure or permission to erase NULL rows. Seven focused harness
+regressions passed, including corrupted value/ROWID/water and suppressed old
+public-write detection. No provider or production mutation occurred.
+
+The historical Task1 source binding captured production checkout
+`eb797e6bd35de695c269054a2e697af8fde2baa5`. The checkout later moved to
+`9cd41bcf5ea43a275eeb1376817d37f7cef6bd21`; the latter is the archived
+old-code ref for this proof. Its Store diff concerns reply-reconciliation
+batching and CAS rechecks, with no Email or action schema declaration change.
+The Git HEAD and SQLite online backup are separately observed, not one atomic
+snapshot. Final source-refresh evidence and the full actual-copy result are
+pending.
