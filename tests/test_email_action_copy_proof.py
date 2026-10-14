@@ -115,3 +115,123 @@ def test_copy_harness_requires_real_old_public_write(old_fresh, monkeypatch):
     monkeypatch.setattr(proof, "_old_process", no_write)
     with pytest.raises((AssertionError, RuntimeError)):
         _case(path, old, fresh=True, null_plans=False)
+
+
+def test_blank_receipt_is_seeded_before_first_forward(old_fresh, monkeypatch):
+    old, path = old_fresh
+    original = proof.migrate_email_action_schema
+    first = []
+
+    def checked_migration(db):
+        if not first:
+            first.append(True)
+            assert db.execute("select count(*) from email_reply_receipts where "
+                              "action_identity='copy-only-reply' and "
+                              "json_extract(provider_receipt_json,'$.smtp_acceptance_id')=''"
+                              ).fetchone() == (1,)
+        return original(db)
+
+    monkeypatch.setattr(proof, "migrate_email_action_schema", checked_migration)
+    assert _case(path, old, fresh=True, null_plans=False)["current_fact_inverse"]
+    assert first == [True]
+
+
+def test_missing_target_current_facts_fails_before_inverse(old_fresh, monkeypatch):
+    old, path = old_fresh
+    monkeypatch.setattr(proof, "_target_current_from_donor", lambda *args: None)
+    with pytest.raises(AssertionError):
+        _case(path, old, fresh=True, null_plans=True)
+
+
+def test_fixture_account_row_corruption_is_not_excluded(old_fresh, monkeypatch):
+    old, path = old_fresh
+    original = proof.migrate_email_action_schema
+
+    def changed_account(db):
+        state = original(db)
+        db.execute("update email_accounts set display_name='corrupted' "
+                   "where account_id='copy-only-account'")
+        return state
+
+    monkeypatch.setattr(proof, "migrate_email_action_schema", changed_account)
+    with pytest.raises(AssertionError):
+        _case(path, old, fresh=True, null_plans=False)
+
+
+def test_unexplained_fixture_message_water_is_rejected(old_fresh, monkeypatch):
+    old, path = old_fresh
+    original = proof._old_process
+
+    def changed_water(root, database, mode, *args):
+        result = original(root, database, mode, *args)
+        if mode == "seed":
+            with closing(sqlite3.connect(database)) as db:
+                db.execute("update sqlite_sequence set seq=seq+999 "
+                           "where name='email_messages'")
+                db.commit()
+        return result
+
+    monkeypatch.setattr(proof, "_old_process", changed_water)
+    with pytest.raises(AssertionError):
+        _case(path, old, fresh=True, null_plans=False)
+
+
+def test_original_email_row_change_is_not_a_new_oracle():
+    original = {name: ((), ()) for name in proof.SOURCE_TABLES}
+    current = dict(original)
+    original["email_actions"] = (((7, "2026-10-14T00:00:00+00:00"),),
+                                 (("integer", "text"),))
+    current["email_actions"] = (((7, "changed"),), (("integer", "text"),))
+    with pytest.raises(AssertionError):
+        proof._original_source_rows_preserved(original, current)
+
+
+def test_old_public_write_cannot_change_original_email_row(old_fresh, monkeypatch):
+    old, path = old_fresh
+    proof._old_process_genuine(old, path, "seed", "baseline-proof-account")
+    original = proof._old_process
+
+    def corrupt_after_public_write(root, database, mode, *args):
+        result = original(root, database, mode, *args)
+        if mode == "write":
+            with closing(sqlite3.connect(database)) as db:
+                db.execute("update email_actions set updated_at='2001-01-01T00:00:00+00:00' "
+                           "where rowid=(select min(rowid) from email_actions "
+                           "where account_id='baseline-proof-account')")
+                db.commit()
+        return result
+
+    monkeypatch.setattr(proof, "_old_process", corrupt_after_public_write)
+    with pytest.raises(AssertionError):
+        _case(path, old, fresh=True, null_plans=False)
+
+
+def test_public_seed_clock_normalization_is_bounded(old_fresh, monkeypatch):
+    old, path = old_fresh
+    original = proof._old_process
+
+    def stale_seed_clock(root, database, mode, *args):
+        result = original(root, database, mode, *args)
+        if mode == "seed":
+            with closing(sqlite3.connect(database)) as db:
+                db.execute("update email_classifications "
+                           "set updated_at='2001-01-01T00:00:00+00:00' "
+                           "where account_id='copy-only-account'")
+                db.commit()
+        return result
+
+    monkeypatch.setattr(proof, "_old_process", stale_seed_clock)
+    with pytest.raises(AssertionError):
+        _case(path, old, fresh=True, null_plans=False)
+
+
+def test_email_auto_allocator_exhaustion_at_signed_max(old_fresh):
+    _old, path = old_fresh
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        proof.migrate_email_action_schema(db)
+        proof._set_sequence(db, "actions:email_action_attempts", 2**63 - 1)
+        db.commit()
+        with pytest.raises(sqlite3.OperationalError, match="database or disk is full"):
+            proof.action_storage._email_auto_next(db, "email_action_attempts")

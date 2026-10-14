@@ -3,7 +3,7 @@
 import argparse
 from collections import Counter
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
@@ -22,7 +22,8 @@ from app.action_email_storage import (
     restore_email_action_schema, _projection, _rows, _types, _columns, _sequence,
     _fingerprint, _set_sequence,
 )
-from app.action_email_definitions import EMAIL_AUTOINCREMENT_TYPES, EMAIL_ROWID_TYPES, EMAIL_TYPES_ORDER
+from app.action_email_definitions import (EMAIL_AUTOINCREMENT_TYPES, EMAIL_COMPOSITE_KEYS,
+                                          EMAIL_ROWID_TYPES, EMAIL_TYPES_ORDER)
 
 PUBLISHED_SCHEMA_REF = "eb797e6bd35de695c269054a2e697af8fde2baa5"
 PRODUCTION_ROOT = Path.home() / "Services/ceo-agent-service"
@@ -86,6 +87,107 @@ def _unrelated(db, fixture_ids=None):
             if name not in (*SOURCE_TABLES, "actions")}
 
 
+def _fixture_rows(db, fixture_ids):
+    predicates = {
+        "email_accounts": ("account_id=?", ("copy-only-account",)),
+        "email_classifications": ("id in (" + ",".join("?" for _ in fixture_ids) + ")",
+                                  fixture_ids),
+        "email_messages": ("stable_message_identity in (" +
+                           ",".join("?" for _ in fixture_ids) + ")",
+                           tuple(f"copy-only-account:message-id:<copy-{ident}@example.test>"
+                                 for ident in fixture_ids)),
+    }
+    result = {}
+    for name, (predicate, args) in predicates.items():
+        columns = _columns(db, name)
+        selected = ",".join(map(_quote, columns))
+        storage = ",".join(f"typeof({_quote(column)})" for column in columns)
+        result[name] = tuple(db.execute(
+            f"select {selected},{storage} from main.{_quote(name)} where {predicate} order by rowid",
+            args))
+    return result
+
+
+def _public_seed_clock(value, start, end):
+    assert isinstance(value, str)
+    observed = datetime.fromisoformat(value)
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+    observed = observed.astimezone(timezone.utc)
+    assert start - timedelta(seconds=2) <= observed <= end + timedelta(seconds=2)
+    return "<public-clock>"
+
+
+def _normalized_seed_fixture(db, fixture_ids, start, end):
+    rows = _fixture_rows(db, fixture_ids)
+    normalized = {}
+    for name, entries in rows.items():
+        columns = _columns(db, name)
+        time_positions = (tuple(columns.index(column) for column in ("created_at", "updated_at")
+                                if column in columns)
+                          if name in ("email_messages", "email_classifications") else ())
+        items = []
+        for entry in entries:
+            values = list(entry)
+            for position in time_positions:
+                values[position] = _public_seed_clock(values[position], start, end)
+            items.append(tuple(values))
+        normalized[name] = tuple(items)
+    return normalized
+
+
+def _normalized_seed_source(db, fixture_ids, start, end):
+    facts = _source_facts(db)
+    normalized = {}
+    for name, (rows, types) in facts.items():
+        columns = (("rowid",) if name in EMAIL_ROWID_TYPES else ()) + _columns(db, name)
+        classification_position = columns.index("classification_id") if "classification_id" in columns else None
+        time_positions = (tuple(columns.index(column) for column in ("created_at", "updated_at")
+                                if column in columns) if name == "email_actions" else ())
+        converted = []
+        for row in rows:
+            values = list(row)
+            if classification_position is not None and row[classification_position] in fixture_ids:
+                for position in time_positions:
+                    values[position] = _public_seed_clock(values[position], start, end)
+            converted.append(tuple(values))
+        normalized[name] = (tuple(converted), tuple(types))
+    return normalized
+
+
+def _normalized_feedback_source(db, facts, start, end):
+    normalized = dict(facts)
+    name = "email_feedback_requests"
+    columns = ("rowid",) + _columns(db, name)
+    request_position = columns.index("feedback_request_id")
+    clock_position = columns.index("applied_at")
+    rows = []
+    for row in facts[name][0]:
+        values = list(row)
+        if row[request_position] == "copy-only-feedback":
+            values[clock_position] = _public_seed_clock(values[clock_position], start, end)
+        rows.append(tuple(values))
+    normalized[name] = (tuple(rows), tuple(facts[name][1]))
+    return normalized
+
+
+def _normalized_feedback_fixture(db, fixture_ids, start, end):
+    rows = _fixture_rows(db, fixture_ids)
+    columns = _columns(db, "email_classifications")
+    id_position = columns.index("id")
+    clock_positions = (columns.index("updated_at"), columns.index("confirmed_at"))
+    normalized = dict(rows)
+    converted = []
+    for row in rows["email_classifications"]:
+        values = list(row)
+        if row[id_position] == fixture_ids[0]:
+            for position in clock_positions:
+                values[position] = _public_seed_clock(values[position], start, end)
+        converted.append(tuple(values))
+    normalized["email_classifications"] = tuple(converted)
+    return normalized
+
+
 def _actions(db, columns):
     selected = ",".join(map(_quote, columns))
     storage = ",".join(f"typeof({_quote(c)})" for c in columns)
@@ -128,6 +230,46 @@ def _target_facts(db, variant):
     return {name: _projection(db, name, variant) for name in SOURCE_TABLES}
 
 
+def _target_current_from_donor(db, before, donor, state, donor_waters):
+    updates = []
+    for name in SOURCE_TABLES:
+        # The source declaration, rather than candidate payload JSON, defines
+        # both the projection order and every value used by this fixture.
+        columns = (("rowid",) if name in EMAIL_ROWID_TYPES else ()) + _columns_from_state(state, name)
+        old_rows = {row[0] if name not in EMAIL_COMPOSITE_KEYS else tuple(
+            row[columns.index(field)] for field in EMAIL_COMPOSITE_KEYS[name]): row
+            for row in before[name][0]}
+        new_rows = donor[name][0]
+        assert len(new_rows) >= len(old_rows), name
+        for row in new_rows:
+            identity = (tuple(row[columns.index(field)] for field in EMAIL_COMPOSITE_KEYS[name])
+                        if name in EMAIL_COMPOSITE_KEYS else row[0])
+            values = dict(zip(columns, row, strict=True))
+            if name in EMAIL_ROWID_TYPES:
+                values.pop("rowid")
+            previous = old_rows.pop(identity, None)
+            if previous is None:
+                if name in EMAIL_ROWID_TYPES:
+                    action_storage.insert_email_action(db, name, values, source_rowid=identity)
+                else:
+                    action_storage._insert_email_action(db, name, values)
+            elif row != previous:
+                changes = {column: value for column, value, prior in
+                           zip(columns, row, previous, strict=True) if value != prior and column != "rowid"}
+                updates.append((name, identity, changes))
+        assert not old_rows, name
+    for name, identity, changes in updates:
+        if name in EMAIL_ROWID_TYPES:
+            action_storage.update_email_action(db, name, identity, changes)
+        else:
+            action_storage._update_email_action(db, name, identity, changes)
+    for name, water in donor_waters.items():
+        _set_sequence(db, f"actions:{name}", water)
+    assert _target_facts(db, state["email_variant"]) == {
+        name: ((("rowid",) if name in EMAIL_ROWID_TYPES else ()) + _columns_from_state(state, name),
+               *donor[name]) for name in SOURCE_TABLES}
+
+
 def _source_waters(db):
     return {name: _sequence(db, name) for name in EMAIL_AUTOINCREMENT_TYPES}
 
@@ -156,20 +298,26 @@ from app.email_classifier_contracts import (EmailAction, EmailCategory, EmailCla
     EmailClassificationStatus, build_email_action_plan)
 path=Path(sys.argv[1]); mode=sys.argv[2]; store=AutoReplyStore(path); email=EmailStore(path)
 if mode == 'seed':
-    email.create_account({'account_id':'copy-only-account','display_name':'Copy only',
-        'email_address':'copy@example.test','imap_host':'imap.example.test',
+    fixture_account=sys.argv[3] if len(sys.argv)>3 else 'copy-only-account'
+    fixture_address=('copy@example.test' if fixture_account=='copy-only-account'
+                     else 'baseline@example.test')
+    account={'account_id':fixture_account,'display_name':'Copy only',
+        'email_address':fixture_address,'imap_host':'imap.example.test',
         'imap_port':993,'imap_tls':True,'imap_username':'copy@example.test',
         'imap_secret_reference':'keychain://copy-only-imap',
         'smtp_host':'smtp.example.test','smtp_port':465,'smtp_tls':True,
         'smtp_username':'copy@example.test','smtp_secret_reference':'keychain://copy-only-smtp',
-        'enabled':False,'scan_folders':['INBOX'],'scan_interval_seconds':60})
+        'enabled':False,'scan_folders':['INBOX'],'scan_interval_seconds':60}
+    with sqlite3.connect(path) as db:
+        email._insert_account(db,account,created_at='2026-10-14T00:00:00+00:00',
+                              updated_at='2026-10-14T00:00:00+00:00')
     with sqlite3.connect(path) as db:
         classification_id=db.execute('select coalesce(max(id),0)+1000 from email_classifications').fetchone()[0]
     def pending(identifier):
       return EmailClassification.model_validate({
         'classification_id':identifier,
-        'stable_message_identity':f'copy-only-account:message-id:<copy-{identifier}@example.test>',
-        'provider_locator':{'account_id':'copy-only-account','folder':'INBOX','uidvalidity':42,
+        'stable_message_identity':f'{fixture_account}:message-id:<copy-{identifier}@example.test>',
+        'provider_locator':{'account_id':fixture_account,'folder':'INBOX','uidvalidity':42,
                             'uid':identifier,'rfc_message_id':f'<copy-{identifier}@example.test>',
                             'thread_id':'copy-only-thread'},
         'category':'work','confidence':0.79,'margin':0.31,
@@ -179,7 +327,7 @@ if mode == 'seed':
     persisted=email.persist_scan_result(pending(classification_id),model_text='__subject__offline copy proof')
     assert persisted['id']==classification_id
     receipt_id=classification_id+1
-    plan=build_email_action_plan(classification_id=receipt_id,account_id='copy-only-account',
+    plan=build_email_action_plan(classification_id=receipt_id,account_id=fixture_account,
         category=EmailCategory.WORK,classification_source='model',confidence=0.79,
         model_id='copy-only-model',config_version='copy-only-config',
         actions=(EmailAction.AUTO_REPLY,EmailAction.MARK_READ,EmailAction.LABEL,
@@ -193,7 +341,7 @@ if mode == 'seed':
         model_text='__subject__offline receipt proof')['id']==receipt_id
     retry_classification_id=receipt_id+1
     retry_plan=build_email_action_plan(classification_id=retry_classification_id,
-        account_id='copy-only-account',category=EmailCategory.WORK,
+        account_id=fixture_account,category=EmailCategory.WORK,
         classification_source='model',confidence=0.79,model_id='copy-only-model',
         config_version='copy-only-config',actions=(EmailAction.TRASH,),
         action_parameters={},created_at=datetime(2026,10,14,tzinfo=timezone.utc))
@@ -215,18 +363,52 @@ if mode == 'seed':
                       'retry_action_id':retry_id}))
 elif mode == 'read':
     classification_id=int(sys.argv[3]); identity=sys.argv[4]
+    direct_id=sys.argv[5]; failed_id=sys.argv[6]; retry_id=sys.argv[7]
     assert email.get_classification(classification_id) is not None
     assert email.get_email_reply_receipt(identity)['provider_receipt']['smtp_acceptance_id']
+    assert len(email.list_action_attempts(direct_id))==1
+    assert len(email.list_action_attempts(failed_id))==1
+    assert len(email.list_action_attempts(retry_id))==2
+    assert len(email.list_failed_direct_actions(account_id='copy-only-account',
+        action_types=(EmailAction.LABEL,),limit=10,action_id=failed_id))==1
+    with sqlite3.connect(path) as db:
+        assert db.execute('select count(*) from email_unsubscribe_steps '
+                          "where reference='copy-only-step'").fetchone()==(1,)
     print(json.dumps({'read':True}))
 elif mode == 'write':
     classification_id=int(sys.argv[3]); identity=sys.argv[4]
-    direct_id=sys.argv[5]; failed_id=sys.argv[6]; retry_id=sys.argv[7]
+    retry_id=sys.argv[5]
     first=email.apply_human_classification(classification_id, EmailCategory.WORK,
-        feedback_request_id='copy-only-feedback',expected_current_action_plan_id=None)
+        feedback_request_id='copy-only-feedback',expected_current_action_plan_id=None,
+        created_at=datetime(2026,10,14,1,4,tzinfo=timezone.utc))
     assert first is not None and first.applied
     second=email.apply_human_classification(classification_id, EmailCategory.WORK,
-        feedback_request_id='copy-only-feedback',expected_current_action_plan_id=None)
+        feedback_request_id='copy-only-feedback',expected_current_action_plan_id=None,
+        created_at=datetime(2026,10,14,1,4,tzinfo=timezone.utc))
     assert second is not None and not second.applied
+    receipt=email.get_email_reply_receipt(identity)
+    assert receipt['provider_receipt']['smtp_acceptance_id']=='copy-only-smtp'
+    assert email.persist_email_reply_receipt(
+        action_identity=identity,effect_digest=receipt['effect_digest'],
+        action_plan_id=receipt['action_plan_id'],classification_id=receipt['classification_id'],
+        account_id=receipt['account_id'],stable_message_identity=receipt['stable_message_identity'],
+        outgoing_message_id=receipt['outgoing_message_id'],provider_operation=receipt['provider_operation'],
+        provider_target=receipt['provider_target'],provider_result_id=receipt['provider_result_id'],
+        sent_folder='Sent',sent_uidvalidity=42,sent_uid=123,
+        smtp_acceptance_id='copy-only-smtp')['provider_receipt']['smtp_acceptance_id']=='copy-only-smtp'
+    second_retry=email.claim_direct_action(action_id=retry_id,
+        claimed_at='2026-10-14T01:05:00+00:00')
+    assert second_retry is not None and second_retry.attempt_number==2
+    retry_done=email.complete_direct_action_attempt(second_retry,status='done',
+        provider_operation='trash',provider_target=second_retry.locator.stable_message_identity,
+        provider_result_id='copy-only-retry-done',error='',
+        finished_at='2026-10-14T01:05:01+00:00')
+    assert retry_done['status']=='done' and len(email.list_action_attempts(retry_id))==2
+    print(json.dumps({'feedback_applied':first.applied,'feedback_replayed':not second.applied,
+                      'receipt_public_replay':True,'retry_completed':True}))
+elif mode == 'current':
+    classification_id=int(sys.argv[3]); identity=sys.argv[4]
+    direct_id=sys.argv[5]; failed_id=sys.argv[6]; retry_id=sys.argv[7]
     receipt=email.get_email_reply_receipt(identity)
     assert receipt is not None and receipt['provider_receipt']['smtp_acceptance_id']==''
     result=email.persist_email_reply_receipt(
@@ -303,15 +485,14 @@ elif mode == 'write':
     history=store.list_operation_logs(source_tables=('email_actions',))
     assert any(item.source_id==public_rowid and item.status=='failed' for item in history)
     assert store is not None
-    print(json.dumps({'feedback_applied':first.applied,'feedback_replayed':not second.applied,
-                      'receipt_read_write':True,'direct_attempt_completed':True,
+    print(json.dumps({'receipt_read_write':True,'direct_attempt_completed':True,
                       'failed_action_visible':True,'history_source_id_visible':True,
                       'sequence_continued':True,'unsubscribe_skip':True,
                       'explicit_retry_recorded':True}))
 '''
 
 
-def _old_process(root, path, mode, *args):
+def _old_process_genuine(root, path, mode, *args):
     result = subprocess.run([sys.executable, "-c", OLD_PROGRAM, str(path), mode,
                              *(str(arg) for arg in args)], cwd=root,
                             env={**os.environ, "PYTHONPATH": str(root)},
@@ -321,11 +502,33 @@ def _old_process(root, path, mode, *args):
     return json.loads(result.stdout)
 
 
+def _old_process(root, path, mode, *args):
+    return _old_process_genuine(root, path, mode, *args)
+
+
 def _copy(source, destination):
     with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)) as original, \
             closing(sqlite3.connect(destination)) as copy:
         original.execute("pragma query_only=on")
         original.backup(copy)
+
+
+def _seed_blank_receipt(db, receipt_id, receipt_plan):
+    row = db.execute("select account_id,stable_message_identity from email_classifications where id=?",
+                     (receipt_id,)).fetchone()
+    assert row is not None
+    values = {
+        "action_identity":"copy-only-reply","effect_digest":"copy-only-digest",
+        "action_plan_id":receipt_plan,"classification_id":receipt_id,
+        "account_id":row[0],"stable_message_identity":row[1],
+        "outgoing_message_id":"<copy-out@example.test>","provider_operation":"sent_readback",
+        "provider_target":"copy-only-target","provider_result_id":"copy-only-result",
+        "provider_receipt_json":json.dumps({"sent_folder":"Sent","sent_uidvalidity":42,
+            "sent_uid":123,"smtp_acceptance_id":""},sort_keys=True,separators=(",",":")),
+        "display_excerpt":"Automatic email reply verified in Sent.",
+        "created_at":"2026-10-14T00:00:00+00:00"}
+    db.execute("insert into email_reply_receipts(" + ",".join(map(_quote, values)) +
+               ") values(" + ",".join("?" for _ in values) + ")", tuple(values.values()))
 
 
 def _case(path, oldroot, *, fresh, null_plans):
@@ -339,11 +542,23 @@ def _case(path, oldroot, *, fresh, null_plans):
             "marker": _marker(db), "ledger": _email_ledger(db),
             "waters": _source_waters(db),
             "other_sequences": _other_sequences(db),
+            "message_max": db.execute("select max(id) from email_messages").fetchone()[0] or 0,
             "fk": _consistency(db),
         }
         assert db.execute("select count(*) from email_classifications "
                           "where account_id='copy-only-account'").fetchone() == (0,)
+    donor_path = path.with_name(path.stem + "-genuine-old-donor.sqlite3")
+    assert not donor_path.exists()
+    _copy(path, donor_path)
+    seed_started = datetime.now(timezone.utc)
+    donor_seeded = _old_process_genuine(oldroot, donor_path, "seed")
+    with closing(sqlite3.connect(donor_path)) as donor_db:
+        _seed_blank_receipt(donor_db, donor_seeded["receipt_classification_id"],
+                            donor_seeded["receipt_plan_id"])
+        donor_db.commit()
     seeded = _old_process(oldroot, path, "seed")
+    seed_finished = datetime.now(timezone.utc)
+    assert seeded == donor_seeded
     classification_id = seeded["classification_id"]
     receipt_id = seeded["receipt_classification_id"]
     receipt_plan = seeded["receipt_plan_id"]
@@ -352,6 +567,29 @@ def _case(path, oldroot, *, fresh, null_plans):
     retry_id = seeded["retry_action_id"]
     fixture_ids = (classification_id, receipt_id, seeded["retry_classification_id"])
     with closing(sqlite3.connect(path)) as db:
+        _seed_blank_receipt(db, receipt_id, receipt_plan)
+        db.commit()
+        fixture_rows = _fixture_rows(db, fixture_ids)
+        with closing(sqlite3.connect(donor_path)) as donor_db:
+            assert _normalized_seed_source(db, fixture_ids, seed_started, seed_finished) == (
+                _normalized_seed_source(donor_db, fixture_ids, seed_started, seed_finished))
+            assert _normalized_seed_fixture(db, fixture_ids, seed_started, seed_finished) == (
+                _normalized_seed_fixture(donor_db, fixture_ids, seed_started, seed_finished))
+        current_donor_path = path.with_name(path.stem + "-current-donor.sqlite3")
+        assert not current_donor_path.exists()
+        _copy(path, current_donor_path)
+        assert {name: len(rows) for name, rows in fixture_rows.items()} == {
+            "email_accounts":1,"email_classifications":3,"email_messages":3}
+        assert db.execute("select display_name,email_address,enabled from email_accounts "
+                          "where account_id='copy-only-account'").fetchone() == (
+                              "Copy only", "copy@example.test", 0)
+        prior_message_water = dict(preseed["other_sequences"]).get("email_messages") or 0
+        first_message_id = max(prior_message_water, preseed["message_max"]) + 1
+        assert tuple(db.execute("select id from email_messages where account_id=? "
+                                "and stable_message_identity like ? order by id",
+                                ("copy-only-account", "copy-only-account:message-id:<copy-%"))) == tuple(
+                                    (first_message_id + offset,) for offset in range(3))
+        assert _sequence(db, "email_messages") == first_message_id + 2
         initial_fk = _consistency(db)
         source = capture_email_action_source(db)
         original_marker = _marker(db)
@@ -381,6 +619,7 @@ def _case(path, oldroot, *, fresh, null_plans):
         state = migrate_email_action_schema(db)
         db.commit()
         assert _unrelated(db, fixture_ids) == original_unrelated
+        assert _fixture_rows(db, fixture_ids) == fixture_rows
         assert _actions(db, original_columns) == original_actions
         assert _target_waters(db) == original_waters
         assert _other_sequences(db) == original_other_sequences
@@ -395,7 +634,7 @@ def _case(path, oldroot, *, fresh, null_plans):
                               original_unrelated,
                               original_actions, original_columns, original_marker, original_ledger,
                               initial_fk, initial_tables, source_counts, original_other_sequences,
-                              preseed["facts"])
+                              preseed["facts"], original_email, fixture_rows, current_donor_path)
 
 
 def _columns_from_state(state, name):
@@ -405,24 +644,60 @@ def _columns_from_state(state, name):
 def _continue_case(db, path, oldroot, state, classification_id, receipt_id, receipt_plan,
                    direct_id, failed_id, retry_id, null_plans, fixture_ids, unrelated, actions,
                    action_columns, marker, ledger, initial_fk, initial_tables, source_counts,
-                   other_sequences, preseed_source_facts):
-    # This fixture exists only in the owned working copy. It is valid Sent evidence
-    # with an initially empty SMTP acceptance ID, later enriched by old public code.
-    row = db.execute("select id,account_id,stable_message_identity from email_classifications where id=?",
-                     (receipt_id,)).fetchone()
-    assert row is not None
+                   other_sequences, preseed_source_facts, seeded_email, seeded_fixture,
+                   donor_path):
     identity = "copy-only-reply"
-    action_storage.insert_email_action(db, "email_reply_receipts", {
-        "action_identity":identity,"effect_digest":"copy-only-digest",
-        "action_plan_id":receipt_plan,"classification_id":receipt_id,
-        "account_id":row[1],"stable_message_identity":row[2],
-        "outgoing_message_id":"<copy-out@example.test>","provider_operation":"sent_readback",
-        "provider_target":"copy-only-target","provider_result_id":"copy-only-result",
-        "provider_receipt_json":json.dumps({"sent_folder":"Sent","sent_uidvalidity":42,
-            "sent_uid":123,"smtp_acceptance_id":""},sort_keys=True,separators=(",",":")),
-        "display_excerpt":"Automatic email reply verified in Sent.",
-        "created_at":"2026-10-14T00:00:00+00:00"})
+    raised_waters = {}
+    with closing(sqlite3.connect(donor_path)) as donor_db:
+        for name, current_water in _target_waters(db).items():
+            raised = (current_water or 0) + 17
+            assert raised < 2**63
+            _set_sequence(db, f"actions:{name}", raised)
+            _set_sequence(donor_db, name, raised)
+            raised_waters[name] = raised
+        donor_db.commit()
+    db.commit()
+    current_write = _old_process_genuine(oldroot, donor_path, "current", classification_id,
+                                         identity, direct_id, failed_id, retry_id)
+    assert all(current_write.get(key) is True for key in (
+        "receipt_read_write", "direct_attempt_completed", "failed_action_visible",
+        "history_source_id_visible", "sequence_continued", "unsubscribe_skip",
+        "explicit_retry_recorded"))
+    with closing(sqlite3.connect(donor_path)) as donor_db:
+        donor_current = _source_facts(donor_db)
+        donor_waters = _source_waters(donor_db)
+        assert all(donor_waters[name] > raised_waters[name]
+                   for name in EMAIL_AUTOINCREMENT_TYPES)
+        assert _unrelated(donor_db, fixture_ids) == unrelated
+        assert _fixture_rows(donor_db, fixture_ids) == seeded_fixture
+        assert _other_sequences(donor_db) == other_sequences
+        _original_source_rows_preserved(preseed_source_facts, donor_current)
+        assert donor_db.execute("select json_extract(provider_receipt_json,"
+                                "'$.smtp_acceptance_id') from email_reply_receipts "
+                                "where action_identity='copy-only-reply'").fetchone() == (
+                                    "copy-only-smtp",)
+        assert donor_db.execute("select outcome from email_unsubscribe_receipts "
+                                "where account_id='copy-only-account'").fetchone() == (
+                                    "skipped_login_required",)
+    assert len(donor_current["email_action_attempts"][0]) == len(
+        seeded_email["email_action_attempts"][0]) + 3
+    assert len(donor_current["email_unsubscribe_steps"][0]) == len(
+        seeded_email["email_unsubscribe_steps"][0]) + 1
+    assert len(donor_current["email_unsubscribe_receipts"][0]) == len(
+        seeded_email["email_unsubscribe_receipts"][0]) + 1
+    assert len(donor_current["email_direct_retry_requests"][0]) == len(
+        seeded_email["email_direct_retry_requests"][0]) + 1
+    assert donor_current["email_reply_receipts"] != seeded_email["email_reply_receipts"]
+    _target_current_from_donor(db, seeded_email, donor_current, state, donor_waters)
+    assert _target_facts(db, state["email_variant"]) == {
+        name: ((("rowid",) if name in EMAIL_ROWID_TYPES else ()) + _columns_from_state(state, name),
+               *donor_current[name]) for name in SOURCE_TABLES}
+    assert _target_waters(db) == donor_waters
+    assert _fixture_rows(db, fixture_ids) == seeded_fixture
     if null_plans:
+        row = db.execute("select id,account_id from email_classifications where id=?",
+                         (receipt_id,)).fetchone()
+        assert row is not None
         for version in (2, 3):
             action_storage.insert_email_action(db, "email_action_plans", {
                 "action_plan_id":None,"action_plan_version":version,
@@ -430,12 +705,6 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
                 "classification_source":"model","confidence":0.79,"model_id":"copy-only-model",
                 "config_version":"copy-only-config","actions_json":"[]", "action_parameters_json":"{}",
                 "created_at":"2026-10-14T00:00:00+00:00"})
-    raised_waters = {}
-    for name, current_water in _target_waters(db).items():
-        raised = max(current_water or 0, 0) + 17
-        assert raised < 2**63
-        _set_sequence(db, f"actions:{name}", raised)
-        raised_waters[name] = raised
     db.commit()
     current = _target_facts(db, state["email_variant"])
     current_waters = _target_waters(db)
@@ -448,6 +717,7 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
     assert _source_waters(db) == current_waters
     assert _other_sequences(db) == current_other_sequences == other_sequences
     assert _unrelated(db, fixture_ids) == unrelated and _actions(db, action_columns) == actions
+    assert _fixture_rows(db, fixture_ids) == seeded_fixture
     assert _marker(db) == marker and _email_ledger(db) == ledger
     _consistency(db, initial_fk)
     if null_plans:
@@ -461,20 +731,35 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
         _original_source_rows_preserved(preseed_source_facts, after_old_email)
         after_old_waters = _source_waters(db)
     else:
-        write = _old_process(oldroot, path, "write", classification_id, identity,
-                             direct_id, failed_id, retry_id)
+        feedback_started = datetime.now(timezone.utc)
+        _old_process_genuine(oldroot, donor_path, "write", classification_id, identity,
+                             retry_id)
+        with closing(sqlite3.connect(donor_path)) as donor_db:
+            donor_after_write = _source_facts(donor_db)
+            assert _unrelated(donor_db, fixture_ids) == unrelated
+        write = _old_process(oldroot, path, "write", classification_id, identity, retry_id)
+        feedback_finished = datetime.now(timezone.utc)
         assert all(write.get(key) is True for key in (
-            "feedback_applied", "feedback_replayed", "receipt_read_write",
-            "direct_attempt_completed", "failed_action_visible",
-            "history_source_id_visible", "sequence_continued", "unsubscribe_skip",
-            "explicit_retry_recorded"))
-        _old_process(oldroot, path, "read", classification_id, identity)
+            "feedback_applied", "feedback_replayed", "receipt_public_replay",
+            "retry_completed"))
+        _old_process(oldroot, path, "read", classification_id, identity,
+                     direct_id, failed_id, retry_id)
         after_old_unrelated = _unrelated(db, fixture_ids)
         after_old_actions = _actions(db, action_columns)
         after_old_email = _source_facts(db)
+        _original_source_rows_preserved(preseed_source_facts, after_old_email)
+        assert _normalized_feedback_source(db, after_old_email, feedback_started,
+                                           feedback_finished) == _normalized_feedback_source(
+                                               db, donor_after_write, feedback_started,
+                                               feedback_finished)
+        with closing(sqlite3.connect(donor_path)) as donor_db:
+            assert _normalized_feedback_fixture(db, fixture_ids, feedback_started,
+                                                feedback_finished) == _normalized_feedback_fixture(
+                                                    donor_db, fixture_ids, feedback_started,
+                                                    feedback_finished)
         after_old_waters = _source_waters(db)
-        assert all(after_old_waters[name] > raised_waters[name]
-                   for name in EMAIL_AUTOINCREMENT_TYPES)
+        assert after_old_waters["email_action_attempts"] > current_waters["email_action_attempts"]
+        assert after_old_waters["email_unsubscribe_steps"] == current_waters["email_unsubscribe_steps"]
         assert after_old_actions == actions
         assert after_old_unrelated == unrelated
         assert db.execute("select status from email_classifications where id=?",
@@ -497,7 +782,7 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
     _consistency(db, initial_fk)
     assert db.execute("select count(*) from sqlite_schema where type='table' and name not like 'sqlite_%'").fetchone()[0] == initial_tables - 13
     return {"variant":state["email_variant"],"initial_tables":initial_tables,
-            "target_tables":initial_tables-13,"source_counts":source_counts,
+            "target_tables":initial_tables-13,"source_counts_after_fixture_seed":source_counts,
             "baseline_fk_findings":len(initial_fk),"current_fact_inverse":True,
             "old_public_feedback_replay":not null_plans,"old_public_receipt_write":not null_plans,
             "old_public_direct_attempt_completion":not null_plans,
