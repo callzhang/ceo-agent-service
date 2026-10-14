@@ -258,3 +258,24 @@ new checks include a fresh-process reforward from committed restored source.
 Focused prior delivery/postfix/receipt migration and inverse/release files
 passed 376 checks with eight variant skips before the final three added E
 cases; no full suite, production copy or old Store constructor was run here.
+
+## Task 3A review correction: retained action copy order
+
+An independent review found a valid retained state that the first migration
+commit could not rebuild: an observer physically inserted between two sent
+replies can later be rebound to the second reply. Copying raw rows in physical
+ID order while the new schema's cross-row trigger is active rejects the
+observer before its current parent has been copied. The same state can be
+created after forward migration, so the inverse had the symmetric failure.
+
+Both directions now create the exact declared action schema, defer its triggers
+while copying the complete retained fourteen-type row set, restore current
+allocator waters, and reinstall the exact triggers before migrating reply
+facts or returning. This preserves physical IDs and raw references without
+sorting by record type or treating observers as a special case. Both actual
+and fresh source variants have a regression for a source rebind before forward
+and a current rebind before inverse. The eight-file E gate passed 453 tests
+with eight variant skips; the six focused earlier delivery/postfix/receipt
+migration and release files passed 125 tests. Ruff and diff check passed.
+No publication, caller, production-copy or old-code constructor gate was
+completed by this correction.

@@ -160,6 +160,23 @@ def _insert_rows(db, table, columns, rows):
                    f"values({','.join('?' for _ in columns)})", rows)
 
 
+def _create_actions_for_raw_copy(db, *, reply_variant=None):
+    """Install exact native DDL, then defer row-dependent triggers until copy ends."""
+    if reply_variant is None:
+        storage.create_action_schema(db, include_delivery=True)
+    else:
+        storage.create_action_schema(db, include_reply=True, reply_variant=reply_variant)
+    triggers = [obj for obj in storage._objects(db, 'actions') if obj['type'] == 'trigger']
+    for obj in triggers:
+        db.execute(f"drop trigger {_quote(obj['name'])}")
+    return triggers
+
+
+def _finish_action_raw_copy(db, triggers):
+    for obj in triggers:
+        db.execute(obj['sql'])
+
+
 def _check_replacement_names(db, expected, current):
     current_names = {storage.sqlite_schema_name(obj['name']) for obj in current}
     for obj in expected:
@@ -224,10 +241,11 @@ def migrate_action_reply_schema(db):
     for table in SOURCE_TABLES:
         db.execute(f"drop table {_quote(table)}")
     db.execute('drop table actions')
-    storage.create_action_schema(db, include_reply=True, reply_variant=variant)
+    triggers = _create_actions_for_raw_copy(db, reply_variant=variant)
     _insert_rows(db, 'actions', action_columns, old_actions)
     for name, value in base_sequences.items():
         _set_sequence(db, name, value)
+    _finish_action_raw_copy(db, triggers)
     for table in SOURCE_TABLES:
         columns, rows = source_rows[table]
         for row in rows:
@@ -293,10 +311,11 @@ def restore_action_reply_schema(db, state):
         "and p.id is null limit 1").fetchone():
         raise ValueError('unsupported orphan fresh Memory action')
     db.execute('drop table actions')
-    storage.create_action_schema(db, include_delivery=True)
+    triggers = _create_actions_for_raw_copy(db)
     _insert_rows(db, 'actions', source_columns, old_actions)
     for name, value in base_sequences.items():
         _set_sequence(db, name, value)
+    _finish_action_raw_copy(db, triggers)
     for table in SOURCE_TABLES:
         definition = state['source_tables'][table]
         db.execute(definition['sql'])
