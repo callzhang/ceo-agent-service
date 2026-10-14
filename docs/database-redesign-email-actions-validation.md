@@ -2062,3 +2062,7 @@ ledger and Store marker facts, schema cookie, database bytes and no WAL. No
 runtime, source/H wrapper, CI, provider, native CLI or production change is
 part of this test unit. Historical-source integration and remaining program
 gates remain open.
+
+### Task5B11 independent acceptance, 2026-10-14
+
+Root accepts9ae63315fd5fe3620e646740fd0dbbe9a89fafdf over2a01e77dc7259d71b074bddbce5572496b757245. Fresh SPEC independently6pass1.89s/lint/diff/307otherfunctionsASTsame and protected459metadata rows verified; own temps absent. Subsequent fresh QUALITY independently checks199actual identifiers/190originalrequired intersection, all190appear in61selectedSQL, all191stringliteral tokens preserved, original265assignment/case/threequotestyles and protected459 rows intact. Currentpartialledger exact pairederrors and fullfuturepair refusal match constructor ordering/no mutations. It did not repeat sufficient6case execution; owned probe dirs absent and frozen cleanHEAD. No runtime changes. Currentthree-file residual diagnostic had318cases313pass5fail; this accepted unit fixes those5 plus fullfuturecase, but combined319current regression still needs rerun. Historical47genuine0441cases already proven in tmp, not yet integrated; copy/native/CI/publication/full10+1 remain open.
