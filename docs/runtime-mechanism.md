@@ -2805,10 +2805,10 @@ pending/failed/written 状态、episode、错误和更新时间，不增加重�
 读取原生会话中明确指定的行范围；原生缺失时显示不可用，数据库中已退休的
 工具正文不作为回退。发布前 quiet-wait 在完整 Store19 actual/fresh manifest
 上继续读取候选、回执、postfix、delivery、任务、会议及定时来源。
-Store19 候选的 Attempt 创建时间索引包含首列 `record_type`；Reply 公共
+Store19 候选的 Attempt 创建时间及状态索引包含首列 `record_type`；Reply 公共
 ID 排序索引保留原键和谓词并声明唯一。前者让时间范围读取使用索引，后者
 让 fresh Memory 的公共父 ID 精确读取通过父索引和 Memory 父索引完成；
-原有公共 ID 唯一约束及规范整数文本约束已保证该唯一性。两个调整只属于
+原有公共 ID 唯一约束及规范整数文本约束已保证该唯一性。这些调整只属于
 Store19 索引声明，Memory 投影的 LEFT JOIN 和旧版本声明不变。
 候选版本尚未上线；实际副本、原始代码冷启动和原生角色路径的离线验收见
 `docs/database-redesign-phase5e-validation.md`，完整 CI 与上线读回仍待验收。
