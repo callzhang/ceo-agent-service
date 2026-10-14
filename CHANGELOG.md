@@ -33,6 +33,11 @@
 
 ## Unreleased
 
+- Reject null or malformed DingTalk message-list responses with a typed provider
+  contract error instead of an `AttributeError` or an empty-message result; do
+  not repeat unread reads through the recent-message fallback for JSON `null`,
+  and retry null responses only within the existing read retry budget.
+
 - Validate every complete historical feedback callback pair in captured source
   text that may combine multiple messages, preserving origin, path, query,
   rating, token and attempt checks. Strict outgoing-body validation is unchanged.
