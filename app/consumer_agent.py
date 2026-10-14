@@ -40,6 +40,7 @@ from app.business_skills import (
     BUNDLED_BUSINESS_SKILL_NAMES,
     default_skill_catalog,
     frozen_task_skill_names,
+    frozen_task_skill_binding,
     installed_runtime_skills,
     render_business_skill_protocol,
 )
@@ -576,6 +577,7 @@ class ConsumerAgentRunner:
             continuation=continuation_prompt,
             skill_names=context.skill_names,
             frozen_skill_names=frozen_skill_names_for_task,
+            frozen_skill_materials=frozen_task_skill_binding(task.trigger_message_json).materials,
             skill_protocol=context_skill_protocol or "",
             skill_protocol_is_custom=skill_protocol_is_custom,
             skill_catalog=default_task_skill_catalog(context.skill_names),

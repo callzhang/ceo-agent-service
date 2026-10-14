@@ -1,5 +1,11 @@
 # CEO Agent Service Architecture
 
+任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
+的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
+revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override
+保持原文。当前预览为旧无分段快照补充明确标记的当前入口；历史视图及已有分段快照保持
+实际保存的 Task 输入。任务入口元数据不进入稳定会话合同指纹，不因这次精简重置 session。
+
 Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整会话、单封原文与发送状态读取：
 `list_dingtalk_mailboxes`、`read_dingtalk_mail_thread`、`read_dingtalk_mail_message`、
 `read_dingtalk_mail_sent_status`。这些接口直接调用现有 DWS 原生只读命令，保留其完整 JSON
