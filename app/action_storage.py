@@ -642,6 +642,21 @@ def _current_objects(include_receipts=False, include_postfix=False, include_deli
         return _objects(db, "actions")
 
 
+def email_action_auxiliary_objects_are_current(db: sqlite3.Connection, *, reply_variant: str) -> bool:
+    """Email-only metadata is required, outside the Store's auxiliary repairs."""
+    old_names = {
+        sqlite_schema_name(obj["name"])
+        for obj in _current_objects(include_reply=True, reply_variant=reply_variant)
+    }
+    expected = {
+        sqlite_schema_name(obj["name"]): obj
+        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, include_email=True)
+        if sqlite_schema_name(obj["name"]) not in old_names
+    }
+    actual = {sqlite_schema_name(obj["name"]): obj for obj in _objects(db, "actions")}
+    return all(actual.get(name) == obj for name, obj in expected.items())
+
+
 def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False) -> bool:
     kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
     if include_email:

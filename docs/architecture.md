@@ -2437,3 +2437,24 @@ Task5A is a bounded local consumer conversion, not final Task5 acceptance.
 Remaining historical/current fixture adaptation, all selected console/worker
 tests and source-copy/native/CI/publication/live readback gates remain open.
 The whole branch is not deployable.
+
+
+### Email metadata refusal boundary, Task5B0 (unpublished)
+
+Current constructors preserve the original Email missing-metadata refusal instead
+of treating it as Store repair. A narrow read-only comparison derives Email's
+32 auxiliary objects from the same-variant29 manifest minus the16 manifest's
+object names, then compares complete canonical type/name/owner/SQL. Both reply
+variants have identical25 index and7 trigger metadata in this difference.
+Shared actions/public-ID metadata stays under the existing Store contract.
+
+Email performs only this comparison after pair selection and before invoking
+the genuine Store, reporting EmailPersistenceCorruption for missing/malformed
+Email auxiliaries. Normal Email construction still invokes Store once outside
+the Email flock. Store's original coherent-current repair permission additionally
+requires these Email objects to be intact, so its generic factory cannot silently
+repair them. The generic factory and existing cache are unchanged. Old Store
+index/route/feedback repairs and Email's existing provider signal-column repair
+remain supported; fresh/Store-first and paired migration behavior stay intact.
+This changes no data, authorization, recovery or business policy. Task5A finite
+readers remain unchanged; broader Task5/6/7 acceptance and deployment remain open.

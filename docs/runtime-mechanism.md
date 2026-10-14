@@ -3207,3 +3207,19 @@ read the exact Store19/Email51 native source or Store20/Email52 target.
 Historical/default fixture adaptation and the remaining Task5 selected paths
 are still open. The branch is not deployable; source-copy/native/provider/CI/
 publication gates remain open.
+
+
+### Original Email metadata refusals, Task5B0
+
+Store's missing-object repair permission excludes the32 Email-only auxiliaries
+already required by the target manifest. Their same-variant29-minus16 name
+difference is checked against canonical object type, owner and SQL, not a pair
+of special index names. Email does this read-only before its genuine Store call
+and retains EmailPersistenceCorruption; Store also requires the same metadata
+before entering its original current-known-repair path. Missing Email auxiliaries
+remain missing without schema/fact/marker/DB-byte or DELETE-journal changes.
+The shared action table/public-ID index and all prior Store repair paths retain
+their existing treatment. Normal Email→Store call count/lock order, current
+provider-signal column repair, fresh orders and coordinator/inverse are unchanged.
+No general factory, writer, source contract or Task5A consumer was changed.
+This is an unpublished regression correction, not final Task5 acceptance.

@@ -1614,3 +1614,123 @@ Task5 matrix: broader old fixture H/T/S conversion, console/worker/CLI/direct
 delivery/reconcile tests and Task4/5 final acceptance remain open. Task6/7
 copy/native/CI/publication/live readback also remain open; this branch is not
 ready for deployment.
+
+
+### Task5B0 original Email metadata-refusal restoration, 2026-10-14
+
+Parent: `7dc87561536c55ebd1c6f1f9411f6029fe779eb3`, after accepted Task5A. Genuine
+source binding is published `0441cf15fafe800f9ca4d67f667e87062ca62109`, archived
+unmodified under an owned temporary root and executed in a separate process.
+Its actual default constructors create Store2026-10-13.5/Email51. The source is
+synthetic fresh data, not a current production-copy/native acceptance claim.
+
+Root found a parent-F regression: Store's generic29 factory inherited the old
+Store missing-auxiliary repair permission and could recreate missing Email
+indexes/triggers before the Email validator saw the defect. This broadened the
+original Email contract. The preflight probe confirmed all five original required
+independent indexes and five action-owned required triggers are refused by genuine
+0441 Email51 with EmailPersistenceCorruption; each missing object remained missing,
+DB bytes were identical and DELETE journal stayed DELETE. Before the correction,
+the target automatically recreated all32 Email-only auxiliary objects one by one
+and changed DELETE to WAL. This was runtime behavior, not a stale-test expectation.
+
+The correction is narrowly scoped:
+
+- `email_action_auxiliary_objects_are_current` uses the existing cached canonical
+  declarations: same-variant29 objects minus16 object names. It compares complete
+  canonical object dictionaries (type/name/table/SQL) against actual actions-owned
+  metadata. Both accepted reply variants produce the same32 complete objects.
+- Email's constructor makes this read-only check after existing pair selection
+  and before the genuine AutoReplyStore call. Missing/malformed Email auxiliaries
+  raise the original EmailPersistenceCorruption domain error. Fresh databases
+  without actions skip this check; normal/Store-first construction still invokes
+  the genuine Store exactly once outside Email's path flock.
+- Store's original current-known-repair permission requires this same Email
+  subset to be intact before its existing auxiliary repair path. Direct Store
+  refusal uses its existing sqlite3.IntegrityError source-refusal boundary. Its
+  normal cached path retains the existing full manifest check; there is no new
+  cache layer, ownership epoch or broad validation gate.
+- Shared names `actions` and `idx_actions_public_id` are outside the difference.
+  The public-ID index and prior16 auxiliaries retain Store's existing repair
+  treatment. The generic create_action_schema capability, codec, DDL, writers,
+  source/inverse and all Task5A explicit include_email consumers are unchanged.
+
+Object classification is exact, not a new business rule inferred from names.
+Of the25 indexes,24 translate the finite native indexes/PK/unique constraints;
+five are the independently droppable required source indexes. Their mapping is:
+
+| Original required index | Target index |
+| --- | --- |
+| idx_email_actions_classification_plan | idx_actions_email_email_actions_0 |
+| idx_email_actions_status | idx_actions_email_email_actions_1 |
+| idx_email_reply_dispatch_claims_status | idx_actions_email_email_reply_dispatch_claims_0 |
+| idx_email_unsubscribe_claims_status | idx_actions_email_email_unsubscribe_claims_0 |
+| idx_email_unsubscribe_receipts_classification_action | idx_actions_email_email_unsubscribe_receipts_0 |
+
+The other19 native PK/unique indexes cannot be dropped independently in native
+SQLite, so no fabricated native counterexample was used. The extra public-key
+index enforces the accepted target representation. Five of the7 triggers are the
+exact original required attempt-count insert/update and explicit-retry immutable
+insert/update/delete translations. Two sequence triggers represent the original
+attempt/step AUTO allocator semantics. These extra structural objects are required
+by the already accepted E2 canonical target manifest; this correction does not
+claim the original source had same-named triggers or invent new business policy.
+The13 translated external and19 retained triggers remain under their existing
+Email validator and are not widened into a new Store repair/refusal policy.
+
+`tests/test_email_action_metadata_repair.py` binds the genuine source independently,
+checks both reply variants' complete delta metadata, and deletes every one of the
+32 target objects. For each object it exercises cold/cached Store paths, Email
+default/validate_rows=False, Store→Email and Email→Store. Both calls refuse;
+complete sorted dump, journal and DB bytes stay identical, covering facts and
+markers as well as metadata. Four further same-name corruption cases distinguish
+index SQL, index owner, wrong object type and trigger SQL; names alone cannot pass.
+The shared Store public-ID index still repairs successfully.
+
+The first RED case stopped because AutoReplyStore incorrectly accepted and repaired
+a missing target auxiliary. The full native probe had independently reproduced
+the known status/receipt index regressions as well as the entire32-object repair
+expansion. Actual captured pytest stdout/exit:
+
+```text
+python -m pytest -q tests/test_email_action_metadata_repair.py -k missing_never -x --basetemp=/tmp/email13-5b0.aRQoJq/red
+FAILED tests/test_email_action_metadata_repair.py::test_email_auxiliary_missing_never_becomes_store_repair[idx_actions_email_email_action_attempts_0]
+1 failed, 2 deselected in 3.94s
+exit 1
+
+python -m pytest -q tests/test_email_action_metadata_repair.py --basetemp=/tmp/email13-5b0.aRQoJq/green
+..................................                                       [100%]
+34 passed in 35.73s
+exit 0
+
+python -m pytest -q tests/test_email_action_metadata_repair.py::test_email_auxiliary_type_owner_and_sql_are_compared_before_store tests/test_email_action_metadata_repair.py::test_shared_store_public_index_still_uses_existing_repair tests/test_email_action_callers.py::test_real_fresh_orders_current_reopen_and_classification_action tests/test_email_action_callers.py::test_email_first_calls_real_store_once_outside_email_lock tests/test_email_action_callers.py::test_real_coordinator_selects_one_pair_and_real_subprocess_opens_both tests/test_email_action_callers.py::test_real_target_direct_facts_inverse_genuine_old_reopen_and_republish tests/test_email_action_callers.py::test_current_known_repair_variant_selection_keeps_original_accepted_path tests/test_email_action_callers.py::test_current_provider_observation_signal_repair_matches_genuine51 tests/test_store.py::test_current_schema_reopens_and_repairs_old_route_session_shape tests/test_feedback_processing.py::test_feedback_round_backfill_self_heals_current_schema_and_interruption --basetemp=/tmp/email13-5b0.aRQoJq/positive
+.............                                                            [100%]
+13 passed in 21.27s
+exit 0
+
+python -m pytest -q tests/test_email_action_metadata_repair.py::test_email_auxiliary_type_owner_and_sql_are_compared_before_store[index_type] --basetemp=/tmp/email13-5b0.aRQoJq/type
+.                                                                        [100%]
+1 passed in 3.91s
+exit 0
+```
+
+The final wrong-type case was added after the13-case run and tested separately;
+these are48 distinct passing selections across three batches, not a claimed
+monolithic48-pass run. Positive coverage preserves shared/old reply recovery-index,
+route-session and feedback current repair, the original Email provider-column
+repair, actual fresh two orders and once-only unlocked Store invocation, actual
+paired child/current-fact inverse, genuine old strict reopen and republication.
+No full48-F/355-Task5A matrix, H/T/S adaptation,5B1, native Agent CLI, provider,
+production, CI, environment changes, push or deployment was performed. The branch
+remains unpublished and broader Task5/6/7 acceptance is open. This unit stops for
+fresh independent sequential SPEC then QUALITY review.
+
+
+Final hygiene: scoped Ruff over the three changed runtime modules and new test
+reported `All checks passed!`; diff check exited0. Complete RED/GREEN stdout and
+preflight metadata probe output were read before cleanup. The explicit resolved
+owned root `/private/tmp/email13-5b0.aRQoJq` and its `/tmp/email13-5b0.aRQoJq` alias
+were removed and verified absent, including all archived code, DB copies and logs.
+No task-owned historical source copy or backup was retained. No other tree or
+publication worktree was modified. Commit is frozen for root's fresh SPEC then
+fresh QUALITY; no5B1 or broader fixture adaptation follows in this unit.

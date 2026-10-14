@@ -185,6 +185,7 @@ from app.action_reply_storage import migrate_action_reply_schema
 
 from app.action_storage import (
     _current_objects as action_schema_objects,
+    email_action_auxiliary_objects_are_current,
     ACTION_TYPES, DELIVERY_ACTION_TYPES, REPLY_ACTION_TYPES,
     POSTFIX_ACTION_TYPES, OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
     create_action_schema,
@@ -9287,7 +9288,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     action_schema_is_current(
                         db, allow_missing_objects=True, include_reply=True,
                         reply_variant=variant, include_email=True,
-                    )
+                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
                 # The old Attempt/Memory tables cannot coexist with candidate E.

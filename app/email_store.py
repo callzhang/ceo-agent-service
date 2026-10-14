@@ -78,7 +78,7 @@ from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import AGENT_RUN_SQL
 from app.action_storage import (
     ActionWriteResult, EMAIL_ACTION_PROJECTIONS, REPLY_VARIANTS,
-    action_schema_is_current, email_action_projection,
+    action_schema_is_current, email_action_projection, email_action_auxiliary_objects_are_current,
     insert_action, insert_email_action, update_email_action, update_action,
     delete_action, delete_email_action,
 )
@@ -3036,6 +3036,14 @@ class EmailStore:
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
         require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION)
+        if self.path.exists():
+            with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+                db.execute("begin")
+                if db.execute("select 1 from sqlite_schema where name='actions'").fetchone() and not any(
+                    email_action_auxiliary_objects_are_current(db, reply_variant=variant)
+                    for variant in REPLY_VARIANTS
+                ):
+                    raise EmailPersistenceCorruption("required Email29 action schema is missing or malformed")
         # The path flock is non-reentrant. Store must finish before Email locks;
         # Store creates only the neutral classification parent, never EmailStore.
         AutoReplyStore(self.path)
