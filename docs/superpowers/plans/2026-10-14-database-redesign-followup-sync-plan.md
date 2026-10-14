@@ -180,3 +180,23 @@ Gate: the actual published-source declaration must exist and match before Tasks 
 | Publication → completion | Normal deploy receipt and PID/health/schema/queues/Attention/History readback. |
 
 No audit, authorization, confirmation, retention, generic relation, credential or provider policy change belongs to this unit. Any later wish to alter a product behavior is a separately scoped decision; the work here preserves the approved behavior and source facts.
+
+
+## Independent planning acceptance
+
+Plan/map `ad8852d0` passed sequential independent SPEC then QUALITY. SPEC
+checked all150 unique field rows against both source variants with zero
+affinity/default/nullability/PK/index differences, plus six bounded native
+uniqueness/FK/scalar/CAS checks. The unused-create/retained-update distinction
+was independently verified from calls and method-value references. Root also
+reran the accepted twenty-case native source oracle successfully. QUALITY
+found no blocking design defect and accepted the following Task1 split.
+
+Task1A implements only opt-in declarations, constraints, projections and
+full-value storage tests over the exact reviewed Email29 actual/fresh scaffold.
+Task1B implements source-shaped insert/update/delete, omitted defaults under
+the writer lock, allocation, mutation/FK parity and source-shaped results.
+Both remain disabled, with no constructor, release or version selection.
+Neither Task1 nor source-write/default/locking equivalence is complete until
+1B passes. This changes commit/review boundaries only; all nine families still
+form one atomic data publication unit with their finite external dependency.

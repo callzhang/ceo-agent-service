@@ -97,3 +97,14 @@ The SPEC review's accidentally created, previously absent `.venv` and
 in-memory databases. The final worktree was clean. Published-predecessor
 binding, target mapping/storage, current-fact inverse, constructor/release
 and provider acceptance remain separate future units.
+
+
+## Target planning checkpoint
+
+The separate target plan/map atad8852d0 passed sequential independent SPEC
+and QUALITY. All150 source fields,9AUTOINC/8CHECK/24indexes/5FK and zero
+source triggers remain exact; no field retirement or new runtime policy was
+accepted. Root reran the existing twenty-case source oracle successfully.
+Task1 may start as separately reviewed disabled declarations and mutations;
+this source-only validation does not claim target implementation, migration,
+actual published predecessor or production acceptance.
