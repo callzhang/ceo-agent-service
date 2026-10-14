@@ -1,0 +1,46 @@
+{
+  "candidate_commit": "de01dcfdebfb09c3a0897a0b036e09b67afd4c47",
+  "complete_ci": {
+    "run_id": 38529409719,
+    "conclusion": "success",
+    "completed_at": "2026-10-14T08:19:44Z",
+    "python_passed": 13092,
+    "python_skipped": 118,
+    "python_deselected": 44,
+    "frontend_passed": 729,
+    "frontend_skipped": 2,
+    "browser_passed": 2,
+    "workbench_build": "passed"
+  },
+  "pull_request": {
+    "url": "https://github.com/callzhang/ceo-agent-service/pull/82",
+    "state": "merged",
+    "merge_commit": "4a962ff75753cc52847edaea679351bfa38f50fa",
+    "merged_at": "2026-10-14T08:26:51Z"
+  },
+  "normal_deployment": {
+    "observed_at": "2026-10-14T08:57:26Z",
+    "exit_code": 1,
+    "receipt": "nothing was deployed: service did not become idle; nothing was changed",
+    "quiet_bypass": false,
+    "published": false
+  },
+  "production_observed_before_migration": {
+    "commit": "d9d340939cc5665cb2b9e26ee3f474216981ace6",
+    "pid": 73677,
+    "store_version": "2026-10-13.4",
+    "email_version": 51,
+    "non_sqlite_internal_tables": 123,
+    "healthz": "ok",
+    "status_observed_at": "2026-10-14T08:52:00Z",
+    "system_health": "degraded",
+    "health_detail": "latest reply attempt has no active task recovery",
+    "violations": 5,
+    "summary": {"queue_count": 13, "pending": 6, "processing": 3, "failed": 28, "retryable": 1, "attention": 23},
+    "earlier_baseline_at": "2026-10-14T08:25:59Z",
+    "earlier_baseline_failed": 26,
+    "earlier_baseline_attention": 21,
+    "cross_system_capture_atomic": false
+  },
+  "evidence_boundary": "CI and merge accepted; production migration and live acceptance incomplete. Copy/native artifacts retain their actual 74ac execution bindings. Pre-deploy failure increment occurred on original code before E migration. No forced restart, test provider send or production data modification."
+}

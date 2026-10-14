@@ -231,3 +231,26 @@ current per-message facts,13,316,096 data bytes plus11,542,528 index bytes.
 The approved destinations are configs and provider_state respectively; these
 counts do not justify keeping either old table permanently or deleting current
 provider inventory by age. No new retention policy is introduced here.
+
+### 2026-10-14 final E CI and unsuccessful normal publication
+
+Final complete CI38529409719 passed atde01dcfd:13,092 Python checks
+(118 skips/44 deselections),729 frontend checks(2 skips),build and2 browser
+checks. PR82 merged as4a962ff7 at08:26:51 UTC. Normal development-checkout
+deployment waited30 minutes and exited at08:57:26 with no changes because
+the service did not become idle. Quiet wait was not bypassed. Production
+remainedd9d34093/Store18/Email51 and123 physical noninternal tables; E is merged,
+not published. The new phase5e_publication_status.v1.json records this boundary.
+
+Before any E conversion, the same production PID73677 exposed healthz=ok but
+system_health=degraded with five latest-reply recovery violations; failure
+summary rose26→28 and Attention21→23 from the08:25:59 baseline. These are
+separately observed pre-migration facts, not evidence of an E regression or
+permission to replay/modify old tasks. Deployment/live acceptance remains open.
+
+Followup9 disabled source-shaped writers and readonly capture are now accepted
+through sequential SPEC/QUALITY; Task2B pure migration is beginning. Email13
+still awaits actual E publication binding and Task3B real-copy/old-code proof.
+Readonly configs/provider/schedules/state preparation covers34 existing tables
+and238 fields exactly against the approved CSV; it selects no runtime migration.
+The full ten-core-table plus ledger objective remains incomplete.
