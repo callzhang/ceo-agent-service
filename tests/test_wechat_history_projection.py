@@ -6,6 +6,7 @@ import pytest
 
 import app.audit_web as audit_web
 from app.attempt_projection import project_attempt_status
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.store import AutoReplyStore
 from app.task_storage import task_physical_id
 from app.web_api.attempts import build_attempt_detail
@@ -67,7 +68,7 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
             )
         original_deliveries = [tuple(row) for row in db.execute("select * from wechat_deliveries")]
         original_tasks = [tuple(row) for row in db.execute("select * from tasks")]
-        original_attempts = [tuple(row) for row in db.execute("select * from reply_attempts")]
+        original_attempts = [tuple(row) for row in db.execute(f"select * from ({REPLY_ATTEMPT_COMMON_SQL})")]
 
     with _client(tmp_path) as client:
         response = client.get("/api/console/history?status=failed")
@@ -92,7 +93,7 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
     with store._connect() as db:
         assert [tuple(row) for row in db.execute("select * from wechat_deliveries")] == original_deliveries
         assert [tuple(row) for row in db.execute("select * from tasks")] == original_tasks
-        assert [tuple(row) for row in db.execute("select * from reply_attempts")] == original_attempts
+        assert [tuple(row) for row in db.execute(f"select * from ({REPLY_ATTEMPT_COMMON_SQL})")] == original_attempts
 
 
 def test_wechat_delivery_for_another_task_does_not_override_attempt():

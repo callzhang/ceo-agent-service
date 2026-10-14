@@ -178,22 +178,27 @@ from app.work_summary_payload import (
 from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
-from app.action_delivery_storage import migrate_action_delivery_schema
+from app.action_reply_storage import migrate_action_reply_schema
 
 from app.action_storage import (
     _current_objects as action_schema_objects,
-    ACTION_TYPES, DELIVERY_ACTION_TYPES,
+    ACTION_TYPES, DELIVERY_ACTION_TYPES, REPLY_ACTION_TYPES,
     POSTFIX_ACTION_TYPES, OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
     create_action_schema,
     RECEIPT_ACTION_TYPES,
     action_schema_is_current,
     insert_action,
     update_action,
+    delete_action,
+    reply_action_projection,
+    _reply_variant_for,
+    validated_reply_variant,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
     REVIEW_CANDIDATE_SQL,
     EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
+    REPLY_ATTEMPT_COMMON_SQL,
     AGENT_EFFECT_INTENT_SQL,
     AGENT_EXECUTION_RECEIPT_SQL,
 )
@@ -293,7 +298,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-13.4"
+STORE_SCHEMA_VERSION = "2026-10-13.5"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -395,7 +400,6 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_transitions_feedback",
     "idx_feedback_processing_transitions_batch_round",
     "idx_feedback_processing_transitions_round",
-    "idx_reply_attempts_agent_run_recovery",
     "idx_oa_notification_events_case_status",
     "idx_oa_notification_events_claim",
     "idx_runtime_attempt_active_route",
@@ -466,6 +470,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_legacy_links_task",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
+    *REPLY_ACTION_TYPES,
     *DELIVERY_ACTION_TYPES,
     *POSTFIX_ACTION_TYPES,
     *RECEIPT_ACTION_TYPES,
@@ -613,13 +618,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "backlog_evidence_json",
         "receipt_version",
         "scope_receipt_json",
-    ),
-    "reply_attempts": (
-        "human_decision_options_json",
-        "feedback_scope",
-        "skill_update_requested",
-        "skill_update_receipts_json",
-        "trigger_text_provenance_json",
     ),
     "runs": (
         "record_type", "legacy_key", "task_id", "parent_id",
@@ -2555,7 +2553,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and run_schema_is_current(db, include_task_runs=True, include_workbench=True)
             and task_schema_is_current(db, include_workbench=True)
             and workbench_schema_is_current(db)
-            and action_schema_is_current(db, include_delivery=True)
+            and any(action_schema_is_current(db, include_reply=True, reply_variant=variant)
+                    for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
             and not removed_columns_present
             and (
@@ -2774,6 +2773,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def _initialize(self) -> None:
         with self._connect() as db:
+            reply_variant = (
+                validated_reply_variant(db, allow_missing_objects=True)
+                if db.execute("select 1 from sqlite_master where name='actions'").fetchone()
+                else "fresh_memory_fk"
+            )
             create_task_schema(db, include_workbench=True)
             create_run_schema(db, include_task_runs=True, include_workbench=True)
             create_workbench_auxiliary_schema(db)
@@ -3099,80 +3103,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     resolved_at text not null default '',
                     resolution text not null default ''
                 );
-                create table if not exists reply_attempts (
-                    id integer primary key autoincrement,
-                    conversation_id text not null,
-                    conversation_title text not null,
-                    trigger_message_id text not null,
-                    trigger_sender text not null,
-                    trigger_text text not null,
-                    trigger_text_provenance_json text not null default '{}',
-                    action text not null,
-                    sensitivity_kind text not null,
-                    agent_run_id integer,
-                    codex_reason text not null default '',
-                    draft_reply_text text not null default '',
-                    direct_user_id text not null default '',
-                    direct_open_dingtalk_id text not null default '',
-                    codex_session_id text not null default '',
-                    codex_transcript_start_line integer not null default 0,
-                    codex_transcript_end_line integer not null default 0,
-                    audit_documents_json text not null default '[]',
-                    audit_tool_events_json text not null default '[]',
-                    audit_summary text not null default '',
-                    human_decision_options_json text not null default '[]',
-                    oa_process_instance_id text not null default '',
-                    oa_task_id text not null default '',
-                    oa_url text not null default '',
-                    oa_action text not null default '',
-                    oa_remark text not null default '',
-                    oa_action_result_json text not null default '',
-                    calendar_event_id text not null default '',
-                    calendar_response_status text not null default '',
-                    calendar_response_result_json text not null default '',
-                    mail_mailbox text not null default '',
-                    mail_message_id text not null default '',
-                    mail_subject text not null default '',
-                    mail_reply_text text not null default '',
-                    mail_action_result_json text not null default '',
-                    reaction_action_result_json text not null default '',
-                    document_action_result_json text not null default '',
-                    final_reply_text text not null default '',
-                    permission_action text not null default '',
-                    permission_reason text not null default '',
-                    send_status text not null,
-                    send_error text not null default '',
-                    retry_count integer not null default 0,
-                    reviewed_at text,
-                    reviewer_feedback text not null default '',
-                    corrected_reply_text text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_reply_attempts_trigger_message_id
-                    on reply_attempts(trigger_message_id);
-                create index if not exists idx_reply_attempts_status
-                    on reply_attempts(send_status, created_at);
-                create index if not exists idx_reply_attempts_created
-                    on reply_attempts(created_at, id);
-                create table if not exists memory_write_events (
-                    id integer primary key autoincrement,
-                    attempt_id integer not null,
-                    event_type text not null,
-                    payload_json text not null,
-                    status text not null default 'pending',
-                    attempts integer not null default 0,
-                    last_error text not null default '',
-                    memory_episode_id text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    unique(attempt_id, event_type),
-                    foreign key(attempt_id) references reply_attempts(id)
-                );
-                create index if not exists idx_memory_write_events_attempt
-                    on memory_write_events(attempt_id, id);
-                create index if not exists idx_memory_write_events_status
-                    on memory_write_events(status, updated_at);
                 create table if not exists meeting_memory_write_events (
                     id integer primary key autoincrement,
                     meeting_job_id integer not null unique,
@@ -4314,7 +4244,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "where payload_json<>'{}'"
             )
             db.execute("create index if not exists idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'")
-            create_action_schema(db, include_delivery=True)
+            create_action_schema(db, include_reply=True, reply_variant=reply_variant)
             self._migrate_oa_notification_events(db)
             feedback_event_columns = {
                 row["name"]
@@ -4426,53 +4356,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "codex_session_contract_hash text not null default ''"
                 )
 
-            reply_attempt_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(reply_attempts)").fetchall()
-            }
-            for column, definition in (
-                ("agent_run_id", "integer"),
-                ("codex_session_id", "text not null default ''"),
-                ("direct_user_id", "text not null default ''"),
-                ("direct_open_dingtalk_id", "text not null default ''"),
-                ("codex_transcript_start_line", "integer not null default 0"),
-                ("codex_transcript_end_line", "integer not null default 0"),
-                ("audit_documents_json", "text not null default '[]'"),
-                ("audit_tool_events_json", "text not null default '[]'"),
-                ("audit_summary", "text not null default ''"),
-                ("human_decision_options_json", "text not null default '[]'"),
-                ("oa_process_instance_id", "text not null default ''"),
-                ("oa_task_id", "text not null default ''"),
-                ("oa_url", "text not null default ''"),
-                ("oa_action", "text not null default ''"),
-                ("oa_remark", "text not null default ''"),
-                ("oa_action_result_json", "text not null default ''"),
-                ("calendar_event_id", "text not null default ''"),
-                ("calendar_response_status", "text not null default ''"),
-                ("calendar_response_result_json", "text not null default ''"),
-                ("mail_mailbox", "text not null default ''"),
-                ("mail_message_id", "text not null default ''"),
-                ("mail_subject", "text not null default ''"),
-                ("mail_reply_text", "text not null default ''"),
-                ("mail_action_result_json", "text not null default ''"),
-                ("reaction_action_result_json", "text not null default ''"),
-                ("document_action_result_json", "text not null default ''"),
-                ("feedback_scope", "text not null default 'one_time'"),
-                ("skill_update_requested", "integer not null default 0"),
-                ("skill_update_receipts_json", "text not null default '[]'"),
-                # An attempt the principal settled outside the service, and the
-                # live evidence that says so. Same pair `errors` already keeps.
-                ("resolved_at", "text not null default ''"),
-                ("resolution", "text not null default ''"),
-            ):
-                if column not in reply_attempt_columns:
-                    try:
-                        db.execute(
-                            f"alter table reply_attempts add column {column} {definition}"
-                        )
-                    except sqlite3.OperationalError as exc:
-                        if "duplicate column name" not in str(exc):
-                            raise
             error_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(errors)").fetchall()
@@ -4483,34 +4366,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ):
                 if column not in error_columns:
                     db.execute(f"alter table errors add column {column} {definition}")
-            db.execute(
-                """
-                update reply_attempts
-                set codex_session_id=coalesce((
-                    select conversations.codex_session_id
-                    from conversations
-                    where conversations.conversation_id=reply_attempts.conversation_id
-                ), '')
-                where codex_session_id=''
-                """
-            )
-            db.execute(
-                """
-                update reply_attempts
-                set send_status='failed'
-                where send_status='needs_authorization'
-                """
-            )
-            for table_name in ("reply_attempts",):
-                existing = {
-                    row["name"]
-                    for row in db.execute(f"pragma table_info({table_name})").fetchall()
-                }
-                if "channel" not in existing:
-                    db.execute(
-                        f"alter table {table_name} add column channel "
-                        f"text not null default 'dingtalk'"
-                    )
             dispatcher_lease_columns = {
                 row["name"]
                 for row in db.execute(
@@ -4656,29 +4511,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             db.execute(
                 """
-                create index if not exists idx_reply_attempts_created
-                    on reply_attempts(created_at, id)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_reply_attempts_oa_history
-                    on reply_attempts(
-                        oa_process_instance_id, created_at desc, id desc
-                    )
-                    where oa_process_instance_id <> ''
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_reply_attempts_trigger_history
-                    on reply_attempts(
-                        conversation_id, trigger_message_id, action, id desc
-                    )
-                """
-            )
-            db.execute(
-                """
                 create index if not exists idx_errors_unresolved
                     on errors(conversation_id, kind, message_id, id)
                     where coalesce(resolved_at, '')=''
@@ -4688,21 +4520,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
                 create index if not exists idx_errors_reply_task_settlement
                     on errors(conversation_id, message_id, kind)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_reply_attempts_current_trigger
-                    on reply_attempts(
-                        channel, conversation_id, trigger_message_id,
-                        updated_at desc, id desc
-                    )
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_reply_attempts_agent_run_recovery
-                    on reply_attempts(agent_run_id, send_error, id)
                 """
             )
             db.execute(
@@ -8449,7 +8266,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                        attempts.id as attempt_id,
                        attempts.send_status as attempt_status
                   from ({REPLY_TASK_INPUT_SQL}) as inputs
-                  join reply_attempts as attempts
+                  join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                     on attempts.channel=inputs.channel
                    and attempts.conversation_id=inputs.conversation_id
                    and attempts.trigger_message_id=inputs.trigger_message_id
@@ -8486,7 +8303,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer
                     )
                   join scheduled_task_config_versions as config on config.id=run.snapshot_id
-                  join reply_attempts as attempts
+                  join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                     on attempts.channel=inputs.channel
                    and attempts.conversation_id=inputs.conversation_id
                    and attempts.trigger_message_id=inputs.trigger_message_id
@@ -9183,7 +9000,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     join universal_plan_executions as plans
                       on plans.execution_scope_id=actions.execution_scope_id
                     join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=plans.reply_task_id
-                    left join reply_attempts as attempts
+                    left join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                       on attempts.id=actions.attempt_id
                     where attempts.id is null
                     order by actions.created_at, actions.execution_id
@@ -9206,30 +9023,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         or error
                         or f"migrated removed runtime state: {legacy_status}"
                     )
-                    db.execute(
-                        """
-                        insert into reply_attempts (
-                            conversation_id, conversation_title, trigger_message_id,
-                            trigger_sender, trigger_text, action, sensitivity_kind,
-                            codex_reason, audit_summary, send_status, send_error,
-                            created_at, updated_at
-                        ) values (?, ?, ?, ?, ?, ?, 'general', ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            row["conversation_id"],
-                            row["conversation_title"],
-                            row["trigger_message_id"],
-                            row["trigger_sender"],
-                            row["trigger_text"],
-                            action,
-                            "migrated from removed runtime",
-                            summary[:2000],
-                            send_status,
-                            error[:1000],
-                            row["created_at"],
-                            row["updated_at"],
-                        ),
-                    )
+                    insert_action(db, "reply_attempts", {
+                        "conversation_id": row["conversation_id"],
+                        "conversation_title": row["conversation_title"],
+                        "trigger_message_id": row["trigger_message_id"],
+                        "trigger_sender": row["trigger_sender"],
+                        "trigger_text": row["trigger_text"],
+                        "action": action, "sensitivity_kind": "general",
+                        "codex_reason": "migrated from removed runtime",
+                        "audit_summary": summary[:2000],
+                        "send_status": send_status, "send_error": error[:1000],
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                    })
             db.execute("drop table if exists universal_action_executions")
             db.execute("drop table if exists universal_plan_executions")
             db.execute("drop index if exists idx_reply_attempts_universal_execution")
@@ -9445,10 +9251,33 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
                 if "service_state" in tables else None
             )
-            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES,
-                            *(obj["name"] for obj in action_schema_objects(True, include_delivery=True)),
+            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
+                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk")),
+                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk")),
                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
-            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True) and action_schema_is_current(db, allow_missing_objects=True, include_delivery=True):
+            current_core_with_known_repairs = (
+                marker is not None
+                and marker[0] == STORE_SCHEMA_VERSION
+                and run_schema_is_current(
+                    db, allow_missing_objects=True, include_task_runs=True,
+                    include_workbench=True,
+                )
+                and task_schema_is_current(
+                    db, allow_missing_objects=True, include_workbench=True,
+                )
+                and workbench_schema_is_current(db, allow_missing_objects=True)
+                and any(
+                    action_schema_is_current(
+                        db, allow_missing_objects=True, include_reply=True,
+                        reply_variant=variant,
+                    )
+                    for variant in ("actual_no_memory_fk", "fresh_memory_fk")
+                )
+                # The old Attempt/Memory tables cannot coexist with candidate E.
+                # Other known retired runtime tables retain their prior repair.
+                and not set(REPLY_ACTION_TYPES).intersection(tables)
+            )
+            if current_core_with_known_repairs:
                 return
             collision = db.execute(
                 "select 1 from sqlite_master where name collate nocase in ("
@@ -9458,7 +9287,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "the exact 2026-10-13.3 source, or the current 2026-10-13.4 schema"
+                    "the exact 2026-10-13.4 source, or the current 2026-10-13.5 schema"
                 )
         finally:
             db.close()
@@ -9470,7 +9299,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if db.execute("select 1 from sqlite_master where name='service_state'").fetchone() is None:
                 return False
             marker = db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-            if marker is None or marker[0] != "2026-10-13.3":
+            if marker is None or marker[0] != "2026-10-13.4":
                 return False
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
@@ -9478,7 +9307,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     and task_schema_is_current(db, include_workbench=True)
                     and workbench_schema_is_current(db)):
                 raise sqlite3.IntegrityError("invalid preceding Store core schema")
-            migrate_action_delivery_schema(db)
+            migrate_action_reply_schema(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
                 raise RuntimeError("typed task migration manifest differs")
             db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
@@ -9751,7 +9580,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if not settled:
                     return False
         latest_attempt = db.execute(
-            """select send_status, resolved_at from reply_attempts where channel=?
+            f"""select send_status, resolved_at from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where channel=?
                and conversation_id=? and trigger_message_id=?
                order by id desc limit 1""",
             (task["channel"], task["conversation_id"], task["trigger_message_id"]),
@@ -9790,7 +9619,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             if other_active is None:
                 attempts = db.execute(
-                    "select id, trigger_text from reply_attempts where channel=? "
+                    f"select id, trigger_text from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where channel=? "
                     "and conversation_id=? and trigger_message_id=? and trigger_text<>''",
                     (channel, conversation_id, message_id),
                 ).fetchall()
@@ -9812,11 +9641,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                          "matching_input_id": matching_input_id},
                         sort_keys=True, separators=(",", ":"),
                     )
-                    db.execute(
-                        "update reply_attempts set trigger_text='', "
-                        "trigger_text_provenance_json=? where id=? and trigger_text<>''",
-                        (provenance, attempt["id"]),
-                    )
+                    update_action(db, "reply_attempts", attempt["id"], {
+                        "trigger_text": "", "trigger_text_provenance_json": provenance,
+                    }, where_sql="trigger_text<>''")
         return True
 
     @classmethod
@@ -10508,7 +10335,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     raise ManualRerunConflict("reply task generation changed during source read")
                 attempt = db.execute(
                     "select agent_run_id,send_status,send_error,resolved_at,resolution "
-                    "from reply_attempts where id=? and channel=? "
+                    f"from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=? and channel=? "
                     "and conversation_id=? and trigger_message_id=?",
                     (attempt_id, channel, conversation_id, trigger_message_id),
                 ).fetchone()
@@ -10595,7 +10422,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (task_id, generation),
             ).fetchall()
             latest_attempt = db.execute(
-                "select send_error from reply_attempts where channel=? and conversation_id=? "
+                f"select send_error from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where channel=? and conversation_id=? "
                 "and trigger_message_id=? order by id desc limit 1",
                 (row["channel"], row["conversation_id"], row["trigger_message_id"]),
             ).fetchone()
@@ -10654,9 +10481,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         }
         if attempt_id > 0:
             row = db.execute(
-                """
+                f"""
                 select reviewer_feedback, corrected_reply_text
-                from reply_attempts where id=?
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=?
                 """,
                 (attempt_id,),
             ).fetchone()
@@ -11361,8 +11188,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             row_id, _, execution_generation = source_key.partition(":")
             query = {
                 "memory_write_event": (
-                    "select 1 from memory_write_events where id=? "
-                    "and status in ('pending', 'failed')"
+                    "select 1 from actions where record_type='memory_write_events' "
+                    "and cast(legacy_key as integer)=? "
+                    "and memory_status in ('pending', 'failed')"
                 ),
                 "meeting_memory_write_event": (
                     "select 1 from meeting_memory_write_events where id=? "
@@ -14765,9 +14593,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select tasks.error, tasks.recovery_code, attempts.send_error
                 from ({REPLY_TASK_SQL}) as tasks
-                left join reply_attempts as attempts
+                left join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                   on attempts.id=(
-                      select latest.id from reply_attempts as latest
+                      select latest.id from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                       where latest.channel=tasks.channel
                         and latest.conversation_id=tasks.conversation_id
                         and latest.trigger_message_id=tasks.trigger_message_id
@@ -14805,9 +14633,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                        tasks.execution_generation, tasks.error,
                        tasks.recovery_code, attempts.send_error
                 from ({REPLY_TASK_SQL}) as tasks
-                left join reply_attempts as attempts
+                left join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                   on attempts.id=(
-                      select latest.id from reply_attempts as latest
+                      select latest.id from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                       where latest.channel=tasks.channel
                         and latest.conversation_id=tasks.conversation_id
                         and latest.trigger_message_id=tasks.trigger_message_id
@@ -15010,21 +14838,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             if task is None:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
-            cursor = db.execute(
-                """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, audit_summary, send_status, send_error, channel
-                ) values (?, ?, ?, ?, ?, 'scheduled_preflight', 'general',
-                          'scheduled_execution_unavailable', ?, 'skipped', ?, 'scheduled')
-                """,
-                (
-                    task["conversation_id"], task["conversation_title"],
-                    task["trigger_message_id"], task["trigger_sender"],
-                    task["trigger_text"], reason.strip(), reason.strip(),
-                ),
-            )
+            result = insert_action(db, "reply_attempts", {
+                "conversation_id": task["conversation_id"],
+                "conversation_title": task["conversation_title"],
+                "trigger_message_id": task["trigger_message_id"],
+                "trigger_sender": task["trigger_sender"],
+                "trigger_text": task["trigger_text"],
+                "action": "scheduled_preflight", "sensitivity_kind": "general",
+                "codex_reason": "scheduled_execution_unavailable",
+                "audit_summary": reason.strip(), "send_status": "skipped",
+                "send_error": reason.strip(), "channel": "scheduled",
+            })
             db.execute(
                 "update tasks as reply_tasks set status='done', locked_at=null, error='', "
                 "updated_at=current_timestamp where reply_tasks.record_type='reply_tasks' and id=? and status='processing' "
@@ -15044,7 +14868,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if ledger.rowcount != 1:
                 raise ValueError("scheduled execution claim is no longer current")
             self._compact_settled_reply_task_input(db, task_id)
-            return int(cursor.lastrowid)
+            return int(result.lastrowid)
 
     def defer_reply_task_for_authorization(
         self,
@@ -15483,24 +15307,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             if task is None:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
-            cursor = db.execute(
-                """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, draft_reply_text, audit_summary,
-                    send_status, send_error, channel
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'wechat')
-                """,
-                (
-                    task["conversation_id"], task["conversation_title"],
-                    task["trigger_message_id"], task["trigger_sender"],
-                    task["trigger_text"], action, sensitivity_kind,
-                    codex_reason, draft_reply_text, audit_summary,
-                    send_status, send_error,
-                ),
-            )
-            attempt_id = int(cursor.lastrowid)
+            result = insert_action(db, "reply_attempts", {
+                "conversation_id": task["conversation_id"],
+                "conversation_title": task["conversation_title"],
+                "trigger_message_id": task["trigger_message_id"],
+                "trigger_sender": task["trigger_sender"],
+                "trigger_text": task["trigger_text"],
+                "action": action, "sensitivity_kind": sensitivity_kind,
+                "codex_reason": codex_reason, "draft_reply_text": draft_reply_text,
+                "audit_summary": audit_summary, "send_status": send_status,
+                "send_error": send_error, "channel": "wechat",
+            })
+            attempt_id = int(result.lastrowid)
             if has_delivery:
                 self._prepare_new_wechat_delivery(
                     db,
@@ -15752,7 +15570,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select deliveries.id as delivery_id, (
                     select attempts.id
-                    from reply_attempts as attempts
+                    from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                     where attempts.channel='wechat'
                       and attempts.conversation_id=tasks.conversation_id
                       and attempts.trigger_message_id=tasks.trigger_message_id
@@ -15769,7 +15587,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and deliveries.execution_generation=tasks.execution_generation
                   and coalesce((
                       select attempts.retry_count
-                      from reply_attempts as attempts
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                       where attempts.channel='wechat'
                         and attempts.conversation_id=tasks.conversation_id
                         and attempts.trigger_message_id=tasks.trigger_message_id
@@ -15821,33 +15639,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     ).fetchone()
                     if task is None:
                         raise RuntimeError("wechat delivery retry task is missing")
-                    db.execute(
-                        """
-                        insert into reply_attempts (
-                            conversation_id, conversation_title,
-                            trigger_message_id, trigger_sender, trigger_text,
-                            action, sensitivity_kind, codex_reason, audit_summary,
-                            send_status, send_error, retry_count, channel
-                        ) values (?, ?, ?, ?, ?, 'send_reply', 'normal',
-                                  'legacy_wechat_delivery_recovery',
-                                  'created during bounded legacy delivery recovery',
-                                  'pending', 'wechat_delivery_ready_to_send', 1,
-                                  'wechat')
-                        """,
-                        (
-                            task["conversation_id"],
-                            task["conversation_title"],
-                            task["trigger_message_id"],
-                            task["trigger_sender"],
-                            task["trigger_text"],
-                        ),
-                    )
+                    insert_action(db, "reply_attempts", {
+                        "conversation_id": task["conversation_id"],
+                        "conversation_title": task["conversation_title"],
+                        "trigger_message_id": task["trigger_message_id"],
+                        "trigger_sender": task["trigger_sender"],
+                        "trigger_text": task["trigger_text"],
+                        "action": "send_reply", "sensitivity_kind": "normal",
+                        "codex_reason": "legacy_wechat_delivery_recovery",
+                        "audit_summary": "created during bounded legacy delivery recovery",
+                        "send_status": "pending",
+                        "send_error": "wechat_delivery_ready_to_send",
+                        "retry_count": 1, "channel": "wechat",
+                    })
                 else:
-                    db.execute(
-                        "update reply_attempts set retry_count=retry_count + 1 "
-                        "where id=?",
+                    attempt = db.execute(
+                        f"select retry_count from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?",
                         (row["attempt_id"],),
-                    )
+                    ).fetchone()
+                    if attempt is not None:
+                        update_action(db, "reply_attempts", row["attempt_id"],
+                                      {"retry_count": attempt["retry_count"] + 1})
                 requeued += 1
             return requeued
 
@@ -16254,7 +16066,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         and tasks.execution_generation=?
                         and (
                             select attempts.retry_count
-                            from reply_attempts as attempts
+                            from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                             where attempts.channel='wechat'
                               and attempts.conversation_id=tasks.conversation_id
                               and attempts.trigger_message_id=tasks.trigger_message_id
@@ -16516,9 +16328,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if row is None:
             return
         attempt = db.execute(
-            """
+            f"""
             select id
-            from reply_attempts
+            from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
             where channel='wechat'
               and conversation_id=?
               and trigger_message_id=?
@@ -16529,16 +16341,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).fetchone()
         if attempt is None:
             return
-        db.execute(
-            """
-            update reply_attempts
-            set send_status=?,
-                send_error=?,
-                updated_at=current_timestamp
-            where id=?
-            """,
-            (send_status, send_error, attempt["id"]),
-        )
+        db.execute("update sqlite_sequence set seq=seq where 0")
+        update_action(db, "reply_attempts", attempt["id"], {
+            "send_status": send_status, "send_error": send_error,
+            "updated_at": db.execute("select current_timestamp").fetchone()[0],
+        })
 
     # ---- WeChat channel: memory candidates ----
     def add_wechat_memory_candidate(self, *, import_run_id: str, account_id: str,
@@ -20221,23 +20028,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "agent_run_id": readback_run_id,
                 "reply_task_id": send_run.reply_task_id,
             }, ignore=True)
-            db.execute(
-                """
-                update reply_attempts
-                set send_status='completed', send_error='', final_reply_text=?,
-                    human_decision_options_json='[]', updated_at=current_timestamp
-                where id=(
-                    select max(id) from reply_attempts
-                    where channel=? and conversation_id=? and trigger_message_id=?
-                )
-                """,
-                (
-                    reply_text,
-                    task["channel"],
-                    task["conversation_id"],
-                    task["trigger_message_id"],
-                ),
-            )
+            latest = db.execute(
+                f"select max(id) from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                "where channel=? and conversation_id=? and trigger_message_id=?",
+                (task["channel"], task["conversation_id"], task["trigger_message_id"]),
+            ).fetchone()[0]
+            if latest is not None:
+                update_action(db, "reply_attempts", latest, {
+                    "send_status": "completed", "send_error": "",
+                    "final_reply_text": reply_text,
+                    "human_decision_options_json": "[]",
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                })
             db.execute(
                 "update tasks as reply_tasks set status='done', error='', available_at='', "
                 "locked_at=null, updated_at=current_timestamp where reply_tasks.record_type='reply_tasks' and id=?",
@@ -20464,16 +20266,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             row = db.execute(
                 "select send_status, coalesce(resolved_at, '') as resolved_at "
-                "from reply_attempts where id=?",
+                f"from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=?",
                 (attempt_id,),
             ).fetchone()
             if row is None or row["send_status"] != "failed" or row["resolved_at"]:
                 return False
-            db.execute(
-                "update reply_attempts "
-                "set resolved_at=current_timestamp, resolution=? where id=?",
-                (evidence, attempt_id),
-            )
+            update_action(db, "reply_attempts", attempt_id, {
+                "resolved_at": db.execute("select current_timestamp").fetchone()[0],
+                "resolution": evidence,
+            })
             return True
 
     def resolve_completed_oa_needs_human_attempt(
@@ -20509,24 +20310,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             attempt = db.execute(
                 "select channel, conversation_id, trigger_message_id "
-                "from reply_attempts where id=?",
+                f"from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=?",
                 (attempt_id,),
             ).fetchone()
             if attempt is None:
                 return False
-            cursor = db.execute(
-                """
-                update reply_attempts
-                set send_status='skipped', send_error='',
-                    resolved_at=current_timestamp, resolution=?,
-                    updated_at=current_timestamp
-                where id=?
-                  and send_status in ('needs_human', 'failed')
-                  and oa_process_instance_id=?
-                  and trim(coalesce(resolved_at, ''))=''
-                """,
-                (resolution, attempt_id, process_id),
-            )
+            now = db.execute("select current_timestamp").fetchone()[0]
+            cursor = update_action(db, "reply_attempts", attempt_id, {
+                "send_status": "skipped", "send_error": "",
+                "resolved_at": now, "resolution": resolution,
+                "updated_at": now,
+            }, where_sql="send_status in ('needs_human', 'failed') "
+                         "and oa_process_instance_id=? "
+                         "and trim(coalesce(resolved_at, ''))=''",
+               parameters=(process_id,))
             if cursor.rowcount != 1:
                 return False
             db.execute(
@@ -23240,7 +23037,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 from feedback_events fe
                 left join ({SENT_REPLY_SQL}) sr
                     on sr.feedback_token = fe.feedback_token
-                left join reply_attempts ra
+                left join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                     on ra.conversation_id = sr.conversation_id
                    and ra.trigger_message_id = sr.trigger_message_id
                 where fe.key=?
@@ -23304,7 +23101,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         sr.feedback_token as feedback_token,
                         max(ra.id) as attempt_id
                     from ({SENT_REPLY_SQL}) sr
-                    join reply_attempts ra
+                    join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                         on ra.conversation_id = sr.conversation_id
                        and ra.trigger_message_id = sr.trigger_message_id
                     where trim(sr.feedback_token) <> ''
@@ -23314,7 +23111,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         fe.key as feedback_key,
                         max(ra.id) as attempt_id
                     from feedback_events fe
-                    join reply_attempts ra
+                    join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                         on ra.id = cast(substr(fe.key, 8) as integer)
                     where fe.key like 'manual:%'
                     group by fe.key
@@ -23350,7 +23147,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on latest.feedback_token = fe.feedback_token
                 left join manual_attempt_by_key manual
                     on manual.feedback_key = fe.key
-                left join reply_attempts ra
+                left join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                     on ra.id = coalesce(latest.attempt_id, manual.attempt_id)
                 left join ({AGENT_RUN_SQL}) ar
                     on ar.id = ra.agent_run_id
@@ -23388,7 +23185,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     from ({SENT_REPLY_SQL}) sr
                     join requested_feedback requested
                         on requested.feedback_token = sr.feedback_token
-                    join reply_attempts ra
+                    join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                         on ra.conversation_id = sr.conversation_id
                        and ra.trigger_message_id = sr.trigger_message_id
                     where trim(sr.feedback_token) <> ''
@@ -23398,7 +23195,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         fe.key as feedback_key,
                         max(ra.id) as attempt_id
                     from requested_feedback fe
-                    join reply_attempts ra
+                    join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                         on ra.id = cast(substr(fe.key, 8) as integer)
                     where fe.key like 'manual:%'
                     group by fe.key
@@ -23434,7 +23231,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on latest.feedback_token = fe.feedback_token
                 left join manual_attempt_by_key manual
                     on manual.feedback_key = fe.key
-                left join reply_attempts ra
+                left join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                     on ra.id = coalesce(latest.attempt_id, manual.attempt_id)
                 left join ({AGENT_RUN_SQL}) ar
                     on ar.id = ra.agent_run_id
@@ -23475,7 +23272,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         sr.feedback_token as feedback_token,
                         max(ra.id) as attempt_id
                     from ({SENT_REPLY_SQL}) sr
-                    join reply_attempts ra
+                    join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                         on ra.conversation_id = sr.conversation_id
                        and ra.trigger_message_id = sr.trigger_message_id
                     where trim(sr.feedback_token) <> ''
@@ -23487,7 +23284,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on pi.feedback_key = fe.key
                 left join latest_attempt_by_token latest
                     on latest.feedback_token = fe.feedback_token
-                left join reply_attempts ra
+                left join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                     on ra.id = latest.attempt_id
                 where trim(fe.resolved_at) = ''
                   and coalesce(pi.status, 'pending') = 'pending'
@@ -23581,84 +23378,43 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                insert into reply_attempts (
-                    conversation_id,
-                    conversation_title,
-                    trigger_message_id,
-                    trigger_sender,
-                    trigger_text,
-                    action,
-                    sensitivity_kind,
-                    codex_reason,
-                    draft_reply_text,
-                    direct_user_id,
-                    direct_open_dingtalk_id,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    audit_documents_json,
-                    audit_tool_events_json,
-                    audit_summary,
-                    human_decision_options_json,
-                    oa_process_instance_id,
-                    oa_task_id,
-                    oa_url,
-                    oa_action,
-                    oa_remark,
-                    oa_action_result_json,
-                    calendar_event_id,
-                    calendar_response_status,
-                    calendar_response_result_json,
-                    mail_mailbox,
-                    mail_message_id,
-                    mail_subject,
-                    mail_reply_text,
-                    mail_action_result_json,
-                    send_status,
-                    channel
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    conversation_id,
-                    conversation_title,
-                    trigger_message_id,
-                    trigger_sender,
-                    trigger_text,
-                    action,
-                    sensitivity_kind,
-                    codex_reason,
-                    draft_reply_text,
-                    direct_user_id,
-                    direct_open_dingtalk_id,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    audit_documents_json,
-                    _audit_event_metadata_json(audit_tool_events_json),
-                    audit_summary,
-                    human_decision_options_json,
-                    oa_process_instance_id,
-                    oa_task_id,
-                    oa_url,
-                    oa_action,
-                    oa_remark,
-                    oa_action_result_json,
-                    calendar_event_id,
-                    calendar_response_status,
-                    calendar_response_result_json,
-                    mail_mailbox,
-                    mail_message_id,
-                    mail_subject,
-                    mail_reply_text,
-                    mail_action_result_json,
-                    send_status,
-                    channel,
-                ),
-            )
-            attempt_id = int(cursor.lastrowid)
+            result = insert_action(db, "reply_attempts", {
+                'conversation_id': conversation_id,
+                'conversation_title': conversation_title,
+                'trigger_message_id': trigger_message_id,
+                'trigger_sender': trigger_sender,
+                'trigger_text': trigger_text,
+                'action': action,
+                'sensitivity_kind': sensitivity_kind,
+                'codex_reason': codex_reason,
+                'draft_reply_text': draft_reply_text,
+                'direct_user_id': direct_user_id,
+                'direct_open_dingtalk_id': direct_open_dingtalk_id,
+                'codex_session_id': codex_session_id,
+                'codex_transcript_start_line': codex_transcript_start_line,
+                'codex_transcript_end_line': codex_transcript_end_line,
+                'audit_documents_json': audit_documents_json,
+                'audit_tool_events_json': _audit_event_metadata_json(audit_tool_events_json),
+                'audit_summary': audit_summary,
+                'human_decision_options_json': human_decision_options_json,
+                'oa_process_instance_id': oa_process_instance_id,
+                'oa_task_id': oa_task_id,
+                'oa_url': oa_url,
+                'oa_action': oa_action,
+                'oa_remark': oa_remark,
+                'oa_action_result_json': oa_action_result_json,
+                'calendar_event_id': calendar_event_id,
+                'calendar_response_status': calendar_response_status,
+                'calendar_response_result_json': calendar_response_result_json,
+                'mail_mailbox': mail_mailbox,
+                'mail_message_id': mail_message_id,
+                'mail_subject': mail_subject,
+                'mail_reply_text': mail_reply_text,
+                'mail_action_result_json': mail_action_result_json,
+                'send_status': send_status,
+                'channel': channel,
+            })
+            attempt_id = int(result.lastrowid)
             self._record_memory_write_events_in_connection(
                 db,
                 attempt_id,
@@ -23746,87 +23502,49 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 send_status=send_status,
             )
         with self._connect() as db:
-            db.execute(
-                """
-                update reply_attempts
-                set conversation_id=?,
-                    conversation_title=?,
-                    trigger_message_id=?,
-                    trigger_sender=?,
-                    trigger_text=?,
-                    action=?,
-                    sensitivity_kind=?,
-                    codex_reason=?,
-                    draft_reply_text=?,
-                    direct_user_id=?,
-                    direct_open_dingtalk_id=?,
-                    codex_session_id=?,
-                    codex_transcript_start_line=?,
-                    codex_transcript_end_line=?,
-                    audit_documents_json=?,
-                    audit_tool_events_json=?,
-                    audit_summary=?,
-                    human_decision_options_json=?,
-                    oa_process_instance_id=?,
-                    oa_task_id=?,
-                    oa_url=?,
-                    oa_action=?,
-                    oa_remark=?,
-                    oa_action_result_json=?,
-                    calendar_event_id=?,
-                    calendar_response_status=?,
-                    calendar_response_result_json=?,
-                    mail_mailbox=?,
-                    mail_message_id=?,
-                    mail_subject=?,
-                    mail_reply_text=?,
-                    mail_action_result_json=?,
-                    final_reply_text='',
-                    permission_action='',
-                    permission_reason='',
-                    send_status=?,
-                    send_error='',
-                    retry_count=0,
-                    updated_at=current_timestamp
-                where id=?
-                """,
-                (
-                    conversation_id,
-                    conversation_title,
-                    trigger_message_id,
-                    trigger_sender,
-                    trigger_text,
-                    action,
-                    sensitivity_kind,
-                    codex_reason,
-                    draft_reply_text,
-                    direct_user_id,
-                    direct_open_dingtalk_id,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    audit_documents_json,
-                    _audit_event_metadata_json(audit_tool_events_json),
-                    audit_summary,
-                    human_decision_options_json,
-                    oa_process_instance_id,
-                    oa_task_id,
-                    oa_url,
-                    oa_action,
-                    oa_remark,
-                    oa_action_result_json,
-                    calendar_event_id,
-                    calendar_response_status,
-                    calendar_response_result_json,
-                    mail_mailbox,
-                    mail_message_id,
-                    mail_subject,
-                    mail_reply_text,
-                    mail_action_result_json,
-                    send_status,
-                    existing_attempt.id,
-                ),
-            )
+            db.execute("update sqlite_sequence set seq=seq where 0")
+            updated_at = db.execute("select current_timestamp").fetchone()[0]
+            update_action(db, "reply_attempts", existing_attempt.id, {
+                'conversation_id': conversation_id,
+                'conversation_title': conversation_title,
+                'trigger_message_id': trigger_message_id,
+                'trigger_sender': trigger_sender,
+                'trigger_text': trigger_text,
+                'action': action,
+                'sensitivity_kind': sensitivity_kind,
+                'codex_reason': codex_reason,
+                'draft_reply_text': draft_reply_text,
+                'direct_user_id': direct_user_id,
+                'direct_open_dingtalk_id': direct_open_dingtalk_id,
+                'codex_session_id': codex_session_id,
+                'codex_transcript_start_line': codex_transcript_start_line,
+                'codex_transcript_end_line': codex_transcript_end_line,
+                'audit_documents_json': audit_documents_json,
+                'audit_tool_events_json': _audit_event_metadata_json(audit_tool_events_json),
+                'audit_summary': audit_summary,
+                'human_decision_options_json': human_decision_options_json,
+                'oa_process_instance_id': oa_process_instance_id,
+                'oa_task_id': oa_task_id,
+                'oa_url': oa_url,
+                'oa_action': oa_action,
+                'oa_remark': oa_remark,
+                'oa_action_result_json': oa_action_result_json,
+                'calendar_event_id': calendar_event_id,
+                'calendar_response_status': calendar_response_status,
+                'calendar_response_result_json': calendar_response_result_json,
+                'mail_mailbox': mail_mailbox,
+                'mail_message_id': mail_message_id,
+                'mail_subject': mail_subject,
+                'mail_reply_text': mail_reply_text,
+                'mail_action_result_json': mail_action_result_json,
+                'send_status': send_status,
+                'final_reply_text': "",
+                'permission_action': "",
+                'permission_reason': "",
+                'send_error': "",
+                'retry_count': 0,
+                "updated_at": updated_at,
+            })
             self._record_memory_write_events_in_connection(
                 db,
                 existing_attempt.id,
@@ -24024,7 +23742,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             current_attempt = db.execute(
                 f"""
                 select attempts.id
-                from reply_attempts as attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                 left join ({AGENT_RUN_SQL}) as runs on runs.id=attempts.agent_run_id
                 where attempts.channel=?
                   and attempts.conversation_id=?
@@ -24037,7 +23755,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       )
                       or attempts.id=(
                           select max(latest.id)
-                          from reply_attempts as latest
+                          from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                           where latest.channel=attempts.channel
                             and latest.conversation_id=attempts.conversation_id
                             and latest.trigger_message_id=attempts.trigger_message_id
@@ -24054,81 +23772,40 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     task_id,
                 ),
             ).fetchone()
-            projection_values = (
-                run_id,
-                codex_reason,
-                codex_session_id,
-                codex_transcript_start_line,
-                codex_transcript_end_line,
-                _audit_event_metadata_json(audit_tool_events_json),
-                audit_summary,
-                human_decision_options_json,
-                persisted_process_id,
-                persisted_task_id,
-                persisted_oa_url,
-                persisted_oa_action,
-                oa_remark,
-                oa_action_result_json,
-                send_status,
-                send_error,
-            )
+            projection_values = {
+                "conversation_id": conversation_id,
+                "conversation_title": conversation_title,
+                "trigger_message_id": trigger_message_id,
+                "trigger_sender": trigger_sender,
+                "trigger_text": trigger_text,
+                "action": "agent_run", "sensitivity_kind": "general",
+                "agent_run_id": run_id, "codex_reason": codex_reason,
+                "codex_session_id": codex_session_id,
+                "codex_transcript_start_line": codex_transcript_start_line,
+                "codex_transcript_end_line": codex_transcript_end_line,
+                "audit_tool_events_json": _audit_event_metadata_json(audit_tool_events_json),
+                "audit_summary": audit_summary,
+                "human_decision_options_json": human_decision_options_json,
+                "oa_process_instance_id": persisted_process_id,
+                "oa_task_id": persisted_task_id,
+                "oa_url": persisted_oa_url, "oa_action": persisted_oa_action,
+                "oa_remark": oa_remark,
+                "oa_action_result_json": oa_action_result_json,
+                "send_status": send_status, "send_error": send_error,
+                "final_reply_text": sent_reply_text,
+            }
             if current_attempt is None:
-                cursor = db.execute(
-                    """
-                    insert into reply_attempts (
-                        conversation_id, conversation_title, trigger_message_id,
-                        trigger_sender, trigger_text, action, sensitivity_kind,
-                        agent_run_id, codex_reason, codex_session_id,
-                        codex_transcript_start_line, codex_transcript_end_line,
-                        audit_tool_events_json, audit_summary,
-                        human_decision_options_json,
-                        oa_process_instance_id, oa_task_id, oa_url, oa_action,
-                        oa_remark, oa_action_result_json, send_status, send_error,
-                        final_reply_text, channel
-                    ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        conversation_id,
-                        conversation_title,
-                        trigger_message_id,
-                        trigger_sender,
-                        trigger_text,
-                        *projection_values,
-                        sent_reply_text,
-                        channel,
-                    ),
-                )
-                attempt_id = int(cursor.lastrowid)
+                result = insert_action(db, "reply_attempts", {
+                    **projection_values, "channel": channel,
+                })
+                attempt_id = int(result.lastrowid)
             else:
                 attempt_id = int(current_attempt["id"])
-                db.execute(
-                    """
-                    update reply_attempts
-                    set conversation_id=?, conversation_title=?,
-                        trigger_message_id=?, trigger_sender=?, trigger_text=?,
-                        action='agent_run', sensitivity_kind='general',
-                        agent_run_id=?, codex_reason=?, codex_session_id=?,
-                        codex_transcript_start_line=?, codex_transcript_end_line=?,
-                        audit_tool_events_json=?, audit_summary=?,
-                        human_decision_options_json=?, oa_process_instance_id=?,
-                        oa_task_id=?, oa_url=?, oa_action=?, oa_remark=?,
-                        oa_action_result_json=?, send_status=?, send_error=?,
-                        final_reply_text=?, permission_action='',
-                        permission_reason='', retry_count=0,
-                        updated_at=current_timestamp
-                    where id=?
-                    """,
-                    (
-                        conversation_id,
-                        conversation_title,
-                        trigger_message_id,
-                        trigger_sender,
-                        trigger_text,
-                        *projection_values,
-                        sent_reply_text,
-                        attempt_id,
-                    ),
-                )
+                update_action(db, "reply_attempts", attempt_id, {
+                    **projection_values, "permission_action": "",
+                    "permission_reason": "", "retry_count": 0,
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                })
             self._record_memory_write_events_in_connection(
                 db,
                 attempt_id,
@@ -24308,19 +23985,23 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     and payload.get("code") == "confirmation_required"
                 ):
                     continue
-                cursor = db.execute(
-                    """
-                    update reply_attempts
-                    set send_status='failed', send_error='confirmation_required',
-                        codex_reason='外部提供方拒绝执行：需要运行时确认；这不是业务决策，Agent 不会将其升级为 needs_human。',
-                        audit_summary='外部提供方拒绝执行：需要运行时确认；这不是业务决策，未执行外部动作。',
-                        human_decision_options_json='[]', updated_at=current_timestamp
-                    where agent_run_id=? and send_status='needs_human'
-                      and send_error='confirmation_required'
-                    """,
+                attempt_ids = [item[0] for item in db.execute(
+                    f"select id from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                    "where agent_run_id=? and send_status='needs_human' "
+                    "and send_error='confirmation_required'",
                     (row["run_id"],),
-                )
-                reconciled += cursor.rowcount
+                )]
+                now = db.execute("select current_timestamp").fetchone()[0]
+                for attempt_id in attempt_ids:
+                    cursor = update_action(db, "reply_attempts", attempt_id, {
+                        "send_status": "failed", "send_error": "confirmation_required",
+                        "codex_reason": "外部提供方拒绝执行：需要运行时确认；这不是业务决策，Agent 不会将其升级为 needs_human。",
+                        "audit_summary": "外部提供方拒绝执行：需要运行时确认；这不是业务决策，未执行外部动作。",
+                        "human_decision_options_json": "[]", "updated_at": now,
+                    }, where_sql="agent_run_id=? and send_status='needs_human' "
+                                 "and send_error='confirmation_required'",
+                       parameters=(row["run_id"],))
+                    reconciled += cursor.rowcount
                 db.execute(
                     """
                     update tasks as reply_tasks
@@ -24359,7 +24040,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and c.invalidated_at=''
                 join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
                   and r.decision='approve' and r.candidate_digest=c.candidate_digest
-                join reply_attempts a on a.channel=t.channel
+                join ({REPLY_ATTEMPT_COMMON_SQL}) as a on a.channel=t.channel
                   and a.conversation_id=t.conversation_id
                   and a.trigger_message_id=t.trigger_message_id
                 left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
@@ -24369,7 +24050,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and choice.id is null
                   and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
                       where newest.task_id=t.id and newest.execution_generation=t.execution_generation)
-                  and a.id=(select max(newest.id) from reply_attempts newest
+                  and a.id=(select max(newest.id) from ({REPLY_ATTEMPT_COMMON_SQL}) as newest
                       where newest.channel=t.channel and newest.conversation_id=t.conversation_id
                         and newest.trigger_message_id=t.trigger_message_id)
                   and exists(select 1 from business_object_tasks current_object
@@ -24390,10 +24071,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     continue
                 if row["send_status"] == "needs_human" and row["task_status"] == "needs_human":
                     continue
-                db.execute("""update reply_attempts set send_status='needs_human',
-                    send_error='', updated_at=current_timestamp where id=?
-                    and agent_run_id=? and send_status='failed'""",
-                    (row["attempt_id"], row["audit_run_id"]))
+                update_action(db, "reply_attempts", row["attempt_id"], {
+                    "send_status": "needs_human", "send_error": "",
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                }, where_sql="agent_run_id=? and send_status='failed'",
+                   parameters=(row["audit_run_id"],))
                 db.execute("""update tasks as reply_tasks set status='needs_human', error='',
                     available_at='', locked_at=null, updated_at=current_timestamp
                     where reply_tasks.record_type='reply_tasks' and id=? and execution_generation=? and status='failed'""",
@@ -24477,14 +24159,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 returning id
                 """
             ).fetchall()
-            attempt_cursor = db.execute(
+            superseded_attempts = db.execute(
                 f"""
-                update reply_attempts as historical_attempt
-                set send_status='skipped',
-                    send_error='',
-                    resolved_at=current_timestamp,
-                    resolution='同一业务对象已由新的终态任务接管；原人工决策不再有效。',
-                    updated_at=current_timestamp
+                select historical_attempt.id
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as historical_attempt
                 where historical_attempt.send_status='needs_human'
                   and trim(coalesce(historical_attempt.resolved_at, ''))=''
                   and exists (
@@ -24503,20 +24181,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         and current_task.status in ('done', 'skipped', 'needs_human')
                   )
                 """
-            )
-            trigger_attempt_cursor = db.execute(
+            ).fetchall()
+            now = db.execute("select current_timestamp").fetchone()[0]
+            attempt_count = 0
+            for attempt in superseded_attempts:
+                attempt_count += update_action(db, "reply_attempts", attempt["id"], {
+                    "send_status": "skipped", "send_error": "",
+                    "resolved_at": now,
+                    "resolution": "同一业务对象已由新的终态任务接管；原人工决策不再有效。",
+                    "updated_at": now,
+                }).rowcount
+            trigger_attempts = db.execute(
                 f"""
-                update reply_attempts as historical_attempt
-                set send_status='skipped',
-                    send_error='',
-                    resolved_at=current_timestamp,
-                    resolution='同一触发的后续处理已终态；原人工决策不再有效。',
-                    updated_at=current_timestamp
+                select historical_attempt.id
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as historical_attempt
                 where historical_attempt.send_status='needs_human'
                   and trim(coalesce(historical_attempt.resolved_at, ''))=''
                   and exists (
                       select 1
-                      from reply_attempts as latest_attempt
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest_attempt
                       where latest_attempt.channel=historical_attempt.channel
                         and latest_attempt.conversation_id=
                             historical_attempt.conversation_id
@@ -24525,7 +24208,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         and latest_attempt.id<>(historical_attempt.id)
                         and latest_attempt.id=(
                             select newest.id
-                            from reply_attempts as newest
+                            from ({REPLY_ATTEMPT_COMMON_SQL}) as newest
                             where newest.channel=historical_attempt.channel
                               and newest.conversation_id=
                                   historical_attempt.conversation_id
@@ -24539,13 +24222,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                 """,
                 terminal_attempt_statuses,
-            )
+            ).fetchall()
+            trigger_attempt_count = 0
+            for attempt in trigger_attempts:
+                trigger_attempt_count += update_action(db, "reply_attempts", attempt["id"], {
+                    "send_status": "skipped", "send_error": "",
+                    "resolved_at": now,
+                    "resolution": "同一触发的后续处理已终态；原人工决策不再有效。",
+                    "updated_at": now,
+                }).rowcount
             for row in skipped_tasks:
                 self._compact_settled_reply_task_input(db, int(row["id"]))
             return (
                 len(skipped_tasks)
-                + attempt_cursor.rowcount
-                + trigger_attempt_cursor.rowcount
+                + attempt_count
+                + trigger_attempt_count
             )
 
     def reconcile_unresolved_reply_tasks_with_terminal_attempts(self) -> int:
@@ -24567,9 +24258,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 select tasks.id, tasks.status, tasks.execution_generation,
                        attempts.send_status, attempts.resolved_at
                 from ({REPLY_TASK_SQL}) as tasks
-                join reply_attempts as attempts on attempts.id=(
+                join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts on attempts.id=(
                     select latest.id
-                    from reply_attempts as latest
+                    from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                     where latest.channel=tasks.channel
                       and latest.conversation_id=tasks.conversation_id
                       and latest.trigger_message_id=tasks.trigger_message_id
@@ -24717,61 +24408,41 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 persisted_oa_url
             )
             current_attempt = db.execute(
-                """
+                f"""
                 select id
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where channel=? and conversation_id=? and trigger_message_id=?
                 order by id desc
                 limit 1
                 """,
                 (channel, conversation_id, trigger_message_id),
             ).fetchone()
-            projection_values = (
-                conversation_id,
-                conversation_title,
-                trigger_message_id,
-                trigger_sender,
-                trigger_text,
-                codex_reason,
-                audit_summary,
-                process_instance_id,
-                oa_task_id,
-                persisted_oa_url,
-                "review" if process_instance_id else "",
-                send_status,
-                send_error,
-            )
+            projection_values = {
+                "conversation_id": conversation_id,
+                "conversation_title": conversation_title,
+                "trigger_message_id": trigger_message_id,
+                "trigger_sender": trigger_sender,
+                "trigger_text": trigger_text,
+                "action": "agent_run", "sensitivity_kind": "general",
+                "codex_reason": codex_reason, "audit_summary": audit_summary,
+                "oa_process_instance_id": process_instance_id,
+                "oa_task_id": oa_task_id, "oa_url": persisted_oa_url,
+                "oa_action": "review" if process_instance_id else "",
+                "send_status": send_status, "send_error": send_error,
+            }
             if current_attempt is None:
-                cursor = db.execute(
-                    """
-                    insert into reply_attempts (
-                        conversation_id, conversation_title, trigger_message_id,
-                        trigger_sender, trigger_text, action, sensitivity_kind,
-                        codex_reason, audit_summary, oa_process_instance_id,
-                        oa_task_id, oa_url, oa_action, send_status, send_error, channel
-                    ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (*projection_values, channel),
-                )
-                attempt_id = int(cursor.lastrowid)
+                result = insert_action(db, "reply_attempts", {
+                    **projection_values, "channel": channel,
+                })
+                attempt_id = int(result.lastrowid)
             else:
                 attempt_id = int(current_attempt["id"])
-                db.execute(
-                    """
-                    update reply_attempts
-                    set conversation_id=?, conversation_title=?,
-                        trigger_message_id=?, trigger_sender=?, trigger_text=?,
-                        action='agent_run', sensitivity_kind='general',
-                        codex_reason=?, audit_summary=?,
-                        oa_process_instance_id=?, oa_task_id=?, oa_url=?,
-                        oa_action=?, send_status=?, send_error=?,
-                        final_reply_text='', permission_action='',
-                        permission_reason='', retry_count=0,
-                        updated_at=current_timestamp
-                    where id=?
-                    """,
-                    (*projection_values, attempt_id),
-                )
+                update_action(db, "reply_attempts", attempt_id, {
+                    **projection_values, "final_reply_text": "",
+                    "permission_action": "", "permission_reason": "",
+                    "retry_count": 0,
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                })
             task_cursor = db.execute(
                 """
                 update tasks as reply_tasks
@@ -24804,10 +24475,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         attempt_id: int,
     ) -> list[MemoryWriteEvent]:
         with self._connect() as db:
+            memory_sql = reply_action_projection("memory_write_events", _reply_variant_for(db))
             rows = db.execute(
-                """
+                f"""
                 select *
-                from memory_write_events
+                from ({memory_sql}) as memory_write_events
                 where attempt_id=?
                 order by id
                 """,
@@ -24844,36 +24516,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if isinstance(event, dict)
         ]
         memory_events = [event for event in memory_events if event is not None]
-        db.execute("delete from memory_write_events where attempt_id=?", (attempt_id,))
+        memory_sql = reply_action_projection("memory_write_events", _reply_variant_for(db))
+        previous_ids = [row[0] for row in db.execute(
+            f"select id from ({memory_sql}) as memory_write_events where attempt_id=?",
+            (attempt_id,),
+        )]
+        for event_id in previous_ids:
+            delete_action(db, "memory_write_events", event_id)
         event_type_counts: dict[str, int] = {}
         for event in memory_events:
             base_event_type = event["event_type"]
             count = event_type_counts.get(base_event_type, 0) + 1
             event_type_counts[base_event_type] = count
             event_type = base_event_type if count == 1 else f"{base_event_type}_{count}"
-            db.execute(
-                """
-                insert into memory_write_events (
-                    attempt_id,
-                    event_type,
-                    payload_json,
-                    status,
-                    attempts,
-                    last_error,
-                    memory_episode_id
-                )
-                values (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    attempt_id,
-                    event_type,
-                    event["payload_json"],
-                    event["status"],
-                    1,
-                    event["last_error"],
-                    event["memory_episode_id"],
-                ),
-            )
+            insert_action(db, "memory_write_events", {
+                "attempt_id": attempt_id,
+                "event_type": event_type,
+                "status": event["status"],
+                "attempts": 1,
+                "last_error": event["last_error"],
+                "memory_episode_id": event["memory_episode_id"],
+            })
 
     @staticmethod
     def _memory_write_event_from_audit_event(
@@ -24892,15 +24555,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             output
         )
         status = parsed_output.get("status") or "pending"
-        payload = {
-            "tool": tool,
-            "call_id": call_id,
-            "input": str(event.get("input") or ""),
-            "output": output,
-        }
         return {
             "event_type": "memory_write",
-            "payload_json": json.dumps(payload, ensure_ascii=False),
             "status": status,
             "last_error": parsed_output.get("last_error") or "",
             "memory_episode_id": parsed_output.get("memory_episode_id") or "",
@@ -25033,14 +24689,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         attempt_id: int,
         updates: dict[str, object],
     ) -> None:
-        assignments = [f"{column}=?" for column in updates]
-        values = list(updates.values())
-        assignments.append("updated_at=current_timestamp")
-        values.append(attempt_id)
-        db.execute(
-            f"update reply_attempts set {', '.join(assignments)} where id=?",
-            values,
-        )
+        db.execute("update sqlite_sequence set seq=seq where 0")
+        updated_at = db.execute("select current_timestamp").fetchone()[0]
+        update_action(db, "reply_attempts", attempt_id,
+                      {**updates, "updated_at": updated_at})
 
     def record_reply_feedback(
         self,
@@ -25050,17 +24702,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         corrected_reply_text: str = "",
     ) -> bool:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                update reply_attempts
-                set reviewer_feedback=?,
-                    corrected_reply_text=?,
-                    reviewed_at=current_timestamp,
-                    updated_at=current_timestamp
-                where id=?
-                """,
-                (feedback, corrected_reply_text, attempt_id),
-            )
+            db.execute("update sqlite_sequence set seq=seq where 0")
+            now = db.execute("select current_timestamp").fetchone()[0]
+            cursor = update_action(db, "reply_attempts", attempt_id, {
+                "reviewer_feedback": feedback,
+                "corrected_reply_text": corrected_reply_text,
+                "reviewed_at": now, "updated_at": now,
+            })
             return cursor.rowcount == 1
 
     def resolve_needs_human_attempt(
@@ -25070,18 +24718,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         reviewer_feedback: str,
     ) -> bool:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                update reply_attempts
-                set send_status='decision_selected',
-                    send_error='',
-                    reviewer_feedback=?,
-                    reviewed_at=current_timestamp,
-                    updated_at=current_timestamp
-                where id=? and send_status='needs_human'
-                """,
-                (reviewer_feedback, attempt_id),
-            )
+            db.execute("update sqlite_sequence set seq=seq where 0")
+            now = db.execute("select current_timestamp").fetchone()[0]
+            cursor = update_action(db, "reply_attempts", attempt_id, {
+                "send_status": "decision_selected", "send_error": "",
+                "reviewer_feedback": reviewer_feedback,
+                "reviewed_at": now, "updated_at": now,
+            }, where_sql="send_status='needs_human'")
             return cursor.rowcount == 1
 
     def close_needs_human_task_with_decision(
@@ -25115,23 +24758,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             # the attempt still reading `failed` was put straight back to
             # failed by the next pass -- 384446 and 384447 reopened one minute
             # after they were answered.
-            db.execute(
-                f"""
-                update reply_attempts
-                set send_status=case
-                        when send_status in ('failed', 'needs_human')
-                        then 'decision_selected'
-                        else send_status
-                    end,
-                    send_error='',
-                    reviewer_feedback=?, reviewed_at=current_timestamp,
-                    resolved_at=current_timestamp, updated_at=current_timestamp
-                where agent_run_id in (
-                    select id from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?
-                )
-                """,
-                (decision, task_id),
-            )
+            attempts = db.execute(
+                f"select id,send_status from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                f"where agent_run_id in (select id from ({AGENT_RUN_SQL}) "
+                "where reply_task_id=?)", (task_id,),
+            ).fetchall()
+            now = db.execute("select current_timestamp").fetchone()[0]
+            for attempt in attempts:
+                update_action(db, "reply_attempts", attempt["id"], {
+                    "send_status": ("decision_selected" if attempt["send_status"]
+                                    in ("failed", "needs_human") else attempt["send_status"]),
+                    "send_error": "", "reviewer_feedback": decision,
+                    "reviewed_at": now, "resolved_at": now, "updated_at": now,
+                })
             self._compact_settled_reply_task_input(db, task_id)
             return True
 
@@ -25165,7 +24804,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 source_review = db.execute(f"""select r.id from ({CANDIDATE_REVIEW_SQL}) r
                     where r.candidate_id=? and r.decision='approve'
                       and r.candidate_digest=? and r.audit_run_id=(
-                        select agent_run_id from reply_attempts where id=?)""",
+                        select agent_run_id from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=?)""",
                     (review_candidate_id, candidate["candidate_digest"], source_attempt_id)).fetchone()
                 if (not supplement_instruction.strip() or source_review is None
                     or candidate["invalidated_at"] or not source_attempt_id
@@ -25182,7 +24821,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             source_row = None
             if source_attempt_id > 0:
                 source_row = db.execute(
-                    "select * from reply_attempts where id=?",
+                    f"select * from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=?",
                     (source_attempt_id,),
                 ).fetchone()
                 if source_row is None:
@@ -25216,35 +24855,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if not isinstance(prior_events, list):
                     prior_events = []
                 queued_events = [*prior_events, {"tool": "audit_review", "result": "queued"}]
-                db.execute(
-                    """
-                    update reply_attempts
-                    set action='send_reply',
-                        codex_reason='reviewed_message_reply',
-                        draft_reply_text=?,
-                        audit_tool_events_json=?,
-                        audit_summary=?,
-                        reviewer_feedback=?,
-                        corrected_reply_text=?,
-                        reviewed_at=current_timestamp,
-                        send_status='pending',
-                        send_error='',
-                        updated_at=current_timestamp
-                    where id=?
-                    """,
-                    (
-                        suggestion,
-                        json.dumps(
-                            queued_events,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        ),
-                        audit_summary,
-                        feedback,
-                        suggestion,
-                        source_attempt_id,
-                    ),
-                )
+                now = db.execute("select current_timestamp").fetchone()[0]
+                update_action(db, "reply_attempts", source_attempt_id, {
+                    "action": "send_reply",
+                    "codex_reason": "reviewed_message_reply",
+                    "draft_reply_text": suggestion,
+                    "audit_tool_events_json": json.dumps(
+                        queued_events, ensure_ascii=False, separators=(",", ":")),
+                    "audit_summary": audit_summary,
+                    "reviewer_feedback": feedback,
+                    "corrected_reply_text": suggestion,
+                    "reviewed_at": now, "send_status": "pending",
+                    "send_error": "", "updated_at": now,
+                })
                 revision_key = self._manual_rerun_revision_key(
                     db, source_attempt_id
                 )
@@ -25268,7 +24891,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select attempts.id as attempt_id, tasks.*
                 from ({REPLY_TASK_CURRENT_SQL}) as tasks
-                join reply_attempts as attempts
+                join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                   on attempts.id=tasks.manual_rerun_attempt_id
                 where tasks.channel=?
                   and tasks.conversation_id=?
@@ -25312,36 +24935,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 + "\nSuggested response: "
                 + suggestion
             ).strip()
-            cursor = db.execute(
-                """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, draft_reply_text, audit_tool_events_json,
-                    audit_summary, reviewer_feedback, corrected_reply_text,
-                    reviewed_at, send_status, channel
-                ) values (?, ?, ?, ?, ?, 'send_reply', 'general',
-                          'reviewed_message_reply', ?, ?, ?, ?, ?,
-                          current_timestamp, 'pending', ?)
-                """,
-                (
-                    conversation_id,
-                    conversation_title,
-                    trigger_message_id,
-                    trigger_sender,
-                    trigger_text,
-                    suggestion,
-                    json.dumps(
-                        [{"tool": "audit_review", "result": "queued"}],
-                        ensure_ascii=False,
-                    ),
-                    audit_summary,
-                    feedback,
-                    suggestion,
-                    channel,
-                ),
-            )
-            attempt_id = int(cursor.lastrowid)
+            result = insert_action(db, "reply_attempts", {
+                "conversation_id": conversation_id,
+                "conversation_title": conversation_title,
+                "trigger_message_id": trigger_message_id,
+                "trigger_sender": trigger_sender,
+                "trigger_text": trigger_text,
+                "action": "send_reply", "sensitivity_kind": "general",
+                "codex_reason": "reviewed_message_reply",
+                "draft_reply_text": suggestion,
+                "audit_tool_events_json": json.dumps(
+                    [{"tool": "audit_review", "result": "queued"}], ensure_ascii=False),
+                "audit_summary": audit_summary,
+                "reviewer_feedback": feedback,
+                "corrected_reply_text": suggestion,
+                "reviewed_at": db.execute("select current_timestamp").fetchone()[0],
+                "send_status": "pending", "channel": channel,
+            })
+            attempt_id = int(result.lastrowid)
             revision_key = self._manual_rerun_revision_key(db, attempt_id)
             task = self._enqueue_manual_rerun_reply_task_in_connection(
                 db,
@@ -25373,22 +24984,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         *,
         reviewer_feedback: str,
     ) -> None:
-        cursor = db.execute(
-            """
-            update reply_attempts
-            set send_status='decision_selected',
-                send_error='',
-                reviewer_feedback=?,
-                reviewed_at=current_timestamp,
-                updated_at=current_timestamp
-            where id=? and send_status in ('failed', 'needs_human')
-            """,
-            (reviewer_feedback, attempt_id),
-        )
+        now = db.execute("select current_timestamp").fetchone()[0]
+        cursor = update_action(db, "reply_attempts", attempt_id, {
+            "send_status": "decision_selected", "send_error": "",
+            "reviewer_feedback": reviewer_feedback,
+            "reviewed_at": now, "updated_at": now,
+        }, where_sql="send_status in ('failed', 'needs_human')")
         if cursor.rowcount == 1:
             return
         row = db.execute(
-            "select send_status, reviewer_feedback from reply_attempts where id=?",
+            f"select send_status, reviewer_feedback from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=?",
             (attempt_id,),
         ).fetchone()
         if (
@@ -25441,7 +25046,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_reply_attempt(self, attempt_id: int) -> ReplyAttempt | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from reply_attempts where id=?",
+                f"select * from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=?",
                 (attempt_id,),
             ).fetchone()
             if row is None:
@@ -25453,9 +25058,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> ReplyAttempt | None:
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where conversation_id=? and trigger_message_id=?
                 order by id desc
                 limit 1
@@ -25491,7 +25096,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select attempts.*
-                from reply_attempts as attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and __NOT_EXTERNAL__
                   and not exists (
@@ -25570,7 +25175,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                   and attempts.id=(
                       select max(latest.id)
-                      from reply_attempts as latest
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                       where latest.conversation_id=attempts.conversation_id
                         and latest.trigger_message_id=attempts.trigger_message_id
                   )
@@ -25617,7 +25222,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                        attempts.trigger_message_id, attempts.send_status,
                        attempts.conversation_title, attempts.trigger_text,
                        attempts.updated_at, attempts.send_error
-                from reply_attempts as attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and __NOT_EXTERNAL__
                   and not exists (
@@ -25694,7 +25299,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                   and attempts.id=(
                       select max(latest.id)
-                      from reply_attempts as latest
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                       where latest.conversation_id=attempts.conversation_id
                         and latest.trigger_message_id=attempts.trigger_message_id
                 )
@@ -25727,7 +25332,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             row = db.execute(
                 f"""
                 select count(*) as count
-                from reply_attempts as attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and __NOT_EXTERNAL__
                   and not exists (
@@ -25806,7 +25411,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                   and attempts.id=(
                       select max(latest.id)
-                      from reply_attempts as latest
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                       where latest.conversation_id=attempts.conversation_id
                         and latest.trigger_message_id=attempts.trigger_message_id
                   )
@@ -25826,9 +25431,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         query_text: str = "",
     ) -> list[ReplyAttempt]:
         with self._connect() as db:
-            query = """
+            query = f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
             """
             filters, args = self._reply_attempt_filters(
                 send_status=send_status,
@@ -25976,7 +25581,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                              and send_status in ('failed', 'blocked', 'pending', 'dry_run', 'needs_human')
                              and exists (
                                 select 1
-                                from reply_attempts as newer_side_effects
+                                from ({REPLY_ATTEMPT_COMMON_SQL}) as newer_side_effects
                                 where newer_side_effects.conversation_id=reply_attempts.conversation_id
                                   and newer_side_effects.trigger_message_id=reply_attempts.trigger_message_id
                                   and newer_side_effects.action=reply_attempts.action
@@ -25991,7 +25596,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                              and action not in ('memory_write', 'oa_approval')
                              and exists (
                                 select 1
-                                from reply_attempts as newer_attempts
+                                from ({REPLY_ATTEMPT_COMMON_SQL}) as newer_attempts
                                 where newer_attempts.conversation_id=reply_attempts.conversation_id
                                   and newer_attempts.trigger_message_id=reply_attempts.trigger_message_id
                                   and newer_attempts.id>reply_attempts.id
@@ -26027,12 +25632,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     permission_action || ' ' || permission_reason || ' ' || send_status || ' ' ||
                     send_error || ' ' || reviewer_feedback || ' ' || corrected_reply_text
                     , '') as search_text
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where (
                     oa_process_instance_id = ''
                     or id = (
                         select process_attempts.id
-                        from reply_attempts as process_attempts
+                        from ({REPLY_ATTEMPT_COMMON_SQL}) as process_attempts
                         where process_attempts.oa_process_instance_id = reply_attempts.oa_process_instance_id
                           and process_attempts.oa_process_instance_id <> ''
                         order by process_attempts.created_at desc,
@@ -26053,7 +25658,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and not exists (
                     select 1
                     from ({AGENT_RUN_SQL}) as historical_run
-                    join reply_attempts as newer_attempt
+                    join ({REPLY_ATTEMPT_COMMON_SQL}) as newer_attempt
                       on newer_attempt.id > reply_attempts.id
                     join ({AGENT_RUN_SQL}) as newer_run
                       on newer_run.id = newer_attempt.agent_run_id
@@ -26265,7 +25870,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         placeholders = ",".join("?" for _ in attempt_ids)
         with self._connect() as db:
             rows = db.execute(
-                f"select * from reply_attempts where id in ({placeholders})",
+                f"select * from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id in ({placeholders})",
                 attempt_ids,
             ).fetchall()
         return [ReplyAttempt.model_validate(dict(row)) for row in rows]
@@ -26273,9 +25878,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def list_reply_attempts_after(self, attempt_id: int) -> list[ReplyAttempt]:
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where id > ?
                 order by id asc
                 """,
@@ -26286,9 +25891,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def list_reply_attempts_since(self, since_utc: str) -> list[ReplyAttempt]:
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where created_at >= ?
                 order by created_at asc, id asc
                 """,
@@ -26300,9 +25905,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, conversation_id: str, limit: int | None = None
     ) -> list[ReplyAttempt]:
         with self._connect() as db:
-            query = """
+            query = f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where conversation_id=?
                 order by id desc
             """
@@ -26321,9 +25926,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return []
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where oa_process_instance_id=?
                 order by created_at desc, id desc
                 limit ?
@@ -26341,7 +25946,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select attempts.*
-                from reply_attempts attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                 where (
                         attempts.send_status='needs_human'
                         or (
@@ -26361,7 +25966,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and trim(attempts.oa_task_id)<>''
                   and attempts.id=(
                       select max(latest.id)
-                      from reply_attempts latest
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                       where latest.oa_process_instance_id=
                             attempts.oa_process_instance_id
                   )
@@ -26386,16 +25991,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Return latest attempts falsely settled by the old pending-list rule."""
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select attempts.*
-                from reply_attempts attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                 where attempts.send_status='skipped'
                   and attempts.resolution like '%OA_TASK_NOT_PENDING%'
                   and attempts.resolution not like 'Live DingTalk readback corrected%'
                   and trim(attempts.oa_process_instance_id)<>''
                   and attempts.id=(
                       select max(latest.id)
-                      from reply_attempts latest
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                       where latest.oa_process_instance_id=
                             attempts.oa_process_instance_id
                   )
@@ -26429,9 +26034,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                """
+                f"""
                 select resolution
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where id=?
                   and send_status='skipped'
                   and oa_process_instance_id=?
@@ -26439,7 +26044,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and resolution not like 'Live DingTalk readback corrected%'
                   and id=(
                       select max(latest.id)
-                      from reply_attempts latest
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                       where latest.oa_process_instance_id=?
                   )
                 """,
@@ -26454,31 +26059,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"Live DingTalk readback corrected the earlier OA_TASK_NOT_PENDING "
                 f"closure: {verified}. Previous resolution retained: {previous}"
             )
-            cursor = db.execute(
-                """
-                update reply_attempts
-                set resolution=?, updated_at=current_timestamp
-                where id=?
-                  and send_status='skipped'
-                  and oa_process_instance_id=?
-                  and oa_task_id=?
-                  and resolution=?
-                  and resolution not like 'Live DingTalk readback corrected%'
-                  and id=(
-                      select max(latest.id)
-                      from reply_attempts latest
-                      where latest.oa_process_instance_id=?
-                  )
-                """,
-                (
-                    corrected,
-                    attempt_id,
-                    process_id,
-                    original_task_id,
-                    previous,
-                    process_id,
-                ),
-            )
+            cursor = update_action(db, "reply_attempts", attempt_id, {
+                "resolution": corrected,
+                "updated_at": db.execute("select current_timestamp").fetchone()[0],
+            }, where_sql="send_status='skipped' and oa_process_instance_id=? "
+                         "and oa_task_id=? and resolution=? "
+                         "and resolution not like 'Live DingTalk readback corrected%' "
+                         f"and id=(select max(latest.id) from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                         "as latest where latest.oa_process_instance_id=?)",
+               parameters=(process_id, original_task_id, previous, process_id))
             return cursor.rowcount == 1
 
     def list_oa_attempt_histories(
@@ -26502,7 +26091,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where oa_process_instance_id in ({placeholders})
                 order by oa_process_instance_id, created_at desc, id desc
                 """,
@@ -26516,11 +26105,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def backfill_oa_audit_metadata(self) -> int:
         """Recover OA identity for historical agent attempts by exact task key."""
         with self._connect() as db:
+            db.execute("update sqlite_sequence set seq=seq where 0")
             rows = db.execute(
                 f"""
-                select reply_attempts.id, reply_tasks.oa_url,
+                select reply_attempts.id, reply_attempts.oa_action, reply_tasks.oa_url,
                        reply_tasks.business_object_key
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.conversation_id=reply_attempts.conversation_id
                     and reply_tasks.trigger_message_id=reply_attempts.trigger_message_id
                 where reply_attempts.action='agent_run'
@@ -26548,21 +26138,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         "https://aflow.dingtalk.com/detail?"
                         f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
                     )
-                cursor = db.execute(
-                    """
-                    update reply_attempts
-                    set oa_process_instance_id=?, oa_task_id=?, oa_url=?,
-                        oa_action=case when oa_action='' then 'review' else oa_action end,
-                        updated_at=current_timestamp
-                    where id=? and oa_process_instance_id=''
-                    """,
-                    (
-                        process_instance_id,
-                        task_id,
-                        oa_url,
-                        int(row["id"]),
-                    ),
-                )
+                cursor = update_action(db, "reply_attempts", int(row["id"]), {
+                    "oa_process_instance_id": process_instance_id,
+                    "oa_task_id": task_id, "oa_url": oa_url,
+                    "oa_action": "review" if row["oa_action"] == "" else row["oa_action"],
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                }, where_sql="oa_process_instance_id=''")
                 repaired += cursor.rowcount
             return repaired
 
@@ -26574,9 +26155,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, codex_session_id: str, limit: int | None = None
     ) -> list[ReplyAttempt]:
         with self._connect() as db:
-            query = """
+            query = f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where codex_session_id=?
                 order by id desc
             """
@@ -26616,7 +26197,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 for row in db.execute(
                     f"""
                     select attempt.id as id, attempt.send_status as send_status
-                    from reply_attempts attempt
+                    from ({REPLY_ATTEMPT_COMMON_SQL}) as attempt
                     join ({AGENT_RUN_SQL}) run on run.id = attempt.agent_run_id
                     where run.reply_task_id = ?
                       and run.execution_generation = ?
@@ -26845,9 +26426,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, limit: int | None = None
     ) -> list[ReplyAttempt]:
         with self._connect() as db:
-            query = """
+            query = f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where reviewer_feedback != '' or corrected_reply_text != ''
                 order by id desc
             """
@@ -26873,7 +26454,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             where_sql = f" where {' and '.join(filters)}" if filters else ""
             row = db.execute(
-                f"select count(*) as count from reply_attempts{where_sql}",
+                f"select count(*) as count from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts{where_sql}",
                 args,
             ).fetchone()
             return int(row["count"])
@@ -26883,14 +26464,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             row = db.execute(
                 f"""
                 select count(*) as count
-                from reply_attempts as attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                 where attempts.send_status='blocked'
                   and (
                       (
                           attempts.action in ('memory_write', 'oa_approval')
                           and attempts.id = (
                               select max(latest.id)
-                              from reply_attempts as latest
+                              from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                               where latest.conversation_id=attempts.conversation_id
                                 and latest.trigger_message_id=attempts.trigger_message_id
                                 and latest.action=attempts.action
@@ -26900,7 +26481,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                           attempts.action not in ('memory_write', 'oa_approval')
                           and attempts.id = (
                               select max(latest.id)
-                              from reply_attempts as latest
+                              from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                               where latest.conversation_id=attempts.conversation_id
                                 and latest.trigger_message_id=attempts.trigger_message_id
                           )
@@ -29696,9 +29277,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return []
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where conversation_id=?
                   and datetime(created_at) >= datetime(?)
                 order by created_at asc, id asc
@@ -30340,7 +29921,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and coalesce(error_event.message_id, '')<>''
                   and exists (
                     select 1
-                    from reply_attempts recovery
+                    from ({REPLY_ATTEMPT_COMMON_SQL}) as recovery
                     where recovery.conversation_id=error_event.conversation_id
                       and recovery.trigger_message_id=error_event.message_id
                       and datetime(recovery.updated_at) >= datetime(error_event.created_at)
@@ -30410,19 +29991,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         original business explanation remains in the immutable audit summary.
         """
         with self._connect() as db:
-            cursor = db.execute(
+            db.execute("update sqlite_sequence set seq=seq where 0")
+            attempts = db.execute(
                 f"""
-                update reply_attempts as attempt
-                set send_status='skipped',
-                    send_error='',
-                    permission_action=?,
-                    permission_reason='关联任务已完成；详见审计说明。',
-                    updated_at=current_timestamp
+                select attempt.id
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempt
                 where lower(attempt.send_status)='blocked'
                   and trim(coalesce(attempt.permission_action, ''))=''
                   and attempt.id=(
                     select max(latest.id)
-                    from reply_attempts latest
+                    from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                     where latest.channel=attempt.channel
                       and latest.conversation_id=attempt.conversation_id
                       and latest.trigger_message_id=attempt.trigger_message_id
@@ -30435,10 +30013,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and task.trigger_message_id=attempt.trigger_message_id
                       and lower(task.status)='done'
                   )
-                """,
-                (REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,),
-            )
-            return cursor.rowcount
+                """
+            ).fetchall()
+            now = db.execute("select current_timestamp").fetchone()[0]
+            return sum(update_action(db, "reply_attempts", attempt["id"], {
+                "send_status": "skipped", "send_error": "",
+                "permission_action": REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
+                "permission_reason": "关联任务已完成；详见审计说明。",
+                "updated_at": now,
+            }).rowcount for attempt in attempts)
 
     def count_sent_replies(self) -> int:
         with self._connect() as db:
@@ -30450,7 +30033,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def max_reply_attempt_id(self) -> int:
         with self._connect() as db:
             row = db.execute(
-                "select coalesce(max(id), 0) as max_id from reply_attempts"
+                f"select coalesce(max(id), 0) as max_id from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts"
             ).fetchone()
             return int(row["max_id"])
 
@@ -30830,7 +30413,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         when send_status='failed' and (
                             exists (
                                 select 1
-                                from reply_attempts as later_attempts
+                                from ({REPLY_ATTEMPT_COMMON_SQL}) as later_attempts
                                 where later_attempts.channel=reply_attempts.channel
                                   and later_attempts.conversation_id=reply_attempts.conversation_id
                                   and later_attempts.trigger_message_id=reply_attempts.trigger_message_id
@@ -30873,7 +30456,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             and (
                             exists (
                                 select 1
-                                from reply_attempts as superseding_attempts
+                                from ({REPLY_ATTEMPT_COMMON_SQL}) as superseding_attempts
                                 where superseding_attempts.channel=reply_attempts.channel
                                   and superseding_attempts.conversation_id=
                                       reply_attempts.conversation_id
@@ -30913,7 +30496,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from reply_attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
                 where {
             (
                 "id in (" + ", ".join(str(int(i)) for i in reply_attempt_ids) + ") and "
@@ -30930,7 +30513,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and not exists (
                     select 1
                     from ({AGENT_RUN_SQL}) as historical_run
-                    join reply_attempts as newer_attempt
+                    join ({REPLY_ATTEMPT_COMMON_SQL}) as newer_attempt
                       on newer_attempt.id > reply_attempts.id
                     join ({AGENT_RUN_SQL}) as newer_run
                       on newer_run.id = newer_attempt.agent_run_id

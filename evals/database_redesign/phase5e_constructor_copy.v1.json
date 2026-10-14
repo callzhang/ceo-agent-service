@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "scope": "OFFLINE Phase5E paired constructor copy acceptance",
+  "observed_at": "2026-10-14T07:21:09.590085+00:00",
+  "candidate_commit": "74ac6200c221c7fed6dd3741f573fd6d6acfb821",
+  "actual_old_source_ref": "d55a21b8532019e48aeb82ff1aba1f5065daa29f",
+  "production_head_start": "d55a21b8532019e48aeb82ff1aba1f5065daa29f",
+  "production_head_end": "e23544c4ca09ce9e7a012b600d268e70a13fc794",
+  "production_binding": "Non-atomic: online SQLite backup and production checkout HEAD were read separately; exact Store18/Email51 and source schema fingerprints bind the copy.",
+  "candidate_source_sha256": {
+    "app/action_reply_storage.py": "72e84e6c8d6be31e39115bcaea1432b4ba6267bbb091610666ad75653415e10c",
+    "app/action_reply_schema_release.py": "eed6dc3ec404e58d52b1562da8c10fcb1a94823698f009f9758fd7997b0ad6fd",
+    "app/action_storage.py": "c43bed4e0962e27195cf466e060883fcc77ea8cb098e3e316ea2ccbe07952a0d",
+    "app/store.py": "24dce2dfab2d0a2878d234bd7698f32273d437a3c3e425e57fd50623b1637d9b",
+    "app/store_schema_release.py": "d0605e18dcbeffcbda904d2177559db5ff312ad3e203f07c0ab30447b8605c8f"
+  },
+  "cases": {
+    "actual_online_backup": {
+      "source_variant": "actual",
+      "source_schema_sha256": "9f4b174573596030e0716d4360b8f445049691ead1e39ac6e979f61676815b98",
+      "source_attempts": 14846,
+      "source_memory_events": 476,
+      "source_tables": 123,
+      "target_tables": 121,
+      "source_file_bytes": 471347200,
+      "target_file_bytes": 471347200,
+      "baseline_fk_findings": 1,
+      "synthetic_attempts_after": 3,
+      "synthetic_memory_after": 2,
+      "old_code_read_unchanged": true,
+      "old_code_public_write_receipt": true,
+      "current_fact_inverse": true,
+      "republish_values_types_waters_equal": true
+    },
+    "old_fresh_constructor": {
+      "source_variant": "fresh_candidate17",
+      "source_schema_sha256": "9b511108327b52d132b73ccf8aefc7e47bc39fb565be0e59b15d98b16a8c39bc",
+      "source_attempts": 0,
+      "source_memory_events": 0,
+      "source_tables": 123,
+      "target_tables": 121,
+      "source_file_bytes": 1982464,
+      "target_file_bytes": 2068480,
+      "baseline_fk_findings": 0,
+      "synthetic_attempts_after": 3,
+      "synthetic_memory_after": 2,
+      "old_code_read_unchanged": true,
+      "old_code_public_write_receipt": true,
+      "current_fact_inverse": true,
+      "republish_values_types_waters_equal": true
+    }
+  },
+  "checks": {
+    "owned_temporary_copies_cleaned": true,
+    "provider_calls": 0,
+    "production_mutations": 0,
+    "native_cli_calls": 0,
+    "all_copy_assertions_passed": true
+  },
+  "evidence_limit": "Private rows, row hashes, archived code and copied databases were transient and deleted. Offline storage compatibility only; no native role, provider, CI, deployment or live readback claim.",
+  "supplemental_runtime_binding": {
+    "runtime_commit": "d6013cb06c76e2cb9d6f96a3c161b98d3d7ae217",
+    "proof_execution_commit": "74ac6200c221c7fed6dd3741f573fd6d6acfb821",
+    "additional_published_source_ref": "e23544c4ca09ce9e7a012b600d268e70a13fc794",
+    "changed_startup_reconcilers": [
+      "reconcile_unresolved_reply_tasks_with_settlement_evidence",
+      "reconcile_unresolved_reply_tasks_with_terminal_attempts"
+    ],
+    "store_ast_unchanged_outside_listed_methods": true,
+    "old_source_ast_unchanged_outside_listed_methods": true,
+    "unchanged_module_sha256": {
+      "app/action_reply_storage.py": "72e84e6c8d6be31e39115bcaea1432b4ba6267bbb091610666ad75653415e10c",
+      "app/action_reply_schema_release.py": "eed6dc3ec404e58d52b1562da8c10fcb1a94823698f009f9758fd7997b0ad6fd",
+      "app/action_storage.py": "c43bed4e0962e27195cf466e060883fcc77ea8cb098e3e316ea2ccbe07952a0d",
+      "app/store_schema_release.py": "d0605e18dcbeffcbda904d2177559db5ff312ad3e203f07c0ab30447b8605c8f",
+      "app/consumer_agent.py": "fdbe5de93ac44c2af36954092cd9ca4c7eac93f9f7dcc547a31b2a8082b20917",
+      "app/audit_agent.py": "61e2bc76f6939d47473725267fe168b3893c2a04ff82e6339797e360121cf606",
+      "app/agent_orchestrator.py": "62ba296f2ee7ef832a1e95d406c102c10f1db3de4369862d832d6eb09a0082b4",
+      "app/system_executor.py": "a24ab6e23370ca5054bb9156341bcf75d54ee9d9c5805c28cabe37fc52ce3743",
+      "app/worker.py": "fae82650cb4b4ef5b08d42e7f08a806bdfb391072e02ac71aeba719c1c08769c",
+      "scripts/validate_native_copy_lifecycle.py": "29bbd36b5b2f49dfaec6444e722080fcba6f081ca0811f4be00af5b4dc10359d"
+    },
+    "native_harness_invokes_changed_startup_methods": false,
+    "fresh_native_execution_at_runtime_commit": false,
+    "targeted_recovery_checks": "Root60; independent SPEC4new+6positive and QUALITY10, all passed",
+    "boundary": "Actual copy and genuine old-code executions remain bound to original proof commit/source ref. Supplemental binding proves unchanged persistence/native paths and separately verifies new startup guards; no new copy or native execution at runtime_commit is claimed."
+  }
+}

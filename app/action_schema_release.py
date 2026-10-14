@@ -9,6 +9,7 @@ from typing import Callable
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     action_schema_is_current,
+    reply_schema_is_current,
     capture_action_schema,
     restore_action_schema,
 )
@@ -35,6 +36,8 @@ def publication_candidate_source(db: sqlite3.Connection) -> str:
     if version == "2026-10-13.3" and action_schema_is_current(db, include_postfix=True):
         return REVIEW_CANDIDATE_SQL
     if version == "2026-10-13.4" and action_schema_is_current(db, include_delivery=True):
+        return REVIEW_CANDIDATE_SQL
+    if version == "2026-10-13.5" and reply_schema_is_current(db):
         return REVIEW_CANDIDATE_SQL
     raise ValueError("unknown or mixed action publication source schema")
 

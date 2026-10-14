@@ -18,6 +18,7 @@ from app.historical_agent_results import (
     HistoricalAuditExternalResult,
 )
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyAttempt
+from app.action_storage import update_action
 
 
 def _attempt(**overrides: object) -> ReplyAttempt:
@@ -193,10 +194,7 @@ def test_approval_history_reads_actual_verified_system_execution_ledger(tmp_path
         oa_process_instance_id="process", oa_task_id="task", send_status="completed",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (audit.id, history_id),
-        )
+        update_action(db, "reply_attempts", history_id, {"agent_run_id": audit.id})
     original_batch = store.list_agent_run_summaries_for_terminal_runs
 
     def missing_adopted_newest_run(run_ids):

@@ -18,7 +18,7 @@ import pytest
 import app.store as store_module
 from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mutation
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
-from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, update_action
+from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, insert_action, update_action
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, SCHEDULED_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
 from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression, task_physical_id
 from app.store import (
@@ -597,8 +597,15 @@ def _seed_runtime_operation_parent(
                 "wechat_memory_import_job": "wechat_memory_import_jobs",
             }[source]
             if table_name == "memory_write_events":
-                db.execute("insert into reply_attempts (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, action, sensitivity_kind, final_reply_text, permission_action, permission_reason, send_status) values (1, 'cid', 'title', 'msg', 'sender', 'text', 'none', 'none', '', 'none', '', 'pending')")
-                db.execute("insert into memory_write_events (id, attempt_id, event_type, payload_json) values (?, 1, 'test', '{}')", (int(source_id),))
+                insert_action(db, "reply_attempts", {"id": 1,
+                    "conversation_id": "cid", "conversation_title": "title",
+                    "trigger_message_id": "msg", "trigger_sender": "sender",
+                    "trigger_text": "text", "action": "none",
+                    "sensitivity_kind": "none", "final_reply_text": "",
+                    "permission_action": "none", "permission_reason": "",
+                    "send_status": "pending"})
+                insert_action(db, "memory_write_events", {"id": int(source_id),
+                    "attempt_id": 1, "event_type": "test"})
             elif table_name == "meeting_memory_write_events":
                 insert_task(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-memory-parent', 'status': 'sent', 'final_message': 'sent summary'})
                 db.execute(
@@ -2776,10 +2783,8 @@ def test_reconcile_repairs_existing_confirmation_projection_to_failed(
         channel=task.channel,
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set agent_run_id=?, send_error=? where id=?",
-            (run.id, "confirmation_required", attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id,
+                      {"agent_run_id": run.id, "send_error": "confirmation_required"})
     store.fail_reply_task(
         task.id,
         "confirmation_required",
@@ -3135,10 +3140,7 @@ def test_skip_obsolete_needs_human_attempt_superseded_by_terminal_business_objec
             expected_execution_generation=current_task.execution_generation,
         )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (old_run.id, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": old_run.id})
         db.execute(
             "update tasks set business_object_key='oa:process-2:task-2' "
             "where record_type='reply_tasks' and id in (?, ?)",
@@ -3161,7 +3163,7 @@ def test_skip_obsolete_needs_human_attempt_superseded_by_terminal_business_objec
     assert updated_attempt.send_error == ""
     with store._connect() as db:
         closure = db.execute(
-            "select resolved_at, resolution from reply_attempts where id=?",
+            f"select resolved_at, resolution from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?",
             (attempt_id,),
         ).fetchone()
     assert closure is not None
@@ -3250,10 +3252,8 @@ def test_history_hides_legacy_duplicate_attempt_projections_for_one_reply_task(
                     'status': 'completed',
                 },
             )
-            db.execute(
-                "update reply_attempts set agent_run_id=? where id=?",
-                (run.lastrowid, attempt_id),
-            )
+            update_action(db, "reply_attempts", attempt_id,
+                          {"agent_run_id": run.lastrowid})
 
     history_ids = [
         item.source_id
@@ -3354,12 +3354,11 @@ def test_needs_human_task_follows_resolved_failed_attempt(tmp_path: Path) -> Non
             "update tasks set status='needs_human', error=? where record_type='reply_tasks' and id=?",
             ("external_action_completed:verified readback", task.id),
         )
-        db.execute(
-            "update reply_attempts set send_error='agent_reported_failure', "
-            "resolved_at=current_timestamp, resolution=? "
-            "where id=?",
-            ("Provider action was sent and read back.", attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "send_error": "agent_reported_failure",
+            "resolved_at": db.execute("select current_timestamp").fetchone()[0],
+            "resolution": "Provider action was sent and read back.",
+        })
 
     assert store.reconcile_unresolved_reply_tasks_with_terminal_attempts() == 1
     updated = store.get_reply_task(task.id)
@@ -4168,7 +4167,7 @@ def test_store_repairs_missing_required_table_despite_current_schema_version(
 
 
 def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path) -> None:
-    from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17
+    from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_store19
     from app.task_storage import WORKBENCH_TURN_SQL
 
     db_path = tmp_path / "source13-workbench.sqlite3"
@@ -4177,6 +4176,7 @@ def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path:
         db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,lease_owner,lease_expires_at)
             values('turn','parent','request',1,'kept','running','original-owner','2026-10-13 00:00:00')""")
     advance_source16_to_store17(db_path)
+    advance_source17_to_store19(db_path)
     AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
         columns = {str(row[1]) for row in db.execute("pragma table_info(tasks)")}
@@ -5311,8 +5311,10 @@ def test_actionable_attempt_decision_rolls_back_queue_when_source_update_fails(
     with store._connect() as db:
         db.executescript(
             f"""
-            create trigger reject_actionable_resolution before update on reply_attempts
-                when old.id={source_id} and new.send_status='pending'
+            create trigger reject_actionable_resolution before update on actions
+                when old.record_type='reply_attempts'
+                and old.legacy_key='{source_id}'
+                and new.attempt_send_status='pending'
             begin
                 select raise(abort, 'forced actionable resolution failure');
             end;
@@ -6168,10 +6170,8 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
         oa_task_id="task-authorization",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (readback_run.id, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id,
+                      {"agent_run_id": readback_run.id})
     store.fail_reply_task(
         task.id,
         "provider_receipt_missing",
@@ -6300,10 +6300,7 @@ def test_reconcile_failed_agent_message_accepts_send_and_readback_in_same_run(
         channel=task.channel,
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (audit.id, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
     store.fail_reply_task(
         task.id,
         "result_invalid",
@@ -6375,10 +6372,8 @@ def test_reconcile_preserves_legacy_authorization_projection(tmp_path: Path, mon
             },
                     result=json.dumps(result), tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (run.lastrowid, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id,
+                      {"agent_run_id": run.lastrowid})
         db.execute(
             "update tasks set status='needs_human' where record_type='reply_tasks' and id=?", (task.id,)
         )
@@ -9020,10 +9015,10 @@ def test_history_query_has_indexes_for_correlated_reply_lookups(tmp_path: Path):
         ]
 
     assert {
-        "idx_reply_attempts_oa_history",
-        "idx_reply_attempts_trigger_history",
-        "idx_reply_attempts_current_trigger",
-        "idx_reply_attempts_agent_run_recovery",
+        "idx_actions_reply_oa_history",
+        "idx_actions_reply_trigger_history",
+        "idx_actions_reply_current_trigger",
+        "idx_actions_reply_run_recovery",
         "idx_actions_sent_history",
         "idx_work_summary_inputs_updated",
     } <= index_names
@@ -9165,10 +9160,9 @@ def test_history_approval_group_breaks_created_at_ties_with_larger_id(tmp_path: 
         send_status="failed",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set created_at=? where id in (?, ?)",
-            ("2026-08-19 00:00:00", older_id, newer_id),
-        )
+        for attempt_id in (older_id, newer_id):
+            update_action(db, "reply_attempts", attempt_id,
+                          {"created_at": "2026-08-19 00:00:00"})
 
     items = store.list_history_items(object_types=("approval",))
 
@@ -9322,14 +9316,10 @@ def test_lists_reply_attempts_since_timestamp(tmp_path: Path):
         sensitivity_kind="general",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set created_at=? where id=?",
-            ("2026-06-04 00:00:00", old_id),
-        )
-        db.execute(
-            "update reply_attempts set created_at=? where id=?",
-            ("2026-06-05 00:00:00", new_id),
-        )
+        update_action(db, "reply_attempts", old_id,
+                      {"created_at": "2026-06-04 00:00:00"})
+        update_action(db, "reply_attempts", new_id,
+                      {"created_at": "2026-06-05 00:00:00"})
 
     attempts = store.list_reply_attempts_since("2026-06-04 12:00:00")
 
@@ -10129,7 +10119,7 @@ def test_completed_oa_needs_human_attempt_is_closed_as_skipped(tmp_path: Path):
     with store._connect() as db:
         row = db.execute(
             "select send_status, send_error, resolved_at, resolution "
-            "from reply_attempts where id=?",
+            f"from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?",
             (attempt_id,),
         ).fetchone()
     assert row["send_status"] == "skipped"
@@ -10176,10 +10166,8 @@ def test_completed_oa_failed_attempt_closes_stale_task(
         send_status="failed",
     )
     with store._immediate_write_transaction() as db:
-        db.execute(
-            "update reply_attempts set send_error='codex_result_invalid' where id=?",
-            (attempt_id,),
-        )
+        update_action(db, "reply_attempts", attempt_id,
+                      {"send_error": "codex_result_invalid"})
 
     assert [row.id for row in store.list_open_oa_needs_human_attempts()] == [
         attempt_id
@@ -10787,7 +10775,8 @@ def test_removed_runtime_migration_rolls_back_every_change_on_failure(
             ).fetchall()
         }
         attempts = db.execute(
-            "select count(*) from reply_attempts where trigger_message_id='msg-rollback'"
+            f"select count(*) from ({REPLY_ATTEMPT_COMMON_SQL}) "
+            "where trigger_message_id='msg-rollback'"
         ).fetchone()[0]
         auth_state = db.execute(
             "select value from service_state where key='dws_auth_backup'"
@@ -11714,7 +11703,7 @@ def test_current_schema_reopens_and_adds_agent_run_recovery_index(
     db_path = tmp_path / "current-version-missing-recovery-index.sqlite3"
     store = AutoReplyStore(db_path)
     with store._connect() as db:
-        db.execute("drop index idx_reply_attempts_agent_run_recovery")
+        db.execute("drop index idx_actions_reply_run_recovery")
 
     assert store._schema_is_current() is False
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
@@ -11729,7 +11718,7 @@ def test_current_schema_reopens_and_adds_agent_run_recovery_index(
             )
         }
 
-    assert "idx_reply_attempts_agent_run_recovery" in index_names
+    assert "idx_actions_reply_run_recovery" in index_names
     assert reopened._schema_is_current() is True
 
 
@@ -12093,10 +12082,8 @@ def _failed_attempt(store, *, trigger: str = "msg-settled-outside") -> int:
         send_status="failed",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set send_error=? where id=?",
-            ("runtime_provider_unreachable", attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id,
+                      {"send_error": "runtime_provider_unreachable"})
     return attempt_id
 
 
@@ -12154,7 +12141,7 @@ def test_the_resolution_appends_and_never_rewrites_the_failure(tmp_path):
     assert "Resolved: approval completed 15:45:52" in row.detail
     with store._connect() as db:
         stored = db.execute(
-            "select send_status, send_error from reply_attempts where id=?",
+            f"select send_status, send_error from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?",
             (attempt_id,),
         ).fetchone()
     assert stored["send_status"] == "failed"
@@ -12211,9 +12198,7 @@ def _attempt(store, *, trigger: str, status: str, error: str = "") -> int:
     )
     if error:
         with store._connect() as db:
-            db.execute(
-                "update reply_attempts set send_error=? where id=?", (error, attempt_id)
-            )
+            update_action(db, "reply_attempts", attempt_id, {"send_error": error})
     return attempt_id
 
 
@@ -12303,11 +12288,10 @@ def test_an_explicit_resolution_still_retires_any_status(tmp_path):
     blocked = _attempt(store, trigger="msg-blocked-resolved", status="blocked")
 
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set resolved_at=current_timestamp, resolution=? "
-            "where id=?",
-            ("settled by the principal", blocked),
-        )
+        update_action(db, "reply_attempts", blocked, {
+            "resolved_at": db.execute("select current_timestamp").fetchone()[0],
+            "resolution": "settled by the principal",
+        })
 
     assert _projected(store, blocked) == "recovered"
 
@@ -12880,10 +12864,10 @@ def test_reconcile_preserves_invalid_legacy_needs_human_projection(
         channel=task.channel,
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set agent_run_id=?, send_error=? where id=?",
-            (claim.run.id, "provider_receipt_missing", attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "agent_run_id": claim.run.id,
+            "send_error": "provider_receipt_missing",
+        })
         db.execute(
             "update tasks set status='needs_human', error='' where record_type='reply_tasks' and id=?",
             (task.id,),
@@ -12936,10 +12920,10 @@ def test_reconcile_preserves_failed_attempt_and_stale_task_for_investigation(
         channel=task.channel,
     )
     with store._immediate_write_transaction() as db:
-        db.execute(
-            "update reply_attempts set agent_run_id=?, send_error='codex_result_invalid' where id=?",
-            (consumer.id, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "agent_run_id": consumer.id,
+            "send_error": "codex_result_invalid",
+        })
         db.execute(
             "update tasks set status='needs_human', error='codex_result_invalid' where record_type='reply_tasks' and id=?",
             (task.id,),
@@ -12993,10 +12977,10 @@ def test_old_generation_attempt_cannot_fail_or_surface_current_task(tmp_path: Pa
             },
                     result='{}', tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
-        db.execute(
-            "update reply_attempts set agent_run_id=?, send_error='needs_human' where id=?",
-            (run.lastrowid, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "agent_run_id": run.lastrowid,
+            "send_error": "needs_human",
+        })
         db.execute(
             "update tasks set execution_generation='current-gen', status='pending' where record_type='reply_tasks' and id=?",
             (task.id,),
@@ -13034,10 +13018,10 @@ def test_current_generation_failed_attempt_remains_visible_while_task_retries(tm
             },
                     result='{}', tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
-        db.execute(
-            "update reply_attempts set agent_run_id=?, send_error='codex_process_failed' where id=?",
-            (run.lastrowid, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "agent_run_id": run.lastrowid,
+            "send_error": "codex_process_failed",
+        })
         db.execute("update tasks set status='pending' where record_type='reply_tasks' and id=?", (task.id,))
     assert store.get_reply_task(task.id).status == "pending"
     assert [item.id for item in store.list_current_unresolved_problem_attempts()] == [attempt_id]

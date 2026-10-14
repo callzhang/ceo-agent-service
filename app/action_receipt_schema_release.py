@@ -14,6 +14,7 @@ from app.action_storage import (
     ACTION_PROJECTIONS,
     RECEIPT_ACTION_TYPES,
     action_schema_is_current,
+    reply_schema_is_current,
 )
 from app.store_schema_release import _migrate_store
 from app.task_schema_release import _foreign_keys
@@ -36,6 +37,8 @@ def publication_receipt_sources(db):
     if version == "2026-10-13.3" and action_schema_is_current(db, include_postfix=True):
         return {kind: ACTION_PROJECTIONS[kind] for kind in RECEIPT_ACTION_TYPES}
     if version == "2026-10-13.4" and action_schema_is_current(db, include_delivery=True):
+        return {kind: ACTION_PROJECTIONS[kind] for kind in RECEIPT_ACTION_TYPES}
+    if version == "2026-10-13.5" and reply_schema_is_current(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in RECEIPT_ACTION_TYPES}
     raise ValueError("unknown or mixed receipt publication source schema")
 

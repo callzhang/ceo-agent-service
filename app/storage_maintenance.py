@@ -10,6 +10,7 @@ from contextlib import closing
 from pathlib import Path
 
 from app.store import AutoReplyStore, REPLY_TASK_CURRENT_SQL
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 
 
 def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
@@ -93,10 +94,10 @@ def _reply_input_storage_counts(db: sqlite3.Connection) -> tuple[int, int, int, 
         f"from ({REPLY_TASK_INPUT_SQL})",
     ).fetchone()
     attempts = db.execute(
-        """select coalesce(sum(case when trigger_text<>'' then 1 else 0 end),0) as uncleared,
+        f"""select coalesce(sum(case when trigger_text<>'' then 1 else 0 end),0) as uncleared,
                   coalesce(sum(length(cast(trigger_text as blob)) +
                                length(cast(trigger_text_provenance_json as blob))),0) as bytes
-           from reply_attempts""",
+           from ({REPLY_ATTEMPT_COMMON_SQL})""",
     ).fetchone()
     return (
         int(task["uncompact"]), int(inputs["uncompact"]),
@@ -144,7 +145,6 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
     """
     counts = {"event_runs_cleared": 0, "payload_fields_cleared": 0, "payload_bytes_removed": 0}
     columns = {
-        "reply_attempts": {"audit_tool_events_json": "[]"},
         "tasks": {"error_detail": ""},
     }
     with closing(sqlite3.connect(database, timeout=60)) as db:

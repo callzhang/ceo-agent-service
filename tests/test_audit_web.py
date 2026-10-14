@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import app.audit_web as audit_web_module
 from tests.run_reader_fixtures import insert_native_run_fixture
 from app.run_storage import insert_run
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
 from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression, task_physical_id
 from app.email_store import EmailStore
 from app.audit_web import (
@@ -2603,10 +2604,7 @@ def test_history_chart_does_not_replace_old_failed_status_with_historical(
         "%Y-%m-%d %H:%M:%S"
     )
     with sqlite3.connect(store.path) as conn:
-        conn.execute(
-            "update reply_attempts set created_at=? where id=?",
-            (old_created_at, attempt_id),
-        )
+        update_action(conn, "reply_attempts", attempt_id, {"created_at": old_created_at})
 
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
@@ -2729,10 +2727,7 @@ def test_history_chart_projects_hidden_legacy_attempts_through_terminal_task(
                     'status': 'completed',
                 },
             )
-            db.execute(
-                "update reply_attempts set agent_run_id=? where id=?",
-                (run.lastrowid, attempt_id),
-            )
+            update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.lastrowid})
     store.complete_reply_task(
         task.id,
         expected_execution_generation=task.execution_generation,
@@ -6679,10 +6674,7 @@ def test_runtime_attempt_history_renders_only_safe_allowlisted_evidence(tmp_path
         audit_summary="Runtime fallback evidence.",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (run.id, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id})
         insert_run(
             db, 'agent_runtime_attempts', {
                 'parent_id': run.id,
@@ -7466,7 +7458,7 @@ def test_failed_history_cards_batch_status_without_reading_native_process(
             sensitivity_kind="general", send_status=status,
         )
         with store._connect() as db:
-            db.execute("update reply_attempts set agent_run_id=? where id=?", (run.id, attempt_id))
+            update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id})
         run_ids.append(run.id)
 
     for reader in ("hydrate_run_events", "read_native_result_json", "_native_records"):
@@ -7678,10 +7670,7 @@ def test_history_needs_human_item_does_not_activate_unreviewed_legacy_choices(tm
     assert "2. 要求补充材料" not in html
     assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' not in html
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set reviewed_at='2026-08-11 05:00:01' where id=?",
-            (attempt_id,),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"reviewed_at": "2026-08-11 05:00:01"})
     decisions = audit_web_module._human_decision_attention_rows(store)
     assert decisions == []
 
@@ -7769,10 +7758,7 @@ def test_rule_decision_attention_excludes_superseded_unreviewed_attempt(
     # OA scan attempts can use a derived trigger identity that differs from
     # the reply task's original trigger. The linked run remains authoritative.
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set trigger_message_id=? where id=?",
-            ("derived-oa-trigger", attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"trigger_message_id": "derived-oa-trigger"})
         db.execute(
             "update tasks set execution_generation=? where record_type='reply_tasks' and id=?",
             ("newer-task-generation", task.id),
@@ -7998,12 +7984,12 @@ def test_reply_attempt_queue_snapshot_reads_latest_projection_once(tmp_path: Pat
         snapshot = _reply_attempt_queue_snapshot(db)
         snapshot_queries = list(queries)
         expected_time = db.execute(
-            "select max(updated_at) from reply_attempts"
+            f"select max(updated_at) from ({REPLY_ATTEMPT_COMMON_SQL})"
         ).fetchone()[0]
     assert snapshot["counts"] == {"failed": 1}
     assert snapshot["latest_updated_at"] == expected_time
     assert len(snapshot_queries) == 1
-    assert "reply_attempts" in snapshot_queries[0].lower()
+    assert "record_type='reply_attempts'" in snapshot_queries[0].lower()
 
 
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
@@ -8165,10 +8151,7 @@ def test_reply_attempt_queue_excludes_prior_generation_after_trigger_revision(
         send_status="failed",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (old_run, old_attempt_id),
-        )
+        update_action(db, "reply_attempts", old_attempt_id, {"agent_run_id": old_run})
         db.execute(
             "update tasks set trigger_message_id=?, execution_generation=?, "
             "status='done' where record_type='reply_tasks' and id=?",
@@ -8425,10 +8408,9 @@ def test_attention_does_not_repeat_old_generation_attempt_for_current_oa_task(
             },
                     result='{}', tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
-        db.execute(
-            "update reply_attempts set agent_run_id=?, send_error='old failure' where id=?",
-            (run.lastrowid, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "agent_run_id": run.lastrowid, "send_error": "old failure",
+        })
         db.execute(
             """update tasks
                set trigger_message_id='oa-pending:process-1:new',
@@ -8944,10 +8926,7 @@ def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: P
             },
                     result='{}', tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (run.lastrowid, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.lastrowid})
         db.execute("update tasks set status='pending' where record_type='reply_tasks' and id=?", (task.id,))
 
     rows = audit_web_module._queue_attention_rows(store)
@@ -11875,10 +11854,9 @@ def test_render_log_list_marks_old_failed_attempt_historical(tmp_path: Path):
         send_status="failed",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set created_at='2026-01-01 00:00:00', updated_at='2026-01-01 00:00:00' where id=?",
-            (attempt_id,),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "created_at": "2026-01-01 00:00:00", "updated_at": "2026-01-01 00:00:00",
+        })
 
     html = render_log_list(store)
 

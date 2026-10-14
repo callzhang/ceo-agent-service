@@ -467,7 +467,7 @@ Worker status summarizes the current `reply_attempts` projection using only
 identity, status, timestamp, and error columns. It does not load full attempt
 payloads such as captured inputs or reply bodies to calculate queue counts.
 It groups trigger identities and seeks each trigger's latest attempt through
-`idx_reply_attempts_current_trigger`; it does not rank every retry row in a
+`idx_actions_reply_current_trigger`; it does not rank every retry row in a
 window function for each status request.
 
 Runtime-attempt detail reads filter by `agent_run_id` and order by
@@ -2810,6 +2810,26 @@ work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选�
 已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
+
+Phase5E 隔离分支的 Store19 候选以完整十六类型 action manifest 验证
+Attempt/Memory；实际 Store18 升级和 fresh 创建分别保留无 Memory 外键与有
+Memory 父外键的唯一规范模式。缺失辅助对象的重启修复先匹配整套模式，不能
+凭一列推断或把 actual 修成 fresh。Store 内部的 Attempt/Memory CRUD 已路由
+到有限 action reader/writer；Memory 写入完成只更新相同事件 ID 的
+pending/failed/written 状态、episode、错误和更新时间，不增加重试次数或重建
+删除的事件。外部 History/Attention/质量扫描/恢复/邮件/维护调用者使用
+有限 Attempt/Memory 投影与按公共 ID 的 action 更新；原有触发身份、
+状态排序、租约条件及业务回执保留。Attempt 详情的 Audit 工具输入输出只
+读取原生会话中明确指定的行范围；原生缺失时显示不可用，数据库中已退休的
+工具正文不作为回退。发布前 quiet-wait 在完整 Store19 actual/fresh manifest
+上继续读取候选、回执、postfix、delivery、任务、会议及定时来源。
+Store19 候选的 Attempt 创建时间及状态索引包含首列 `record_type`；Reply 公共
+ID 排序索引保留原键和谓词并声明唯一。前者让时间范围读取使用索引，后者
+让 fresh Memory 的公共父 ID 精确读取通过父索引和 Memory 父索引完成；
+原有公共 ID 唯一约束及规范整数文本约束已保证该唯一性。这些调整只属于
+Store19 索引声明，Memory 投影的 LEFT JOIN 和旧版本声明不变。
+候选版本尚未上线；实际副本、原始代码冷启动和原生角色路径的离线验收见
+`docs/database-redesign-phase5e-validation.md`，完整 CI 与上线读回仍待验收。
 
 
 ### Full document native output delivery

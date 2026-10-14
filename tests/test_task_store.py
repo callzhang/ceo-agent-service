@@ -1,3 +1,4 @@
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
 from concurrent.futures import ThreadPoolExecutor
 import json
 import sqlite3
@@ -1657,15 +1658,10 @@ def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: 
             "update follow_up_drafts set created_at='2026-06-01 10:00:00' where id=?",
             (draft_id,),
         )
-        db.execute(
-            """
-            update reply_attempts
-            set created_at='2026-06-02 10:00:00',
-                updated_at='2026-06-02 10:00:00'
-            where id=?
-            """,
-            (attempt_id,),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "created_at": "2026-06-02 10:00:00",
+            "updated_at": "2026-06-02 10:00:00",
+        })
 
     logs = store.list_operation_logs(limit=2)
 
@@ -1677,7 +1673,7 @@ def test_operation_logs_query_prunes_unrequested_sources(tmp_path: Path):
 
     query = store._operation_logs_base_query(source_tables=("reply_attempts",))
 
-    assert "from reply_attempts" in query
+    assert REPLY_ATTEMPT_COMMON_SQL in query
     assert "from errors" not in query
     assert "'reply_tasks' as source_table" not in query
 

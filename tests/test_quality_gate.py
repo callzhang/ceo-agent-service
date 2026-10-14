@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from app.run_storage import insert_run
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, insert_action, update_action
 from app.task_storage import REPLY_TASK_SQL, insert_task
 from app.quality_gate import (
     add_channel_health,
@@ -101,7 +102,7 @@ def _insert_needs_human_projection(store, *, monkeypatch, result, status="needs_
                 'transcript_end': 1 if native_available else 0,
             },
         )
-        db.execute("update reply_attempts set agent_run_id=? where id=?", (run.lastrowid, attempt_id))
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.lastrowid})
     if native_available:
         assert json.loads(store.get_agent_run(run.lastrowid).final_result_json) == result
     return attempt_id
@@ -401,15 +402,14 @@ def test_quality_gate_excludes_recent_error_recovered_by_later_attempt(tmp_path)
             ) values ('conversation', 'message', 'consumer', 'temporary failure',
                 '2026-08-07 00:30:00')"""
         )
-        db.execute(
-            """insert into reply_attempts (
-                conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind,
-                final_reply_text, permission_action, send_status, updated_at
-            ) values ('conversation', 'group', 'message', 'sender', 'trigger',
-                'agent_run', 'normal', '', 'none', 'completed',
-                '2026-08-07 00:45:00')"""
-        )
+        insert_action(db, "reply_attempts", {
+            "conversation_id": "conversation", "conversation_title": "group",
+            "trigger_message_id": "message", "trigger_sender": "sender",
+            "trigger_text": "trigger", "action": "agent_run",
+            "sensitivity_kind": "normal", "final_reply_text": "",
+            "permission_action": "none", "send_status": "completed",
+            "updated_at": "2026-08-07 00:45:00",
+        })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -652,15 +652,14 @@ def test_quality_gate_deduplicates_historical_attempts_after_a_later_success(tmp
             ("blocked", "2026-08-07 00:00:00"),
             ("sent", "2026-08-07 00:30:00"),
         ):
-            db.execute(
-                """insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    final_reply_text, permission_action, send_status, updated_at
-                ) values ('conversation', 'group', 'message', 'sender', 'trigger',
-                    'send_reply', 'normal', 'reply', 'send', ?, ?)""",
-                (status, updated_at),
-            )
+            insert_action(db, "reply_attempts", {
+                "conversation_id": "conversation", "conversation_title": "group",
+                "trigger_message_id": "message", "trigger_sender": "sender",
+                "trigger_text": "trigger", "action": "send_reply",
+                "sensitivity_kind": "normal", "final_reply_text": "reply",
+                "permission_action": "send", "send_status": status,
+                "updated_at": updated_at,
+            })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -672,14 +671,13 @@ def test_quality_gate_ignores_dry_run_when_done_task_has_no_unknown_effect(tmp_p
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
         _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='conversation', conversation_title='group', single_chat=0, trigger_message_id='message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='sender', trigger_text='trigger', status='done', updated_at='2026-08-07 00:59:00')
-        db.execute(
-            """insert into reply_attempts (
-                conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind,
-                send_status, updated_at
-            ) values ('conversation', 'group', 'message', 'sender', 'trigger',
-                'agent_run', 'general', 'dry_run', '2026-08-07 00:59:00')"""
-        )
+        insert_action(db, "reply_attempts", {
+            "conversation_id": "conversation", "conversation_title": "group",
+            "trigger_message_id": "message", "trigger_sender": "sender",
+            "trigger_text": "trigger", "action": "agent_run",
+            "sensitivity_kind": "general", "send_status": "dry_run",
+            "updated_at": "2026-08-07 00:59:00",
+        })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -695,15 +693,14 @@ def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp
             ("needs_human", "recovered", "2026-08-07 00:00:00"),
             ("completed", "recovered", "2026-08-07 00:30:00"),
         ):
-            db.execute(
-                """insert into reply_attempts (
-                    channel, conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, send_status, updated_at
-                ) values ('dingtalk', 'conversation', 'group', ?, 'sender', 'trigger',
-                    'agent_run', 'normal', 'specific action required', ?, ?)""",
-                (message, status, updated_at),
-            )
+            insert_action(db, "reply_attempts", {
+                "channel": "dingtalk", "conversation_id": "conversation",
+                "conversation_title": "group", "trigger_message_id": message,
+                "trigger_sender": "sender", "trigger_text": "trigger",
+                "action": "agent_run", "sensitivity_kind": "normal",
+                "codex_reason": "specific action required", "send_status": status,
+                "updated_at": updated_at,
+            })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -714,15 +711,14 @@ def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp
 def test_quality_gate_excludes_reviewed_needs_human_attempt(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into reply_attempts (
-                channel, conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind,
-                codex_reason, send_status, reviewed_at, updated_at
-            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
-                'trigger', 'agent_run', 'normal', 'specific action required',
-                'needs_human', '2026-08-07 00:45:00', '2026-08-07 00:30:00')"""
-        )
+        insert_action(db, "reply_attempts", {
+            "channel": "dingtalk", "conversation_id": "conversation",
+            "conversation_title": "group", "trigger_message_id": "message",
+            "trigger_sender": "sender", "trigger_text": "trigger",
+            "action": "agent_run", "sensitivity_kind": "normal",
+            "codex_reason": "specific action required", "send_status": "needs_human",
+            "reviewed_at": "2026-08-07 00:45:00", "updated_at": "2026-08-07 00:30:00",
+        })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -741,15 +737,10 @@ def test_quality_gate_excludes_resolved_needs_human_attempt(tmp_path, monkeypatc
         result={"outcome": "proposal"},
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set send_status='needs_human', "
-            "resolved_at=?, resolution=? where id=?",
-            (
-                "2026-08-07 01:00:00",
-                "Live provider state reached a terminal outcome.",
-                attempt_id,
-            ),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "send_status": "needs_human", "resolved_at": "2026-08-07 01:00:00",
+            "resolution": "Live provider state reached a terminal outcome.",
+        })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -1006,15 +997,14 @@ def test_quality_gate_excludes_needs_human_from_historical_business_object_task(
             values ('oa:process:task', ?)""",
             (current_task.lastrowid,),
         )
-        db.execute(
-            """insert into reply_attempts (
-                channel, conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind,
-                codex_reason, send_status, updated_at
-            ) values ('dingtalk', 'work-notice', '工作通知', 'old-message',
-                'OA审批', '旧审批通知', 'agent_run', 'normal',
-                'specific action required', 'needs_human', '2026-08-07 00:30:00')"""
-        )
+        insert_action(db, "reply_attempts", {
+            "channel": "dingtalk", "conversation_id": "work-notice",
+            "conversation_title": "工作通知", "trigger_message_id": "old-message",
+            "trigger_sender": "OA审批", "trigger_text": "旧审批通知",
+            "action": "agent_run", "sensitivity_kind": "normal",
+            "codex_reason": "specific action required", "send_status": "needs_human",
+            "updated_at": "2026-08-07 00:30:00",
+        })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -1026,7 +1016,7 @@ def test_quality_gate_excludes_needs_human_from_historical_business_object_task(
     assert store.count_current_unresolved_problem_attempts() == 0
     with store._connect() as db:
         historical_attempt = db.execute(
-            "select send_status from reply_attempts where trigger_message_id='old-message'"
+            f"select send_status from ({REPLY_ATTEMPT_COMMON_SQL}) where trigger_message_id='old-message'"
         ).fetchone()
         assert historical_attempt["send_status"] == "needs_human"
         assert historical_task.lastrowid != current_task.lastrowid
@@ -1035,15 +1025,14 @@ def test_quality_gate_excludes_needs_human_from_historical_business_object_task(
 def test_quality_gate_deduplicates_failed_delivery_after_sent_reply_receipt(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into reply_attempts (
-                channel, conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind,
-                final_reply_text, permission_action, send_status, updated_at
-            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
-                'trigger', 'send_reply', 'normal', 'reply', 'send', 'failed', ?)""",
-            ("2026-08-07 00:30:00",),
-        )
+        insert_action(db, "reply_attempts", {
+            "channel": "dingtalk", "conversation_id": "conversation",
+            "conversation_title": "group", "trigger_message_id": "message",
+            "trigger_sender": "sender", "trigger_text": "trigger",
+            "action": "send_reply", "sensitivity_kind": "normal",
+            "final_reply_text": "reply", "permission_action": "send",
+            "send_status": "failed", "updated_at": "2026-08-07 00:30:00",
+        })
     store.record_sent_reply("conversation", "message", "reply")
 
     report = scan_hourly_quality(store.path, now=NOW)
@@ -1055,15 +1044,14 @@ def test_quality_gate_deduplicates_failed_delivery_after_sent_reply_receipt(tmp_
 def test_quality_gate_does_not_treat_agent_run_block_as_delivery_failure(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into reply_attempts (
-                channel, conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind,
-                final_reply_text, permission_action, send_status, updated_at
-            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
-                'trigger', 'agent_run', 'normal', '', '', 'blocked', ?)""",
-            ("2026-08-07 00:30:00",),
-        )
+        insert_action(db, "reply_attempts", {
+            "channel": "dingtalk", "conversation_id": "conversation",
+            "conversation_title": "group", "trigger_message_id": "message",
+            "trigger_sender": "sender", "trigger_text": "trigger",
+            "action": "agent_run", "sensitivity_kind": "normal",
+            "final_reply_text": "", "permission_action": "",
+            "send_status": "blocked", "updated_at": "2026-08-07 00:30:00",
+        })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -1078,15 +1066,14 @@ def test_quality_gate_deduplicates_oa_failure_after_later_success(tmp_path):
             ("blocked", "2026-08-07 00:00:00"),
             ("completed", "2026-08-07 00:30:00"),
         ):
-            db.execute(
-                """insert into reply_attempts (
-                    channel, conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    oa_process_instance_id, send_status, updated_at
-                ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
-                    'trigger', 'oa_approval', 'normal', 'approval-instance', ?, ?)""",
-                (status, updated_at),
-            )
+            insert_action(db, "reply_attempts", {
+                "channel": "dingtalk", "conversation_id": "conversation",
+                "conversation_title": "group", "trigger_message_id": "message",
+                "trigger_sender": "sender", "trigger_text": "trigger",
+                "action": "oa_approval", "sensitivity_kind": "normal",
+                "oa_process_instance_id": "approval-instance",
+                "send_status": status, "updated_at": updated_at,
+            })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -1097,25 +1084,18 @@ def test_quality_gate_deduplicates_oa_failure_after_later_success(tmp_path):
 def test_quality_gate_deduplicates_oa_failure_after_agent_receipt_success(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into reply_attempts (
-                channel, conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind,
-                oa_process_instance_id, send_status, updated_at
-            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
-                'trigger', 'oa_approval', 'normal', 'approval-instance', 'blocked',
-                '2026-08-07 01:00:00')"""
-        )
-        db.execute(
-            """insert into reply_attempts (
-                channel, conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind,
-                oa_process_instance_id, oa_action_result_json, send_status, updated_at
-            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
-                'trigger', 'agent_run', 'normal', 'approval-instance',
-                '{"success":true,"taskStatus":"COMPLETED"}',
-                'completed', '2026-08-07 00:30:00')"""
-        )
+        for values in (
+            {"action": "oa_approval", "send_status": "blocked", "updated_at": "2026-08-07 01:00:00"},
+            {"action": "agent_run", "send_status": "completed", "updated_at": "2026-08-07 00:30:00",
+             "oa_action_result_json": '{"success":true,"taskStatus":"COMPLETED"}'},
+        ):
+            insert_action(db, "reply_attempts", {
+                "channel": "dingtalk", "conversation_id": "conversation",
+                "conversation_title": "group", "trigger_message_id": "message",
+                "trigger_sender": "sender", "trigger_text": "trigger",
+                "sensitivity_kind": "normal", "oa_process_instance_id": "approval-instance",
+                **values,
+            })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -1127,15 +1107,14 @@ def test_quality_gate_counts_only_latest_oa_failure_per_approval_instance(tmp_pa
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
         for updated_at in ("2026-08-07 00:00:00", "2026-08-07 00:30:00"):
-            db.execute(
-                """insert into reply_attempts (
-                    channel, conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    oa_process_instance_id, send_status, updated_at
-                ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
-                    'trigger', 'oa_approval', 'normal', 'approval-instance', 'failed', ?)""",
-                (updated_at,),
-            )
+            insert_action(db, "reply_attempts", {
+                "channel": "dingtalk", "conversation_id": "conversation",
+                "conversation_title": "group", "trigger_message_id": "message",
+                "trigger_sender": "sender", "trigger_text": "trigger",
+                "action": "oa_approval", "sensitivity_kind": "normal",
+                "oa_process_instance_id": "approval-instance",
+                "send_status": "failed", "updated_at": updated_at,
+            })
 
     report = scan_hourly_quality(store.path, now=NOW)
 

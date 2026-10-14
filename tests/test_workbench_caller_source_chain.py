@@ -4,6 +4,8 @@ import sqlite3
 
 from app.action_storage import ACTION_PROJECTIONS, action_schema_is_current
 from app.action_postfix_storage import migrate_action_postfix_schema
+from app.action_delivery_storage import migrate_action_delivery_schema
+from app.action_reply_storage import migrate_action_reply_schema
 from app.run_storage import insert_run
 from app.store import AutoReplyStore
 from app.task_storage import insert_task
@@ -74,10 +76,22 @@ def test_source13_fixture_keeps_original_actions_receipts_and_watermark(tmp_path
         assert db.execute("select id,legacy_key,payload_json from actions where record_type='review_candidates'").fetchone() == original_physical
         assert db.execute("select seq from sqlite_sequence where name='actions:agent_execution_receipts'").fetchone() == (50,)
 
+    with sqlite3.connect(path) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        migrate_action_delivery_schema(db)
+        db.execute("update service_state set value='2026-10-13.4' where key='store_schema_version'")
+        db.execute("create table email_schema_migrations(version integer primary key,applied_at text not null)")
+        db.execute("insert into email_schema_migrations values(51,'historical source')")
+        db.commit()
+        db.execute("begin immediate")
+        migrate_action_reply_schema(db)
+        db.execute("update service_state set value='2026-10-13.5' where key='store_schema_version'")
+
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.4",)
-        assert action_schema_is_current(db, include_delivery=True)
+        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.5",)
+        assert action_schema_is_current(db, include_reply=True, reply_variant="actual_no_memory_fk")
         assert db.execute(ACTION_PROJECTIONS["review_candidates"]).fetchone() == original_candidate
         assert db.execute("select id,legacy_key,payload_json from actions where record_type='review_candidates'").fetchone() == original_physical
         for name, expected in original_receipts.items():

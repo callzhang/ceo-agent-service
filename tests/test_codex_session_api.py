@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.action_storage import insert_action
 from app.run_storage import insert_run
 from app.store import AutoReplyStore
 from app.task_storage import REPLY_TASK_SQL, task_physical_id
@@ -78,30 +79,30 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
             ).lastrowid
         )
         historical_attempt_id = int(
-            db.execute(
-                """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    agent_run_id, send_status
-                ) values (?, 'Codex session history', ?, 'Avery', 'old result',
-                          'agent_run', 'general', ?, 'failed')
-                """,
-                (conversation_id, trigger_message_id, historical_audit_run_id),
-            ).lastrowid
+            insert_action(db, "reply_attempts", {
+                "conversation_id": conversation_id,
+                "conversation_title": "Codex session history",
+                "trigger_message_id": trigger_message_id,
+                "trigger_sender": "Avery",
+                "trigger_text": "old result",
+                "action": "agent_run",
+                "sensitivity_kind": "general",
+                "agent_run_id": historical_audit_run_id,
+                "send_status": "failed",
+            }).lastrowid
         )
         current_attempt_id = int(
-            db.execute(
-                """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    agent_run_id, send_status
-                ) values (?, 'Codex session history', ?, 'Avery', 'current result',
-                          'agent_run', 'general', ?, 'skipped')
-                """,
-                (conversation_id, trigger_message_id, current_audit_run_id),
-            ).lastrowid
+            insert_action(db, "reply_attempts", {
+                "conversation_id": conversation_id,
+                "conversation_title": "Codex session history",
+                "trigger_message_id": trigger_message_id,
+                "trigger_sender": "Avery",
+                "trigger_text": "current result",
+                "action": "agent_run",
+                "sensitivity_kind": "general",
+                "agent_run_id": current_audit_run_id,
+                "send_status": "skipped",
+            }).lastrowid
         )
     return historical_attempt_id, current_attempt_id
 

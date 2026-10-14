@@ -11,6 +11,7 @@ from app.daily_report_facts import (
     report_window_for_run,
 )
 from app.email_store import EmailStore
+from app.action_storage import update_action
 from app.store import AutoReplyStore
 from app.task_storage import task_physical_id
 
@@ -28,13 +29,9 @@ INSIDE_LATE = "2026-09-24 15:59:59"
 BEFORE = "2026-09-23 15:59:59"
 
 
-def _set(store: AutoReplyStore, table: str, row_id: int, **values) -> None:
-    assignments = ", ".join(f"{column}=?" for column in values)
+def _set_reply_attempt(store: AutoReplyStore, row_id: int, **values) -> None:
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            f"update {table} set {assignments} where id=?",
-            (*values.values(), row_id),
-        )
+        update_action(db, "reply_attempts", row_id, values)
 
 
 def _signal(store: AutoReplyStore, key: str) -> int:
@@ -102,7 +99,7 @@ def _attempt(
         send_status=send_status,
         **values,
     )
-    _set(store, "reply_attempts", attempt_id, created_at=created_at)
+    _set_reply_attempt(store, attempt_id, created_at=created_at)
     return attempt_id
 
 
@@ -361,7 +358,7 @@ def test_handled_reports_preserve_identity_when_titles_and_prompts_match(tmp_pat
             send_status=status,
             audit_summary="All approved actions verified" if status == "completed" else "",
         )
-        _set(store, "reply_attempts", attempt_id, created_at=created_at)
+        _set_reply_attempt(store, attempt_id, created_at=created_at)
         expected[attempt_id] = (conversation_id, trigger_id, created_at, None)
 
     facts = collect_daily_report_facts(store, EmailStore(store.path), DAY)

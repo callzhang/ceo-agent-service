@@ -15,6 +15,7 @@ from app.action_storage import (
     DELIVERY_ACTION_TYPES,
     SOURCE_COLUMNS,
     action_schema_is_current,
+    reply_schema_is_current,
 )
 from app.store_schema_release import _migrate_store
 from app.task_schema_release import _foreign_keys
@@ -36,6 +37,8 @@ def publication_delivery_sources(db):
             for kind in DELIVERY_ACTION_TYPES
         }
     if version == ACTION_DELIVERY_VERSION and action_schema_is_current(db, include_delivery=True):
+        return {kind: ACTION_PROJECTIONS[kind] for kind in DELIVERY_ACTION_TYPES}
+    if version == "2026-10-13.5" and reply_schema_is_current(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in DELIVERY_ACTION_TYPES}
     raise ValueError("unknown or mixed sent delivery publication source schema")
 

@@ -1,0 +1,3754 @@
+{
+  "scope": "source preparation only: actual published Store17 and owned empty candidate Store18; no E target schema, migration/version reservation, private rows, native copy or provider operation",
+  "captured_at_utc": "2026-10-13T22:24:21.869043+00:00",
+  "production_commit": "7fabea8085e0a3095c3296c93226d21a28374216",
+  "candidate_commit": "5221062de86382165abd6ac4d829f980264523d5",
+  "actual_store17": {
+    "tables": {
+      "reply_attempts": {
+        "sql": "CREATE TABLE reply_attempts (\n                    id integer primary key autoincrement,\n                    conversation_id text not null,\n                    conversation_title text not null,\n                    trigger_message_id text not null,\n                    trigger_sender text not null,\n                    trigger_text text not null,\n                    action text not null,\n                    sensitivity_kind text not null,\n                    codex_reason text not null default '',\n                    draft_reply_text text not null default '',\n                    final_reply_text text not null default '',\n                    permission_action text not null default '',\n                    permission_reason text not null default '',\n                    send_status text not null,\n                    send_error text not null default '',\n                    retry_count integer not null default 0,\n                    reviewed_at text,\n                    reviewer_feedback text not null default '',\n                    corrected_reply_text text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp\n                , audit_documents_json text not null default '[]', audit_tool_events_json text not null default '[]', audit_summary text not null default '', codex_session_id text not null default '', codex_transcript_start_line integer not null default 0, codex_transcript_end_line integer not null default 0, direct_user_id text not null default '', direct_open_dingtalk_id text not null default '', oa_process_instance_id text not null default '', oa_task_id text not null default '', oa_url text not null default '', oa_action text not null default '', oa_remark text not null default '', oa_action_result_json text not null default '', conversation_single_chat integer, trigger_create_time text not null default '', calendar_event_id text not null default '', calendar_response_status text not null default '', calendar_response_result_json text not null default '', mail_mailbox text not null default '', mail_message_id text not null default '', mail_subject text not null default '', mail_reply_text text not null default '', mail_action_result_json text not null default '', channel text not null default 'dingtalk', universal_execution_id text not null default '', universal_execution_scope_id text not null default '', reaction_action_result_json text not null default '', document_action_result_json text not null default '', agent_run_id integer, human_decision_options_json text not null default '[]', feedback_scope text not null default 'one_time', skill_update_requested integer not null default 0, skill_update_receipts_json text not null default '[]', resolved_at text not null default '', resolution text not null default '', trigger_text_provenance_json text not null default '{}')",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "conversation_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "conversation_title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "trigger_message_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "trigger_sender",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "trigger_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "action",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "sensitivity_kind",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "codex_reason",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "draft_reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "final_reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "permission_action",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "permission_reason",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "send_status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "send_error",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "retry_count",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "reviewed_at",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "reviewer_feedback",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 18,
+            "name": "corrected_reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 19,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 20,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 21,
+            "name": "audit_documents_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 22,
+            "name": "audit_tool_events_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 23,
+            "name": "audit_summary",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 24,
+            "name": "codex_session_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 25,
+            "name": "codex_transcript_start_line",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 26,
+            "name": "codex_transcript_end_line",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 27,
+            "name": "direct_user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 28,
+            "name": "direct_open_dingtalk_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 29,
+            "name": "oa_process_instance_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 30,
+            "name": "oa_task_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 31,
+            "name": "oa_url",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 32,
+            "name": "oa_action",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 33,
+            "name": "oa_remark",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 34,
+            "name": "oa_action_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 35,
+            "name": "conversation_single_chat",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 36,
+            "name": "trigger_create_time",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 37,
+            "name": "calendar_event_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 38,
+            "name": "calendar_response_status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 39,
+            "name": "calendar_response_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 40,
+            "name": "mail_mailbox",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 41,
+            "name": "mail_message_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 42,
+            "name": "mail_subject",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 43,
+            "name": "mail_reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 44,
+            "name": "mail_action_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 45,
+            "name": "channel",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'dingtalk'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 46,
+            "name": "universal_execution_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 47,
+            "name": "universal_execution_scope_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 48,
+            "name": "reaction_action_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 49,
+            "name": "document_action_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 50,
+            "name": "agent_run_id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 51,
+            "name": "human_decision_options_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 52,
+            "name": "feedback_scope",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'one_time'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 53,
+            "name": "skill_update_requested",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 54,
+            "name": "skill_update_receipts_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 55,
+            "name": "resolved_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 56,
+            "name": "resolution",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 57,
+            "name": "trigger_text_provenance_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_keys": [],
+        "indexes": [
+          {
+            "seq": 0,
+            "name": "idx_reply_attempts_agent_run_recovery",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 50,
+                "name": "agent_run_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 14,
+                "name": "send_error",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 0,
+                "name": "id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_agent_run_recovery\n                    on reply_attempts(agent_run_id, send_error, id)\n                "
+          },
+          {
+            "seq": 1,
+            "name": "idx_reply_attempts_current_trigger",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 45,
+                "name": "channel",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 1,
+                "name": "conversation_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 3,
+                "name": "trigger_message_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": 20,
+                "name": "updated_at",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 4,
+                "cid": 0,
+                "name": "id",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 5,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_current_trigger\n                    on reply_attempts(\n                        channel, conversation_id, trigger_message_id,\n                        updated_at desc, id desc\n                    )\n                "
+          },
+          {
+            "seq": 2,
+            "name": "idx_reply_attempts_trigger_history",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 1,
+                "name": "conversation_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 3,
+                "name": "trigger_message_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 6,
+                "name": "action",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": 0,
+                "name": "id",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 4,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_trigger_history\n                    on reply_attempts(\n                        conversation_id, trigger_message_id, action, id desc\n                    )\n                "
+          },
+          {
+            "seq": 3,
+            "name": "idx_reply_attempts_oa_history",
+            "unique": 0,
+            "origin": "c",
+            "partial": 1,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 29,
+                "name": "oa_process_instance_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 19,
+                "name": "created_at",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 0,
+                "name": "id",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_oa_history\n                    on reply_attempts(\n                        oa_process_instance_id, created_at desc, id desc\n                    )\n                    where oa_process_instance_id <> ''\n                "
+          },
+          {
+            "seq": 4,
+            "name": "idx_reply_attempts_created",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 19,
+                "name": "created_at",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 0,
+                "name": "id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_created\n                    on reply_attempts(created_at, id)"
+          },
+          {
+            "seq": 5,
+            "name": "idx_reply_attempts_status",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 13,
+                "name": "send_status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 19,
+                "name": "created_at",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_status\n                    on reply_attempts(send_status, created_at)"
+          },
+          {
+            "seq": 6,
+            "name": "idx_reply_attempts_trigger_message_id",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 3,
+                "name": "trigger_message_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_trigger_message_id\n                    on reply_attempts(trigger_message_id)"
+          }
+        ],
+        "triggers": [],
+        "row_count": 14821,
+        "sequence": 15409,
+        "column_aggregates": {
+          "id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 63961,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 14821
+              }
+            ]
+          },
+          "conversation_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 719303,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "conversation_title": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 226840,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "trigger_message_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 684969,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "trigger_sender": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 263001,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "trigger_text": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14673,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 49654,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "action": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 185567,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "sensitivity_kind": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 101906,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "codex_reason": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 18,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 2380632,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "draft_reply_text": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 12759,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 1622497,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "final_reply_text": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 12821,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 3215470,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "permission_action": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 13060,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 9015,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "permission_reason": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14768,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 2274,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "send_status": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 106578,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "send_error": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 11142,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 151667,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "retry_count": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 14736,
+            "bytes": 14821,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 14821
+              }
+            ]
+          },
+          "reviewed_at": {
+            "total": 14821,
+            "null_count": 14567,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 4826,
+            "storage_types": [
+              {
+                "storage_type": "null",
+                "count": 14567
+              },
+              {
+                "storage_type": "text",
+                "count": 254
+              }
+            ]
+          },
+          "reviewer_feedback": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14559,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 67866,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "corrected_reply_text": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14803,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 6882,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "created_at": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 281599,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "updated_at": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 281599,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "audit_documents_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 13414,
+            "zero_number_count": 0,
+            "bytes": 744660,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "audit_tool_events_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 14821,
+            "zero_number_count": 0,
+            "bytes": 29642,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "audit_summary": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 42,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 2617080,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "codex_session_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 4439,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 373752,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "codex_transcript_start_line": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 12938,
+            "bytes": 17482,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 14821
+              }
+            ]
+          },
+          "codex_transcript_end_line": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 7490,
+            "bytes": 24262,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 14821
+              }
+            ]
+          },
+          "direct_user_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14050,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 14111,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "direct_open_dingtalk_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14041,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 26665,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "oa_process_instance_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 13799,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 36792,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "oa_task_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 13891,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 11160,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "oa_url": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 13860,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 110115,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "oa_action": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 13786,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 6277,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "oa_remark": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14662,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 102912,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "oa_action_result_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14602,
+            "empty_object_text_count": 48,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 68490,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "conversation_single_chat": {
+            "total": 14821,
+            "null_count": 14820,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 1,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 1
+              },
+              {
+                "storage_type": "null",
+                "count": 14820
+              }
+            ]
+          },
+          "trigger_create_time": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14820,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 19,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "calendar_event_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14602,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 7246,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "calendar_response_status": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14617,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 1648,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "calendar_response_result_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14617,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 15906,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "mail_mailbox": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14821,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "mail_message_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14821,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "mail_subject": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14821,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "mail_reply_text": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14821,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "mail_action_result_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14820,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 168,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "channel": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 101843,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "universal_execution_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14086,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 47040,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "universal_execution_scope_id": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14086,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 23520,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "reaction_action_result_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14756,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 7648,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "document_action_result_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14821,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "agent_run_id": {
+            "total": 14821,
+            "null_count": 9943,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 20710,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 4878
+              },
+              {
+                "storage_type": "null",
+                "count": 9943
+              }
+            ]
+          },
+          "human_decision_options_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 14774,
+            "zero_number_count": 0,
+            "bytes": 71008,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "feedback_scope": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 118568,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "skill_update_requested": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 14821,
+            "bytes": 14821,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 14821
+              }
+            ]
+          },
+          "skill_update_receipts_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 14821,
+            "zero_number_count": 0,
+            "bytes": 29642,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "resolved_at": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14611,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 3990,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "resolution": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 14611,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 21471,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          },
+          "trigger_text_provenance_json": {
+            "total": 14821,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 182,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 2003216,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 14821
+              }
+            ]
+          }
+        }
+      },
+      "memory_write_events": {
+        "sql": "CREATE TABLE memory_write_events (\n                    id integer primary key autoincrement,\n                    attempt_id integer not null,\n                    event_type text not null,\n                    payload_json text not null,\n                    status text not null default 'pending',\n                    attempts integer not null default 0,\n                    last_error text not null default '',\n                    memory_episode_id text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    unique(attempt_id, event_type)\n                )",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "attempt_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "event_type",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "payload_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'pending'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "attempts",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "last_error",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "memory_episode_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_keys": [],
+        "indexes": [
+          {
+            "seq": 0,
+            "name": "idx_memory_write_events_attempt",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 1,
+                "name": "attempt_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 0,
+                "name": "id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_memory_write_events_attempt\n                    on memory_write_events(attempt_id, id)"
+          },
+          {
+            "seq": 1,
+            "name": "idx_memory_write_events_status",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 4,
+                "name": "status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 0,
+                "name": "id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_memory_write_events_status\n                    on memory_write_events(status, id)"
+          },
+          {
+            "seq": 2,
+            "name": "sqlite_autoindex_memory_write_events_1",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 1,
+                "name": "attempt_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 2,
+                "name": "event_type",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": null
+          }
+        ],
+        "triggers": [],
+        "row_count": 476,
+        "sequence": 1426,
+        "column_aggregates": {
+          "id": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 1855,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 476
+              }
+            ]
+          },
+          "attempt_id": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 1764,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 476
+              }
+            ]
+          },
+          "event_type": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 5716,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 476
+              }
+            ]
+          },
+          "payload_json": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 601922,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 476
+              }
+            ]
+          },
+          "status": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 3332,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 476
+              }
+            ]
+          },
+          "attempts": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 476,
+            "storage_types": [
+              {
+                "storage_type": "integer",
+                "count": 476
+              }
+            ]
+          },
+          "last_error": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 304,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 22548,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 476
+              }
+            ]
+          },
+          "memory_episode_id": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 172,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 10944,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 476
+              }
+            ]
+          },
+          "created_at": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 9044,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 476
+              }
+            ]
+          },
+          "updated_at": {
+            "total": 476,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 9044,
+            "storage_types": [
+              {
+                "storage_type": "text",
+                "count": 476
+              }
+            ]
+          }
+        }
+      }
+    },
+    "inbound_foreign_keys": [],
+    "marker": [
+      "2026-10-13.3",
+      "2026-10-12 00:20:48"
+    ],
+    "review_marker_counts": {
+      "empty_array_rows": 14821,
+      "invalid_json_rows": 0,
+      "rows_with_native_session_ref": 10382
+    }
+  },
+  "fresh_candidate18": {
+    "tables": {
+      "reply_attempts": {
+        "sql": "CREATE TABLE reply_attempts (\n                    id integer primary key autoincrement,\n                    conversation_id text not null,\n                    conversation_title text not null,\n                    trigger_message_id text not null,\n                    trigger_sender text not null,\n                    trigger_text text not null,\n                    trigger_text_provenance_json text not null default '{}',\n                    action text not null,\n                    sensitivity_kind text not null,\n                    agent_run_id integer,\n                    codex_reason text not null default '',\n                    draft_reply_text text not null default '',\n                    direct_user_id text not null default '',\n                    direct_open_dingtalk_id text not null default '',\n                    codex_session_id text not null default '',\n                    codex_transcript_start_line integer not null default 0,\n                    codex_transcript_end_line integer not null default 0,\n                    audit_documents_json text not null default '[]',\n                    audit_tool_events_json text not null default '[]',\n                    audit_summary text not null default '',\n                    human_decision_options_json text not null default '[]',\n                    oa_process_instance_id text not null default '',\n                    oa_task_id text not null default '',\n                    oa_url text not null default '',\n                    oa_action text not null default '',\n                    oa_remark text not null default '',\n                    oa_action_result_json text not null default '',\n                    calendar_event_id text not null default '',\n                    calendar_response_status text not null default '',\n                    calendar_response_result_json text not null default '',\n                    mail_mailbox text not null default '',\n                    mail_message_id text not null default '',\n                    mail_subject text not null default '',\n                    mail_reply_text text not null default '',\n                    mail_action_result_json text not null default '',\n                    reaction_action_result_json text not null default '',\n                    document_action_result_json text not null default '',\n                    final_reply_text text not null default '',\n                    permission_action text not null default '',\n                    permission_reason text not null default '',\n                    send_status text not null,\n                    send_error text not null default '',\n                    retry_count integer not null default 0,\n                    reviewed_at text,\n                    reviewer_feedback text not null default '',\n                    corrected_reply_text text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp\n                , feedback_scope text not null default 'one_time', skill_update_requested integer not null default 0, skill_update_receipts_json text not null default '[]', resolved_at text not null default '', resolution text not null default '', channel text not null default 'dingtalk')",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "conversation_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "conversation_title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "trigger_message_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "trigger_sender",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "trigger_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "trigger_text_provenance_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "action",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "sensitivity_kind",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "agent_run_id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "codex_reason",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "draft_reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "direct_user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "direct_open_dingtalk_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "codex_session_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "codex_transcript_start_line",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "codex_transcript_end_line",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "audit_documents_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 18,
+            "name": "audit_tool_events_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 19,
+            "name": "audit_summary",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 20,
+            "name": "human_decision_options_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 21,
+            "name": "oa_process_instance_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 22,
+            "name": "oa_task_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 23,
+            "name": "oa_url",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 24,
+            "name": "oa_action",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 25,
+            "name": "oa_remark",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 26,
+            "name": "oa_action_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 27,
+            "name": "calendar_event_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 28,
+            "name": "calendar_response_status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 29,
+            "name": "calendar_response_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 30,
+            "name": "mail_mailbox",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 31,
+            "name": "mail_message_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 32,
+            "name": "mail_subject",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 33,
+            "name": "mail_reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 34,
+            "name": "mail_action_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 35,
+            "name": "reaction_action_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 36,
+            "name": "document_action_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 37,
+            "name": "final_reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 38,
+            "name": "permission_action",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 39,
+            "name": "permission_reason",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 40,
+            "name": "send_status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 41,
+            "name": "send_error",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 42,
+            "name": "retry_count",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 43,
+            "name": "reviewed_at",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 44,
+            "name": "reviewer_feedback",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 45,
+            "name": "corrected_reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 46,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 47,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 48,
+            "name": "feedback_scope",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'one_time'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 49,
+            "name": "skill_update_requested",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 50,
+            "name": "skill_update_receipts_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 51,
+            "name": "resolved_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 52,
+            "name": "resolution",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 53,
+            "name": "channel",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'dingtalk'",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_keys": [],
+        "indexes": [
+          {
+            "seq": 0,
+            "name": "idx_reply_attempts_agent_run_recovery",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 9,
+                "name": "agent_run_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 41,
+                "name": "send_error",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 0,
+                "name": "id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_agent_run_recovery\n                    on reply_attempts(agent_run_id, send_error, id)\n                "
+          },
+          {
+            "seq": 1,
+            "name": "idx_reply_attempts_current_trigger",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 53,
+                "name": "channel",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 1,
+                "name": "conversation_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 3,
+                "name": "trigger_message_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": 47,
+                "name": "updated_at",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 4,
+                "cid": 0,
+                "name": "id",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 5,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_current_trigger\n                    on reply_attempts(\n                        channel, conversation_id, trigger_message_id,\n                        updated_at desc, id desc\n                    )\n                "
+          },
+          {
+            "seq": 2,
+            "name": "idx_reply_attempts_trigger_history",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 1,
+                "name": "conversation_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 3,
+                "name": "trigger_message_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 7,
+                "name": "action",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": 0,
+                "name": "id",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 4,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_trigger_history\n                    on reply_attempts(\n                        conversation_id, trigger_message_id, action, id desc\n                    )\n                "
+          },
+          {
+            "seq": 3,
+            "name": "idx_reply_attempts_oa_history",
+            "unique": 0,
+            "origin": "c",
+            "partial": 1,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 21,
+                "name": "oa_process_instance_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 46,
+                "name": "created_at",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 0,
+                "name": "id",
+                "desc": 1,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_oa_history\n                    on reply_attempts(\n                        oa_process_instance_id, created_at desc, id desc\n                    )\n                    where oa_process_instance_id <> ''\n                "
+          },
+          {
+            "seq": 4,
+            "name": "idx_reply_attempts_created",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 46,
+                "name": "created_at",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 0,
+                "name": "id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_created\n                    on reply_attempts(created_at, id)"
+          },
+          {
+            "seq": 5,
+            "name": "idx_reply_attempts_status",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 40,
+                "name": "send_status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 46,
+                "name": "created_at",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_status\n                    on reply_attempts(send_status, created_at)"
+          },
+          {
+            "seq": 6,
+            "name": "idx_reply_attempts_trigger_message_id",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 3,
+                "name": "trigger_message_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_reply_attempts_trigger_message_id\n                    on reply_attempts(trigger_message_id)"
+          }
+        ],
+        "triggers": [],
+        "row_count": 0,
+        "sequence": null,
+        "column_aggregates": {
+          "id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "conversation_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "conversation_title": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "trigger_message_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "trigger_sender": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "trigger_text": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "trigger_text_provenance_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "action": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "sensitivity_kind": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "agent_run_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "codex_reason": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "draft_reply_text": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "direct_user_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "direct_open_dingtalk_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "codex_session_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "codex_transcript_start_line": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "codex_transcript_end_line": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "audit_documents_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "audit_tool_events_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "audit_summary": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "human_decision_options_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "oa_process_instance_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "oa_task_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "oa_url": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "oa_action": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "oa_remark": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "oa_action_result_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "calendar_event_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "calendar_response_status": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "calendar_response_result_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "mail_mailbox": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "mail_message_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "mail_subject": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "mail_reply_text": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "mail_action_result_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "reaction_action_result_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "document_action_result_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "final_reply_text": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "permission_action": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "permission_reason": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "send_status": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "send_error": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "retry_count": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "reviewed_at": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "reviewer_feedback": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "corrected_reply_text": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "created_at": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "updated_at": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "feedback_scope": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "skill_update_requested": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "skill_update_receipts_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "resolved_at": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "resolution": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "channel": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          }
+        }
+      },
+      "memory_write_events": {
+        "sql": "CREATE TABLE memory_write_events (\n                    id integer primary key autoincrement,\n                    attempt_id integer not null,\n                    event_type text not null,\n                    payload_json text not null,\n                    status text not null default 'pending',\n                    attempts integer not null default 0,\n                    last_error text not null default '',\n                    memory_episode_id text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    unique(attempt_id, event_type),\n                    foreign key(attempt_id) references reply_attempts(id)\n                )",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "attempt_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "event_type",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "payload_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'pending'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "attempts",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "last_error",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "memory_episode_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_keys": [
+          {
+            "id": 0,
+            "seq": 0,
+            "table": "reply_attempts",
+            "from": "attempt_id",
+            "to": "id",
+            "on_update": "NO ACTION",
+            "on_delete": "NO ACTION",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "seq": 0,
+            "name": "idx_memory_write_events_status",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 4,
+                "name": "status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 9,
+                "name": "updated_at",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_memory_write_events_status\n                    on memory_write_events(status, updated_at)"
+          },
+          {
+            "seq": 1,
+            "name": "idx_memory_write_events_attempt",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 1,
+                "name": "attempt_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 0,
+                "name": "id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_memory_write_events_attempt\n                    on memory_write_events(attempt_id, id)"
+          },
+          {
+            "seq": 2,
+            "name": "sqlite_autoindex_memory_write_events_1",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 1,
+                "name": "attempt_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 2,
+                "name": "event_type",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": null
+          }
+        ],
+        "triggers": [],
+        "row_count": 0,
+        "sequence": null,
+        "column_aggregates": {
+          "id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "attempt_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "event_type": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "payload_json": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "status": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "attempts": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "last_error": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "memory_episode_id": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "created_at": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          },
+          "updated_at": {
+            "total": 0,
+            "null_count": 0,
+            "empty_text_count": 0,
+            "empty_object_text_count": 0,
+            "empty_array_text_count": 0,
+            "zero_number_count": 0,
+            "bytes": 0,
+            "storage_types": []
+          }
+        }
+      }
+    },
+    "inbound_foreign_keys": [
+      {
+        "from_table": "memory_write_events",
+        "id": 0,
+        "seq": 0,
+        "table": "reply_attempts",
+        "from": "attempt_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      }
+    ],
+    "marker": [
+      "2026-10-13.4",
+      "2026-10-13 22:24:21"
+    ]
+  },
+  "frozen_store16_and_candidate17_declarations_unchanged": true,
+  "declaration_hashes": {
+    "actual": "7767b28009235384fe63ce26ea7c3ad65b371e6235a847c2f9fcc5adaedbe8a5",
+    "fresh": "fd481936604c3613d3661c1a9afddf5e6750febba8b13037a603c3b3f4f98e7e"
+  },
+  "source_oracle": {
+    "passed": 54,
+    "opposite_variant_skips": 2
+  },
+  "temporary_artifacts_removed": true,
+  "dependency_tests": {
+    "passed": 12,
+    "duration_seconds": 3.25
+  }
+}

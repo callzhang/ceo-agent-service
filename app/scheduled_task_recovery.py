@@ -1,7 +1,7 @@
 from __future__ import annotations
 from app.run_storage import SCHEDULED_RUN_SQL
 from app.task_storage import REPLY_TASK_SQL
-from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL
+from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, REPLY_ATTEMPT_COMMON_SQL, update_action
 
 from datetime import datetime, timezone
 
@@ -58,13 +58,13 @@ def close_superseded_scheduled_reply_tasks(
             join scheduled_task_config_versions as config on config.id=run.snapshot_id
             join scheduled_tasks as current_task
               on current_task.id=run.scheduled_task_id
-            join reply_attempts as latest_attempt
+            join ({REPLY_ATTEMPT_COMMON_SQL}) as latest_attempt
               on latest_attempt.channel=task.channel
              and latest_attempt.conversation_id=task.conversation_id
              and latest_attempt.trigger_message_id=task.trigger_message_id
              and latest_attempt.id=(
                      select max(candidate.id)
-                     from reply_attempts as candidate
+                     from ({REPLY_ATTEMPT_COMMON_SQL}) as candidate
                      where candidate.channel=task.channel
                        and candidate.conversation_id=task.conversation_id
                        and candidate.trigger_message_id=task.trigger_message_id
@@ -90,7 +90,7 @@ def close_superseded_scheduled_reply_tasks(
               )
               and not exists (
                   select 1
-                  from reply_attempts as later_attempt
+                  from ({REPLY_ATTEMPT_COMMON_SQL}) as later_attempt
                   where later_attempt.channel=latest_attempt.channel
                     and later_attempt.conversation_id=latest_attempt.conversation_id
                     and later_attempt.trigger_message_id=latest_attempt.trigger_message_id
@@ -138,15 +138,10 @@ def close_superseded_scheduled_reply_tasks(
                 f"for scheduled task {int(row['scheduled_task_id'])} "
                 f"version {int(row['current_version'])}"
             )
-            db.execute(
-                """
-                update reply_attempts
-                   set resolved_at=?, resolution=?, updated_at=?
-                 where id=?
-                   and send_status='failed'
-                   and trim(coalesce(resolved_at, ''))=''
-                """,
-                (now_text, resolution, now_text, int(row["attempt_id"])),
+            update_action(
+                db, "reply_attempts", int(row["attempt_id"]),
+                {"resolved_at": now_text, "resolution": resolution, "updated_at": now_text},
+                where_sql="send_status='failed' and trim(coalesce(resolved_at, ''))=''",
             )
             closed += 1
         return closed

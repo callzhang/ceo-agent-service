@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "candidate_commit": "74ac6200c221c7fed6dd3741f573fd6d6acfb821",
+  "source_production_commit_observed": "d55a21b8532019e48aeb82ff1aba1f5065daa29f",
+  "observed_at": "2026-10-14T07:13:43.341491+00:00",
+  "scope": "Native approval and settlement recovery after main recovery merge; candidate-prepared copy, not published Store19",
+  "native": {
+    "model": "gpt-5.6-luna",
+    "cases": [
+      {
+        "case": "approve",
+        "passed": true,
+        "completed": true,
+        "status": "done",
+        "interrupted": false,
+        "native_invocations": [
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "b4b2ce7ec6e75d99dec0b6f65ad9c11538ac8dc3304cf2ac8250940280474a50"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "1e1b0a35c350b8a46623fd80a0e40823d738cfefa173192fc928326c205138ca"
+          }
+        ],
+        "verification_calls": 1,
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "fake_provider_calls": 1,
+        "original_nonfts_tables_unchanged": 116,
+        "reopen_invocation_count": 2,
+        "sessions": [
+          {
+            "role": "consumer",
+            "session_id": "01a13943-c00c-7820-853a-6c1aed618963",
+            "start": 0,
+            "end": 36,
+            "native_exists": true
+          },
+          {
+            "role": "audit",
+            "session_id": "01a13944-3214-7762-874c-bedbddb77f63",
+            "start": 0,
+            "end": 37,
+            "native_exists": true
+          }
+        ]
+      },
+      {
+        "case": "settlement_recovery",
+        "passed": true,
+        "completed": true,
+        "status": "done",
+        "interrupted": true,
+        "native_invocations": [
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "dbef69fc759a53d508263e41ac7d70aea8e17f7afeca34a2cf2645b65aac2fcb"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "de67cf432e5800027640bc301f02ff6af5dc43049c629f78f284c540d1ab6cc0"
+          }
+        ],
+        "verification_calls": 1,
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "fake_provider_calls": 1,
+        "original_nonfts_tables_unchanged": 116,
+        "reopen_invocation_count": 2,
+        "sessions": [
+          {
+            "role": "consumer",
+            "session_id": "01a13945-63bd-7471-8446-046c7df19d82",
+            "start": 0,
+            "end": 36,
+            "native_exists": true
+          },
+          {
+            "role": "audit",
+            "session_id": "01a13945-ab4e-7182-afa4-83f2fd2f3648",
+            "start": 0,
+            "end": 29,
+            "native_exists": true
+          }
+        ]
+      }
+    ],
+    "actual_outbound_sends": 0,
+    "native_files_copied": 0,
+    "original_store": "2026-10-13.4",
+    "email": 51,
+    "prepared_store": "2026-10-13.5",
+    "temporary_copies_cleaned": true,
+    "prepared_baseline": "Latest read-only online backup constructed by candidate Store19; production HEAD observation and backup capture are separate observations"
+  },
+  "complete_ci_passed": false,
+  "production_deployed": false,
+  "scripted": {
+    "candidate_commit": "c47e6f4ab1f83b2d3c323662b77c45bb3f0649fb",
+    "passed": 11,
+    "seconds": 159.15,
+    "network_and_subprocess_refused": true,
+    "baseline_original_rows_unchanged": true,
+    "temporary_copies_cleaned": true
+  },
+  "supplemental_runtime_binding": {
+    "runtime_commit": "d6013cb06c76e2cb9d6f96a3c161b98d3d7ae217",
+    "evidence": "phase5e_constructor_copy.v1.json supplemental_runtime_binding",
+    "fresh_native_execution_at_runtime_commit": false
+  }
+}

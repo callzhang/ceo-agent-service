@@ -9,6 +9,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from functools import lru_cache
 import json
+import math
 import sqlite3
 from string import ascii_lowercase, ascii_uppercase
 
@@ -104,6 +105,27 @@ SOURCE_COLUMNS.update({
     "sent_reply_observers": ("sent_reply_id", "agent_run_id", "reply_task_id", "created_at"),
 })
 ALL_ACTION_TYPES_WITH_DELIVERY = ALL_ACTION_TYPES_WITH_POSTFIX + DELIVERY_ACTION_TYPES
+REPLY_ACTION_TYPES = ("reply_attempts", "memory_write_events")
+ALL_ACTION_TYPES_WITH_REPLY = ALL_ACTION_TYPES_WITH_DELIVERY + REPLY_ACTION_TYPES
+REPLY_VARIANTS = ("actual_no_memory_fk", "fresh_memory_fk")
+# This metadata is confined to the opt-in E declaration. SQLite applies the
+# source affinities to generated fields over the finite type payload.
+_ATTEMPT_TEXT = """conversation_id conversation_title trigger_message_id trigger_sender trigger_text action sensitivity_kind codex_reason draft_reply_text final_reply_text permission_action permission_reason send_status send_error reviewed_at reviewer_feedback corrected_reply_text created_at updated_at audit_documents_json audit_tool_events_json audit_summary codex_session_id direct_user_id direct_open_dingtalk_id oa_process_instance_id oa_task_id oa_url oa_action oa_remark oa_action_result_json trigger_create_time calendar_event_id calendar_response_status calendar_response_result_json mail_mailbox mail_message_id mail_subject mail_reply_text mail_action_result_json channel universal_execution_id universal_execution_scope_id reaction_action_result_json document_action_result_json human_decision_options_json feedback_scope skill_update_receipts_json resolved_at resolution trigger_text_provenance_json""".split()
+_ATTEMPT_INTEGER = "retry_count codex_transcript_start_line codex_transcript_end_line conversation_single_chat agent_run_id skill_update_requested".split()
+_ATTEMPT_HISTORICAL = {"conversation_single_chat", "trigger_create_time", "universal_execution_id", "universal_execution_scope_id"}
+_ATTEMPT_NULLABLE = {"reviewed_at", "agent_run_id", "conversation_single_chat"}
+_ATTEMPT_REQUIRED = {"conversation_id", "conversation_title", "trigger_message_id", "trigger_sender", "trigger_text", "action", "sensitivity_kind", "send_status"}
+_ATTEMPT_DEFAULTS = {field: "" for field in _ATTEMPT_TEXT if field not in _ATTEMPT_REQUIRED | _ATTEMPT_NULLABLE | {"created_at", "updated_at", "audit_tool_events_json"}}
+_ATTEMPT_DEFAULTS.update({"audit_documents_json": "[]", "human_decision_options_json": "[]", "skill_update_receipts_json": "[]", "trigger_text_provenance_json": "{}", "channel": "dingtalk", "feedback_scope": "one_time", "retry_count": 0, "codex_transcript_start_line": 0, "codex_transcript_end_line": 0, "skill_update_requested": 0, "reviewed_at": None, "agent_run_id": None, "conversation_single_chat": None, "audit_tool_events_json": "[]"})
+_MEMORY_TEXT = "event_type status last_error memory_episode_id created_at updated_at".split()
+_MEMORY_INTEGER = "attempt_id attempts".split()
+_MEMORY_DEFAULTS = {"status": "pending", "attempts": 0, "last_error": "", "memory_episode_id": ""}
+_REPLY_FIELDS = {"reply_attempts": tuple(_ATTEMPT_TEXT + _ATTEMPT_INTEGER), "memory_write_events": tuple(_MEMORY_TEXT + _MEMORY_INTEGER)}
+_REPLY_TYPES = {"reply_attempts": {**dict.fromkeys(_ATTEMPT_TEXT, "text"), **dict.fromkeys(_ATTEMPT_INTEGER, "integer")}, "memory_write_events": {**dict.fromkeys(_MEMORY_TEXT, "text"), **dict.fromkeys(_MEMORY_INTEGER, "integer")}}
+REPLY_SEQUENCE_NAMES = {kind: "actions:" + kind for kind in REPLY_ACTION_TYPES}
+_ATTEMPT_ORDER = """id conversation_id conversation_title trigger_message_id trigger_sender trigger_text action sensitivity_kind codex_reason draft_reply_text final_reply_text permission_action permission_reason send_status send_error retry_count reviewed_at reviewer_feedback corrected_reply_text created_at updated_at audit_documents_json audit_tool_events_json audit_summary codex_session_id codex_transcript_start_line codex_transcript_end_line direct_user_id direct_open_dingtalk_id oa_process_instance_id oa_task_id oa_url oa_action oa_remark oa_action_result_json conversation_single_chat trigger_create_time calendar_event_id calendar_response_status calendar_response_result_json mail_mailbox mail_message_id mail_subject mail_reply_text mail_action_result_json channel universal_execution_id universal_execution_scope_id reaction_action_result_json document_action_result_json agent_run_id human_decision_options_json feedback_scope skill_update_requested skill_update_receipts_json resolved_at resolution trigger_text_provenance_json""".split()
+_FRESH_ATTEMPT_ORDER = """id conversation_id conversation_title trigger_message_id trigger_sender trigger_text trigger_text_provenance_json action sensitivity_kind agent_run_id codex_reason draft_reply_text direct_user_id direct_open_dingtalk_id codex_session_id codex_transcript_start_line codex_transcript_end_line audit_documents_json audit_tool_events_json audit_summary human_decision_options_json oa_process_instance_id oa_task_id oa_url oa_action oa_remark oa_action_result_json calendar_event_id calendar_response_status calendar_response_result_json mail_mailbox mail_message_id mail_subject mail_reply_text mail_action_result_json reaction_action_result_json document_action_result_json final_reply_text permission_action permission_reason send_status send_error retry_count reviewed_at reviewer_feedback corrected_reply_text created_at updated_at feedback_scope skill_update_requested skill_update_receipts_json resolved_at resolution channel""".split()
+_MEMORY_ORDER = "id attempt_id event_type payload_json status attempts last_error memory_episode_id created_at updated_at".split()
 IDENTITY_FIELDS.update({"sent_replies": "id"})
 ActionIdentity = int | str | tuple[str, str] | tuple[int, int]
 AUTOINCREMENT_TYPES = ("agent_effect_intents", "agent_execution_receipts")
@@ -221,12 +243,37 @@ def _payload_check(kind, references):
     return f"check(record_type<>'{kind}' or ({' and '.join('(' + t + ')' for t in terms)}))"
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False):
+def _reply_value_check(field):
+    path = f"$.{field}"
+    field_type = f"json_type(payload_json,'{path}')"
+    tag = f"json_extract(payload_json,'{path}.t')"
+    blob_value = f"json_extract(payload_json,'{path}.v')"
+    obj = f"json_extract(payload_json,'{path}')"
+    blob = (f"({tag}='blob' and json_type(payload_json,'{path}.v')='text' "
+            f"and length({blob_value})%2=0 and unhex({blob_value}) is not null "
+            f"and json_remove({obj},'$.t','$.v')='{{}}')")
+    nonfinite = f"({tag} in ('inf','-inf') and json_remove({obj},'$.t')='{{}}')"
+    return (f"(case when {field_type} in ('null','text','integer','real','true','false') then 1 "
+            f"when {field_type}='object' then coalesce((json_type(payload_json,'{path}.t')='text' "
+            f"and ({blob} or {nonfinite})),0) else 0 end)")
+
+
+def _reply_payload_check(fields):
+    paths = ",".join(repr("$." + field) for field in fields)
+    return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
+
+
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
+    if include_reply and reply_variant not in REPLY_VARIANTS:
+        raise ValueError("reply storage requires one global source variant")
+    if not include_reply and reply_variant is not None:
+        raise ValueError("reply variant requires opt-in reply storage")
+    include_delivery = include_delivery or include_reply
     include_postfix = include_postfix or include_delivery
     include_receipts = include_receipts or include_postfix
-    kinds = ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else CANDIDATE_ACTION_TYPES
+    kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else CANDIDATE_ACTION_TYPES
     references = _references_for(kinds)
-    payload_fields = dict.fromkeys(c for kind in kinds for c in PAYLOAD_FIELDS[kind] if c not in references and not (include_delivery and c == "channel"))
+    payload_fields = dict.fromkeys(c for kind in kinds if kind not in REPLY_ACTION_TYPES for c in PAYLOAD_FIELDS[kind] if c not in references and not (include_delivery and c == "channel"))
     generated = []
     for column in payload_fields:
         expression = f"json_extract(payload_json,'$.{column}')"
@@ -239,6 +286,23 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
             sent_channel = "when record_type='sent_replies' then json_extract(payload_json,'$.channel') " if include_delivery and column == "channel" else ""
             generated.append(f"{column} text generated always as (case {sent_channel}when record_type in ({postfix_scope}) then json_extract(legacy_key,'$[{index}]') end) virtual")
         generated.append("postfix_type text generated always as (case when record_type in ('outbound_postfix_receipts','native_reply_dispatches') then 'outbound_postfixes' end) virtual")
+    reply_columns = []
+    if include_reply:
+        for kind, prefix in (("reply_attempts", "attempt_"), ("memory_write_events", "memory_")):
+            for field in _REPLY_FIELDS[kind]:
+                if kind == "reply_attempts" and reply_variant == "fresh_memory_fk" and field in _ATTEMPT_HISTORICAL:
+                    continue
+                if kind == "memory_write_events" and field == "attempt_id" and reply_variant == "fresh_memory_fk":
+                    continue
+                path = f"$.{field}"
+                encoded = (f"case json_extract(payload_json,'{path}.t') "
+                           f"when 'blob' then unhex(json_extract(payload_json,'{path}.v')) "
+                           "when 'inf' then 9e999 when '-inf' then -9e999 end")
+                value = (f"case when json_type(payload_json,'{path}')='object' "
+                         f"then {encoded} else json_extract(payload_json,'{path}') end")
+                reply_columns.append(f"{prefix}{field} {_REPLY_TYPES[kind][field]} generated always as ({value}) virtual")
+        if reply_variant == "fresh_memory_fk":
+            reply_columns.append("memory_attempt_ref integer references actions(id)")
     key_check = "legacy_key=cast(cast(legacy_key as integer) as text)"
     if include_receipts:
         key_check = f"case when record_type='external_action_results' then trim(legacy_key)<>'' else {key_check} end"
@@ -257,9 +321,10 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         + ",".join(repr(k) for k in kinds)
         + f")),legacy_key text not null check({key_check}),"
         + ",".join(f"{column} integer references {parent}(id)" for column, (parent, _) in references.items())
+        + ("," + ",".join(reply_columns) if reply_columns else "")
         + ",payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),"
         + ",".join(generated)
-        + "," + ",".join(_payload_check(kind, references) for kind in kinds)
+        + "," + ",".join(_payload_check(kind, references) for kind in kinds if kind not in REPLY_ACTION_TYPES)
         + "," + ",".join(f"check(record_type<>'{kind}' or {field} in ({','.join(repr(v) for v in options)}))"
                           for kind, (field, options) in ENUMS.items() if kind in kinds)
     )
@@ -273,6 +338,15 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         table += ",foreign key(postfix_type,channel,delivery_key) references actions(record_type,channel,delivery_key)"
     if include_delivery:
         table += ",check(record_type<>'sent_reply_observers' or (sent_reply_id is not null and agent_run_id is not null and reply_task_id is not null and json_extract(legacy_key,'$[1]')=agent_run_id))"
+    if include_reply:
+        table += ",check(record_type not in ('reply_attempts','memory_write_events') or (" + " and ".join(f"{field} is null" for field in references) + "))"
+        attempt_fields = [field for field in _REPLY_FIELDS["reply_attempts"] if reply_variant == "actual_no_memory_fk" or field not in _ATTEMPT_HISTORICAL]
+        table += ",check(record_type<>'reply_attempts' or (" + _reply_payload_check(attempt_fields) + "))"
+        table += ",check(record_type<>'reply_attempts' or (" + " and ".join(f"attempt_{field} is not null" for field in attempt_fields if field not in _ATTEMPT_NULLABLE) + "))"
+        memory_parent = "memory_attempt_ref" if reply_variant == "fresh_memory_fk" else "memory_attempt_id"
+        memory_fields = [field for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id" or reply_variant == "actual_no_memory_fk"]
+        table += ",check(record_type<>'memory_write_events' or (" + _reply_payload_check(memory_fields) + "))"
+        table += ",check(record_type<>'memory_write_events' or (" + " and ".join([f"{memory_parent} is not null"] + [f"memory_{field} is not null" for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id"]) + "))"
     table += ")"
     numeric_scope = " where record_type<>'external_action_results'" if include_receipts else ""
     if include_postfix:
@@ -308,6 +382,22 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
             "create unique index idx_actions_sent_external_key on actions(external_action_key) where record_type='sent_replies' and external_action_key<>''",
             "create index idx_actions_sent_history on actions(conversation_id,trigger_message_id,sent_at) where record_type='sent_replies'",
         )
+    if include_reply:
+        memory_parent = "memory_attempt_ref" if reply_variant == "fresh_memory_fk" else "memory_attempt_id"
+        indexes += (
+            "create unique index idx_actions_reply_public_order on actions(record_type,cast(legacy_key as integer)) where record_type='reply_attempts'",
+            "create index idx_actions_memory_public_order on actions(record_type,cast(legacy_key as integer)) where record_type='memory_write_events'",
+            "create index idx_actions_reply_trigger_message on actions(attempt_trigger_message_id) where record_type='reply_attempts'",
+            "create index idx_actions_reply_status on actions(record_type,attempt_send_status,attempt_created_at) where record_type='reply_attempts'",
+            "create index idx_actions_reply_created on actions(record_type,attempt_created_at,cast(legacy_key as integer)) where record_type='reply_attempts'",
+            "create index idx_actions_reply_oa_history on actions(attempt_oa_process_instance_id,attempt_created_at desc,cast(legacy_key as integer) desc) where record_type='reply_attempts' and attempt_oa_process_instance_id<>''",
+            "create index idx_actions_reply_trigger_history on actions(attempt_conversation_id,attempt_trigger_message_id,attempt_action,cast(legacy_key as integer) desc) where record_type='reply_attempts'",
+            "create index idx_actions_reply_current_trigger on actions(attempt_channel,attempt_conversation_id,attempt_trigger_message_id,attempt_updated_at desc,cast(legacy_key as integer) desc) where record_type='reply_attempts'",
+            "create index idx_actions_reply_run_recovery on actions(attempt_agent_run_id,attempt_send_error,cast(legacy_key as integer)) where record_type='reply_attempts'",
+            f"create unique index idx_actions_memory_unique on actions({memory_parent},memory_event_type) where record_type='memory_write_events'",
+            f"create index idx_actions_memory_attempt on actions({memory_parent},cast(legacy_key as integer)) where record_type='memory_write_events'",
+            f"create index idx_actions_memory_status on actions(memory_status,{'memory_updated_at' if reply_variant == 'fresh_memory_fk' else 'cast(legacy_key as integer)'}) where record_type='memory_write_events'",
+        )
     triggers = (
         "create trigger trg_actions_record_type_immutable before update of record_type on actions when new.record_type<>old.record_type begin select raise(abort,'action record type is immutable'); end",
         "create trigger trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
@@ -327,6 +417,30 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         triggers += ("create trigger trg_actions_sent_public_reference_update before update of legacy_key on actions when old.record_type='sent_replies' and new.legacy_key<>old.legacy_key and exists(select 1 from actions where sent_reply_id=old.id and record_type='sent_reply_observers') begin select raise(abort,'FOREIGN KEY constraint failed'); end",)
         for event, suffix in (("insert", "insert"), ("update of sent_reply_id,legacy_key", "update")):
             triggers += (f"create trigger trg_actions_observer_sent_key_{suffix} before {event} on actions when new.record_type='sent_reply_observers' and not exists(select 1 from actions p where p.id=new.sent_reply_id and p.record_type='sent_replies' and cast(p.legacy_key as integer)=json_extract(new.legacy_key,'$[0]')) begin select raise(abort,'observer sent reply identity mismatch'); end",)
+    if include_reply:
+        for kind, name in REPLY_SEQUENCE_NAMES.items():
+            triggers += (f"create trigger trg_actions_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
+                         f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
+                         f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
+        marker_check = (
+            "json_type(new.payload_json,'$.audit_tool_events_json') is not 'text' or "
+            "case when json_valid(new.attempt_audit_tool_events_json) then ("
+            "json_type(new.attempt_audit_tool_events_json) is not 'array' or "
+            "exists(select 1 from json_each(new.attempt_audit_tool_events_json) e where "
+            "case when e.type='object' then (json_extract(e.value,'$.tool') is not 'audit_review' or "
+            "json_extract(e.value,'$.result') is not 'queued' or "
+            "json_remove(e.value,'$.tool','$.result')<>'{}') else 1 end)) else 1 end"
+        )
+        for event, suffix in (("insert", "insert"), ("update of payload_json", "update")):
+            triggers += (f"create trigger trg_actions_reply_markers_{suffix} before {event} on actions "
+                         f"when new.record_type='reply_attempts' and ({marker_check}) "
+                         "begin select raise(abort,'invalid reply audit markers'); end",)
+        if reply_variant == "fresh_memory_fk":
+            triggers += (
+                "create trigger trg_actions_memory_attempt_insert before insert on actions when new.record_type='memory_write_events' and new.memory_attempt_ref is not null and not exists(select 1 from actions p where p.id=new.memory_attempt_ref and p.record_type='reply_attempts') begin select raise(abort,'memory attempt type mismatch'); end",
+                "create trigger trg_actions_memory_attempt_update before update of memory_attempt_ref on actions when new.record_type='memory_write_events' and new.memory_attempt_ref is not null and not exists(select 1 from actions p where p.id=new.memory_attempt_ref and p.record_type='reply_attempts') begin select raise(abort,'memory attempt type mismatch'); end",
+                "create trigger trg_actions_reply_public_reference_update before update of legacy_key on actions when old.record_type='reply_attempts' and new.legacy_key<>old.legacy_key and exists(select 1 from actions c where c.record_type='memory_write_events' and c.memory_attempt_ref=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
+            )
     return table, indexes, triggers
 
 
@@ -336,6 +450,8 @@ POSTFIX_ACTION_TABLE_DDL, POSTFIX_ACTION_INDEX_DDL, POSTFIX_ACTION_TRIGGER_DDL =
 
 
 def _projection(kind):
+    if kind in REPLY_ACTION_TYPES:
+        raise ValueError("reply projection requires global schema variant")
     fields, joins = [], []
     for field in SOURCE_COLUMNS[kind]:
         if field == IDENTITY_FIELDS.get(kind):
@@ -362,6 +478,52 @@ def _projection(kind):
 
 
 ACTION_PROJECTIONS = {kind: _projection(kind) for kind in ALL_ACTION_TYPES_WITH_DELIVERY}
+
+
+def reply_action_projection(kind, reply_variant):
+    if kind not in REPLY_ACTION_TYPES or reply_variant not in REPLY_VARIANTS:
+        raise ValueError("unsupported reply projection")
+    order = (_FRESH_ATTEMPT_ORDER if reply_variant == "fresh_memory_fk" else _ATTEMPT_ORDER) if kind == "reply_attempts" else _MEMORY_ORDER
+    fields = []
+    for field in order:
+        if field == "id":
+            expression = "cast(a.legacy_key as integer)"
+        elif kind == "reply_attempts" and field in _ATTEMPT_HISTORICAL and reply_variant == "fresh_memory_fk":
+            continue
+        elif kind == "memory_write_events" and field == "payload_json":
+            expression = "'{}'"
+        elif kind == "memory_write_events" and field == "attempt_id" and reply_variant == "fresh_memory_fk":
+            expression = "cast(p.legacy_key as integer)"
+        else:
+            expression = "a." + ("attempt_" if kind == "reply_attempts" else "memory_") + field
+        fields.append(expression + " as " + field)
+    join = "left join actions p on p.id=a.memory_attempt_ref and p.record_type='reply_attempts'" if kind == "memory_write_events" and reply_variant == "fresh_memory_fk" else ""
+    return f"select {','.join(fields)} from actions a {join} where a.record_type='{kind}' and a.record_type<>'external_action_results' and a.record_type not in ({_POSTFIX_TYPES_SQL}) and a.record_type<>'sent_reply_observers'"
+
+
+# Both canonical E declarations contain the 54 current Attempt fields. This
+# explicit projection omits only the four preserved actual-source history fields.
+REPLY_ATTEMPT_COMMON_SQL = reply_action_projection("reply_attempts", "fresh_memory_fk")
+
+
+def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=False) -> str:
+    """Select one complete canonical E declaration, including its FK and indexes."""
+    matches = [
+        variant for variant in REPLY_VARIANTS
+        if action_schema_is_current(
+            db, allow_missing_objects=allow_missing_objects,
+            include_reply=True, reply_variant=variant,
+        )
+    ]
+    if len(matches) != 1:
+        raise sqlite3.IntegrityError("unsupported or mixed Attempt/Memory action schema")
+    return matches[0]
+
+
+def reply_schema_is_current(db: sqlite3.Connection) -> bool:
+    """Recognize either complete Store19 declaration, without altering the DB."""
+    return any(action_schema_is_current(db, include_reply=True, reply_variant=variant)
+               for variant in REPLY_VARIANTS)
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
 CANDIDATE_SELECTION_SQL = ACTION_PROJECTIONS["candidate_selections"]
@@ -378,25 +540,25 @@ SENT_REPLY_SQL = ACTION_PROJECTIONS["sent_replies"]
 SENT_REPLY_OBSERVER_SQL = ACTION_PROJECTIONS["sent_reply_observers"]
 
 
-def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False) -> None:
+def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None) -> None:
     """Create the declared schema, or repair only its missing auxiliary objects."""
     existing = db.execute("select 1 from sqlite_master where name='actions' collate nocase").fetchone()
     if existing:
-        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery):
+        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery, include_reply=include_reply, reply_variant=reply_variant):
             raise ValueError("unsupported current actions schema declaration")
         names = {sqlite_schema_name(obj["name"]) for obj in _objects(db, "actions")}
-        for obj in _current_objects(include_receipts, include_postfix, include_delivery):
+        for obj in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant):
             if sqlite_schema_name(obj["name"]) not in names:
                 db.execute(obj["sql"])
     else:
         if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in ACTION_TYPES):
             capture_action_schema(db)
-        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery))
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery)
+        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant))
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant)
 
 
-def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False):
-    if (include_receipts or include_postfix or include_delivery) and not db.execute("select 1 from sqlite_master where type='table' and name='sqlite_sequence'").fetchone():
+def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
+    if (include_receipts or include_postfix or include_delivery or include_reply) and not db.execute("select 1 from sqlite_master where type='table' and name='sqlite_sequence'").fetchone():
         # SQLite creates its native sequence metadata on the first declaration
         # of an AUTOINCREMENT table. The initializer has no rows and is removed;
         # actions retains its ordinary physical INTEGER PRIMARY KEY allocator.
@@ -405,24 +567,24 @@ def _create_action_objects(db, include_receipts=False, include_postfix=False, in
             name += "_"
         db.execute(f'create table "{name}"(id integer primary key autoincrement)')
         db.execute(f'drop table "{name}"')
-    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery)
+    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant)
     for sql in (table, *indexes, *triggers):
         db.execute(sql)
 
 
-@lru_cache(maxsize=8)
-def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False):
+@lru_cache(maxsize=12)
+def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
     with closing(sqlite3.connect(":memory:")) as db:
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery)
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant)
         return _objects(db, "actions")
 
 
-def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False) -> bool:
-    kinds = ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
+def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None) -> bool:
+    kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in kinds):
         return False
     actual = {sqlite_schema_name(o["name"]): o for o in _objects(db, "actions")}
-    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix, include_delivery)}
+    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant)}
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase and tbl_name<>'actions' collate nocase", (name,)).fetchone() for name in expected):
         return False
     return not (actual.keys() - expected.keys()) and all(
@@ -432,7 +594,7 @@ def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=Fa
 
 
 def _require_kind(kind):
-    if kind not in SOURCE_COLUMNS:
+    if kind not in SOURCE_COLUMNS and kind not in REPLY_ACTION_TYPES:
         raise ValueError("unknown action record type")
 
 
@@ -488,6 +650,13 @@ def _parent_id(db, field, public_id):
 
 def _check_fields(kind, values):
     _require_kind(kind)
+    if kind in REPLY_ACTION_TYPES:
+        allowed = set(_REPLY_FIELDS[kind]) | {"id"}
+        if kind == "memory_write_events":
+            allowed.add("payload_json")
+        if set(values) - allowed:
+            raise ValueError(f"unknown {kind} source fields")
+        return
     if set(values) - set(SOURCE_COLUMNS[kind]):
         raise ValueError(f"unknown {kind} source fields")
     for field, value in values.items():
@@ -504,7 +673,7 @@ class ActionWriteResult:
 
 
 def _autoincrement_high_water(db, kind):
-    name = DELIVERY_SEQUENCE_NAME if kind == "sent_replies" else ACTION_SEQUENCE_NAMES[kind]
+    name = REPLY_SEQUENCE_NAMES[kind] if kind in REPLY_ACTION_TYPES else DELIVERY_SEQUENCE_NAME if kind == "sent_replies" else ACTION_SEQUENCE_NAMES[kind]
     rows = db.execute("select seq from sqlite_sequence where name=?", (name,)).fetchall()
     if len(rows) > 1 or any(type(row[0]) is not int or row[0] < 0 for row in rows):
         raise ValueError(f"invalid {kind} allocator metadata")
@@ -521,17 +690,198 @@ def _raise_autoincrement_full():
         allocator.execute("insert into ids default values")
 
 
+def _reply_variant_for(db):
+    columns = {row[1] for row in db.execute("pragma table_xinfo(actions)")}
+    if "memory_attempt_ref" in columns and "memory_attempt_id" not in columns:
+        return "fresh_memory_fk"
+    if "memory_attempt_id" in columns and "memory_attempt_ref" not in columns:
+        return "actual_no_memory_fk"
+    raise ValueError("unsupported reply actions declaration")
+
+
+def _audit_markers(value):
+    if isinstance(value, memoryview):
+        value = bytes(value)
+    if not isinstance(value, (str, bytes, bytearray)):
+        return "[]"
+    try:
+        events = json.loads(value)
+    except (ValueError, TypeError, UnicodeError):
+        return "[]"
+    if not isinstance(events, list):
+        return "[]"
+    marker = {"tool": "audit_review", "result": "queued"}
+    return json.dumps([marker for item in events if item == marker], separators=(",", ":"))
+
+
+def _reply_parent(db, public_id):
+    row = db.execute("select id from actions where " + _identity_predicate("reply_attempts"),
+                     _identity_arguments("reply_attempts", public_id)).fetchone()
+    if row is None:
+        raise sqlite3.IntegrityError("FOREIGN KEY constraint failed")
+    return row[0]
+
+
+def _source_bound_null(value):
+    return value is None or isinstance(value, float) and math.isnan(value)
+
+
+def _reply_auto_id(values):
+    return _source_bound_null(values.get("id"))
+
+
+def _native_integer_primary_key(value, *, update=False):
+    # A scratch SQLite INTEGER PRIMARY KEY supplies SQLite's actual assignment
+    # affinity (2.0, '2.0', booleans, BLOBs), without a Python numeric parser.
+    if type(value) is int:
+        if not -(2**63) <= value < 2**63:
+            raise OverflowError("Python int too large to convert to SQLite INTEGER")
+        return value
+    with closing(sqlite3.connect(":memory:")) as source_key:
+        source_key.execute("create table ids(id integer primary key)")
+        if update:
+            source_key.execute("insert into ids(id) values(1)")
+            source_key.execute("update ids set id=?", (value,))
+            return source_key.execute("select id from ids").fetchone()[0]
+        return source_key.execute("insert into ids(id) values(?) returning id", (value,)).fetchone()[0]
+
+
+def _encoded_sqlite_value(value):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {"t": "blob", "v": bytes(value).hex()}
+    if isinstance(value, float) and math.isnan(value):
+        # sqlite3 binds NaN as NULL before the source table applies NOT NULL.
+        return None
+    if value == float("inf"):
+        return {"t": "inf"}
+    if value == float("-inf"):
+        return {"t": "-inf"}
+    if type(value) is int and not -(2**63) <= value < 2**63:
+        raise OverflowError("Python int too large to convert to SQLite INTEGER")
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise sqlite3.ProgrammingError("unsupported SQLite source value")
+
+
+def _reply_payload(values):
+    return json.dumps({field: _encoded_sqlite_value(value) for field, value in values.items()},
+                      ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _insert_reply_action(db, kind, values, *, ignore=False):
+    variant = _reply_variant_for(db)
+    if kind == "reply_attempts" and variant == "fresh_memory_fk" and set(values) & _ATTEMPT_HISTORICAL:
+        raise ValueError("historical attempt fields absent from fresh variant")
+    now = db.execute("select current_timestamp").fetchone()[0]
+    if kind == "reply_attempts":
+        data = _ATTEMPT_DEFAULTS | {"created_at": now, "updated_at": now} | {field: value for field, value in values.items() if field in _REPLY_FIELDS[kind]}
+        data["audit_tool_events_json"] = _audit_markers(data["audit_tool_events_json"])
+        if variant == "fresh_memory_fk":
+            data = {field: value for field, value in data.items() if field not in _ATTEMPT_HISTORICAL}
+    else:
+        data = _MEMORY_DEFAULTS | {"created_at": now, "updated_at": now} | {field: value for field, value in values.items() if field in _REPLY_FIELDS[kind]}
+    attempt_id = data.pop("attempt_id", None) if kind == "memory_write_events" and variant == "fresh_memory_fk" else None
+    payload_json = _reply_payload(data)
+    if _reply_auto_id(values):
+        maximum = _autoincrement_high_water(db, kind)
+        if maximum == 2**63 - 1:
+            if db.in_transaction:
+                db.execute("rollback")
+            _raise_autoincrement_full()
+        public_id = maximum + 1
+    else:
+        public_id = _native_integer_primary_key(values["id"])
+    if ignore and db.execute("select 1 from actions where record_type=? and cast(legacy_key as integer)=?", (kind, public_id)).fetchone():
+        # Source INSERT OR IGNORE resolves its public-key uniqueness before FK
+        # evaluation, but still advances AUTOINCREMENT on an explicit ID.
+        # A legal public-key UPDATE can put this ID above the saved sequence.
+        name = REPLY_SEQUENCE_NAMES[kind]
+        db.execute("insert into sqlite_sequence(name,seq) select ?,0 where not exists(select 1 from sqlite_sequence where name=?)", (name, name))
+        db.execute("update sqlite_sequence set seq=max(seq,?) where name=?", (public_id, name))
+        return ActionWriteResult(None, 0)
+    parent_ref = None
+    if kind == "memory_write_events" and variant == "fresh_memory_fk":
+        required = (attempt_id, *(data.get(field) for field in ("event_type", "status", "attempts",
+                                                          "last_error", "memory_episode_id", "created_at", "updated_at")))
+        if all(not _source_bound_null(value) for value in required):
+            parent_ref = _reply_parent(db, attempt_id)
+    columns = ["record_type", "legacy_key", "payload_json"]
+    arguments = [kind, str(public_id), payload_json]
+    if kind == "memory_write_events" and variant == "fresh_memory_fk":
+        columns.append("memory_attempt_ref")
+        arguments.append(parent_ref)
+    cursor = db.execute(
+        f"insert {'or ignore ' if ignore else ''}into actions({','.join(columns)}) "
+        f"values({','.join('?' for _ in arguments)}) returning cast(legacy_key as integer)", arguments,
+    )
+    row = cursor.fetchone()
+    cursor.fetchall()
+    return ActionWriteResult(row[0] if row else None, cursor.rowcount)
+
+
+def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameters=()):
+    variant = _reply_variant_for(db)
+    if kind == "reply_attempts" and variant == "fresh_memory_fk" and set(values) & _ATTEMPT_HISTORICAL:
+        raise ValueError("historical attempt fields absent from fresh variant")
+    if not values or kind == "memory_write_events" and set(values) == {"payload_json"}:
+        raise ValueError("action update requires fields")
+    predicate = _identity_predicate(kind)
+    identity_arguments = list(_identity_arguments(kind, public_id))
+    if where_sql:
+        projection = reply_action_projection(kind, variant)
+        predicate += f" and cast(legacy_key as integer) in (select id from ({projection}) where id=? and ({where_sql}))"
+        identity_arguments.extend((public_id, *parameters))
+    # Bind through a write statement: SQLite opens its deferred transaction,
+    # binds every SET/WHERE input, then takes the writer lock when it executes.
+    # The zero-row write keeps that lock through the scan and actual UPDATE.
+    bound = (*values.values(), *identity_arguments)
+    db.execute("update sqlite_sequence set seq=seq where 0" + " and ? is null" * len(bound), bound)
+    if db.execute(f"select 1 from actions where {predicate} limit 1", identity_arguments).fetchone() is None:
+        return db.execute("update actions set legacy_key=legacy_key where 0")
+    assignments, arguments, paths = [], [], []
+    for field, value in values.items():
+        if field == "id":
+            column = "legacy_key"
+            value = str(_native_integer_primary_key(value, update=True))
+        elif kind == "memory_write_events" and field == "payload_json":
+            continue
+        elif kind == "memory_write_events" and field == "attempt_id" and variant == "fresh_memory_fk":
+            column, value = "memory_attempt_ref", _reply_parent(db, value)
+        elif kind == "reply_attempts" and field == "audit_tool_events_json":
+            paths.extend(("$.audit_tool_events_json", json.dumps(_audit_markers(value))))
+            continue
+        else:
+            paths.extend(("$." + field, json.dumps(_encoded_sqlite_value(value), ensure_ascii=False,
+                                                   allow_nan=False, separators=(",", ":"))))
+            continue
+        assignments.append(column + "=?")
+        arguments.append(value)
+    if paths:
+        assignments.append("payload_json=json_set(payload_json," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")")
+        arguments.extend(paths)
+    if not assignments:
+        raise ValueError("action update requires fields")
+    arguments.extend(identity_arguments)
+    return db.execute(f"update actions set {','.join(assignments)} where {predicate}", arguments)
+
+
 def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False) -> ActionWriteResult:
     """Allocate automatic receipt IDs under SQLite's writer lock."""
     _check_fields(record_type, values)
-    automatic = (record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies") and values.get("id") is None
-    owned = automatic and not db.in_transaction and (
+    automatic = ((record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies") and values.get("id") is None
+                 or record_type in REPLY_ACTION_TYPES and _reply_auto_id(values))
+    locked = automatic or (record_type in REPLY_ACTION_TYPES and (ignore or record_type == "memory_write_events"
+                             and _reply_variant_for(db) == "fresh_memory_fk"))
+    owned = locked and not db.in_transaction and (
         db.isolation_level is None or getattr(db, "autocommit", None) is True
     )
     if owned:
         db.execute("savepoint action_receipt_insert")
     try:
-        if automatic:
+        if record_type in REPLY_ACTION_TYPES:
+            bound = tuple(values.values())
+            db.execute("update sqlite_sequence set seq=seq where 0" + " and ? is null" * len(bound), bound)
+        elif locked:
             # A no-row write acquires the lock before reading the allocator.
             # Deferred connections retain their ordinary caller-owned transaction.
             db.execute("update sqlite_sequence set seq=seq where 0")
@@ -549,6 +899,8 @@ def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ign
 def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False) -> ActionWriteResult:
     """Insert source-shaped values; return the original per-type public ID."""
     _check_fields(record_type, values)
+    if record_type in REPLY_ACTION_TYPES:
+        return _insert_reply_action(db, record_type, values, ignore=ignore)
     now = db.execute("select current_timestamp").fetchone()[0]
     payload = DEFAULTS[record_type] | {
         field: now for field in ("created_at", "updated_at", "prepared_at", "sent_at")
@@ -601,6 +953,23 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
 def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIdentity, values: dict, *, where_sql: str = "", parameters=()) -> sqlite3.Cursor:
     """Update explicit source fields; an optional predicate uses the projection."""
     _check_fields(record_type, values)
+    if record_type in REPLY_ACTION_TYPES:
+        owned = not db.in_transaction and (
+            db.isolation_level is None or getattr(db, "autocommit", None) is True
+        )
+        if owned:
+            db.execute("savepoint action_reply_update")
+        try:
+            result = _update_reply_action(db, record_type, public_id, values,
+                                          where_sql=where_sql, parameters=parameters)
+        except BaseException:
+            if owned and db.in_transaction:
+                db.execute("rollback to action_reply_update")
+                db.execute("release action_reply_update")
+            raise
+        if owned:
+            db.execute("release action_reply_update")
+        return result
     assignments, args, paths = [], [], []
     identity_arguments = _identity_arguments(record_type, public_id)
     if record_type == "sent_reply_observers" and ("sent_reply_id" in values or "agent_run_id" in values):

@@ -11,7 +11,7 @@ from app.run_storage import AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL, RUNTIME
 from app.task_storage import MEETING_JOB_SQL, REPLY_TASK_SQL, WORKBENCH_TURN_SQL, insert_task, task_physical_id
 from tests.run_reader_fixtures import assert_no_core_native_storage
 
-from app.action_storage import CANDIDATE_REVIEW_SQL, REVIEW_CANDIDATE_SQL
+from app.action_storage import CANDIDATE_REVIEW_SQL, REVIEW_CANDIDATE_SQL, REPLY_ATTEMPT_COMMON_SQL, update_action
 
 
 def test_native_only_cleanup_removes_missing_native_copies_preserves_service_state(tmp_path):
@@ -21,11 +21,11 @@ def test_native_only_cleanup_removes_missing_native_copies_preserves_service_sta
     runtime = store.claim_agent_runtime_attempt(run.id, 'codex_oauth', 'codex_cli', 'local_oauth', 'gpt-5.5')
     from tests.test_store import _attempt
     attempt_id = _attempt(store, trigger='cleanup-regression', status='sent')
-    marker = 'historical-tool-output-only-in-db'
+    marker = '[{"tool":"audit_review","result":"queued"}]'
     with sqlite3.connect(store.path) as db:
         db.execute('pragma journal_mode=wal')
         db.execute("update runs set status='completed',session_id='missing-session' where record_type='agent_runs' and legacy_key=?", (str(run.id),))
-        db.execute('update reply_attempts set audit_tool_events_json=? where id=?', (json.dumps([{'output':marker}]),attempt_id))
+        update_action(db, 'reply_attempts', attempt_id, {'audit_tool_events_json': marker})
         insert_run(db, 'okr_review_runs', {'request_id': 1})
         job_id = insert_task(db, 'meeting_alignment_jobs', {'meeting_id': 'cleanup-meeting', 'final_message': 'adopted business output'}).lastrowid
         insert_run(db, 'meeting_alignment_runs', {'task_id': job_id, 'status': 'sent'})
@@ -39,10 +39,10 @@ def test_native_only_cleanup_removes_missing_native_copies_preserves_service_sta
         before = db.execute(f'select id,status,execution_generation from ({REPLY_TASK_SQL})').fetchall()
     counts = storage_maintenance.compact_native_duplicates(store.path)
     assert counts['event_runs_cleared'] == 0
-    assert counts['payload_fields_cleared'] == 1
+    assert counts['payload_fields_cleared'] == 0
     with sqlite3.connect(store.path) as db:
         assert_no_core_native_storage(db)
-        assert db.execute('select audit_tool_events_json,send_status from reply_attempts where id=?',(attempt_id,)).fetchone() == ('[]','sent')
+        assert db.execute(f'select audit_tool_events_json,send_status from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?',(attempt_id,)).fetchone() == (marker,'sent')
         assert db.execute(f'select id,status,execution_generation from ({REPLY_TASK_SQL})').fetchall() == before
         assert db.execute(f'select codex_session_id,status from ({AGENT_RUN_SQL}) where id=?',(run.id,)).fetchone() == ('missing-session','completed')
         assert db.execute(f'select result_envelope_json,runtime_kind from ({RUNTIME_ATTEMPT_SQL}) where id=?', (runtime.id,)).fetchone() == ('','codex_cli')
@@ -60,26 +60,29 @@ def test_native_only_cleanup_removes_missing_native_copies_preserves_service_sta
 
 
 def test_cleanup_reports_unreclaimed_wal_when_reader_holds_old_snapshot(tmp_path, monkeypatch):
-    store = AutoReplyStore(tmp_path / 'service.sqlite3')
-    from tests.test_store import _attempt
-    attempt_id = _attempt(store, trigger='held-reader-regression', status='sent')
+    from app.workbench.store import WorkbenchStore
+    store = WorkbenchStore(tmp_path / 'service.sqlite3')
+    task = store.create_task(title='Held reader', runtime_kind='codex')
+    turn = store.create_turn(task.id, user_text='Input', client_request_id='held-reader')
+    with store._connect() as db:
+        turn_id = task_physical_id(db, 'workbench_turns', turn.id)
     connect = sqlite3.connect
     with closing(connect(store.path)) as writer:
         writer.execute('pragma journal_mode=wal')
-        writer.execute('update reply_attempts set audit_tool_events_json=? where id=?',
-                       (json.dumps([{'output': 'old-trajectory-body'}]), attempt_id))
+        writer.execute('update tasks set error_detail=? where record_type=\'workbench_turns\' and id=?',
+                       ('old-trajectory-body', turn_id))
         writer.commit()
         with closing(connect(store.path)) as reader:
             reader.execute('begin')
             assert 'old-trajectory-body' in reader.execute(
-                'select audit_tool_events_json from reply_attempts where id=?', (attempt_id,)
+                'select error_detail from tasks where record_type=\'workbench_turns\' and id=?', (turn_id,)
             ).fetchone()[0]
             monkeypatch.setattr(storage_maintenance.sqlite3, 'connect',
                                 lambda path, **kwargs: connect(path, timeout=0.01))
             with pytest.raises(RuntimeError, match='WAL reclamation incomplete'):
                 storage_maintenance.compact_native_duplicates(store.path)
-            assert reader.execute('select audit_tool_events_json from reply_attempts where id=?',
-                                  (attempt_id,)).fetchone()[0] != '[]'
+            assert reader.execute('select error_detail from tasks where record_type=\'workbench_turns\' and id=?',
+                                  (turn_id,)).fetchone()[0] == 'old-trajectory-body'
     storage_maintenance.compact_native_duplicates(store.path)
     wal = store.path.with_name(store.path.name + '-wal')
     assert not wal.exists() or wal.stat().st_size == 0

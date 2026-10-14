@@ -707,7 +707,7 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   `newCalendar=1` / `calendarDetail` / `uniqueId=`，含 URL 编码形式），另加 attempt 上的
   `calendar_response` / `calendar_reconciliation` 动作或 `calendar_event_id`；测试把两处
   判定绑在一起。OKR 评审 attempt（`action='okr_review'`）归入钉钉消息。
-- History 的来源表是 `HISTORY_SOURCE_TABLES`：`reply_attempts`、会议、Task 各表，
+- History 的逻辑来源是 `HISTORY_SOURCE_TABLES`：`reply_attempts` 投影、会议、Task 各来源，
   以及两类新来源。Audit web 启动不预热大范围 History 查询；打开尝试详情时批量读取该任务代次的
   Agent run 及工具事件，图表只投影所选时间范围内 attempt 的当前 History 状态。
   页面缓存以来源表元组为键。
@@ -2008,6 +2008,28 @@ work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选�
 已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
+
+Phase5E 候选 Store19（`2026-10-13.5`）初始化将 Reply Attempt 和
+Memory Write Event 放入有限 `actions` 类型，保留各自公共整数 ID；物理
+`reply_attempts` 和 `memory_write_events` 表退役。准确 Store18 来源通过同一
+事务内的配对迁移与完整 manifest 核验，空库创建采用 fresh Memory 父外键模式；
+已迁移的 actual 模式在重启和辅助索引修复时继续保持无 Memory 外键模式。
+Store 与外部 History、Attention、质量扫描、定时恢复、邮件取证和维护读取
+都使用有限 Attempt/Memory 投影；外部写入按各自公共 ID 经有限 action writer
+更新，维持原有状态、条件、时间及事务语义。Memory 正文不复制到目标，
+`payload_json` 读取为 `{}`，仅保留准确的排队业务标记。主 Attempt 详情中的
+Audit 工具记录只从原生会话的指定行范围读取；缺失原生记录明确显示不可用，
+不会把已退休的数据库工具正文当作替代。已有业务结果、原始回执和排队审查
+标记继续保留。发布 quiet-wait 的候选、回执、postfix、delivery、任务、会议和
+定时来源只接受完整的 Store19 actual 或 fresh manifest，仍保留旧版本的准确选择。
+Store19 的 Attempt 创建时间及状态索引以 `record_type` 开头，使时间范围与
+原有状态排序读取在同类型记录增长时仍有准确索引；Reply 公共 ID 排序索引声明为唯一，帮助 fresh
+Memory 的公共父 ID 精确读取先定位父记录、再走 Memory 父索引。该唯一性已由
+既有全局公共 ID 唯一索引和整数规范文本约束保证；Memory 的 LEFT JOIN、
+字段及旧六／九／十二／十四类型声明不变。
+本段是隔离分支候选行为，未发布、未部署；实际副本、原始代码冷启动和原生
+角色路径的离线验收见 `docs/database-redesign-phase5e-validation.md`，完整 CI
+及上线读回仍属于后续发布门。
 
 
 ### Full document native output delivery

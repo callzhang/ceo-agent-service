@@ -8,7 +8,7 @@ import pytest
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_storage import RETIRED_TASK_TABLES, migrate_task_schema
 from tests.test_task_storage import source_database
-from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17
+from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_store19
 
 
 def original_rows_source13(path, source_factory=source_database):
@@ -53,6 +53,7 @@ def typed_runtime(request, tmp_path, monkeypatch):
             db.execute("update tasks set source_type='local_file' "
                        "where record_type='work_summary_inputs' and legacy_key='2'")
         advance_source16_to_store17(path)
+        advance_source17_to_store19(path)
         AutoReplyStore(path)  # Publish the complete source before observing typed readers.
 
     accesses = set()

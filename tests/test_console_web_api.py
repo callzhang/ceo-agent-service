@@ -1,3 +1,4 @@
+from app.action_storage import update_action
 import sqlite3
 import json
 import os
@@ -164,7 +165,7 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
         delivery_id, "failed", error="target_open_failed", pre_action_failure=True,
     )
     with store._connect() as db:
-        db.execute("update reply_attempts set retry_count=2 where id=?", (attempt_id,))
+        update_action(db, "reply_attempts", attempt_id, {"retry_count": 2})
     delivery = store.get_wechat_delivery_by_id(delivery_id)
     store.skip_exhausted_stale_wechat_delivery(
         delivery_id, expected_execution_generation=delivery.execution_generation,
@@ -2805,10 +2806,7 @@ def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_pat
                     }
                 ), tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (run.lastrowid, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.lastrowid})
 
     rows = audit_web_module._queue_attention_rows(store)
 
@@ -2864,7 +2862,7 @@ def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempt
             },
                     result=json.dumps(result), tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
-        db.execute("update reply_attempts set agent_run_id=? where id=?", (run.lastrowid, attempt_id))
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.lastrowid})
 
     rows = audit_web_module._queue_attention_rows(store)
 

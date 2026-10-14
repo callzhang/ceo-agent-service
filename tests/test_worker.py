@@ -3506,10 +3506,9 @@ def test_single_chat_calendar_reply_is_not_suppressed_by_approximate_topic_match
         send_status="sent",
     )
     with sqlite3.connect(worker.store.path) as db:
-        db.execute(
-            "update reply_attempts set created_at=?, updated_at=? where id=?",
-            ("2026-05-13 09:59:00", "2026-05-13 09:59:00", attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "created_at": "2026-05-13 09:59:00", "updated_at": "2026-05-13 09:59:00",
+        })
 
     queued = worker._enqueue_reply_task(
         conversation(single_chat=True),
@@ -9979,10 +9978,9 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
         send_status="commented",
     )
     with worker.store._connect() as db:
-        db.execute(
-            "update reply_attempts set created_at=?, updated_at=? where id=?",
-            ("2026-05-13 09:30:00", "2026-05-13 09:30:00", previous_attempt_id),
-        )
+        update_action(db, "reply_attempts", previous_attempt_id, {
+            "created_at": "2026-05-13 09:30:00", "updated_at": "2026-05-13 09:30:00",
+        })
 
     script_no_action(worker)
     worker.run_once()

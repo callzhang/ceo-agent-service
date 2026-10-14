@@ -27,8 +27,8 @@ def project_attempt_status(
 ) -> str:
     """Return the current state for an Attempt without rewriting history.
 
-    Physical ``reply_attempts.send_status`` is immutable history.  The current
-    state belongs to the task's current execution generation and its last
+    Stored Attempt status may change as the current execution is reconciled.
+    The projected current state belongs to the task's current execution generation and its last
     effective run; a task already closed as done/skipped must therefore not be
     reported as the stale pending state of an older attempt row.
     """

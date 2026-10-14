@@ -151,14 +151,19 @@ def test_current_facts_and_all_nine_identities_survive_inverse_repeat_and_republ
 
 def test_real_store17_fixture_historical_publication_and_republication(tmp_path, target_db):
     from app.action_postfix_storage import restore_action_postfix_schema
+    from app.action_reply_storage import capture_action_reply_schema, restore_action_reply_schema
     from app.run_storage import insert_run
     from app.store import AutoReplyStore
     from app.task_storage import insert_task
+    from tests.test_reply_attempt_action_migration import _database
 
     scope_path = tmp_path / "captured-source-scope.sqlite3"
     _source(scope_path)
     with closing(sqlite3.connect(scope_path)) as db:
         source_schema = capture_action_postfix_schema(db)
+    reply_source_path = tmp_path / "captured-reply-source.sqlite3"
+    with closing(_database(reply_source_path, "fresh_candidate17")) as db:
+        reply_source_schema = capture_action_reply_schema(db)
     path = tmp_path / "full-store.sqlite3"
     AutoReplyStore(path)
     delivery_source(target_db, "actual")
@@ -172,10 +177,12 @@ def test_real_store17_fixture_historical_publication_and_republication(tmp_path,
             storage.insert_action(db, kind, {**source_values(kind, token="deleted-high"), "id": watermark})
             storage.delete_action(db, kind, watermark)
         db.commit()
-        # The current factory creates Store18. Reconstruct actual Store17 and
-        # then Store16 with both paired inverses before historical publication.
+        # The current factory creates Store19. Apply the reply and delivery
+        # current-fact inverses before reconstructing historical Store16.
         db.execute("pragma foreign_keys=off")
         db.execute("begin immediate")
+        restore_action_reply_schema(db, reply_source_schema)
+        db.execute("update service_state set value='2026-10-13.4' where key='store_schema_version'")
         restore_action_delivery_schema(db, delivery_schema)
         db.execute("update service_state set value=? where key='store_schema_version'", (TARGET,))
         original = _snapshot(db, target=True)

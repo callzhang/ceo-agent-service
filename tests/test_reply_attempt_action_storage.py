@@ -1,0 +1,828 @@
+"""Independent source/finite comparisons for the opt-in Phase 5E storage."""
+
+from contextlib import closing
+import json
+import math
+from pathlib import Path
+import sqlite3
+from tempfile import TemporaryDirectory
+
+import pytest
+
+from app import action_storage as storage
+
+
+CAPTURE = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-13-database-redesign-phase5e-reply-source.json").read_text())
+REQUIRED = {"conversation_id": "c", "conversation_title": "t", "trigger_message_id": "m",
+            "trigger_sender": "s", "trigger_text": "body", "action": "reply",
+            "sensitivity_kind": "ordinary", "send_status": "pending"}
+
+
+@pytest.fixture(params=[("actual", "actual_no_memory_fk"), ("fresh_candidate17", "fresh_memory_fk")])
+def pair(request):
+    with closing(sqlite3.connect(":memory:")) as source, closing(sqlite3.connect(":memory:")) as target:
+        source.execute("pragma foreign_keys=on")
+        target.execute("pragma foreign_keys=on")
+        for name in ("reply_attempts", "memory_write_events"):
+            source.execute(CAPTURE[request.param[0]]["tables"][name]["sql"])
+        for definition in CAPTURE[request.param[0]]["tables"].values():
+            for index in definition["indexes"]:
+                if index["sql"]:
+                    source.execute(index["sql"])
+        target.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+        target.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+        storage.create_action_schema(target, include_reply=True, reply_variant=request.param[1])
+        yield source, target, request.param[0]
+
+
+def insert_source(db, table, values, ignore=False):
+    return db.execute(f"insert {'or ignore ' if ignore else ''}into {table}({','.join(values)}) values({','.join('?' for _ in values)})", tuple(values.values()))
+
+
+def projection(db, kind, identity, variant):
+    columns = [c["name"] for c in CAPTURE[variant]["tables"][kind]["columns"]]
+    values = db.execute("select * from (" + storage.reply_action_projection(kind, "actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk") + ") where id=?", (identity,)).fetchone()
+    return dict(zip(columns, values, strict=True))
+
+
+def source_row(db, kind, identity):
+    db.row_factory = sqlite3.Row
+    row = db.execute(f"select * from {kind} where id=?", (identity,)).fetchone()
+    return dict(row)
+
+
+def test_defaults_and_raw_storage_classes_match_source(pair):
+    source, target, variant = pair
+    values = REQUIRED | {"trigger_text": "not JSON\0 { trailing", "audit_documents_json": b"\x00\xffnot json",
+                         "final_reply_text": b"\x00\xffnot json", "agent_run_id": 404,
+                         "reviewed_at": None}
+    if variant == "actual":
+        values |= {"conversation_single_chat": 1, "trigger_create_time": b"\x00\xffnot json"}
+    sid = insert_source(source, "reply_attempts", values).lastrowid
+    tid = storage.insert_action(target, "reply_attempts", values).lastrowid
+    assert sid == tid
+    expected = source_row(source, "reply_attempts", sid)
+    actual = projection(target, "reply_attempts", tid, variant)
+    assert set(actual) == set(expected)
+    expected["audit_tool_events_json"] = "[]"
+    assert actual == expected
+    for field in expected:
+        if field == "audit_tool_events_json":
+            continue
+        source_type = source.execute(f"select typeof({field}) from reply_attempts where id=?", (sid,)).fetchone()[0]
+        target_type = target.execute(f"select typeof({field}) from ({storage.reply_action_projection('reply_attempts', 'actual_no_memory_fk' if variant == 'actual' else 'fresh_memory_fk')}) where id=?", (tid,)).fetchone()[0]
+        assert target_type == source_type, field
+
+
+def test_independent_id_namespaces_and_memory_membership(pair):
+    source, target, variant = pair
+    aid = insert_source(source, "reply_attempts", REQUIRED | {"id": 41}).lastrowid
+    assert storage.insert_action(target, "reply_attempts", REQUIRED | {"id": 41}).lastrowid == aid
+    event = {"attempt_id": aid, "event_type": "memory_write", "payload_json": "not JSON\0 { trailing"}
+    mid = insert_source(source, "memory_write_events", event | {"id": 41}).lastrowid
+    assert storage.insert_action(target, "memory_write_events", event | {"id": 41}).lastrowid == mid
+    expected = source_row(source, "memory_write_events", mid)
+    expected["payload_json"] = "{}"
+    assert projection(target, "memory_write_events", mid, variant) == expected
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_source(source, "memory_write_events", event)
+    with pytest.raises(sqlite3.IntegrityError):
+        storage.insert_action(target, "memory_write_events", event)
+    orphan = event | {"attempt_id": 404, "event_type": "orphan"}
+    if variant == "actual":
+        insert_source(source, "memory_write_events", orphan)
+        storage.insert_action(target, "memory_write_events", orphan)
+    else:
+        with pytest.raises(sqlite3.IntegrityError):
+            insert_source(source, "memory_write_events", orphan)
+        with pytest.raises(sqlite3.IntegrityError):
+            storage.insert_action(target, "memory_write_events", orphan)
+
+
+def test_old_layout_remains_unchanged(pair):
+    _, target, _ = pair
+    assert not storage.action_schema_is_current(target, include_delivery=True)
+    assert storage.action_schema_is_current(target, include_reply=True, reply_variant="actual_no_memory_fk") or storage.action_schema_is_current(target, include_reply=True, reply_variant="fresh_memory_fk")
+    assert storage.ACTION_SEQUENCE_NAMES == {"agent_effect_intents": "actions:agent_effect_intents",
+                                             "agent_execution_receipts": "actions:agent_execution_receipts"}
+
+
+@pytest.mark.parametrize("kind", ["reply_attempts", "memory_write_events"])
+def test_native_allocator_low_high_ignore_reject_and_delete(pair, kind):
+    source, target, _ = pair
+    if kind == "memory_write_events":
+        parent = insert_source(source, "reply_attempts", REQUIRED).lastrowid
+        assert storage.insert_action(target, "reply_attempts", REQUIRED).lastrowid == parent
+        base = {"attempt_id": parent, "event_type": "one", "payload_json": "{}"}
+        next_values = {"attempt_id": parent, "event_type": "two", "payload_json": "{}"}
+        invalid = {"event_type": None}
+    else:
+        base = REQUIRED
+        next_values = REQUIRED
+        invalid = {"conversation_id": None}
+
+    def pair_insert(values, ignore=False):
+        left = insert_source(source, kind, values, ignore=ignore)
+        right = storage.insert_action(target, kind, values, ignore=ignore)
+        assert right.lastrowid == (left.lastrowid if left.rowcount else None)
+        assert right.rowcount == left.rowcount
+        return left.lastrowid
+
+    assert pair_insert(base | {"id": 700}) == 700
+    source.execute(f"delete from {kind} where id=700")
+    storage.delete_action(target, kind, 700)
+    assert pair_insert(base) == 701
+    pair_insert(next_values | {"id": 5})
+    pair_insert(next_values | invalid | {"id": 900}, ignore=True)
+    assert source.execute("select seq from sqlite_sequence where name=?", (kind,)).fetchone()[0] == target.execute(
+        "select seq from sqlite_sequence where name=?", (storage.REPLY_SEQUENCE_NAMES[kind],)).fetchone()[0] == 900
+    values = next_values | ({"event_type": "three"} if kind == "memory_write_events" else {})
+    assert pair_insert(values) == 901
+    for target_db, operation in ((source, lambda: insert_source(source, kind, values | invalid | {"id": 1000})),
+                                 (target, lambda: storage.insert_action(target, kind, values | invalid | {"id": 1000}))):
+        with pytest.raises(sqlite3.IntegrityError):
+            operation()
+    assert source.execute("select seq from sqlite_sequence where name=?", (kind,)).fetchone()[0] == target.execute(
+        "select seq from sqlite_sequence where name=?", (storage.REPLY_SEQUENCE_NAMES[kind],)).fetchone()[0] == 901
+
+
+def test_fresh_memory_reference_update_delete_and_rebind(pair):
+    source, target, variant = pair
+    if variant != "fresh_candidate17":
+        pytest.skip("fresh reference contract")
+    first = insert_source(source, "reply_attempts", REQUIRED).lastrowid
+    second = insert_source(source, "reply_attempts", REQUIRED).lastrowid
+    for identity in (first, second):
+        assert storage.insert_action(target, "reply_attempts", REQUIRED).lastrowid == identity
+    values = {"attempt_id": first, "event_type": "memory_write", "payload_json": "{}"}
+    event = insert_source(source, "memory_write_events", values).lastrowid
+    assert storage.insert_action(target, "memory_write_events", values).lastrowid == event
+    with pytest.raises(sqlite3.IntegrityError):
+        source.execute("update reply_attempts set id=99 where id=?", (first,))
+    with pytest.raises(sqlite3.IntegrityError):
+        storage.update_action(target, "reply_attempts", first, {"id": 99})
+    with pytest.raises(sqlite3.IntegrityError):
+        source.execute("delete from reply_attempts where id=?", (first,))
+    with pytest.raises(sqlite3.IntegrityError):
+        storage.delete_action(target, "reply_attempts", first)
+    source.execute("update memory_write_events set attempt_id=? where id=?", (second, event))
+    storage.update_action(target, "memory_write_events", event, {"attempt_id": second})
+    assert projection(target, "memory_write_events", event, variant)["attempt_id"] == second
+    source.execute("update reply_attempts set id=99 where id=?", (first,))
+    storage.update_action(target, "reply_attempts", first, {"id": 99})
+    assert storage.action_physical_id(target, "reply_attempts", 99)
+
+
+@pytest.mark.parametrize("kind", ["reply_attempts", "memory_write_events"])
+def test_ignored_max_exhausts_native_allocator(pair, kind):
+    source, target, _ = pair
+    if kind == "memory_write_events":
+        parent = insert_source(source, "reply_attempts", REQUIRED).lastrowid
+        storage.insert_action(target, "reply_attempts", REQUIRED)
+        values = {"attempt_id": parent, "event_type": "one", "payload_json": "{}"}
+        invalid = {"event_type": None}
+    else:
+        values = REQUIRED
+        invalid = {"conversation_id": None}
+    insert_source(source, kind, values | {"id": 1})
+    storage.insert_action(target, kind, values | {"id": 1})
+    insert_source(source, kind, values | invalid | {"id": 2**63 - 1}, ignore=True)
+    storage.insert_action(target, kind, values | invalid | {"id": 2**63 - 1}, ignore=True)
+    source.commit()
+    target.commit()
+    for operation in (lambda: insert_source(source, kind, values), lambda: storage.insert_action(target, kind, values)):
+        with pytest.raises(sqlite3.DatabaseError) as error:
+            operation()
+        assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+
+
+@pytest.mark.parametrize("kind", ["reply_attempts", "memory_write_events"])
+@pytest.mark.parametrize("mode", ["transaction", "savepoint", "autocommit"])
+def test_full_rolls_back_the_same_native_scope(kind, mode):
+    outcomes = []
+    for target in (False, True):
+        with closing(sqlite3.connect(":memory:", isolation_level=None)) as db:
+            db.execute("pragma foreign_keys=on")
+            if target:
+                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk")
+            else:
+                for table in ("reply_attempts", "memory_write_events"):
+                    db.execute(CAPTURE["actual"]["tables"][table]["sql"])
+            db.execute("create table pending(value text)")
+            if kind == "memory_write_events":
+                parent = storage.insert_action(db, "reply_attempts", REQUIRED).lastrowid if target else insert_source(db, "reply_attempts", REQUIRED).lastrowid
+                values = {"attempt_id": parent, "event_type": "one", "payload_json": "{}"}
+                next_values = values | {"event_type": "two"}
+            else:
+                values = REQUIRED
+                next_values = REQUIRED
+            if target:
+                storage.insert_action(db, kind, values | {"id": 2**63 - 1})
+            else:
+                insert_source(db, kind, values | {"id": 2**63 - 1})
+            if mode != "autocommit":
+                db.execute("begin")
+            if mode == "savepoint":
+                db.execute("savepoint nested")
+            db.execute("insert into pending values('uncommitted')")
+            with pytest.raises(sqlite3.DatabaseError) as error:
+                if target:
+                    storage.insert_action(db, kind, next_values)
+                else:
+                    insert_source(db, kind, next_values)
+            assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+            table = "actions" if target else kind
+            sequence = storage.REPLY_SEQUENCE_NAMES[kind] if target else kind
+            outcomes.append((db.in_transaction, db.execute("select count(*) from pending").fetchone()[0],
+                             db.execute(f"select count(*) from {table} " + ("where record_type=?" if target else ""),
+                                        (kind,) if target else ()).fetchone()[0],
+                             db.execute("select seq from sqlite_sequence where name=?", (sequence,)).fetchone()))
+    assert outcomes[0] == outcomes[1]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("trigger_text", 12), ("trigger_text", 1.25), ("trigger_text", "x\0z"),
+    ("trigger_text", b"\x00\xffnot json"), ("retry_count", "00001"),
+    ("retry_count", "1x"), ("retry_count", 1.5),
+])
+def test_attempt_affinity_value_and_type_match_source(pair, field, value):
+    source, target, variant = pair
+    values = REQUIRED | {field: value}
+    sid = insert_source(source, "reply_attempts", values).lastrowid
+    tid = storage.insert_action(target, "reply_attempts", values).lastrowid
+    expected = source.execute(f"select {field},typeof({field}) from reply_attempts where id=?", (sid,)).fetchone()
+    actual = target.execute("select " + field + ",typeof(" + field + ") from (" + storage.reply_action_projection(
+        "reply_attempts", "actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk") + ") where id=?", (tid,)).fetchone()
+    assert actual == expected
+
+
+def test_reply_index_shapes_and_variant_status(pair):
+    _, target, variant = pair
+    indexes = {row[1]: row for row in target.execute("pragma index_list(actions)")}
+    expected = {"idx_actions_reply_trigger_message", "idx_actions_reply_status", "idx_actions_reply_created",
+                "idx_actions_reply_oa_history", "idx_actions_reply_trigger_history", "idx_actions_reply_current_trigger",
+                "idx_actions_reply_run_recovery", "idx_actions_memory_unique", "idx_actions_memory_attempt",
+                "idx_actions_memory_status"}
+    assert expected <= indexes.keys()
+    assert indexes["idx_actions_memory_unique"][2] == 1
+    oa = list(target.execute("pragma index_xinfo(idx_actions_reply_oa_history)"))
+    assert [(row[2], row[3], row[4]) for row in oa[:3]] == [
+        ("attempt_oa_process_instance_id", 0, "BINARY"), ("attempt_created_at", 1, "BINARY"), (None, 1, "BINARY")]
+    status = list(target.execute("pragma index_xinfo(idx_actions_memory_status)"))
+    assert status[1][2] == ("memory_updated_at" if variant == "fresh_candidate17" else None)
+    sql = target.execute("select sql from sqlite_schema where name='idx_actions_reply_oa_history'").fetchone()[0]
+    assert "attempt_oa_process_instance_id<>''" in sql
+
+
+def test_finite_payload_has_no_duplicate_physical_source_values(pair):
+    _, target, variant = pair
+    columns = {row[1]: row[6] for row in target.execute("pragma table_xinfo(actions)")}
+    assert columns["payload_json"] == 0
+    assert "attempt_values_json" not in columns
+    assert "memory_values_json" not in columns
+    assert columns["attempt_final_reply_text"] == 2
+    assert columns["memory_last_error"] == 2
+    assert ("memory_attempt_ref" in columns) == (variant == "fresh_candidate17")
+    assert ("memory_attempt_id" in columns) == (variant == "actual")
+    assert columns.get("memory_attempt_id") == (2 if variant == "actual" else None)
+
+
+def test_raw_update_and_exact_queued_marker_projection(pair):
+    source, target, variant = pair
+    sid = insert_source(source, "reply_attempts", REQUIRED).lastrowid
+    assert storage.insert_action(target, "reply_attempts", REQUIRED).lastrowid == sid
+    marker = {"tool": "audit_review", "result": "queued"}
+    events = json.dumps([{"tool": "read", "output": "secret"}, marker, marker, {"tool": "audit_review", "result": "done"}])
+    update = {"final_reply_text": b"\x00\xffnot json", "codex_reason": "not JSON\0 { trailing",
+              "audit_tool_events_json": events, "retry_count": float("inf"), "reviewed_at": None}
+    source.execute("update reply_attempts set " + ",".join(field + "=?" for field in update) + " where id=?",
+                   (*update.values(), sid))
+    storage.update_action(target, "reply_attempts", sid, update)
+    expected = source_row(source, "reply_attempts", sid)
+    expected["audit_tool_events_json"] = json.dumps([marker, marker], separators=(",", ":"))
+    actual = projection(target, "reply_attempts", sid, variant)
+    assert actual == expected
+    assert math.isinf(actual["retry_count"])
+    assert "secret" not in target.execute("select payload_json from actions where record_type='reply_attempts'").fetchone()[0]
+
+
+def test_memory_update_retains_raw_state_and_no_payload_copy(pair):
+    source, target, variant = pair
+    aid = insert_source(source, "reply_attempts", REQUIRED).lastrowid
+    storage.insert_action(target, "reply_attempts", REQUIRED)
+    initial = {"attempt_id": aid, "event_type": "memory_write", "payload_json": "private copied tool fragment"}
+    mid = insert_source(source, "memory_write_events", initial).lastrowid
+    assert storage.insert_action(target, "memory_write_events", initial).lastrowid == mid
+    source.execute("update memory_write_events set status=?,last_error=?,memory_episode_id=?,attempts=? where id=?",
+                   (b"\x00\xff", "not JSON\0 { trailing", b"\x00\xffepisode", "00007", mid))
+    storage.update_action(target, "memory_write_events", mid, {"status": b"\x00\xff", "last_error": "not JSON\0 { trailing",
+                                                              "memory_episode_id": b"\x00\xffepisode", "attempts": "00007"})
+    expected = source_row(source, "memory_write_events", mid)
+    expected["payload_json"] = "{}"
+    assert projection(target, "memory_write_events", mid, variant) == expected
+    assert "private copied tool fragment" not in target.execute(
+        "select payload_json from actions where record_type='memory_write_events'").fetchone()[0]
+
+
+def test_negative_public_ids_and_actual_orphan_key_change(pair):
+    source, target, variant = pair
+    if variant != "actual":
+        pytest.skip("actual scalar association contract")
+    aid = insert_source(source, "reply_attempts", REQUIRED | {"id": -7}).lastrowid
+    assert storage.insert_action(target, "reply_attempts", REQUIRED | {"id": -7}).lastrowid == aid
+    event = {"attempt_id": aid, "event_type": "memory_write", "payload_json": "{}", "id": -9}
+    assert insert_source(source, "memory_write_events", event).lastrowid == -9
+    assert storage.insert_action(target, "memory_write_events", event).lastrowid == -9
+    source.execute("update reply_attempts set id=-8 where id=-7")
+    storage.update_action(target, "reply_attempts", -7, {"id": -8})
+    assert projection(target, "memory_write_events", -9, variant)["attempt_id"] == -7
+    assert storage.insert_action(target, "reply_attempts", REQUIRED).lastrowid == insert_source(
+        source, "reply_attempts", REQUIRED).lastrowid == 1
+
+
+def test_fresh_fk_rejects_wrong_physical_parent_type(pair):
+    _, target, variant = pair
+    if variant != "fresh_candidate17":
+        pytest.skip("fresh typed reference contract")
+    other = storage.insert_action(target, "sent_replies", {"conversation_id": "c", "trigger_message_id": "m",
+                                                           "reply_text": "body"}).lastrowid
+    other_physical = storage.action_physical_id(target, "sent_replies", other)
+    with pytest.raises(sqlite3.IntegrityError):
+        target.execute("insert into actions(record_type,legacy_key,payload_json,memory_attempt_ref) values(?,?,?,?)",
+                       ("memory_write_events", "1", json.dumps({"event_type": "memory_write", "status": "pending",
+                                                                 "attempts": 0, "last_error": "", "memory_episode_id": "",
+                                                                 "created_at": "now", "updated_at": "now"}), other_physical))
+
+
+def test_reply_lookup_indices_survive_other_type_volume(pair):
+    _, target, variant = pair
+    for index in range(250):
+        storage.insert_action(target, "sent_replies", {"conversation_id": "other", "trigger_message_id": str(index),
+                                                       "reply_text": "body"})
+    aid = storage.insert_action(target, "reply_attempts", REQUIRED).lastrowid
+    storage.insert_action(target, "memory_write_events", {"attempt_id": aid, "event_type": "memory_write"})
+    parent_column = "memory_attempt_id" if variant == "actual" else "memory_attempt_ref"
+    physical_parent = aid if variant == "actual" else storage.action_physical_id(target, "reply_attempts", aid)
+    cases = [
+        (("idx_actions_public_id", "idx_actions_reply_public_order"),
+         "select id from actions where " + storage._identity_predicate("reply_attempts"),
+         storage._identity_arguments("reply_attempts", aid)),
+        ("idx_actions_reply_trigger_message", "select id from actions where record_type='reply_attempts' and attempt_trigger_message_id=?", ("m",)),
+        ("idx_actions_reply_status", "select id from actions where record_type='reply_attempts' and attempt_send_status=? order by attempt_created_at", ("pending",)),
+        ("idx_actions_memory_attempt", f"select id from actions where record_type='memory_write_events' and {parent_column}=? order by cast(legacy_key as integer)", (physical_parent,)),
+        ("idx_actions_memory_status", "select id from actions where record_type='memory_write_events' and memory_status=? order by " +
+         ("cast(legacy_key as integer)" if variant == "actual" else "memory_updated_at"), ("pending",)),
+    ]
+    assert target.execute(cases[0][1], cases[0][2]).fetchall() == [
+        (storage.action_physical_id(target, "reply_attempts", aid),)]
+    assert storage.action_physical_id(target, "reply_attempts", aid) != \
+        storage.action_physical_id(target, "memory_write_events", 1)
+    for name, sql, arguments in cases:
+        plan = target.execute("explain query plan " + sql, arguments).fetchall()
+        expected = (name,) if isinstance(name, str) else name
+        assert any(index in row[3] for index in expected for row in plan), (name, plan)
+
+
+def test_fresh_ignored_memory_constraints_advance_native_allocator(pair):
+    source, target, variant = pair
+    if variant != "fresh_candidate17":
+        pytest.skip("fresh parent reference contract")
+    cases = [
+        {"event_type": "x", "payload_json": "{}"},
+        {"attempt_id": 404, "event_type": None, "payload_json": "{}"},
+        {"attempt_id": 404, "event_type": None, "payload_json": "{}", "id": 2**63 - 1},
+    ]
+    for expected_sequence, values in zip((1, 2, 2**63 - 1), cases, strict=True):
+        assert insert_source(source, "memory_write_events", values, ignore=True).rowcount == 0
+        assert storage.insert_action(target, "memory_write_events", values, ignore=True).rowcount == 0
+        assert source.execute("select seq from sqlite_sequence where name='memory_write_events'").fetchone() == (expected_sequence,)
+        assert target.execute("select seq from sqlite_sequence where name=?", (storage.REPLY_SEQUENCE_NAMES["memory_write_events"],)).fetchone() == (expected_sequence,)
+    source.commit()
+    target.commit()
+    for operation in (lambda: insert_source(source, "memory_write_events", {"attempt_id": 404, "event_type": "x", "payload_json": "{}"}),
+                      lambda: storage.insert_action(target, "memory_write_events", {"attempt_id": 404, "event_type": "x", "payload_json": "{}"})):
+        with pytest.raises(sqlite3.DatabaseError) as error:
+            operation()
+        assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+
+
+def test_fresh_ignored_duplicate_id_precedes_missing_parent(pair):
+    source, target, variant = pair
+    if variant != "fresh_candidate17":
+        pytest.skip("fresh parent reference contract")
+    parent = insert_source(source, "reply_attempts", REQUIRED).lastrowid
+    storage.insert_action(target, "reply_attempts", REQUIRED)
+    initial = {"id": 1, "attempt_id": parent, "event_type": "original", "payload_json": "{}"}
+    insert_source(source, "memory_write_events", initial)
+    storage.insert_action(target, "memory_write_events", initial)
+    bad_parent = {"id": 1, "attempt_id": 404, "event_type": "new", "payload_json": "{}"}
+    assert insert_source(source, "memory_write_events", bad_parent, ignore=True).rowcount == 0
+    assert storage.insert_action(target, "memory_write_events", bad_parent, ignore=True).rowcount == 0
+    assert source.execute("select seq from sqlite_sequence where name='memory_write_events'").fetchone() == target.execute(
+        "select seq from sqlite_sequence where name=?", (storage.REPLY_SEQUENCE_NAMES["memory_write_events"],)).fetchone() == (1,)
+
+
+@pytest.mark.parametrize("kind", ["reply_attempts", "memory_write_events"])
+@pytest.mark.parametrize("updated_id", [900, 2**63 - 1])
+def test_ignored_duplicate_after_public_id_update_advances_native_water(pair, kind, updated_id):
+    source, target, _ = pair
+    values = REQUIRED if kind == "reply_attempts" else {"attempt_id": 404, "event_type": "x", "payload_json": "{}"}
+    if kind == "memory_write_events":
+        insert_source(source, "reply_attempts", REQUIRED | {"id": 404})
+        storage.insert_action(target, "reply_attempts", REQUIRED | {"id": 404})
+    assert insert_source(source, kind, values).lastrowid == 1
+    assert storage.insert_action(target, kind, values).lastrowid == 1
+    source.execute(f"update {kind} set id=? where id=1", (updated_id,))
+    storage.update_action(target, kind, 1, {"id": updated_id})
+    duplicate = values | {"id": updated_id}
+    assert insert_source(source, kind, duplicate, ignore=True).rowcount == 0
+    assert storage.insert_action(target, kind, duplicate, ignore=True).rowcount == 0
+    assert source.execute("select seq from sqlite_sequence where name=?", (kind,)).fetchone() == (updated_id,)
+    assert target.execute("select seq from sqlite_sequence where name=?", (storage.REPLY_SEQUENCE_NAMES[kind],)).fetchone() == (updated_id,)
+    source.execute(f"delete from {kind} where id=?", (updated_id,))
+    storage.delete_action(target, kind, updated_id)
+    if updated_id == 2**63 - 1:
+        for operation in (lambda: insert_source(source, kind, values), lambda: storage.insert_action(target, kind, values)):
+            with pytest.raises(sqlite3.DatabaseError) as error:
+                operation()
+            assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+    else:
+        assert insert_source(source, kind, values).lastrowid == updated_id + 1
+        assert storage.insert_action(target, kind, values).lastrowid == updated_id + 1
+
+
+@pytest.mark.parametrize("replacement", [None, 2.5, "nonnumeric"])
+def test_absent_attempt_update_defers_row_constraints(pair, replacement):
+    source, target, _ = pair
+    assert source.execute("update reply_attempts set id=? where id=999", (replacement,)).rowcount == 0
+    assert storage.update_action(target, "reply_attempts", 999, {"id": replacement}).rowcount == 0
+
+
+def test_absent_fresh_memory_update_defers_parent_resolution(pair):
+    source, target, variant = pair
+    if variant != "fresh_candidate17":
+        pytest.skip("fresh typed parent contract")
+    assert source.execute("update memory_write_events set attempt_id=999 where id=999").rowcount == 0
+    assert storage.update_action(target, "memory_write_events", 999, {"attempt_id": 999}).rowcount == 0
+    parent = insert_source(source, "reply_attempts", REQUIRED).lastrowid
+    storage.insert_action(target, "reply_attempts", REQUIRED)
+    event = {"attempt_id": parent, "event_type": "memory_write", "payload_json": "{}"}
+    mid = insert_source(source, "memory_write_events", event).lastrowid
+    storage.insert_action(target, "memory_write_events", event)
+    assert source.execute("update memory_write_events set attempt_id=999 where id=? and 0", (mid,)).rowcount == 0
+    assert storage.update_action(target, "memory_write_events", mid, {"attempt_id": 999}, where_sql="0").rowcount == 0
+
+
+def test_absent_update_still_rejects_unbindable_input(pair):
+    source, target, _ = pair
+    with pytest.raises(sqlite3.ProgrammingError):
+        source.execute("update reply_attempts set id=? where id=999", (object(),))
+    with pytest.raises(sqlite3.ProgrammingError):
+        storage.update_action(target, "reply_attempts", 999, {"id": object()})
+
+
+@pytest.mark.parametrize("bad_argument", ["set", "where"])
+@pytest.mark.parametrize("connection_options, expected_transaction", [
+    ({}, True), ({"isolation_level": None}, False), ({"autocommit": True}, False),
+])
+def test_bad_update_binding_opens_native_deferred_transaction(bad_argument, connection_options,
+                                                               expected_transaction):
+    outcomes = []
+    for target in (False, True):
+        with closing(sqlite3.connect(":memory:", **connection_options)) as db:
+            if target:
+                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk")
+            else:
+                db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
+            db.commit()
+            with pytest.raises(sqlite3.ProgrammingError):
+                if target:
+                    storage.update_action(db, "reply_attempts", 999,
+                                          {"final_reply_text": object() if bad_argument == "set" else "ok"},
+                                          where_sql="id=?" if bad_argument == "where" else "",
+                                          parameters=(object(),) if bad_argument == "where" else ())
+                else:
+                    db.execute("update reply_attempts set final_reply_text=? where id=999" +
+                               (" and id=?" if bad_argument == "where" else ""),
+                               ("ok", object()) if bad_argument == "where" else (object(),))
+            outcomes.append(db.in_transaction)
+    assert outcomes == [expected_transaction] * 2
+
+
+@pytest.mark.parametrize("connection_options", [{"isolation_level": None}, {"autocommit": True}])
+def test_autocommit_update_holds_writer_lock_through_predicate_scan(connection_options):
+    with TemporaryDirectory(prefix="phase5e-update-", dir="/tmp") as temporary:
+        path = Path(temporary) / "reply.db"
+        with closing(sqlite3.connect(path, **connection_options)) as db, closing(
+            sqlite3.connect(path, isolation_level=None, timeout=0)
+        ) as other:
+            db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+            db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+            storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk")
+            identity = storage.insert_action(db, "reply_attempts", REQUIRED).lastrowid
+            observed = []
+
+            def probe(sql):
+                if sql.startswith("select 1 from actions where"):
+                    try:
+                        other.execute("begin immediate")
+                    except sqlite3.OperationalError as error:
+                        observed.append(error.sqlite_errorcode)
+                    else:
+                        observed.append(None)
+                        other.execute("rollback")
+
+            db.set_trace_callback(probe)
+            try:
+                result = storage.update_action(db, "reply_attempts", identity, {"final_reply_text": "done"})
+            finally:
+                db.set_trace_callback(None)
+            assert result.rowcount == 1
+            assert observed == [sqlite3.SQLITE_BUSY]
+            assert db.in_transaction is False
+
+
+@pytest.mark.parametrize("scope", ["transaction", "savepoint"])
+def test_failed_update_preserves_caller_transaction(scope):
+    outcomes = []
+    for target in (False, True):
+        with closing(sqlite3.connect(":memory:", isolation_level=None)) as db:
+            if target:
+                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk")
+            else:
+                db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
+            db.execute("create table pending(value text)")
+            db.execute("begin")
+            if scope == "savepoint":
+                db.execute("savepoint caller")
+            db.execute("insert into pending values('caller')")
+            with pytest.raises(sqlite3.ProgrammingError):
+                if target:
+                    storage.update_action(db, "reply_attempts", 999, {"final_reply_text": object()})
+                else:
+                    db.execute("update reply_attempts set final_reply_text=? where id=999", (object(),))
+            outcomes.append((db.in_transaction, db.execute("select count(*) from pending").fetchone()[0]))
+            if scope == "savepoint":
+                db.execute("release caller")
+            db.execute("rollback")
+    assert outcomes == [(True, 1)] * 2
+
+
+@pytest.mark.parametrize("scope", ["deferred", "transaction", "savepoint"])
+@pytest.mark.parametrize("bad_argument", ["set", "where"])
+def test_bad_update_binding_does_not_take_writer_lock(scope, bad_argument):
+    outcomes = []
+    with TemporaryDirectory(prefix="phase5e-binding-", dir="/tmp") as temporary:
+        for target in (False, True):
+            path = Path(temporary) / ("target.db" if target else "source.db")
+            with closing(sqlite3.connect(path)) as db, closing(sqlite3.connect(path, isolation_level=None, timeout=0)) as other:
+                if target:
+                    db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                    db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                    storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk")
+                else:
+                    db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
+                db.commit()
+                if scope == "transaction":
+                    db.execute("begin")
+                elif scope == "savepoint":
+                    db.execute("savepoint caller")
+                with pytest.raises(sqlite3.ProgrammingError):
+                    if target:
+                        storage.update_action(db, "reply_attempts", 999,
+                                              {"final_reply_text": object() if bad_argument == "set" else "ok"},
+                                              where_sql="id=?" if bad_argument == "where" else "",
+                                              parameters=(object(),) if bad_argument == "where" else ())
+                    else:
+                        db.execute("update reply_attempts set final_reply_text=? where id=999" +
+                                   (" and id=?" if bad_argument == "where" else ""),
+                                   ("ok", object()) if bad_argument == "where" else (object(),))
+                try:
+                    other.execute("begin immediate")
+                except sqlite3.OperationalError as error:
+                    writer_result = error.sqlite_errorcode
+                else:
+                    writer_result = None
+                    other.execute("rollback")
+                outcomes.append((db.in_transaction, writer_result))
+                db.rollback()
+    assert outcomes == [(True, None)] * 2
+
+
+@pytest.mark.parametrize("kind, variant", [
+    ("reply_attempts", "actual"), ("memory_write_events", "fresh_candidate17"),
+])
+@pytest.mark.parametrize("explicit_id", [False, True])
+@pytest.mark.parametrize("scope", ["deferred", "autocommit", "outer"])
+def test_bad_reply_insert_binding_matches_native_transaction_and_lock(kind, variant, explicit_id, scope):
+    outcomes = []
+    with TemporaryDirectory(prefix="phase5e-insert-binding-", dir="/tmp") as temporary:
+        for target in (False, True):
+            path = Path(temporary) / ("target.db" if target else "source.db")
+            options = {"isolation_level": None} if scope == "autocommit" else {}
+            with closing(sqlite3.connect(path, **options)) as db, closing(
+                sqlite3.connect(path, isolation_level=None, timeout=0)
+            ) as other:
+                db.execute("pragma foreign_keys=on")
+                if target:
+                    db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                    db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                    storage.create_action_schema(db, include_reply=True,
+                                                 reply_variant="fresh_memory_fk" if kind == "memory_write_events"
+                                                 else "actual_no_memory_fk")
+                else:
+                    for table in ("reply_attempts", "memory_write_events"):
+                        db.execute(CAPTURE[variant]["tables"][table]["sql"])
+                db.commit()
+                if scope == "outer":
+                    db.execute("begin")
+                values = (REQUIRED | {"final_reply_text": object()} if kind == "reply_attempts" else
+                          {"attempt_id": 999, "event_type": "memory_write", "last_error": object()})
+                if explicit_id:
+                    values["id"] = 8
+                with pytest.raises(sqlite3.ProgrammingError):
+                    if target:
+                        storage.insert_action(db, kind, values)
+                    else:
+                        insert_source(db, kind, values)
+                try:
+                    other.execute("begin immediate")
+                except sqlite3.OperationalError as error:
+                    writer_result = error.sqlite_errorcode
+                else:
+                    writer_result = None
+                    other.execute("rollback")
+                outcomes.append((db.in_transaction, writer_result))
+                if db.in_transaction:
+                    db.rollback()
+    assert outcomes == [(scope != "autocommit", None)] * 2
+
+
+@pytest.mark.parametrize("mode", ["deferred", "autocommit", "outer", "savepoint"])
+def test_fresh_explicit_insert_parent_failure_transaction_matches_source(mode):
+    outcomes = []
+    for target in (False, True):
+        with closing(sqlite3.connect(":memory:", isolation_level=None if mode == "autocommit" else "")) as db:
+            db.execute("pragma foreign_keys=on")
+            if target:
+                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                storage.create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk")
+            else:
+                for table in ("reply_attempts", "memory_write_events"):
+                    db.execute(CAPTURE["fresh_candidate17"]["tables"][table]["sql"])
+            db.execute("create table pending(value text)")
+            db.commit()
+            if mode == "outer":
+                db.execute("begin")
+                db.execute("insert into pending values('caller')")
+            elif mode == "savepoint":
+                db.execute("savepoint caller")
+                db.execute("insert into pending values('caller')")
+            values = {"id": 8, "attempt_id": 999, "event_type": "memory_write", "payload_json": "{}"}
+            with pytest.raises(sqlite3.IntegrityError):
+                if target:
+                    storage.insert_action(db, "memory_write_events", values)
+                else:
+                    insert_source(db, "memory_write_events", values)
+            outcomes.append((db.in_transaction, db.execute("select count(*) from pending").fetchone()[0]))
+    expected = (mode != "autocommit", int(mode in ("outer", "savepoint")))
+    assert outcomes == [expected, expected]
+
+
+def test_fresh_full_precedes_missing_parent_and_rolls_back_caller_work():
+    outcomes = []
+    for target in (False, True):
+        with closing(sqlite3.connect(":memory:", isolation_level=None)) as db:
+            db.execute("pragma foreign_keys=on")
+            if target:
+                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                storage.create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk")
+            else:
+                for table in ("reply_attempts", "memory_write_events"):
+                    db.execute(CAPTURE["fresh_candidate17"]["tables"][table]["sql"])
+            db.execute("create table pending(value text)")
+            parent = storage.insert_action(db, "reply_attempts", REQUIRED).lastrowid if target else insert_source(db, "reply_attempts", REQUIRED).lastrowid
+            initial = {"id": 2**63 - 1, "attempt_id": parent, "event_type": "original", "payload_json": "{}"}
+            if target:
+                storage.insert_action(db, "memory_write_events", initial)
+            else:
+                insert_source(db, "memory_write_events", initial)
+            db.execute("begin")
+            db.execute("insert into pending values('caller')")
+            with pytest.raises(sqlite3.DatabaseError) as error:
+                if target:
+                    storage.insert_action(db, "memory_write_events", {"attempt_id": 404, "event_type": "new", "payload_json": "{}"}, ignore=True)
+                else:
+                    insert_source(db, "memory_write_events", {"attempt_id": 404, "event_type": "new", "payload_json": "{}"}, ignore=True)
+            outcomes.append((error.value.sqlite_errorcode, db.in_transaction,
+                             db.execute("select count(*) from pending").fetchone()[0]))
+    assert outcomes == [(sqlite3.SQLITE_FULL, False, 0)] * 2
+
+
+def test_reply_payload_rejects_unknown_or_retired_fields(pair):
+    _, target, variant = pair
+    aid = storage.insert_action(target, "reply_attempts", REQUIRED).lastrowid
+    mid = storage.insert_action(target, "memory_write_events", {"attempt_id": aid, "event_type": "x"}).lastrowid
+    for kind, identity, field, value in [
+        ("reply_attempts", aid, "not_a_source_field", "unexpected"),
+        ("memory_write_events", mid, "payload_json", "copied tool output"),
+        ("reply_attempts", aid, "conversation_single_chat" if variant == "fresh_candidate17" else "not_a_source_field", 1),
+    ]:
+        with pytest.raises(sqlite3.IntegrityError):
+            target.execute("update actions set payload_json=json_set(payload_json,?,?) where record_type=? and cast(legacy_key as integer)=?",
+                           ("$." + field, value, kind, identity))
+    with pytest.raises(ValueError):
+        storage.update_action(target, "reply_attempts", aid, {"payload_json": "unexpected body"})
+    for copied in (json.dumps([{"tool": "read", "output": "copied tool body"}]),
+                   json.dumps([{"result": "queued"}]),
+                   json.dumps([{"tool": "audit_review", "result": "queued", "output": "copied"}]),
+                   json.dumps(["not a marker"])):
+        with pytest.raises(sqlite3.IntegrityError):
+            target.execute("update actions set payload_json=json_set(payload_json,'$.audit_tool_events_json',?) "
+                           "where record_type='reply_attempts' and cast(legacy_key as integer)=?", (copied, aid))
+
+
+@pytest.mark.parametrize("fragment", [
+    '{"t":"blob","v":"0g"}', '{"t":"blob","v":"00","extra":1}',
+    '{"t":"inf","v":"unrelated"}', '{"t":"unknown"}',
+    '{"v":"626f6479"}', '{}', '{"t":null,"v":"00"}',
+])
+@pytest.mark.parametrize("field", ["final_reply_text", "reviewed_at", "agent_run_id"])
+def test_reply_payload_rejects_malformed_storage_tags(pair, fragment, field):
+    _, target, _ = pair
+    aid = storage.insert_action(target, "reply_attempts", REQUIRED).lastrowid
+    with pytest.raises(sqlite3.IntegrityError):
+        target.execute("update actions set payload_json=json_set(payload_json,?,json(?)) "
+                       "where record_type='reply_attempts' and cast(legacy_key as integer)=?", ("$." + field, fragment, aid))
+
+
+def test_blob_json_queued_markers_keep_order_and_multiplicity(pair):
+    source, target, variant = pair
+    marker = {"tool": "audit_review", "result": "queued"}
+    raw = json.dumps([marker, {"tool": "read", "output": "copied"}, marker]).encode()
+    aid = insert_source(source, "reply_attempts", REQUIRED | {"audit_tool_events_json": raw}).lastrowid
+    assert storage.insert_action(target, "reply_attempts", REQUIRED | {"audit_tool_events_json": raw}).lastrowid == aid
+    expected = json.dumps([marker, marker], separators=(",", ":"))
+    assert projection(target, "reply_attempts", aid, variant)["audit_tool_events_json"] == expected
+    storage.update_action(target, "reply_attempts", aid, {"audit_tool_events_json": raw})
+    assert projection(target, "reply_attempts", aid, variant)["audit_tool_events_json"] == expected
+    assert "copied" not in target.execute("select payload_json from actions where record_type='reply_attempts'").fetchone()[0]
+
+
+@pytest.mark.parametrize("kind", ["reply_attempts", "memory_write_events"])
+@pytest.mark.parametrize("source_id", [2.0, "2", "2.0", True, float("nan")])
+def test_native_integer_primary_key_input_matches_source(pair, kind, source_id):
+    source, target, _ = pair
+    if kind == "memory_write_events":
+        insert_source(source, "reply_attempts", REQUIRED | {"id": 404})
+        storage.insert_action(target, "reply_attempts", REQUIRED | {"id": 404})
+    values = REQUIRED if kind == "reply_attempts" else {"attempt_id": 404, "event_type": "x", "payload_json": "{}"}
+    source_error = target_error = None
+    try:
+        source_result = insert_source(source, kind, values | {"id": source_id})
+    except sqlite3.DatabaseError as error:
+        source_error = type(error)
+    try:
+        target_result = storage.insert_action(target, kind, values | {"id": source_id})
+    except sqlite3.DatabaseError as error:
+        target_error = type(error)
+    assert target_error == source_error
+    if source_error is None:
+        assert target_result.lastrowid == source_result.lastrowid
+        assert target.execute("select legacy_key from actions where record_type=?", (kind,)).fetchone() == (str(source_result.lastrowid),)
+
+
+@pytest.mark.parametrize("source_id", [2.0, "2", "2.0", True])
+def test_native_integer_primary_key_update_matches_source(pair, source_id):
+    source, target, variant = pair
+    sid = insert_source(source, "reply_attempts", REQUIRED | {"id": 41}).lastrowid
+    storage.insert_action(target, "reply_attempts", REQUIRED | {"id": 41})
+    source.execute("update reply_attempts set id=? where id=?", (source_id, sid))
+    storage.update_action(target, "reply_attempts", sid, {"id": source_id})
+    new_id = source.execute("select id from reply_attempts").fetchone()[0]
+    assert projection(target, "reply_attempts", new_id, variant)["id"] == new_id
+
+
+@pytest.mark.parametrize("kind", ["reply_attempts", "memory_write_events"])
+def test_nan_public_id_uses_current_native_highwater(pair, kind):
+    source, target, _ = pair
+    if kind == "memory_write_events":
+        insert_source(source, "reply_attempts", REQUIRED | {"id": 404})
+        storage.insert_action(target, "reply_attempts", REQUIRED | {"id": 404})
+        values = {"attempt_id": 404, "event_type": "x", "payload_json": "{}"}
+    else:
+        values = REQUIRED
+    insert_source(source, kind, values | {"id": 41})
+    storage.insert_action(target, kind, values | {"id": 41})
+    if kind == "memory_write_events":
+        values = values | {"event_type": "y"}
+    assert insert_source(source, kind, values | {"id": float("nan")}).lastrowid == 42
+    assert storage.insert_action(target, kind, values | {"id": float("nan")}).lastrowid == 42

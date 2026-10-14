@@ -27,6 +27,9 @@ from app.action_storage import (
     REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
+    REPLY_ATTEMPT_COMMON_SQL,
+    reply_action_projection,
+    validated_reply_variant,
 )
 
 
@@ -130,7 +133,7 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"sent_replies": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks"}
+        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
@@ -358,7 +361,7 @@ def _check_reply_attempts(
 ) -> None:
     # Only the newest attempt for a trigger can be actionable. This prevents an
     # old blocked/dry-run row from masking a later sent, skipped, or failed row.
-    latest = """
+    latest = f"""
         with latest as (
             select id, channel, conversation_id, trigger_message_id,
                    action, send_status, updated_at, reviewed_at, resolved_at,
@@ -366,7 +369,7 @@ def _check_reply_attempts(
                 partition by channel, conversation_id, trigger_message_id
                 order by datetime(updated_at) desc, id desc
             ) as ordinal
-            from reply_attempts
+            from ({REPLY_ATTEMPT_COMMON_SQL})
         )
     """
     direct_terminal = _count(
@@ -406,14 +409,14 @@ def _check_reply_attempts(
                     end
                     order by datetime(a.updated_at) desc, a.id desc
                 ) as ordinal
-                from reply_attempts a
+                from ({REPLY_ATTEMPT_COMMON_SQL}) a
                 where lower(a.action)='oa_approval'
             )
             select count(*) from oa_latest a
             where ordinal=1
               and lower(a.send_status) in ('failed','blocked')
               and not exists (
-                select 1 from reply_attempts resolved
+                select 1 from ({REPLY_ATTEMPT_COMMON_SQL}) resolved
                 where resolved.oa_process_instance_id=a.oa_process_instance_id
                   and json_valid(resolved.oa_action_result_json)
                   and coalesce(
@@ -842,6 +845,10 @@ def _check_external_delivery_queues(
             "and not (lower(status)='failed' and attempt_count < 3)",
         ),
     ):
+        source_sql = (
+            f"({reply_action_projection('memory_write_events', validated_reply_variant(db))})"
+            if source == "memory_write_events" else source
+        )
         if source == "work_todo_dingtalk_links":
             failed = _count(
                 db,
@@ -859,7 +866,7 @@ def _check_external_delivery_queues(
         else:
             failed = _count(
                 db,
-                f"""select count(*) from {source}
+                f"""select count(*) from {source_sql}
                     where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})
                     {resolved_filter}""",
                 failed_statuses,
@@ -868,7 +875,7 @@ def _check_external_delivery_queues(
              severity="error", detail="external delivery queue has an unrecovered failure")
         active = _count(
             db,
-            f"select count(*) from {source} where lower({status_column}) in ({','.join('?' for _ in active_statuses)})",
+            f"select count(*) from {source_sql} where lower({status_column}) in ({','.join('?' for _ in active_statuses)})",
             active_statuses,
         )
         _add(attention, source=source, code="active", count=active,
@@ -1002,7 +1009,7 @@ def _check_recent_errors(
              and not ({})
              and not exists (
                 select 1
-                from reply_attempts recovery
+                from ({REPLY_ATTEMPT_COMMON_SQL}) recovery
                 where recovery.conversation_id=error_event.conversation_id
                   and recovery.trigger_message_id=error_event.message_id
                   and datetime(recovery.updated_at) >= datetime(error_event.created_at)
@@ -1010,6 +1017,7 @@ def _check_recent_errors(
              )""".format(
             scheduled_predicate,
             ",".join("?" for _ in RECOVERED_REPLY_ATTEMPT_STATUSES),
+            REPLY_ATTEMPT_COMMON_SQL=REPLY_ATTEMPT_COMMON_SQL,
         ),
         (
             _cutoff(now, RECENT_ERROR_WINDOW_SECONDS),
