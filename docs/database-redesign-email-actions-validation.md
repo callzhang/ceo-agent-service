@@ -1910,3 +1910,23 @@ RED and GREEN each removed and verified absence of their own
 `/tmp/email13-task5b6-*` roots. Historical H, shared metadata rebuild S,
 composite effect/retry and remaining current T tests are still deferred;
 this is not full Task5 or publication acceptance.
+
+### Task5B6 QUALITY P2 repair: count all finite plan reads
+
+Fresh QUALITY found that the first selector counted only finite plan queries
+already containing the batch `json_each` predicate. An additional point read
+through the same `EMAIL_PLAN_SQL` projection would have been filtered out and
+could falsely satisfy the one-query assertion. A focused regression now
+executes the real `_current_action_plan_rows` batch read followed by a point
+read on the same SQLite connection and trace. The original batch-only selector
+and an intermediate `SELECT *` prefix selector each ran RED with `Failed: DID
+NOT RAISE AssertionError`, pytest exit 1. The point read selects only
+`action_plan_id`, proving that outer-column selection cannot hide the read.
+The final selector counts every trace query containing the full finite
+`from ({EMAIL_PLAN_SQL})` source fragment, asserts there is exactly one, and
+only then verifies that sole query has the batch `json_each` predicate. The
+new regression and original one-query/connection test ran GREEN:
+`2 passed in 1.94s`, pytest exit 0. Scoped Ruff and diff-check passed;
+all run-owned `/tmp/email13-task5b6-p2-*` roots were removed and
+verified absent. This repairs the review finding; independent re-review is
+still pending and the broader Task5/publication gates remain open.

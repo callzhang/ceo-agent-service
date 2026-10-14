@@ -110,6 +110,15 @@ def test_v48_reference_migration_rejects_corruption_and_rolls_back(tmp_path, cor
         assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == 48
 
 
+def _assert_single_batch_plan_query(queries):
+    plan_queries = [
+        query for query in queries
+        if f"from ({EMAIL_PLAN_SQL})".lower() in query.lower()
+    ]
+    assert len(plan_queries) == 1
+    assert "where action_plan_id in (select value from json_each(" in plan_queries[0].lower()
+
+
 def test_list_hydrates_canonical_plans_in_one_query_and_connection(tmp_path, monkeypatch):
     path = tmp_path / 'batch.sqlite3'
     store = EmailStore(path)
@@ -131,13 +140,25 @@ def test_list_hydrates_canonical_plans_in_one_query_and_connection(tmp_path, mon
     items, total = store.list_classifications(status=None, limit=20, offset=0)
     assert total == len(items) == 20
     assert len(connections) == 1
-    plan_queries = [
-        query for query in queries
-        if query.lower().startswith(f"select * from ({EMAIL_PLAN_SQL})".lower())
-        and "where action_plan_id in (select value from json_each(" in query.lower()
-    ]
-    assert len(plan_queries) == 1
+    _assert_single_batch_plan_query(queries)
     assert all(item['action_plan']['action_plan_id'] == item['current_action_plan_id'] for item in items)
+
+
+def test_plan_query_guard_rejects_batch_plus_point_hydration(tmp_path):
+    path = tmp_path / 'batch-plus-point.sqlite3'
+    seed(path)
+    queries = []
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        db.set_trace_callback(queries.append)
+        rows = db.execute('select * from email_classifications where id=1').fetchall()
+        assert len(EmailStore._current_action_plan_rows(db, rows)) == 1
+        assert db.execute(
+            f'select action_plan_id from ({EMAIL_PLAN_SQL}) where action_plan_id=?',
+            (rows[0]['current_action_plan_id'],),
+        ).fetchone() is not None
+    with pytest.raises(AssertionError):
+        _assert_single_batch_plan_query(queries)
 
 
 def test_current_reference_survives_correction_feedback_and_scan_retry(tmp_path):
