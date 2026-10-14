@@ -71,7 +71,8 @@ def test_sql_legal_null_plans_survive_fresh_forward_inverse_reforward(old_fresh)
     assert not result["old_public_feedback_replay"]
 
 
-def test_source_ref_must_be_current_published_checkout(tmp_path):
+def test_source_ref_must_be_current_published_checkout(tmp_path, monkeypatch):
+    monkeypatch.setattr(proof, "PRODUCTION_ROOT", Path(__file__).resolve().parents[1])
     with pytest.raises(AssertionError):
         run(tmp_path / "not-opened.sqlite3", "not-a-published-ref", Path(__file__).resolve().parents[1])
 
@@ -88,7 +89,8 @@ def test_copy_harness_rejects_current_fact_loss(old_fresh, monkeypatch, damage):
                        "where record_type='email_action_plans'")
         elif damage == "rowid":
             db.execute("update actions set legacy_key='999999' "
-                       "where record_type='email_action_plans'")
+                       "where record_type='email_action_plans' and id=(select min(id) "
+                       "from actions where record_type='email_action_plans')")
         else:
             db.execute("delete from sqlite_sequence where name='actions:email_action_attempts'")
             db.execute("insert into sqlite_sequence(name,seq) "
