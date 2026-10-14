@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Protocol
@@ -15,7 +16,7 @@ from app.agent_runtime_router import (
     RoutedResultValidationError,
     RoutedResultValidationRetry,
 )
-from app.config import principal_display_name, work_profile_path
+from app.config import principal_display_name
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
@@ -104,10 +105,15 @@ class MeetingAlignmentAgent:
         consumer_prompt: str = "",
         skill_protocol: str = "",
     ) -> MeetingAlignmentDecision:
+        profile = work_profile_instruction()
+        profile_source = (
+            "work_profile:sha256:" + hashlib.sha256(profile.encode("utf-8")).hexdigest()
+            if profile else ""
+        )
         prompt = build_meeting_alignment_prompt(
             source,
-            work_profile=work_profile_instruction(),
-            work_profile_source=str(work_profile_path()),
+            work_profile=profile,
+            work_profile_source=profile_source,
             similar_sessions=similar_sessions or [],
             group_candidates=group_candidates or [],
             consumer_prompt=consumer_prompt,
