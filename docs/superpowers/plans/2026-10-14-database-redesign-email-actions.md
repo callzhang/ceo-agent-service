@@ -265,6 +265,14 @@ not Task3B implementation or execution evidence.
 
 ## Task 4: Paired release, constructors, DAO and external triggers
 
+**Foundation preparation accepted, unselected:** neutral current classification
+and retained non-action DDL factories0a1929a0 passed sequential independent
+SPEC then QUALITY. Genuine2773 native49-object parity, transaction/savepoint
+rollback, passive imports and real opt-in action FK behavior are verified.
+No constructor invokes these factories, no seeds/markers are assigned, and
+all selected constructor/DAO/release work below remains open.
+
+
 **Unselected foundation prepared 2026-10-14:** `app/email_classification_schema.py`
 provides the full post-Email51 classification-parent DDL, and
 `app/email_current_schema.py` provides the retained non-action Email DDL as

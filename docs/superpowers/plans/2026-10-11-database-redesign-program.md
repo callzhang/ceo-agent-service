@@ -331,3 +331,13 @@ that integration, the known E History query bottleneck and incomplete live
 performance acceptance remain a separate bounded repair; the previous1.440s
 diagnostic was only count equivalence, not a published fix. Full10+1 remains
 active; Followup9 and the other prepared families remain disabled/preparatory.
+
+
+Email13 Task4 pure current-schema factories0a1929a0 now passed sequential
+SPEC then QUALITY. Exact native current classification30fields, retained
+19tables/10indexes/19triggers and empty separate ledger are prepared without
+selection or seed/version writes;49 native source objects were independently
+reconstructed and checked. Actual constructor orders, fresh default seeds,
+paired markers/inverse, DAO/callers and publication remain pending. History
+query repairPR86 has separate completed scoped reviews and external CI in
+progress; neither preparation nor CI progress changes the production table count.

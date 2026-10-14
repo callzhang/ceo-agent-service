@@ -407,3 +407,21 @@ fresh cases. Actual121→108 tables and the existing FK finding1 are preserved.
 No source row was filtered or sanitized. No production change, constructor
 activation, target marker, provider call, native CLI, CI or publication is
 claimed. The full ten-core-table plus one-ledger redesign remains incomplete.
+
+
+## Unselected current-schema factory acceptance
+
+Root accepts0a1929a0d14a578d292c299c4afcca6c0bd004ca after sequential
+independent SPEC then QUALITY. SPEC reconstructed genuine published2773 fresh
+metadata and verified all49 fixture objects and complete retained namespace;
+six focused tests passed2.77s. QUALITY independently verified passive imports,
+caller-only connection use, both transaction modes/savepoints/outer rollback,
+real older-kind and Email29 FK writes, and unchanged active constructors;
+six focused tests passed1.72s. Both Ruff/diff checks passed and review-owned
+temporary artifacts were cleaned.
+
+The neutral30-column classification parent and19-table/10-index/19-trigger
+retained DDL are prepared only. The separate ledger is empty, and no seed
+rows or version values are assigned. Existing constructors, source tables,
+validators, DAO and releases remain selected exactly as before. This is not
+Task4 constructor integration or production acceptance; that work remains open.
