@@ -32,11 +32,12 @@ verification failure, not a needs_human business choice. No maintenance runs in
 read paths or startup.
 
 Startup reply-task projection recovery performs candidate discovery on read-only
-connections and applies bounded batches in short SQLite write transactions. Both
-the failed-current-run repair and settled-trigger reconciliation recheck the exact
-task generation and current evidence inside each write transaction, so a concurrent
-terminal update is preserved and a large historical backlog cannot monopolize the
-database writer for one transaction.
+connections and applies bounded batches in short SQLite write transactions. The
+failed-current-run repair rechecks only the candidate task IDs, generations and
+latest run IDs in each write batch, along with current receipt and settlement
+evidence; it never reruns the full historical candidate scan under the writer
+lock. Settled-trigger reconciliation also rechecks exact task generations and
+current evidence inside each batch, preserving concurrent terminal updates.
 
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed

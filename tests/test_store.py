@@ -2722,12 +2722,19 @@ def test_reconcile_done_failed_runs_commits_between_bounded_batches(
     original_transaction = store._immediate_write_transaction
     committed_batches = 0
     interleaved_writer_acquired = False
+    batch_transaction_sql: list[str] = []
 
     @contextmanager
     def transaction_with_competing_writer():
         nonlocal committed_batches, interleaved_writer_acquired
         with original_transaction() as db:
-            yield db
+            statements: list[str] = []
+            db.set_trace_callback(statements.append)
+            try:
+                yield db
+            finally:
+                db.set_trace_callback(None)
+                batch_transaction_sql.extend(statements)
         committed_batches += 1
         if committed_batches == 1:
             with store._connect() as other_writer:
@@ -2746,6 +2753,17 @@ def test_reconcile_done_failed_runs_commits_between_bounded_batches(
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 1
     assert committed_batches == 2
     assert interleaved_writer_acquired
+    batch_selects = [
+        statement.lower()
+        for statement in batch_transaction_sql
+        if statement.lstrip().lower().startswith(("select", "with"))
+    ]
+    assert len(batch_selects) == 2
+    assert all("with batch_candidates" in statement for statement in batch_selects)
+    assert all(
+        "from (select cast(legacy_key as integer) as id" not in statement
+        for statement in batch_selects
+    )
     first = store.get_reply_task(task_ids[0])
     second = store.get_reply_task(task_ids[1])
     assert first is not None and first.status == "failed"

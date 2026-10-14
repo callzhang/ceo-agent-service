@@ -368,8 +368,9 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 `failed`、且没有成功外部动作或已收口错误的 `done` task 改回真实失败投影。此恢复按
 `external_action_results.business_object_key`、`sent_replies.external_action_key` 和
 `errors(conversation_id, message_id, kind)` 索引反查，不在写事务中为每条 task 扫描整张回执和
-错误表。候选扫描在只读连接完成，写入按固定大小分批；每批在短写事务内重新核验 task ID、执行代、
-最新失败 run、外部成功动作和已收口错误。并发变化的候选会跳过，不会被旧扫描结果覆盖；历史保留规则不变。
+错误表。候选扫描在只读连接完成，写入按固定大小分批；每批短写事务只按候选 task ID、执行代和
+最新 run ID 查询并重核外部成功动作、已收口错误及终态回执，不在写锁内重跑全历史候选查询。
+并发变化的候选会跳过，不会被旧扫描结果覆盖；历史保留规则不变。
 
 `reconcile_unresolved_reply_tasks_with_settlement_evidence` 同样先只读扫描精确 trigger 的已收口
 settlement evidence，再按固定大小批次短写。每个批次重新核验 task ID、execution generation、未解决状态
