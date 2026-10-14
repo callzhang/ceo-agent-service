@@ -1,5 +1,12 @@
 # CEO Agent Service Architecture
 
+The local History query candidate projects source identity and sort time from
+each selected source before the combined page sort, applies existing filters
+within those source branches, and hydrates only the selected page in one read
+snapshot. Reply Attempt recovery and supersession checks share the maximum
+terminal public Attempt ID per trigger with their original status rules. This is a read-path
+change only; its broad search and live UI performance remain unverified.
+
 Follow-up/Todo-sync action storage Tasks 1A/1B are an unselected candidate. With
 the explicit disabled-by-default `include_followup_sync` flag on the reviewed
 Email29 actual/fresh scaffold, nine finite action types expose the original

@@ -11,6 +11,191 @@ from app.task_storage import insert_task
 from app.task_storage import REPLY_TASK_SQL
 
 
+def test_plain_history_key_stage_uses_compact_branch_projections(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "compact-history.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="compact", conversation_title="Compact",
+        trigger_message_id="one", trigger_sender="sender", trigger_text="body",
+        action="agent_run", sensitivity_kind="general", send_status="failed",
+    )
+    calls = []
+    original = store._operation_logs_key_query
+
+    def capture(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls.append(result)
+        return result
+
+    monkeypatch.setattr(store, "_operation_logs_key_query", capture)
+    total, rows = store.list_operation_logs_with_count(
+        limit=1, source_tables=("reply_attempts", "errors"),
+        _skip_history_cache=True,
+    )
+    assert total == 1
+    assert len(rows) == 1
+    compact_sql, branches = calls[0]
+    assert "select source_table, source_id, occurred_at" in compact_sql
+    assert branches == 2
+
+
+def test_plain_history_key_stage_does_not_compute_unfiltered_type(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "compact-type.sqlite3")
+    for number in range(30):
+        store.record_reply_attempt(
+            conversation_id="compact", conversation_title="Compact",
+            trigger_message_id=str(number), trigger_sender="sender",
+            trigger_text="body", action="agent_run",
+            sensitivity_kind="general", send_status="sent",
+        )
+    computed = []
+    original_connect = store._connect
+    original_type_sql = history_types.reply_attempt_history_type_sql
+
+    @contextmanager
+    def instrumented_connection():
+        with original_connect() as db:
+            db.create_function(
+                "count_history_type", 1,
+                lambda value: computed.append(value) or value,
+            )
+            yield db
+
+    monkeypatch.setattr(store, "_connect", instrumented_connection)
+    monkeypatch.setattr(
+        history_types, "reply_attempt_history_type_sql",
+        lambda: "count_history_type(" + original_type_sql() + ")",
+    )
+    total, rows = store.list_operation_logs_with_count(
+        limit=1, source_tables=("reply_attempts", "errors"),
+        _skip_history_cache=True,
+    )
+    assert total == 30
+    assert len(rows) == 1
+    assert len(computed) == 1
+
+
+def test_history_generic_filters_match_full_projection(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-filters.sqlite3")
+    for index, status in enumerate(("failed", "sent", "needs_human")):
+        store.record_reply_attempt(
+            conversation_id="filters", conversation_title="Matching context",
+            trigger_message_id=str(index), trigger_sender="sender",
+            trigger_text=f"searchable body {index}", action="agent_run",
+            sensitivity_kind="general", send_status=status,
+        )
+    selections = (
+        {}, {"query": "searchable"}, {"statuses": ("sent",)},
+        {"log_type": "Reply"}, {"history_types": (history_types.DINGTALK,)},
+        {"query": "matching", "statuses": ("failed", "sent")},
+    )
+    for filters in selections:
+        where_sql, where_args = store._operation_log_filters(
+            source_tables=("reply_attempts", "errors"), **filters
+        )
+        with store._connect() as db:
+            expected = db.execute(
+                "select * from (" + store._operation_logs_base_query(
+                    ("reply_attempts", "errors")
+                ) + ") " + where_sql +
+                " order by occurred_at desc, source_table desc, source_id desc",
+                tuple(where_args),
+            ).fetchall()
+        for offset, limit in ((0, 2), (1, 1), (99, 2)):
+            total, rows = store.list_operation_logs_with_count(
+                offset=offset, limit=limit,
+                source_tables=("reply_attempts", "errors"),
+                _skip_history_cache=True, **filters,
+            )
+            assert total == len(expected)
+            assert [row.model_dump() for row in rows] == [
+                OperationLog.model_validate(dict(row)).model_dump()
+                for row in expected[offset:offset + limit]
+            ]
+
+
+def test_later_terminal_attempt_is_shared_across_long_trigger_history(tmp_path):
+    store = AutoReplyStore(tmp_path / "terminal-history.sqlite3")
+    original_ids = []
+    for number in range(240):
+        original_ids.append(store.record_reply_attempt(
+            channel="dingtalk", conversation_id="long-history",
+            conversation_title="History", trigger_message_id="same-trigger",
+            trigger_sender="sender", trigger_text=f"failed {number}",
+            action="agent_run", sensitivity_kind="general", send_status="failed",
+        ))
+    superseded_ids = []
+    for status in ("blocked", "pending", "needs_human"):
+        superseded_ids.append(store.record_reply_attempt(
+            channel="dingtalk", conversation_id="long-history",
+            conversation_title="History", trigger_message_id="same-trigger",
+            trigger_sender="sender", trigger_text=status,
+            action="agent_run", sensitivity_kind="general", send_status=status,
+        ))
+    terminal_id = store.record_reply_attempt(
+        channel="dingtalk", conversation_id="long-history",
+        conversation_title="History", trigger_message_id="same-trigger",
+        trigger_sender="sender", trigger_text="sent",
+        action="agent_run", sensitivity_kind="general", send_status="sent",
+    )
+    other_id = store.record_reply_attempt(
+        channel="wechat", conversation_id="long-history",
+        conversation_title="History", trigger_message_id="same-trigger",
+        trigger_sender="sender", trigger_text="other channel",
+        action="agent_run", sensitivity_kind="general", send_status="failed",
+    )
+    with store._connect() as db:
+        steps = 0
+
+        def count_steps():
+            nonlocal steps
+            steps += 1000
+            return steps > 2_000_000
+
+        db.set_progress_handler(count_steps, 1000)
+        try:
+            rows = db.execute(
+                "select source_id, status from (" +
+                store._operation_logs_base_query(("reply_attempts",)) +
+                ") order by source_id"
+            ).fetchall()
+        finally:
+            db.set_progress_handler(None, 0)
+    statuses = {row["source_id"]: row["status"] for row in rows}
+    assert len(statuses) == len(original_ids) + len(superseded_ids) + 2
+    assert all(statuses[attempt_id] == "recovered" for attempt_id in original_ids)
+    assert all(statuses[attempt_id] == "recovered" for attempt_id in superseded_ids)
+    assert statuses[terminal_id] == "sent"
+    assert statuses[other_id] == "failed"
+    assert steps < 500_000
+
+
+@pytest.mark.parametrize(
+    "sources", (None, (), ("reply_attempts", "reply_attempts"), ("absent",))
+)
+def test_history_compact_keys_preserve_source_selection(tmp_path, sources):
+    store = AutoReplyStore(tmp_path / "source-selection.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="source", conversation_title="Source",
+        trigger_message_id="one", trigger_sender="sender", trigger_text="body",
+        action="agent_run", sensitivity_kind="general", send_status="sent",
+    )
+    where_sql, where_args = store._operation_log_filters(source_tables=sources)
+    with store._connect() as db:
+        expected = db.execute(
+            "select source_table, source_id from (" +
+            store._operation_logs_base_query(sources) + ") " + where_sql +
+            " order by occurred_at desc, source_table desc, source_id desc",
+            tuple(where_args),
+        ).fetchall()
+    total, rows = store.list_operation_logs_with_count(
+        limit=20, source_tables=sources, _skip_history_cache=True
+    )
+    assert total == len(expected)
+    assert [(row.source_table, row.source_id) for row in rows] == [
+        tuple(row) for row in expected
+    ]
+
+
 @pytest.mark.parametrize("offset,limit", [(0, 1), (3, 2), (8, 2)])
 def test_history_hydrates_bodies_only_for_requested_page(
     tmp_path, monkeypatch, offset, limit

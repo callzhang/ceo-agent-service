@@ -3128,6 +3128,16 @@ not proof of all task execution or provider outcomes. See
 `docs/database-redesign-history-query-validation.md` for exact evidence.
 No schema or retention change is part of this History release.
 
+The subsequent local History query candidate narrows each selected source branch
+to `source_table`, `source_id`, and `occurred_at` before the combined page sort.
+The existing type, status, and text filters still run inside each source branch;
+the selected page is hydrated through the original full projection in the same
+read snapshot. Two later/superseding reply-attempt status checks share one
+per-trigger maximum terminal public Attempt ID, preserving the same eight
+terminal statuses and strict newer-ID comparison. The failed-only candidate path is unchanged. This candidate has
+focused local tests only; broad History text search still has an unbounded
+projection cost and has not passed whole-copy or live UI acceptance.
+
 
 ### Unselected current Email fresh seeds (Task4E1)
 

@@ -2264,3 +2264,29 @@ Focused regressions include genuine d06 fresh source publication, the canonical 
 Root accepts9254756a0b5b7d5ae89d75370afdc532301f293b over06d97e3a after fresh sequential SPEC and QUALITY PASS. Both confirm official paired publication before native task creation, separate immutable source/postpublication target baselines via SQLite Backup API, correct independently read-only streaming inclusion with original FTS/shadow exclusions/FK findings, and unchanged native commands/roles/provider/CLI modes. QUALITY additionally passed a signed-ROWID/mixed composite PK/Unicode/BLOB/addition/deletion helper probe and cleaned its temp root. Accepted implementer12cases5.72s/Ruff/diff/AST boundaries and cleanup were not needlessly repeated. Native Email projection/direct-attempt/History proof is separately deterministic, with honest zero prior reply/unsubscribe receipts; no Email-browser native or full-task-context claim.
 
 Actual native approve/revision runs on latest production copies, in-memory-provider receipts, isolated Console clicks, CI and publication remain open. No production or real provider mutation has occurred. Root will now run those two real CLI cases; all original trajectories remain solely in native Codex storage.
+
+### Local generic History query candidate, 2026-10-14
+
+The full UNION key stage evaluated reply Attempt status work during a plain
+multi-source list, although that list needed only source identity and sort time.
+The local candidate projects three compact keys per selected source branch,
+applies original filters before combining branches, then hydrates page rows in
+the existing read snapshot. Repeated later/superseding terminal-attempt checks
+now share one grouped maximum public ID per trigger, with the same eight
+terminal statuses and strict newer-ID predicate. The failed-only dispatch and
+its candidate path are unchanged. Focused regression-first tests cover filter,
+offset, total, page-only hydration and a long same-trigger history; broad text
+search, whole-copy performance and live UI acceptance remain open. This unit
+has no schema, provider, native CLI, production or deployment change.
+
+Focused pagination module: 14 passed in 8.75 seconds after the final query
+structure correction. The original full-projection helper retains its string
+return contract; selected source keys wrap its actual returned SQL, so existing
+body-read instrumentation observes the key stage. A disposable fault probe
+forced summary evaluation on every key and observed eight body evaluations
+for a one-row page; the page-only regression would fail under that fault. The
+probe's owned `/tmp` directory was removed and absence verified. Scoped Ruff
+and whitespace checks passed. Two selected non-Email History-type checks
+passed; a third selected test reached its previously identified retired
+`email_action_plans` fixture INSERT and failed before the query assertion.
+That fixture conversion belongs to Task7 and is outside this query unit.

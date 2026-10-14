@@ -30302,17 +30302,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             history_types=history_types,
             source_tables=source_tables,
         )
+        compact_query, branch_count = self._operation_logs_key_query(
+            source_tables, where_sql
+        )
         sql = f"""
             with operation_logs as (
-                {self._operation_logs_base_query(source_tables)}
+                {compact_query}
             )
             select source_table, source_id, count(*) over() as __total
             from operation_logs
-            {where_sql}
             order by occurred_at desc, source_table desc, source_id desc
             limit ? offset ?
         """
-        args = [*where_args, max(0, limit), max(0, offset)]
+        args = [*(where_args * branch_count), max(0, limit), max(0, offset)]
         with self.read_snapshot(), self._connect() as db:
             page_keys = db.execute(sql, tuple(args)).fetchall()
             if page_keys:
@@ -30361,6 +30363,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 self._history_page_cache_refreshing = False
         return result
+
+    def _operation_logs_key_query(
+        self, source_tables: tuple[str, ...] | None, where_sql: str
+    ) -> tuple[str, int]:
+        # Reuse each source's full projection and its existing source selection;
+        # SQLite can omit display and status expressions for unfiltered keys.
+        if source_tables:
+            branches = [
+                self._operation_logs_base_query((source,))
+                for source in dict.fromkeys(source_tables)
+            ]
+        else:
+            branches = self._operation_logs_base_query().split("union all")
+        compact = [
+            "select source_table, source_id, occurred_at from ("
+            + branch + ") as source " + where_sql
+            for branch in branches
+        ]
+        return " union all ".join(compact), len(compact)
 
     def _list_failed_operation_logs_with_count(
         self,
@@ -30836,18 +30857,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                                   =handed_over_tasks.execution_generation
                         ) then 'needs_human'
                         when send_status='failed' and (
-                            exists (
-                                select 1
-                                from ({REPLY_ATTEMPT_COMMON_SQL}) as later_attempts
-                                where later_attempts.channel=reply_attempts.channel
-                                  and later_attempts.conversation_id=reply_attempts.conversation_id
-                                  and later_attempts.trigger_message_id=reply_attempts.trigger_message_id
-                                  and later_attempts.id>reply_attempts.id
-                                  and later_attempts.send_status in (
-                                      'sent', 'completed', 'skipped', 'needs_human',
-                                      'reacted', 'commented', 'calendar', 'document'
-                                  )
-                            )
+                            reply_attempts.terminal_id>reply_attempts.id
                             or exists (
                                 select 1
                                 from ({REPLY_TASK_CURRENT_SQL}) as terminal_tasks
@@ -30879,20 +30889,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         -- open question, including ones nobody has answered.
                         when send_status in ('blocked', 'needs_human', 'pending')
                             and (
-                            exists (
-                                select 1
-                                from ({REPLY_ATTEMPT_COMMON_SQL}) as superseding_attempts
-                                where superseding_attempts.channel=reply_attempts.channel
-                                  and superseding_attempts.conversation_id=
-                                      reply_attempts.conversation_id
-                                  and superseding_attempts.trigger_message_id=
-                                      reply_attempts.trigger_message_id
-                                  and superseding_attempts.id>reply_attempts.id
-                                  and superseding_attempts.send_status in (
-                                      'sent', 'completed', 'skipped', 'needs_human',
-                                      'reacted', 'commented', 'calendar', 'document'
-                                  )
-                            )
+                            reply_attempts.terminal_id>reply_attempts.id
                             or coalesce(reply_attempts.resolved_at, '')<>''
                         ) then 'recovered'
                         else send_status
@@ -30921,7 +30918,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
+                from (
+                  select reply_attempts_base.*, terminal_attempts.terminal_id
+                  from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts_base
+                  left join (
+                    select attempt_channel as channel,
+                           attempt_conversation_id as conversation_id,
+                           attempt_trigger_message_id as trigger_message_id,
+                           max(cast(legacy_key as integer)) as terminal_id
+                    from actions
+                    where record_type='reply_attempts'
+                      and attempt_send_status in (
+                          'sent', 'completed', 'skipped', 'needs_human',
+                          'reacted', 'commented', 'calendar', 'document'
+                      )
+                    group by attempt_channel, attempt_conversation_id,
+                             attempt_trigger_message_id
+                  ) as terminal_attempts
+                    on terminal_attempts.channel=reply_attempts_base.channel
+                   and terminal_attempts.conversation_id=reply_attempts_base.conversation_id
+                   and terminal_attempts.trigger_message_id=reply_attempts_base.trigger_message_id
+                ) as reply_attempts
                 where {
             (
                 "id in (" + ", ".join(str(int(i)) for i in reply_attempt_ids) + ") and "
