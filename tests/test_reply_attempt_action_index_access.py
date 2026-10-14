@@ -184,6 +184,36 @@ def original_shape(source, target, target_variant, table, suffix, arguments, sou
 
 
 @pytest.mark.parametrize("variant,target_variant", VARIANTS)
+def test_original_status_order_access_stays_bounded_as_attempts_grow(
+        variant, target_variant):
+    source, target = setup(variant, target_variant)
+    with closing(source), closing(target):
+        seed(source, target)
+        suffix = "send_status=? order by created_at limit 5"
+        args = ("pending",)
+        before = original_shape(source, target, target_variant, "reply_attempts",
+                                suffix, args, "idx_reply_attempts_status")
+        for i in range(1000):
+            attempt = {
+                "id": 1000 + i, "conversation_id": "volume",
+                "conversation_title": "volume", "trigger_message_id": f"volume-{i}",
+                "trigger_sender": "volume", "trigger_text": "volume",
+                "action": "reply", "sensitivity_kind": "ordinary",
+                "send_status": "done", "created_at": "2025-01-01 00:00:00",
+            }
+            source.execute(
+                "insert into reply_attempts(" + ",".join(attempt) + ") values(" +
+                ",".join("?" for _ in attempt) + ")", tuple(attempt.values()))
+            storage.insert_action(target, "reply_attempts", attempt)
+        after = original_shape(source, target, target_variant, "reply_attempts",
+                               suffix, args, "idx_reply_attempts_status")
+        assert after[0] <= before[0] + 10
+        assert after[1] <= before[1] + 100, (before, after)
+        assert any("idx_actions_reply_status" in detail for detail in after[2]), after[2]
+        assert not any("USE TEMP B-TREE" in detail for detail in after[2]), after[2]
+
+
+@pytest.mark.parametrize("variant,target_variant", VARIANTS)
 def test_original_created_range_access_stays_bounded_as_attempts_grow(
         variant, target_variant):
     source, target = setup(variant, target_variant)
