@@ -233,3 +233,13 @@ read-only capture/refusal unit is accepted; Task2B pure forward/current-fact
 inverse may now proceed on the same disabled scaffold. This does not bind a
 published predecessor, reserve versions, select runtime constructors or resolve
 the existing performance gates.
+
+### Task2B acceptance
+
+Pure migration/current-fact inverse c57de7bc passed sequential SPEC then QUALITY
+after7022ec1c andb17db9fc. Final70 migration/inverse checks passed; independent
+refusal and valid controls preserved serialized database bytes, current BLOB
+receipts, legacy ownership and unrelated existing FK diagnostics. This is
+disabled scaffold acceptance only. Task3 actual published predecessor binding,
+activation, index gates and later real-copy/archived-code/native proof remain
+unfulfilled. No constructor, version, caller or production selection was made.

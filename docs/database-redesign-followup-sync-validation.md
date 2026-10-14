@@ -233,6 +233,30 @@ checks, and16 independent native parser probes covering quoted/indirect MAIN
 and TEMP dependencies, harmless CTE/literal names, local TEMP shadows/FTS and
 the historical MAIN-owner TEMP trigger followed by a shadow. No caller
 transaction/settings, schema, sequences or total_changes changed in those
-probes. The earlier two blockers are resolved. Task2B forward/current-fact
-inverse, actual published predecessor binding and runtime activation remain
-unimplemented; this accepts only disabled Task2A.
+probes. The earlier two blockers are resolved. At this checkpoint Task2B was
+not implemented. This accepts only disabled Task2A; subsequent Task2B acceptance
+is recorded below. Published predecessor binding and activation are separate.
+
+### Root Task2B acceptance
+
+Disabled pure migration/current-fact inverse at c57de7bc, following7022ec1c and
+b17db9fc, passed sequential independent SPEC then QUALITY. Initial87 focused
+checks passed; the final migration/inverse selection passed70. Four reproduced
+inverse defects were repaired: allocator aliases, incoming FKs to future source
+endpoints, omitted orphan send attempts and unbound legacy-column metadata.
+Refusals happen before mutation. Source identity stays direct and no original
+row snapshot is used as a current-fact inverse.
+
+Final SPEC ran six targeted checks plus twelve independent both-variant probes.
+Final QUALITY ran fourteen independent probes. Refusals preserved exact
+serialized MAIN bytes, caller transaction/FK settings and diagnostics. Valid
+inverse/re-forward controls preserved the BLOB receipt containing NUL, legacy
+Task ownership and an unrelated existing FK diagnostic; no global clean-FK gate
+was added. Exact source metadata, prior/nine allocator states, TEMP shadows,
+current new/changed/deleted rows and caller rollback are covered by the focused
+suite. All owned temporary artifacts were cleaned.
+
+This accepts only preparation on the reviewed disabled Email29 scaffold. It
+does not bind the eventual published predecessor or accept constructor/caller
+activation, performance gates, genuine archived-code/copy/native CLI proof,
+complete CI or production publication. Those remain the plan's later tasks.
