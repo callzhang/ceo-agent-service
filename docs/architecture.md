@@ -1,5 +1,13 @@
 # CEO Agent Service Architecture
 
+Follow-up/Todo-sync action storage Task 1A is an unselected candidate. With
+the explicit disabled-by-default `include_followup_sync` flag on the reviewed
+Email29 actual/fresh scaffold, nine finite action types expose the original
+150 fields through source-shaped projections. The business send-attempt draft
+edge uses a typed physical action FK and projects its parent public ID; four
+declared business edges still target their retained business tables. This
+commit does not select the declaration or change runtime task behavior.
+
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
 revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override

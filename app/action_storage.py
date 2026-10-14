@@ -13,6 +13,11 @@ import math
 import sqlite3
 from string import ascii_lowercase, ascii_uppercase
 
+from app.action_followup_sync_definitions import (
+    SYNC_ACTION_PROJECTIONS as SYNC_ACTION_PROJECTIONS,
+    SYNC_TYPES_ORDER, sync_schema_parts,
+)
+
 from app.action_email_definitions import (
     EMAIL_ACTION_PROJECTIONS as EMAIL_ACTION_PROJECTIONS,
     EMAIL_AUTOINCREMENT_TYPES, EMAIL_COMPOSITE_KEYS, EMAIL_DEFAULTS,
@@ -271,7 +276,9 @@ def _reply_payload_check(fields):
     return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False):
+    if include_followup_sync and not include_email:
+        raise ValueError("follow-up/Todo action storage requires the Email29 scaffold")
     if include_email and not include_reply:
         raise ValueError("Email action storage requires the sixteen-type reply schema")
     if include_reply and reply_variant not in REPLY_VARIANTS:
@@ -286,7 +293,11 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if include_email:
         kinds += EMAIL_TYPES_ORDER
         email_generated, email_checks, email_fks, email_indexes, email_triggers = email_schema_parts(_reply_value_check)
+    if include_followup_sync:
+        kinds += SYNC_TYPES_ORDER
     references = _references_for(old_kinds)
+    if include_followup_sync:
+        sync_generated, sync_checks, sync_fks, sync_indexes, sync_triggers = sync_schema_parts(references, reply_variant)
     payload_fields = dict.fromkeys(c for kind in old_kinds if kind not in REPLY_ACTION_TYPES for c in PAYLOAD_FIELDS[kind] if c not in references and not (include_delivery and c == "channel"))
     generated = []
     for column in payload_fields:
@@ -340,6 +351,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         + ",".join(f"{column} integer references {parent}(id)" for column, (parent, _) in references.items())
         + ("," + ",".join(reply_columns) if reply_columns else "")
         + ("," + ",".join(email_generated) if include_email else "")
+        + ("," + ",".join(sync_generated) if include_followup_sync else "")
         + ",payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),"
         + ",".join(generated)
         + "," + ",".join(_payload_check(kind, references) for kind in old_kinds if kind not in REPLY_ACTION_TYPES)
@@ -372,6 +384,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         table += ",check(record_type not in (" + email_scope + ") or (" + " and ".join(
             f"{field} is null" for field in unused_refs
         ) + "))"
+    if include_followup_sync:
+        table += "," + ",".join((*sync_checks, *sync_fks))
     table += ")"
     numeric_scope = " where record_type<>'external_action_results'" if include_receipts else ""
     if include_postfix:
@@ -428,6 +442,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         )
     if include_email:
         indexes += tuple(email_indexes)
+    if include_followup_sync:
+        indexes += tuple(sync_indexes)
     triggers = (
         "create trigger trg_actions_record_type_immutable before update of record_type on actions when new.record_type<>old.record_type begin select raise(abort,'action record type is immutable'); end",
         "create trigger trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
@@ -478,6 +494,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
             triggers += (f"create trigger trg_actions_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
                          f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
                          f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
+    if include_followup_sync:
+        triggers += tuple(sync_triggers)
     return table, indexes, triggers
 
 
@@ -577,24 +595,24 @@ SENT_REPLY_SQL = ACTION_PROJECTIONS["sent_replies"]
 SENT_REPLY_OBSERVER_SQL = ACTION_PROJECTIONS["sent_reply_observers"]
 
 
-def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False) -> None:
+def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False) -> None:
     """Create the declared schema, or repair only its missing auxiliary objects."""
     existing = db.execute("select 1 from sqlite_master where name='actions' collate nocase").fetchone()
     if existing:
-        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery, include_reply=include_reply, reply_variant=reply_variant, include_email=include_email):
+        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery, include_reply=include_reply, reply_variant=reply_variant, include_email=include_email, include_followup_sync=include_followup_sync):
             raise ValueError("unsupported current actions schema declaration")
         names = {sqlite_schema_name(obj["name"]) for obj in _objects(db, "actions")}
-        for obj in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email):
+        for obj in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync):
             if sqlite_schema_name(obj["name"]) not in names:
                 db.execute(obj["sql"])
     else:
         if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in ACTION_TYPES):
             capture_action_schema(db)
-        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email))
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email)
+        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync))
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync)
 
 
-def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False):
+def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False):
     if (include_receipts or include_postfix or include_delivery or include_reply) and not db.execute("select 1 from sqlite_master where type='table' and name='sqlite_sequence'").fetchone():
         # SQLite creates its native sequence metadata on the first declaration
         # of an AUTOINCREMENT table. The initializer has no rows and is removed;
@@ -604,26 +622,28 @@ def _create_action_objects(db, include_receipts=False, include_postfix=False, in
             name += "_"
         db.execute(f'create table "{name}"(id integer primary key autoincrement)')
         db.execute(f'drop table "{name}"')
-    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email)
+    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync)
     for sql in (table, *indexes, *triggers):
         db.execute(sql)
 
 
 @lru_cache(maxsize=16)
-def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False):
+def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False):
     with closing(sqlite3.connect(":memory:")) as db:
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email)
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync)
         return _objects(db, "actions")
 
 
-def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False) -> bool:
+def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False) -> bool:
     kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
     if include_email:
         kinds += EMAIL_TYPES_ORDER
+    if include_followup_sync:
+        kinds += SYNC_TYPES_ORDER
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in kinds):
         return False
     actual = {sqlite_schema_name(o["name"]): o for o in _objects(db, "actions")}
-    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email)}
+    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync)}
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase and tbl_name<>'actions' collate nocase", (name,)).fetchone() for name in expected):
         return False
     return not (actual.keys() - expected.keys()) and all(
