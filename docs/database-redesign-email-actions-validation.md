@@ -189,3 +189,24 @@ All probes used closed in-memory databases or cleaned task-owned temporary
 directories. This accepts disabled Task2A/2B storage only; actual published E
 source binding, forward/current-fact inverse, constructors, caller conversion,
 paired publication and production acceptance remain required.
+
+
+## Task3A-1 independent source-capture acceptance
+
+The source-capture unit `18387703`, finite rebuilt-source closure correction
+`2ca854a4`, and MAIN-schema qualification `729aaf45` passed fresh sequential
+SPEC then QUALITY review. SPEC independently passed111 selected checks with
+two existing skips, the138 exact-metadata/closure cases and34 MAIN/TEMP
+shadow cases. QUALITY independently passed61 checks and10 combined scenarios
+covering all thirteen temporary source shadows, same-name temporary indexes,
+actions shadows, unrelated temporary allocator metadata, query-only and
+file-backed read-only connections. MAIN and TEMP serialized facts and caller
+transactions remained unchanged throughout the independent probes.
+
+All144 source fields, both canonical sixteen-type declarations, five own
+triggers, thirteen external blockers and the9/2/2 locator split remain exact.
+The six disabled-Email manifests are byte-equivalent. This accepts only
+read-only candidate source capture/refusal, not forward/inverse conversion,
+a published predecessor, a release version or production activation. Task3A-2
+may now implement pure forward/current-fact inverse; Task3B actual publication
+binding and copy/genuine-old-code acceptance remain mandatory before Task4.
