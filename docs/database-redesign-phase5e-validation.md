@@ -222,3 +222,39 @@ equivalence for every rejected synthetic database. This is source binding and
 refusal evidence only. It does not implement E target DDL, migrate a row,
 reserve a Store version, change a runtime caller or complete the ten-table
 redesign.
+
+## Task 3A: opt-in transactional forward and current-fact inverse
+
+The isolated E storage migration now accepts only the exact published Store18
+fourteen-type action declaration and the actual or fresh Attempt/Memory source
+declarations. The caller owns an FK-off transaction. Forward preflights names,
+dependencies and declarations before touching schema, preserves all fourteen
+action rows with their physical IDs, raw stored values, SQLite storage classes
+and allocator waters, then copies Attempt/Memory through the accepted finite
+writer. Public Attempt and Memory IDs keep independent namespaces; fresh
+Memory uses its typed physical parent reference and actual Memory retains its
+source scalar association. The two intentional retirements are queued audit
+markers only, in order and with multiplicity, and a `{}` Memory payload
+placeholder. Source table DDL, index/FK/trigger metadata and variant are the
+only inverse state; no business row or retired body snapshot is retained there.
+
+The inverse verifies the exact sixteen-type declaration and captured source
+metadata, reads current facts after finite writes/updates/deletions, recreates
+the original source DDL and current legacy rows, and transfers current public
+ID allocator waters back to the original names. It clears the two finite
+allocator namespace rows so another exact-source forward migration can run.
+Value checks include SQLite `typeof` for every retained field and physical
+action column. Forward remains bound to published Store18/Email51 markers;
+inverse deliberately has no release marker policy because the paired release
+wrapper must verify its eventual target marker and timestamp atomically.
+
+This is a local, opt-in migration unit. It has no Store bootstrap or caller
+conversion, no version reservation, no release wrapper, no old-code constructor
+copy acceptance, and no production or provider operation. Task 3B must add the
+paired publication/rollback wrapper and real caller gates before activation.
+The seven existing storage/source/preflight files plus thirteen new forward and
+inverse checks passed together: 449 passed, eight source-variant skips. The
+new checks include a fresh-process reforward from committed restored source.
+Focused prior delivery/postfix/receipt migration and inverse/release files
+passed 376 checks with eight variant skips before the final three added E
+cases; no full suite, production copy or old Store constructor was run here.
