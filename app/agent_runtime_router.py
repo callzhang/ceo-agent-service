@@ -253,7 +253,8 @@ def _out_of_band_instructions(command_factory: CodexCommandFactory) -> str:
     """
     parts = [command_factory.developer_instructions.strip()]
     if command_factory.use_output_schema and command_factory.output_schema_path is not None:
-        schema = command_factory.output_schema_path.read_text(encoding="utf-8").strip()
+        schema = json.dumps(json.loads(command_factory.output_schema_path.read_text(encoding="utf-8")),
+                            ensure_ascii=False, separators=(",", ":"))
         parts.append(
             "# Output JSON Schema\n\n"
             "Return exactly one JSON object that validates against this schema.\n\n"
@@ -1299,6 +1300,11 @@ class RoutedCodexExecution:
                     and route_session_id == continuation_session_id
                     else original_prompt
                 )
+            from app.native_trajectory import count_claude_session_lines
+
+            session_line_counter = (count_claude_session_lines
+                                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                                    else self._session_line_counter)
             transcript_start = 0
             transcript_end = 0
             line_count = 0
@@ -1318,11 +1324,9 @@ class RoutedCodexExecution:
                     observed_session_id,
                     transcript_reference,
                     transcript_start,
-                    max(
-                        transcript_start + line_count,
-                        transcript_start,
-                        transcript_end,
-                    ),
+                    (session_line_counter(observed_session_id) if observed_session_id else 0)
+                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                    else max(transcript_start + line_count, transcript_start, transcript_end),
                 )
 
             if route_session_id:
@@ -1330,7 +1334,7 @@ class RoutedCodexExecution:
                     active_attempt,
                     stage="transcript_evidence",
                     evidence=current_evidence,
-                    action=lambda: self._session_line_counter(route_session_id),
+                    action=lambda: session_line_counter(route_session_id),
                 )
 
             def observe_stdout_line(line: str) -> None:
@@ -1345,7 +1349,9 @@ class RoutedCodexExecution:
                     ):
                         raise RoutedCodexPolicyAbort("runtime_session_conflict")
                     observed_session_id = streamed_session_id
-                    transcript_reference = f"codex_session:{streamed_session_id}"
+                    transcript_reference = (f"claude_session:{streamed_session_id}"
+                                            if route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                                            else f"codex_session:{streamed_session_id}")
                     active_attempt = self._store.set_agent_runtime_attempt_session(
                         active_attempt.id,
                         streamed_session_id,
@@ -1542,7 +1548,7 @@ class RoutedCodexExecution:
                     session_id=observed_session_id,
                     transcript_reference=transcript_reference,
                     transcript_start=transcript_start,
-                    transcript_end=max(transcript_start + line_count, transcript_start),
+                    transcript_end=current_evidence()[3],
                 )
                 raise RoutedCodexExecutionCancelled()
 
@@ -1570,15 +1576,14 @@ class RoutedCodexExecution:
             observed_session_id = buffered_session_id or observed_session_id
             transcript_end = max(transcript_start + line_count, transcript_start)
             if observed_session_id:
-                transcript_end = max(
-                    transcript_end,
-                    self._finalized_step(
-                        active_attempt,
-                        stage="transcript_evidence",
-                        evidence=current_evidence,
-                        action=lambda: self._session_line_counter(observed_session_id),
-                    ),
+                native_end = self._finalized_step(
+                    active_attempt,
+                    stage="transcript_evidence",
+                    evidence=current_evidence,
+                    action=lambda: session_line_counter(observed_session_id),
                 )
+                transcript_end = (native_end if route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                                  else max(transcript_end, native_end))
             # Only Codex has a stdout session transcript to reference; Friday
             # and Claude carry their own identifiers, set when the turn ran.
             if route.runtime_kind is RuntimeKind.CODEX_CLI:

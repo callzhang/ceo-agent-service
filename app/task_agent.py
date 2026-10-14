@@ -1378,7 +1378,8 @@ def _project_citations(decision: TaskAgentDecision):
 def _validate_current_project_citation(citation, *, work_item: WorkItem) -> None:
     if citation.source_ref != work_item.source.ref:
         raise ValueError(
-            "current Project evidence must cite the immutable Work Item source_ref"
+            "current Project evidence must cite the immutable Work Item source_ref; "
+            f"expected={work_item.source.ref!r}, received={citation.source_ref!r}"
         )
     if not source_contains_quote(work_item.summary, citation.source_excerpt):
         raise ValueError(
