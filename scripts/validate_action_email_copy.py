@@ -534,7 +534,7 @@ def run(source, source_ref, repo):
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
             tar.extractall(oldroot, filter="data")
         old_hashes = {name: hashlib.sha256((oldroot / name).read_bytes()).hexdigest()
-                      for name in module_paths}
+                      for name in module_paths if (oldroot / name).is_file()}
         original = root / "online-backup.sqlite3"
         _copy(source, original)
         with closing(sqlite3.connect(original)) as db:
