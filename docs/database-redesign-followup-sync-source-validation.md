@@ -47,3 +47,23 @@ The graphify skill was used only as a temporary code navigation aid on seven sco
 Cleanup completed and verified: `/tmp/ceo-followup-sync-source.qECbIs` (resolved `/private/tmp/ceo-followup-sync-source.qECbIs`) was removed and its absence asserted before commit. This removed the exact-code archive, synthetic empty SQLite database and sidecars, scoped code/graph/cache and disposable scripts. The JSON records the UTC cleanup receipt. No production database backup was created or retained.
 
 No Email source artifacts, runtime modules, tests, architecture/runtime behavior contract, plans, target schema/version, provider state or production data were edited. No push or deployment is part of this unit. The source-only documentation is ready for the root's separate independent review after commit; downstream implementation remains separately owned.
+
+## Independent source-preparation acceptance
+
+Commit `9eb71a5f` passed fresh sequential SPEC and QUALITY. SPEC independently
+replayed both nine-table metadata variants, compared all150approved CSV fields
+and both19-file fingerprint sets, then rebuilt the genuine archived9a2a23fc
+fresh source and matched all nine declarations/PRAGMAs/indexes. It spot-checked
+current button-only business sending, legacy history, both Dispatcher receipt/
+generation paths, provider-ID uniqueness and exact linked Task completion.
+QUALITY independently matched the complete113-site attribute-reference multiset
+for the54Store dependencies, checked the finite table-name navigation boundary
+and the behavior/uniqueness claims most likely to affect a later migration.
+Neither reviewer found an actionable issue. All independent processing was
+read-only or in-memory; the SPEC archive/database and original capture root
+were removed and their absence verified.
+
+This accepts metadata/source navigation only. Native source write/allocator/FK
+behavior still needs its separate oracle, and the actual future published
+predecessor must be recaptured before any target migration. There is no target
+schema, version assignment, retirement decision or runtime publication here.
