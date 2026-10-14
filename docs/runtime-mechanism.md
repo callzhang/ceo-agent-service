@@ -2889,3 +2889,5 @@ retry an invalid `null` response through the recent-message fallback; valid but
 unrecognized object envelopes retain the existing fallback behavior. Read-only
 message commands make only the configured bounded retry for JSON `null`; if it
 persists, the typed failure remains visible to normal recovery and Attention.
+
+Recorded DingTalk delivery recovery (2026-10-14): startup reconciliation, explicit failed-task completion and protection against failed-run projection all honor the receipt verification state. A recorded receipt with verification.state=ambiguous or failed does not prove delivery and cannot restore done. Positive sent receipts and previously recorded legacy readback receipts keep their existing completion behavior.

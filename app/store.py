@@ -20028,7 +20028,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("reconciled task has no business object key")
             recorded = db.execute(
                 f"select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) "
-                "where external_action_key=? and business_object_key=?",
+                "where external_action_key=? and business_object_key=? "
+                "and coalesce(json_extract(provider_result_json, '$.verification.state'), 'sent')='sent'",
                 (key, business_object_key),
             ).fetchone()
             projected = db.execute(
@@ -20349,6 +20350,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({SENT_REPLY_SQL}) as replies
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
+                        and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
                   )
                 returning id
                 """
@@ -24235,6 +24237,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({SENT_REPLY_SQL}) as replies
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
+                        and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
                   )
                   and not exists (
                       select 1

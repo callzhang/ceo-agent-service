@@ -9,6 +9,7 @@ from app.agent_contracts import ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator
 from app.attempt_projection import project_attempt_status
 from app.dingtalk_delivery_repair import apply_delivery_reverification
+from app.run_storage import AGENT_RUN_SQL
 from app.system_executor import ActionOutcome, SystemExecutor
 from tests.test_agent_orchestrator import ScriptedAudit, ScriptedConsumer, candidate, task_and_context
 from tests.test_dingtalk_delivery_verification import reply_receipt
@@ -68,6 +69,32 @@ def proof(receipt, state):
 def test_failed_current_task_does_not_inherit_historical_completion():
     assert project_attempt_status(SimpleNamespace(send_status="completed"),
         SimpleNamespace(status="failed", execution_generation="initial"), []) == "failed"
+
+
+@pytest.mark.parametrize("state", ["ambiguous", "failed"])
+def test_restart_recovery_cannot_complete_unverified_recorded_delivery(tmp_path, state):
+    store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)
+    assert apply_delivery_reverification(store, proof(receipt, state))
+    assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 0
+    assert store.get_reply_task(task.id).status == "failed"
+    with pytest.raises(ValueError, match="not recorded"):
+        store.resolve_reconciled_failed_reply_task(task.id, external_action_key=receipt["external_action_key"])
+    with store._connect() as db:
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task.id,))
+        db.execute("update runs set status='failed',structured_error_json=? where record_type='agent_runs' "
+                   f"and id=(select max(id) from ({AGENT_RUN_SQL}) where reply_task_id=?)",
+                   ('{"code":"later_failure"}', task.id))
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 1
+    assert store.get_reply_task(task.id).status == "failed"
+
+
+def test_restart_recovery_keeps_confirmed_recorded_delivery(tmp_path):
+    store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)
+    assert apply_delivery_reverification(store, proof(receipt, "sent"))
+    with store._connect() as db:
+        db.execute("update tasks set status='failed' where record_type='reply_tasks' and id=?", (task.id,))
+    assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
+    assert store.get_reply_task(task.id).status == "done"
 
 
 @pytest.mark.parametrize("state", ["sent", "ambiguous"])
