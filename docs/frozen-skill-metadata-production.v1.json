@@ -1,0 +1,88 @@
+{
+  "version": "frozen-skill-metadata-production.v1",
+  "observed_at": "2026-10-14T03:02:09.040292+00:00",
+  "release_commit": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
+  "prior_pid": 74472,
+  "deployment": {
+    "operation_id": "deploy-3aa2d214-4261-4af4-9ee8-5bb7a9be5fe9",
+    "status": "succeeded",
+    "original_commit": "30cb7e7674b4115502ed8917d9c1845cfa7d92dc",
+    "target_commit": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
+    "installed_commit": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-13.sqlite3",
+    "error": ""
+  },
+  "backup_complete": true,
+  "production_runtime_sha256": {
+    "app/business_skills.py": "347bfe1cda71b12502cb456c6698644962ba421e8a23974f718dad2585146a4e",
+    "app/prompt_composition.py": "547552b296be270595845b694dda06811a28dbed560887a58a5b983f224cc63b",
+    "app/consumer_agent.py": "fdbe5de93ac44c2af36954092cd9ca4c7eac93f9f7dcc547a31b2a8082b20917",
+    "app/audit_agent.py": "61e2bc76f6939d47473725267fe168b3893c2a04ff82e6339797e360121cf606",
+    "app/prompt_preview.py": "7c488d732933fa81bade5baa90315d74156ae5833a6e0b881e982a4d96c511e4"
+  },
+  "readbacks": {
+    "/healthz": {
+      "ok": true,
+      "status": "ok"
+    },
+    "/api/workers/status": {
+      "service": {
+        "ok": true,
+        "state": "running",
+        "pid": "97620"
+      },
+      "summary": {
+        "queue_count": 13,
+        "pending": 3,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0,
+        "attention": 1
+      }
+    },
+    "/api/attention/status": {
+      "count": 2,
+      "rows": 1,
+      "human_decisions": 1
+    },
+    "/api/console/history?page_size=5&include_chart=false": {
+      "items": 5,
+      "statuses": [
+        "sent",
+        "done",
+        "skipped",
+        "skipped",
+        "done"
+      ]
+    },
+    "/api/console/settings/prompt-preview?mode=current&role=consumer": {
+      "http_ok": true,
+      "status": "available",
+      "role": "consumer",
+      "submission_state": "preview",
+      "task_id": null,
+      "sections": 13,
+      "has_frozen_content_hash": false
+    },
+    "/api/console/settings/prompt-preview?mode=current&role=audit": {
+      "http_ok": true,
+      "status": "available",
+      "role": "audit",
+      "submission_state": "preview",
+      "task_id": null,
+      "sections": 14,
+      "has_frozen_content_hash": false
+    }
+  },
+  "tests": {
+    "focused": 92,
+    "consumer_audit": 175,
+    "native_environment_skipped": 4
+  },
+  "limits": [
+    "No newly triggered business task or model judgment",
+    "Public Settings input preview only; legacy/history preservation separately covered by focused tests",
+    "Repeated Skill reads not eliminated; TaskAgent separate builder unchanged",
+    "No native schema/provider or workflow policy changes"
+  ]
+}
