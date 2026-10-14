@@ -492,20 +492,18 @@ def _render_response_item(
 def normalize_stored_tool_events(
     events: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
-    """Flatten persisted ``codex exec --json`` stream events for rendering.
+    """Normalize a legacy ``codex exec --json`` stream shape.
 
-    ``AgentRun.tool_events`` (persisted verbatim into
-    ``reply_attempts.audit_tool_events_json`` when a run finalizes) holds the
-    raw ``codex exec --json`` stdout stream: ``thread.started`` /
+    This utility remains for historical format tests; Attempt detail no longer
+    reads stored tool bodies when its native session is unavailable. Older
+    copied streams contained ``thread.started`` /
     ``turn.started`` / ``item.started`` / ``item.completed`` /
     ``turn.completed`` records, each wrapping the actual call under a nested
     ``item``. That is a different shape from the native Codex rollout file
     (``response_item`` / ``event_msg`` with a nested ``item_completed``
     payload) that :func:`_audit_event_from_jsonl` reads for a *live* session
-    on disk. Nothing before this normalized the stream shape, so once a
-    session's rollout file has rotated away and rendering falls back to the
-    stored events, every call rendered with no name, no arguments and no
-    result -- the stored account was never actually readable.
+    on disk. The runtime detail reader now reports missing native evidence
+    explicitly instead of treating a stored stream as a substitute.
 
     Only ``mcp_tool_call`` and ``command_execution`` items become visible
     calls, matching what the live-session path already surfaces; other item

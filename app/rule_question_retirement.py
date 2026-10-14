@@ -20,6 +20,8 @@ from app.run_storage import AGENT_RUN_SQL
 
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
+    REPLY_ATTEMPT_COMMON_SQL,
+    update_action,
 )
 
 
@@ -59,14 +61,14 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
         select a.*, r.reply_task_id, r.execution_generation as run_generation,
                r.role, r.status as run_status,
                t.status as task_status, t.execution_generation as task_generation
-        from reply_attempts a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id
+        from ({REPLY_ATTEMPT_COMMON_SQL}) a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id
         join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
         join business_object_tasks current_object
           on current_object.business_object_key=t.business_object_key
          and current_object.reply_task_id=t.id
         where a.id=? and a.channel=t.channel
           and a.conversation_id=t.conversation_id and a.trigger_message_id=t.trigger_message_id
-          and not exists(select 1 from reply_attempts newer
+          and not exists(select 1 from ({REPLY_ATTEMPT_COMMON_SQL}) newer
             where newer.channel=a.channel and newer.conversation_id=a.conversation_id
               and newer.trigger_message_id=a.trigger_message_id and newer.id>a.id)
           and not exists(select 1 from ({REVIEW_CANDIDATE_SQL}) c where c.task_id=t.id)
@@ -109,8 +111,8 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
             "旧长期规则问题已按当前实例决策契约退役；未作出业务决策，也未执行新动作。"
             f"依据：{authority.strip()}；原结果 SHA256：{digest}"
         )
-        db.execute("update reply_attempts set resolved_at=?, resolution=? where id=?",
-                   (receipt["resolved_at"], resolution, attempt_id))
+        update_action(db, "reply_attempts", attempt_id,
+                      {"resolved_at": receipt["resolved_at"], "resolution": resolution})
         db.execute("insert into service_state(key,value) values (?,?)",
                    (key, json.dumps(receipt, ensure_ascii=False, sort_keys=True)))
     return receipt

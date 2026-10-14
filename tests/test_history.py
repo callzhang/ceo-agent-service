@@ -1,6 +1,7 @@
 import sqlite3
 
 from app.run_storage import insert_run
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
 from app.task_storage import REPLY_TASK_SQL
 from app.history import HistoryItem, safe_observability_error
 from app.store import AutoReplyStore
@@ -81,10 +82,7 @@ def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
     store.update_reply_attempt(reply_id, final_reply_text="先灰度。")
     meeting_run_id = _seed_meeting_run(store)
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update reply_attempts set created_at='2026-07-14 10:00:00' where id=?",
-            (reply_id,),
-        )
+        update_action(db, "reply_attempts", reply_id, {"created_at": "2026-07-14 10:00:00"})
         db.execute(
             "update runs set created_at='2026-07-14 10:01:00' where record_type='meeting_alignment_runs' and cast(legacy_key as integer)=?",
             (meeting_run_id,),
@@ -149,10 +147,7 @@ def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
             },
         )
         failed_run = db.execute("select last_insert_rowid()").fetchone()[0]
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?",
-            (failed_run, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": failed_run})
         insert_run(
             db, 'agent_runs', {
                 'task_id': task_id,
@@ -332,10 +327,9 @@ def test_history_retains_reply_legacy_search_fields(tmp_path):
         send_status="failed",
     )
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update reply_attempts set corrected_reply_text='修正版答案', send_error='legacy-error' where id=?",
-            (attempt_id,),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "corrected_reply_text": "修正版答案", "send_error": "legacy-error",
+        })
 
     for query in (
         "cid-search-legacy",
@@ -364,7 +358,8 @@ def test_history_tie_order_is_stable_across_kinds(tmp_path):
     )
     meeting_run_id = _seed_meeting_run(store)
     with sqlite3.connect(store.path) as db:
-        db.execute("update reply_attempts set created_at='2026-07-14 10:00:00'")
+        for (attempt_id,) in db.execute(f"select id from ({REPLY_ATTEMPT_COMMON_SQL})"):
+            update_action(db, "reply_attempts", attempt_id, {"created_at": "2026-07-14 10:00:00"})
         db.execute("update runs set created_at='2026-07-14 10:00:00' where record_type='meeting_alignment_runs'")
 
     first_page = store.list_history_items(limit=1, offset=0)

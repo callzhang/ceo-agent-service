@@ -1,4 +1,5 @@
 from app.task_storage import REPLY_TASK_SQL
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 import argparse
 import errno
 import json
@@ -2960,7 +2961,7 @@ def _quality_required_channels(db_path: Path) -> set[str]:
             select distinct lower(channel) from ({REPLY_TASK_SQL})
             where lower(status) in ('pending', 'processing') and trim(channel) != ''
             union
-            select distinct lower(channel) from reply_attempts
+            select distinct lower(channel) from ({REPLY_ATTEMPT_COMMON_SQL})
             where lower(send_status) in ('failed', 'blocked')
               and datetime(updated_at) >= datetime('now', '-72 hours')
               and trim(channel) != ''

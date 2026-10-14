@@ -1,3 +1,4 @@
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
 import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -936,7 +937,7 @@ def test_scan_pending_oa_approvals_keeps_running_process_task_no_longer_pending(
     assert attempt.send_status == "needs_human"
     with store._connect() as db:
         resolution = db.execute(
-            "select resolution from reply_attempts where id=?",
+            f"select resolution from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?",
             (attempt_id,),
         ).fetchone()["resolution"]
     assert resolution == ""
@@ -1002,7 +1003,7 @@ def test_scan_pending_oa_approvals_closes_running_process_after_explicit_return(
     assert attempt.send_status == "skipped"
     with store._connect() as db:
         resolution = db.execute(
-            "select resolution from reply_attempts where id=?",
+            f"select resolution from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?",
             (attempt_id,),
         ).fetchone()["resolution"]
     assert "verified return receipt" in resolution
@@ -1119,13 +1120,10 @@ def test_scan_does_not_restore_attention_for_legacy_task_owned_by_another_approv
         send_status="skipped",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set resolved_at=current_timestamp, resolution=? where id=?",
-            (
-                "Live DingTalk OA task reached terminal state OA_TASK_NOT_PENDING.",
-                attempt_id,
-            ),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "resolved_at": db.execute("select current_timestamp").fetchone()[0],
+            "resolution": "Live DingTalk OA task reached terminal state OA_TASK_NOT_PENDING.",
+        })
 
     assert scan_pending_oa_approvals(store, FakeDws()) == 0
     key = "oa:proc-legacy:task-principal"
@@ -1196,13 +1194,10 @@ def test_scan_clears_legacy_attention_for_provider_snake_case_return_receipt(
         send_status="skipped",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set resolved_at=current_timestamp, resolution=? where id=?",
-            (
-                "Live DingTalk OA task reached terminal state OA_TASK_NOT_PENDING.",
-                attempt_id,
-            ),
-        )
+        update_action(db, "reply_attempts", attempt_id, {
+            "resolved_at": db.execute("select current_timestamp").fetchone()[0],
+            "resolution": "Live DingTalk OA task reached terminal state OA_TASK_NOT_PENDING.",
+        })
     store.set_daily_scan_state(
         "oa_pending",
         last_success_at="2026-10-12 00:00:00",

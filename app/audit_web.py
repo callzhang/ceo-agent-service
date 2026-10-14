@@ -58,7 +58,6 @@ from app.codex_decision import audit_summary_explains_no_documents
 from app.codex_history import (
     RenderedCodexEvent,
     extract_codex_audit_events_from_session,
-    normalize_stored_tool_events,
     render_local_codex_session,
 )
 from app.config import (
@@ -187,6 +186,9 @@ from app.action_storage import (
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
     SENT_REPLY_SQL,
+    REPLY_ATTEMPT_COMMON_SQL,
+    reply_action_projection,
+    validated_reply_variant,
 )
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -2580,7 +2582,9 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
     snapshots: list[dict[str, object]] = []
     with store._connect() as db:
         for name, table, status_column, updated_column, error_column in specs:
-            if not _sqlite_table_exists(db, "tasks" if table in ("reply_tasks", "work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests") else table):
+            physical_table = ("tasks" if table in ("reply_tasks", "work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests")
+                              else "actions" if table in ("reply_attempts", "memory_write_events") else table)
+            if not _sqlite_table_exists(db, physical_table):
                 continue
             if table == "reply_tasks":
                 snapshots.append(_reply_task_queue_snapshot(db))
@@ -2596,6 +2600,9 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                 continue
             if table == "reply_attempts":
                 snapshots.append(_reply_attempt_queue_snapshot(db))
+                continue
+            if table == "memory_write_events":
+                snapshots.append(_memory_write_queue_snapshot(db, name))
                 continue
             if table == "wechat_deliveries":
                 snapshots.append(_wechat_delivery_queue_snapshot(db))
@@ -3059,7 +3066,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     current_attempts = f"""
         with trigger_keys as (
             select channel, conversation_id, trigger_message_id
-            from reply_attempts
+            from ({REPLY_ATTEMPT_COMMON_SQL})
             group by channel, conversation_id, trigger_message_id
         ), current as (
             select
@@ -3138,9 +3145,9 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                     else lower(coalesce(a.send_status, ''))
                 end as live_status
             from trigger_keys
-            join reply_attempts a on a.id=(
+            join ({REPLY_ATTEMPT_COMMON_SQL}) a on a.id=(
                 select newest.id
-                from reply_attempts newest
+                from ({REPLY_ATTEMPT_COMMON_SQL}) newest
                 where newest.channel=trigger_keys.channel
                   and newest.conversation_id=trigger_keys.conversation_id
                   and newest.trigger_message_id=trigger_keys.trigger_message_id
@@ -3210,6 +3217,31 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
         "retryable": _queue_count_for(counts, {"retryable"}),
         "latest_updated_at": latest_updated_at,
         "latest_error": latest_error,
+    }
+
+
+def _memory_write_queue_snapshot(db: sqlite3.Connection, name: str) -> dict[str, object]:
+    source = reply_action_projection("memory_write_events", validated_reply_variant(db))
+    rows = db.execute(
+        f"select lower(coalesce(status,'')) as status,count(*) as count "
+        f"from ({source}) group by lower(coalesce(status,'')) order by status"
+    ).fetchall()
+    counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
+    latest = db.execute(
+        f"select updated_at from ({source}) order by updated_at desc limit 1"
+    ).fetchone()
+    failed = db.execute(
+        f"select last_error from ({source}) where lower(status)='failed' "
+        "and trim(coalesce(last_error,''))<>'' order by updated_at desc,id desc limit 1"
+    ).fetchone()
+    return {
+        "name": name, "table": "memory_write_events", "counts": counts,
+        "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
+        "processing": _queue_count_for(counts, {"processing", "running", "sending"}),
+        "failed": _queue_count_for(counts, {"failed", "error"}),
+        "retryable": 0,
+        "latest_updated_at": "" if latest is None else str(latest["updated_at"] or ""),
+        "latest_error": "" if failed is None else str(failed["last_error"] or ""),
     }
 
 
@@ -3745,7 +3777,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   )
                   and not exists (
                     select 1
-                    from reply_attempts recovery
+                    from ({REPLY_ATTEMPT_COMMON_SQL}) recovery
                     where recovery.conversation_id=error_event.conversation_id
                       and recovery.trigger_message_id=error_event.message_id
                       and datetime(recovery.updated_at) >= datetime(error_event.created_at)
@@ -3843,7 +3875,7 @@ def _human_decision_attention_rows(
     sql = f"""
         select attempts.id, attempts.conversation_title, attempts.updated_at,
                c.candidate_json
-        from reply_attempts attempts
+        from ({REPLY_ATTEMPT_COMMON_SQL}) attempts
         join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=attempts.agent_run_id
           and review.decision='approve'
         join ({REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id
@@ -3862,7 +3894,7 @@ def _human_decision_attention_rows(
           and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
               where newest.task_id=task.id
                 and newest.execution_generation=task.execution_generation)
-          and attempts.id=(select max(latest.id) from reply_attempts latest
+          and attempts.id=(select max(latest.id) from ({REPLY_ATTEMPT_COMMON_SQL}) latest
               where latest.channel=attempts.channel
                 and latest.conversation_id=attempts.conversation_id
                 and latest.trigger_message_id=attempts.trigger_message_id)
@@ -13027,19 +13059,8 @@ def _audit_tool_events_for_attempt(attempt: ReplyAttempt) -> list[dict[str, str]
                 else None
             ),
         )
-        if session_events:
-            return session_events
-    try:
-        payload = json.loads(attempt.audit_tool_events_json or "[]")
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(payload, list):
-        return []
-    stored_events = [event for event in payload if isinstance(event, dict)]
-    # The stored events are the raw codex exec --json stream (persisted
-    # verbatim when the run finalized), not the flattened shape the calls
-    # below expect -- see normalize_stored_tool_events for why.
-    return normalize_stored_tool_events(stored_events)
+        return session_events
+    return []
 
 
 def _audit_tool_uses_html(uses: list[dict[str, object]]) -> str:

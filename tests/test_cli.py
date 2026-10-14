@@ -1,3 +1,4 @@
+from app.action_storage import update_action
 import json
 import sqlite3
 import sys
@@ -330,10 +331,7 @@ def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, in
         pre_action_failure=True,
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set retry_count=2 where id=?",
-            (attempt_id,),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"retry_count": 2})
     return delivery_id, attempt_id
 
 

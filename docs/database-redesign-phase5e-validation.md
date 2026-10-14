@@ -476,3 +476,37 @@ main delta. The combined current mail-source, new Store integration, Memory
 completion and source-preflight gate passed 48 cases after the merge. Its owned
 temporary directory was cleaned. This is an integration check, not a repeated
 production copy or native business acceptance.
+
+## Task 5 external caller and fixture candidate
+
+The isolated Store19 candidate now routes external Attempt/Memory reads through
+finite public-ID projections and mutates Attempt by the typed action writer.
+History/Attention, quality coverage, scheduled recovery, rule-question
+retirement, CLI channel discovery, email unsubscribe evidence and maintenance
+no longer require the two retired physical tables. Logical source labels and
+queue/status predicates remain the existing contracts. The main Attempt detail
+reader no longer resurrects stored tool-event bodies when a native session is
+unavailable; the queued `audit_review` business marker remains stored.
+
+The deployment quiet-wait selectors recognize both complete Store19 action
+manifests while retaining their exact older declarations. Candidate, receipt,
+postfix, delivery, task, meeting and scheduled selectors reject an unknown
+version or an extra action index without modifying the database. The generic
+run selector already reads unified runs and required no new version case.
+
+The source13 workbench fixture restores Attempt/Memory from frozen actual-source
+declarations, then takes explicit Store17 to Store18 and Store18 to Store19
+steps, with exact Email51 metadata for the latter preflight. The original lease
+and recovery-index assertions pass. Historical Store17/18 publisher tests keep
+their protocol/current-fact assertions and are labeled as injected historical
+coverage; a separate current default-factory test proves a full Store18 to
+Store19 publication, current-fact inverse and republish. Neither synthetic
+fixture is described as an actual published old-code cold constructor.
+
+Focused local evidence on this candidate: 68 quality and scan-cost checks;
+164 reviewed-human/recovery/rule/email/scan-cost checks; 166 History, Attempt
+detail, OA, WeChat and Attention checks; 338 audit web and native-maintenance
+checks; 12 deployment-maintenance checks; 98 historical workbench/task/meeting
+checks. These are local implementation gates. Independent SPEC/QUALITY review,
+latest production-copy/current-fact proof, original-code cold constructor,
+native role paths, complete CI, push, deployment and live readback remain open.

@@ -5,6 +5,7 @@ from app.agent_cron.models import ScheduledTaskSkillRef
 from app.scheduled_task_recovery import close_superseded_scheduled_reply_tasks
 from app.store import AutoReplyStore
 from app.task_storage import REPLY_TASK_SQL
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 
 
 UTC = timezone.utc
@@ -117,7 +118,7 @@ def test_failed_agent_task_is_closed_after_service_command_migration(
             (scheduled_run.event_id,),
         ).fetchone()
         attempt_row = db.execute(
-            "select send_status, resolved_at, resolution from reply_attempts where id=?",
+            f"select send_status, resolved_at, resolution from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?",
             (attempt_id,),
         ).fetchone()
     assert tuple(task_row) == (

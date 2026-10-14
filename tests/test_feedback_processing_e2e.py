@@ -4,6 +4,7 @@ This fixture models the historical feedback reported for attempt #8308.  It
 uses the real local Console API and persists only the deterministic summary
 and references; no model invocation is involved in the import step.
 """
+from app.action_storage import update_action
 
 import subprocess
 from pathlib import Path
@@ -103,7 +104,7 @@ def _seed_attempt_8308(store: AutoReplyStore) -> tuple[int, str]:
     # sequence makes the fixture exercise the exact historical attempt route.
     with store._connect() as db:
         db.execute(
-            "insert or replace into sqlite_sequence(name, seq) values('reply_attempts', 8307)"
+            "insert or replace into sqlite_sequence(name, seq) values('actions:reply_attempts', 8307)"
         )
     attempt_id = store.record_reply_attempt(
         conversation_id="conversation-8308",
@@ -136,7 +137,7 @@ def _seed_attempt_8308(store: AutoReplyStore) -> tuple[int, str]:
         # Resolution requires a durable positive run id.  The run is not
         # needed for this API fixture; its detail route remains conservative
         # unless an actual agent-run role is present.
-        db.execute("update reply_attempts set agent_run_id=445 where id=?", (attempt_id,))
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": 445})
     store.upsert_feedback_event(
         key="feedback-8308",
         feedback_token=token,

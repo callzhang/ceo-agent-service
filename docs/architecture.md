@@ -691,7 +691,7 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   `newCalendar=1` / `calendarDetail` / `uniqueId=`，含 URL 编码形式），另加 attempt 上的
   `calendar_response` / `calendar_reconciliation` 动作或 `calendar_event_id`；测试把两处
   判定绑在一起。OKR 评审 attempt（`action='okr_review'`）归入钉钉消息。
-- History 的来源表是 `HISTORY_SOURCE_TABLES`：`reply_attempts`、会议、Task 各表，
+- History 的逻辑来源是 `HISTORY_SOURCE_TABLES`：`reply_attempts` 投影、会议、Task 各来源，
   以及两类新来源。Audit web 启动不预热大范围 History 查询；打开尝试详情时批量读取该任务代次的
   Agent run 及工具事件，图表只投影所选时间范围内 attempt 的当前 History 状态。
   页面缓存以来源表元组为键。
@@ -1998,9 +1998,16 @@ Memory Write Event 放入有限 `actions` 类型，保留各自公共整数 ID�
 `reply_attempts` 和 `memory_write_events` 表退役。准确 Store18 来源通过同一
 事务内的配对迁移与完整 manifest 核验，空库创建采用 fresh Memory 父外键模式；
 已迁移的 actual 模式在重启和辅助索引修复时继续保持无 Memory 外键模式。
-内部 Store 的读取使用显式 Attempt 投影，写入使用有限 action writer；Memory
-正文不复制到目标，`payload_json` 读取为 `{}`，仅保留准确的排队业务标记。
-本段是隔离分支候选行为，未发布、未部署；外部调用者与完整发布门仍待后续单元。
+Store 与外部 History、Attention、质量扫描、定时恢复、邮件取证和维护读取
+都使用有限 Attempt/Memory 投影；外部写入按各自公共 ID 经有限 action writer
+更新，维持原有状态、条件、时间及事务语义。Memory 正文不复制到目标，
+`payload_json` 读取为 `{}`，仅保留准确的排队业务标记。主 Attempt 详情中的
+Audit 工具记录只从原生会话的指定行范围读取；缺失原生记录明确显示不可用，
+不会把已退休的数据库工具正文当作替代。已有业务结果、原始回执和排队审查
+标记继续保留。发布 quiet-wait 的候选、回执、postfix、delivery、任务、会议和
+定时来源只接受完整的 Store19 actual 或 fresh manifest，仍保留旧版本的准确选择。
+本段是隔离分支候选行为，未发布、未部署；实际副本、原始代码冷启动、原生
+角色路径、完整 CI 和上线读回仍属于后续发布门。
 
 
 ### Full document native output delivery

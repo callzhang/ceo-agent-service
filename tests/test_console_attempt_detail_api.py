@@ -197,7 +197,7 @@ def test_attempt_detail_loads_task_runs_when_attempt_has_no_run_id(tmp_path: Pat
     consumer = _complete_consumer_run(store, task, owner="task-run-fallback")
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
     with store._immediate_write_transaction() as db:
-        db.execute("update reply_attempts set agent_run_id=null where id=?", (attempt_id,))
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": None})
     _, item = build_attempt_detail(store, attempt_id)
     assert item is not None
     assert item["consumer_result"]["confidence"] == "82%"
@@ -533,9 +533,7 @@ def _seed_email_attempt(store: AutoReplyStore, *, with_agent_runs: bool) -> int:
             'role': 'audit', 'status': 'completed', 'parent_id': consumer,
             'session_id': 'session-audit', 'transcript_start': 0, 'transcript_end': 59,
         }).lastrowid
-        db.execute(
-            "update reply_attempts set agent_run_id=? where id=?", (audit, attempt_id)
-        )
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit})
     return attempt_id
 
 
@@ -1179,7 +1177,7 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
         send_status='failed', channel='dingtalk',
     )
     with store._connect() as db:
-        db.execute('update reply_attempts set agent_run_id=? where id=?', (run.id, attempt_id))
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id})
     before = store.get_agent_run(run.id)
     _, item = build_attempt_detail(store, attempt_id)
     assert item['actions']['can_rerun'] is (not refused)

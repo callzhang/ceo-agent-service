@@ -7,13 +7,109 @@ import pytest
 
 from app import action_reply_schema_release as release_module
 from app import action_storage as storage
-from app.action_reply_storage import capture_action_reply_schema, migrate_action_reply_schema
+from app.action_schema_release import publication_candidate_source
+from app.action_receipt_schema_release import publication_receipt_sources
+from app.action_postfix_schema_release import publication_postfix_sources
+from app.action_delivery_schema_release import publication_delivery_sources
+from app.task_schema_release import publication_task_sources, publication_meeting_sources
+from app.scheduled_config_storage import publication_scheduled_source
+from app.action_reply_storage import capture_action_reply_schema, migrate_action_reply_schema, restore_action_reply_schema
 from app.task_schema_release import _foreign_keys
 from tests.test_reply_attempt_action_migration import _database
 
 
 ORIGINAL = ("2026-10-13.4", " original\x00timestamp ")
 TARGET = "2026-10-13.5"
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh_candidate17"))
+def test_store19_publication_sources_require_complete_variant(tmp_path, variant):
+    path, release = _source(tmp_path, variant)
+    release.publish()
+    with closing(sqlite3.connect(path)) as db:
+        before = tuple(db.iterdump())
+        assert publication_candidate_source(db) == storage.REVIEW_CANDIDATE_SQL
+        assert publication_receipt_sources(db) == {
+            kind: storage.ACTION_PROJECTIONS[kind] for kind in storage.RECEIPT_ACTION_TYPES}
+        assert publication_postfix_sources(db) == {
+            kind: storage.ACTION_PROJECTIONS[kind] for kind in storage.POSTFIX_ACTION_TYPES}
+        assert publication_delivery_sources(db) == {
+            kind: storage.ACTION_PROJECTIONS[kind] for kind in storage.DELIVERY_ACTION_TYPES}
+        assert publication_task_sources(db)[0].startswith("select ")
+        assert publication_meeting_sources(db)[0].startswith("select ")
+        assert publication_scheduled_source(db).startswith("select ")
+        assert tuple(db.iterdump()) == before
+        selectors = (publication_candidate_source, publication_receipt_sources,
+                     publication_postfix_sources, publication_delivery_sources,
+                     publication_task_sources, publication_meeting_sources,
+                     publication_scheduled_source)
+        db.execute("update service_state set value='unknown' where key='store_schema_version'")
+        unknown = tuple(db.iterdump())
+        for selector in selectors:
+            with pytest.raises(ValueError, match="unknown|mixed"):
+                selector(db)
+        assert tuple(db.iterdump()) == unknown
+        db.execute("update service_state set value=? where key='store_schema_version'", (TARGET,))
+        db.execute("create index unexpected_reply_index on actions(attempt_channel)")
+        changed = tuple(db.iterdump())
+        for selector in selectors:
+            with pytest.raises(ValueError, match="unknown|mixed"):
+                selector(db)
+        assert tuple(db.iterdump()) == changed
+
+
+def test_current_store19_factory_publishes_full_store18_source_and_current_fact_inverse(tmp_path):
+    from pathlib import Path
+    from app.store import AutoReplyStore
+    from app.email_store import EmailStore
+    from app.store_schema_release import prepare_store_schema_release
+
+    captured_path = tmp_path / "captured-source.sqlite3"
+    with closing(_database(captured_path, "fresh_candidate17")) as captured:
+        source = capture_action_reply_schema(captured)
+    path = tmp_path / "full-store.sqlite3"
+    AutoReplyStore(path)
+    EmailStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        storage.insert_action(db, "reply_attempts", {
+            "id": 17, "conversation_id": "chat", "conversation_title": "source",
+            "trigger_message_id": "message", "trigger_sender": "sender",
+            "trigger_text": "source\x00text", "action": "agent_run",
+            "sensitivity_kind": "ordinary", "send_status": "pending",
+        })
+        storage.insert_action(db, "memory_write_events", {
+            "id": 23, "attempt_id": 17, "event_type": "semantic", "status": "pending",
+        })
+        db.commit()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        restore_action_reply_schema(db, source)
+        db.execute("update service_state set value=?,updated_at=? "
+                   "where key='store_schema_version'", ORIGINAL)
+        db.commit()
+        assert capture_action_reply_schema(db) == source
+    release = prepare_store_schema_release(Path(__file__).parents[1], path)
+    assert isinstance(release, release_module.ActionReplySchemaRelease)
+    assert release.migrate is release_module._migrate_store
+    release.publish()
+    with closing(sqlite3.connect(path)) as db:
+        assert _marker(db)[0] == TARGET
+        assert db.execute(f"select trigger_text from ({storage.REPLY_ATTEMPT_COMMON_SQL}) where id=17").fetchone() == ("source\x00text",)
+        storage.update_action(db, "reply_attempts", 17, {"final_reply_text": "current\x00reply"})
+        storage.insert_action(db, "memory_write_events", {
+            "id": 24, "attempt_id": 17, "event_type": "receipt", "status": "written",
+        })
+        db.commit()
+    release.rollback()
+    with closing(sqlite3.connect(path)) as db:
+        assert _marker(db) == ORIGINAL
+        assert db.execute("select final_reply_text from reply_attempts where id=17").fetchone() == ("current\x00reply",)
+        assert db.execute("select id,attempt_id,status from memory_write_events order by id").fetchall() == [
+            (23, 17, "pending"), (24, 17, "written")]
+    release.publish()
+    with closing(sqlite3.connect(path)) as db:
+        assert _marker(db)[0] == TARGET
+        assert db.execute(f"select count(*) from ({storage.reply_action_projection('memory_write_events', 'fresh_memory_fk')})").fetchone() == (2,)
 
 
 def _source(tmp_path, variant, *, prior_fk=False):
@@ -148,14 +244,12 @@ def test_inverse_failure_is_atomic(tmp_path, monkeypatch):
         assert tuple(db.iterdump()) == before
 
 
-def test_factory_routes_only_exact_future_transition(tmp_path, monkeypatch):
+def test_factory_routes_only_exact_current_transition(tmp_path):
     from pathlib import Path
 
     from app import store_schema_release
 
     path, _ = _source(tmp_path, "actual")
-    assert store_schema_release.prepare_store_schema_release(Path(__file__).parents[1], path) is None
-    monkeypatch.setattr(store_schema_release, "_target_store_version", lambda root: TARGET)
     release = store_schema_release.prepare_store_schema_release(Path(__file__).parents[1], path)
     assert isinstance(release, release_module.ActionReplySchemaRelease)
     assert release.migrate is release_module._migrate_store

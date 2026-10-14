@@ -1,3 +1,4 @@
+from app.action_storage import update_action
 import json
 
 import pytest
@@ -124,8 +125,7 @@ def test_refused_history_does_not_fetch_source_or_enqueue(tmp_path, monkeypatch)
     store.fail_agent_run(run.id, {"code": "provider_risk_rejected", "retryable": False},
                          owner="refused-fixture")
     with store._connect() as db:
-        db.execute("update reply_attempts set agent_run_id=?,send_status='failed' where id=?",
-                   (run.id, attempt_id))
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id, "send_status": "failed"})
     before = store.get_reply_task(task.id)
 
     def forbidden_read(*args):
@@ -177,8 +177,7 @@ def test_source_fetch_cannot_reopen_a_newly_refused_generation(tmp_path, monkeyp
         store.fail_reply_task(newer.id, "provider_risk_rejected",
                               expected_execution_generation=newer.execution_generation)
         with store._connect() as db:
-            db.execute("update reply_attempts set agent_run_id=?,send_status='failed' where id=?",
-                       (run.id, attempt_id))
+            update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id, "send_status": "failed"})
         return source
 
     monkeypatch.setattr(DwsClient, "read_message_by_id", read_then_refuse)

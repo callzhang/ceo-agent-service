@@ -30,6 +30,8 @@ def test_actual_source_declarations_initialize_transactionally_and_idempotently(
     db.execute("update service_state set value='2026-10-13.3' where key='store_schema_version'")
     db.commit()
     db.close()
+    from tests.workbench_caller_fixtures import advance_source17_to_store19
+    advance_source17_to_store19(path)
     store = AutoReplyStore(path)
     with store._connect() as db:
         assert workbench_schema_is_current(db)

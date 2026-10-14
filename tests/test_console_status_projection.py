@@ -1,4 +1,5 @@
 from app.audit_web import _reply_attempt_queue_snapshot
+from app.action_storage import update_action
 from app.store import AutoReplyStore
 
 
@@ -27,16 +28,14 @@ def test_status_reads_errors_only_for_current_failed_attempts(tmp_path):
         for attempt_id, error in zip(
             ids, ["old failure", "skipped detail", "current failure"]
         ):
-            db.execute(
-                "update reply_attempts set send_error=? where id=?", (error, attempt_id)
-            )
+            update_action(db, "reply_attempts", attempt_id, {"send_error": error})
         expected = _reply_attempt_queue_snapshot(db)
         columns = [
-            row["name"] for row in db.execute("pragma table_info(reply_attempts)")
+            row["name"] for row in db.execute("pragma table_xinfo(actions)")
         ]
         projection = ",".join(
-            "read_status_error(send_error) as send_error"
-            if column == "send_error"
+            "read_status_error(attempt_send_error) as attempt_send_error"
+            if column == "attempt_send_error"
             else f'"{column}"'
             for column in columns
         )
@@ -44,7 +43,7 @@ def test_status_reads_errors_only_for_current_failed_attempts(tmp_path):
             "read_status_error", 1, lambda value: error_reads.append(value) or value
         )
         db.execute(
-            f"create temp view reply_attempts as select {projection} from main.reply_attempts"
+            f"create temp view actions as select {projection} from main.actions"
         )
         actual = _reply_attempt_queue_snapshot(db)
     assert actual == expected

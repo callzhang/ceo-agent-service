@@ -190,6 +190,15 @@ def full_source_database(path, auxiliary_path):
         for obj in state['objects']:
             if obj['type'] != 'table' and obj['sql'] and not db.execute('select 1 from sqlite_schema where name=?', (obj['name'],)).fetchone():
                 db.execute(obj['sql'])
+    # Source13 had these physical tables. The current auxiliary constructor
+    # retires them, so restore the independently captured published source DDL.
+    reply_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-13-database-redesign-phase5e-reply-source.json').read_text())['actual']['tables']
+    for state in reply_source.values():
+        db.execute(state['sql'])
+    for state in reply_source.values():
+        for obj in (*reversed(state['indexes']), *state['triggers']):
+            if obj['sql']:
+                db.execute(obj['sql'])
     db.commit()
     _INITIALIZED_STORE_PATHS.discard(path.resolve())
     return db

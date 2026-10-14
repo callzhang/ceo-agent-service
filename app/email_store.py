@@ -2499,16 +2499,17 @@ def _email_unsubscribe_attempt_ids(
     conversation_id: str,
     action_identity: str,
 ) -> list[int]:
+    from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
     if db.execute(
-        "select 1 from sqlite_master where type='table' and name='reply_attempts'"
+        "select 1 from sqlite_master where type='table' and name='actions'"
     ).fetchone() is None:
         return []
     return [
         int(row["id"])
         for row in db.execute(
-            """
+            f"""
             select id
-            from reply_attempts
+            from ({REPLY_ATTEMPT_COMMON_SQL})
             where channel='email'
               and conversation_id=?
               and trigger_message_id=?

@@ -1,3 +1,4 @@
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, delete_action, update_action
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -42,10 +43,7 @@ def _seed_exhausted_target_open_failure(tmp_path, *, retry_count=2):
         pre_action_failure=True,
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set retry_count=? where id=?",
-            (retry_count, attempt_id),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"retry_count": retry_count})
     return store, delivery_id, attempt_id, delivery.execution_generation
 
 
@@ -60,9 +58,9 @@ def _wechat_delivery_and_attempt_state(store, delivery_id):
         attempts = [
             dict(row)
             for row in db.execute(
-                """
+                f"""
                 select attempts.*
-                from reply_attempts as attempts
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                 join tasks as tasks
                   on tasks.conversation_id=attempts.conversation_id
                  and tasks.trigger_message_id=attempts.trigger_message_id
@@ -638,10 +636,7 @@ def test_exhausted_stale_wechat_delivery_is_skipped_with_attempt_sync(tmp_path):
         pre_action_failure=True,
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set retry_count=2 where id=?",
-            (attempt_id,),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"retry_count": 2})
 
     store.skip_exhausted_stale_wechat_delivery(
         delivery_id,
@@ -689,10 +684,7 @@ def test_exhausted_stale_wechat_ui_failure_is_skipped_with_attempt_sync(tmp_path
         pre_action_failure=True,
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set retry_count=2 where id=?",
-            (attempt_id,),
-        )
+        update_action(db, "reply_attempts", attempt_id, {"retry_count": 2})
 
     store.skip_exhausted_stale_wechat_delivery(
         delivery_id,
@@ -756,10 +748,7 @@ def test_exhausted_stale_wechat_delivery_uses_latest_attempt_retry_count(tmp_pat
         send_status="failed", channel="wechat",
     )
     with store._connect() as db:
-        db.execute(
-            "update reply_attempts set retry_count=1 where id=?",
-            (latest_attempt_id,),
-        )
+        update_action(db, "reply_attempts", latest_attempt_id, {"retry_count": 1})
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
 
     with pytest.raises(AgentRunLeaseLostError, match="not in expected state"):
@@ -826,7 +815,7 @@ def test_exhausted_stale_wechat_delivery_rejects_ineligible_state_unchanged(
             )
             assert changed.rowcount == 1
         elif invalid_state == "missing_matching_attempt":
-            db.execute("delete from reply_attempts where id=?", (attempt_id,))
+            delete_action(db, "reply_attempts", attempt_id)
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
 
     with pytest.raises(AgentRunLeaseLostError, match="not in expected state"):

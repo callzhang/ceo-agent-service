@@ -518,6 +518,12 @@ def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=Fal
     if len(matches) != 1:
         raise sqlite3.IntegrityError("unsupported or mixed Attempt/Memory action schema")
     return matches[0]
+
+
+def reply_schema_is_current(db: sqlite3.Connection) -> bool:
+    """Recognize either complete Store19 declaration, without altering the DB."""
+    return any(action_schema_is_current(db, include_reply=True, reply_variant=variant)
+               for variant in REPLY_VARIANTS)
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
 CANDIDATE_SELECTION_SQL = ACTION_PROJECTIONS["candidate_selections"]

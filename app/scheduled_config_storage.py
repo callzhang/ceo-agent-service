@@ -45,7 +45,7 @@ def migrate_scheduled_configs(db: sqlite3.Connection) -> None:
 def publication_scheduled_source(db: sqlite3.Connection) -> str:
     """Read the exact scheduled layout for the paired publication quiet wait."""
     from app.run_storage import SCHEDULED_RUN_SQL
-    from app.action_storage import action_schema_is_current
+    from app.action_storage import action_schema_is_current, reply_schema_is_current
 
     row = db.execute(
         "select value from service_state where key='store_schema_version'"
@@ -56,8 +56,8 @@ def publication_scheduled_source(db: sqlite3.Connection) -> str:
         for row in db.execute("select name from sqlite_master where type='table'")
     }
     if (
-        version in ("2026-10-12.1", "2026-10-13.1", "2026-10-13.2", "2026-10-13.3", "2026-10-13.4")
-        and (version == "2026-10-12.1" or action_schema_is_current(db, include_receipts=version in ("2026-10-13.2", "2026-10-13.3", "2026-10-13.4"), include_postfix=version in ("2026-10-13.3", "2026-10-13.4"), include_delivery=version == "2026-10-13.4"))
+        version in ("2026-10-12.1", "2026-10-13.1", "2026-10-13.2", "2026-10-13.3", "2026-10-13.4", "2026-10-13.5")
+        and (reply_schema_is_current(db) if version == "2026-10-13.5" else version == "2026-10-12.1" or action_schema_is_current(db, include_receipts=version in ("2026-10-13.2", "2026-10-13.3", "2026-10-13.4"), include_postfix=version in ("2026-10-13.3", "2026-10-13.4"), include_delivery=version == "2026-10-13.4"))
         and {"tasks", "runs"} <= tables
         and not {
             "scheduled_task_runs",

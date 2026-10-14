@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from app.run_storage import AGENT_RUN_SQL, insert_run
-from app.action_storage import ACTION_PROJECTIONS, insert_action
+from app.action_storage import ACTION_PROJECTIONS, insert_action, update_action
 from app.audit_web import _reply_attempt_queue_snapshot, handle_rerun_attempt_post
 from app.quality_gate import scan_hourly_quality
 from app.store import AutoReplyStore
@@ -82,7 +82,7 @@ def seed(store, *, native_home):
             'role': 'consumer', 'status': 'completed', 'session_id': session_id,
             'transcript_start': 1, 'transcript_end': 2,
         }).lastrowid
-        db.execute("update reply_attempts set agent_run_id=? where id=?", (run_id, attempt_id))
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run_id})
     return attempt_id, task_id, run_id, result
 
 
@@ -106,8 +106,10 @@ def test_resolved_question_projects_consistently_and_cannot_rerun(tmp_path, isol
     attempt_id, task_id, run_id, result = seed(store, native_home=isolated_native_home)
     original_native = native_path(store, run_id).read_bytes()
     with store._connect() as db:
-        db.execute("update reply_attempts set resolved_at=current_timestamp, resolution=? where id=?",
-                   ("旧长期规则问题已退役；未作出业务决策，也未执行新动作。", attempt_id))
+        update_action(db, "reply_attempts", attempt_id, {
+            "resolved_at": db.execute("select current_timestamp").fetchone()[0],
+            "resolution": "旧长期规则问题已退役；未作出业务决策，也未执行新动作。",
+        })
     _, detail = build_attempt_detail(store, attempt_id)
     assert detail["status"]["raw"] == "skipped"
     assert "退役" in detail["status"]["message"]
@@ -194,10 +196,13 @@ def test_retirement_refuses_current_or_unproven_questions(tmp_path, change, isol
                 'candidate_digest': 'digest', 'stage_index': 0, 'proposal_revision': 0,
             })
         elif change == "newer":
-            db.execute("insert into reply_attempts(channel, conversation_id, conversation_title, "
-                       "trigger_message_id, trigger_sender, trigger_text, action, sensitivity_kind, "
-                       "codex_reason, send_status) values ('dingtalk','synthetic','Synthetic', "
-                       "'question','Synthetic','new question','agent_run','general','new','needs_human')")
+            insert_action(db, "reply_attempts", {
+                "channel": "dingtalk", "conversation_id": "synthetic",
+                "conversation_title": "Synthetic", "trigger_message_id": "question",
+                "trigger_sender": "Synthetic", "trigger_text": "new question",
+                "action": "agent_run", "sensitivity_kind": "general",
+                "codex_reason": "new", "send_status": "needs_human",
+            })
     if change in {"modern", "malformed", "retryable", "authorization_required"}:
         path = native_path(store, run_id)
         records = [json.loads(line) for line in path.read_text().splitlines()]
