@@ -4,8 +4,9 @@ from dataclasses import replace
 import pytest
 import sqlite3
 
+from app.action_storage import update_email_action
 from app.email_classifier_contracts import EmailAction
-from app.email_store import EmailStore
+from app.email_store import EMAIL_DIRECT_ACTION_LOCATOR_SQL, EmailStore
 from app.email_action_reconcile import ExistingReadOnlyEmailStore, release_source_verified_retry
 from tests.test_email_action_reconcile import (
     ACCOUNT, ReadOnlyFakeSession, _action_row, _factory, _seed_failed as _seed_original,
@@ -168,7 +169,12 @@ def test_source_verified_retry_rejects_changed_failure(tmp_path: Path):
         account_id=ACCOUNT, action_types=(EmailAction.MOVE,), limit=1,
     )[0]
     with store._connect() as db:
-        db.execute("update email_actions set error='new failure' where action_id=?", (action_id,))
+        action_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
+            (action_id,),
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row["rowid"], {"error": "new failure"})
     assert not _release(store,
         failed, source_locator=failed.action.locator, source_revision="source-v1",
         requested_at="2026-10-12T06:00:00+00:00", apply=True,

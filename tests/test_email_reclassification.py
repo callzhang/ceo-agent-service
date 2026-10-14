@@ -5,6 +5,7 @@ import sqlite3
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.action_storage import email_action_projection
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -96,7 +97,8 @@ def test_processed_work_to_legal_creates_user_plan_version_and_keeps_old_plan(
     with sqlite3.connect(store.path) as db:
         plans = db.execute(
             "select action_plan_id, action_plan_version, category, classification_source "
-            "from email_action_plans where classification_id=? order by action_plan_version",
+            f"from ({email_action_projection('email_action_plans')}) "
+            "where classification_id=? order by action_plan_version",
             (501,),
         ).fetchall()
     assert [plan[1] for plan in plans] == [1, 2]

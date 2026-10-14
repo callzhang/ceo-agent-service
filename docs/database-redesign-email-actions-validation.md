@@ -2352,3 +2352,15 @@ comparisons exclude internal tables and include the existing FTS/shadow tables.
 This unit is not deployed. Task7 must finish the additional current-versus-old
 test-fixture migration, CI, main reconciliation and normal deployment/readback.
 The complete ten-core-table plus migration-ledger redesign remains open.
+
+### Task7 four current Email test storage reads
+
+Four existing current tests now read plan history and zero mailbox actions through
+the finite Email action projections. The changed-failure retry test locates every
+matching original source ROWID and updates its error through the accepted Email
+writer. The tests retain their plan version/history, original authorization
+snapshot, no-mailbox-action, queue, training-record, and stale-retry refusal
+assertions. Their exact selectors first failed four times on removed physical
+tables, then passed four times against Store20/Email52. No runtime, schema,
+provider, production, or historical-test behavior changed. This is one bounded
+Task7 test-debt unit; remaining Task7/CI/publication gates are open.
