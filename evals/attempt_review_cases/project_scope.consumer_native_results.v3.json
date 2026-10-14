@@ -1,0 +1,976 @@
+{
+  "version": "project-scope-consumer.v3",
+  "manifest_sha256": "b1788e4d81d7430dd6c48f915c55e8d8a805da5d04ebc1e0e74f6d2e931e5b4a",
+  "v1_manifest_sha256": "3b2408b5cd362a031c4012390327fe01336764783060b53ca45e74e67345fc3d",
+  "harness_sha256": "85c89450fdb9b1cd80ef2adae5bf8f281b9a28458acbfdd2d8d569c96855b3c0",
+  "shared_harness_sha256": "cef781432368e0697109f09b19eef5a9f1193325fde06862d29e17a214d1c506",
+  "baseline_ref": "c5a2e5164410f6688a79393f1c30a7c29f032732",
+  "baseline_skill_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+  "candidate_skill_sha256": "950d752ae159737752dc46285c6896924b45b17a7b2119c12e98bcec7f24ba66",
+  "generic_skill_sha256": "ca0d2aed99269b25819686fc9a8844e6484ac9b171695314027477a4b7e57d20",
+  "production_user_prompt_template_sha256": "164feb55f0f14f01253f5394eae21e692a64d089e60e868872ec39a2579a1866",
+  "consumer_developer_sha256": "4eed3c1638b5ca715f87356978bd69bd4718a63ff8fba1cf763566cfbe669851",
+  "consumer_schema_sha256": "e73296018727384782713dbe6494238cb4a1884fb196837c247fbbfca1fedb0e",
+  "settings": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "timeout_seconds_per_case": 300,
+    "concurrency": 1,
+    "tools": "none",
+    "provider": "synthetic-inline-only",
+    "current_time": "2026-10-14T12:00:00+08:00"
+  },
+  "results": [
+    {
+      "case_id": "false_low_from_prior_trial",
+      "side": "baseline",
+      "semantic_criterion": "Do not demand 特批 or earn-back because the historical 10-unit trial is below 25%; identify 1000-unit current aggregate at 25.334% with trial costs already included; preserve other required review checks.",
+      "case_facts_sha256": "828430b58fed85f5f7e755becf193907936dfe2ff931a705c4120bd797ae39f4",
+      "prompt_sha256": "d3b18cf74a849ba78168ef93615c3197e4f8201d065fdb3becb7b876799f67c4",
+      "native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "summary": "合成项目立项属于第一曲线且综合毛利率约为18.86%，低于25%门槛；表单未勾选“特批”，且未提交业务价值评估或毛利差额回收计划。当前应退回发起人补正，不能直接同意或拒绝。",
+          "error_code": null,
+          "error_retryable": false,
+          "error_authorization_required": false,
+          "risk": "high",
+          "confidence": 0.98,
+          "rule_coverage": 1.0,
+          "information_completeness": 0.75,
+          "durable_memories": [],
+          "outcome": "proposal",
+          "proposal": {
+            "objective": "将合成第一曲线项目立项申请退回发起人，补选低毛利特批并补充足以评估特批合理性的业务价值或毛利差额回收材料。",
+            "actions": [
+              {
+                "description": "退回合成项目立项 OA 给发起人补正第一曲线低毛利特批材料",
+                "action_identity": "revert-synthetic-PROJ-A-low-margin-special-approval",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-A",
+                  "task_id": "synthetic-TASK-A",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "该项目表内收入955000元，综合成本713060元，其他成本71860元，综合毛利为180080元，毛利率约18.86%，低于第一曲线25%的毛利底线。请勾选“特批”，并补充业务价值评估或毛利差额回收计划，至少说明客户/收入与预算承诺、战略或产品/算法价值、可复用资产、总投入与机会成本、可量化结果及风险控制；同时补齐“数据集需求评估（POC）”等与本次特批判断相关的缺失材料。此前试测阶段成本1500+5600元已包含在其他成本71860元内，请勿重复计入。补正前不进入同意判断。"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前审批实例为synthetic-PROJ-A，当前任务为synthetic-TASK-A，当前审批人有权审阅，且存在可退回发起人的节点sid-startevent。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "正式项目范围为1000条，收入为955000元，表内综合成本为713060元，其他成本为71860元；项目备注明确此前试测阶段成本1500+5600元已包含在其他成本中。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "据上述口径，综合毛利为180080元，综合毛利率约为18.86%，低于第一曲线25%的毛利底线。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "表单中的“特批”未勾选，“数据集需求评估（POC）”为空，其他项目战略、合同和资源材料仍需继续审阅。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "适用项目规则要求第一曲线综合毛利低于25%时勾选“特批”，并提交业务价值评估或毛利差额回收计划；未勾选或申请人材料不足时应退回补正，不得由审阅人代勾或直接批准。",
+                "references": [
+                  "Business Skill excerpt: stardust-oa-project-review, Project rules 2-3",
+                  "Business Skill excerpt: dingtalk-oa-approval, decision table rows 4 and 7a"
+                ]
+              }
+            ],
+            "authored_judgment": "本轮只评估低毛利特批与差额回收要求。由于毛利率已低于25%，且特批程序和关键价值材料均未完成，当前最小且可逆的正确动作是退回补正。正式项目的战略适配、合同/预算、资源投入和交付风险尚未完成审阅，因此本候选不表达最终立项结论。"
+          },
+          "decision_options": [],
+          "requested_input": null,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false
+        },
+        "error": "",
+        "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a139c0-d399-78a0-a178-b59ad86702f6\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle, code_mode_only. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"error\",\"message\":\"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"error\",\"message\":\"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_3\",\"type\":\"agent_message\",\"text\":\"{\\\"summary\\\":\\\"合成项目立项属于第一曲线且综合毛利率约为18.86%，低于25%门槛；表单未勾选“特批”，且未提交业务价值评估或毛利差额回收计划。当前应退回发起人补正，不能直接同意或拒绝。\\\",\\\"error_code\\\":null,\\\"error_retryable\\\":false,\\\"error_authorization_required\\\":false,\\\"risk\\\":\\\"high\\\",\\\"confidence\\\":0.98,\\\"rule_coverage\\\":1.0,\\\"information_completeness\\\":0.75,\\\"durable_memories\\\":[],\\\"outcome\\\":\\\"proposal\\\",\\\"proposal\\\":{\\\"objective\\\":\\\"将合成第一曲线项目立项申请退回发起人，补选低毛利特批并补充足以评估特批合理性的业务价值或毛利差额回收材料。\\\",\\\"actions\\\":[{\\\"description\\\":\\\"退回合成项目立项 OA 给发起人补正第一曲线低毛利特批材料\\\",\\\"action_identity\\\":\\\"revert-synthetic-PROJ-A-low-margin-special-approval\\\",\\\"capability\\\":\\\"dingtalk-oa\\\",\\\"operation\\\":\\\"revert_task\\\",\\\"target\\\":{\\\"process_instance_id\\\":\\\"synthetic-PROJ-A\\\",\\\"task_id\\\":\\\"synthetic-TASK-A\\\",\\\"target_activity_id\\\":\\\"sid-startevent\\\"},\\\"payload\\\":{\\\"action\\\":\\\"REVERT_FOR_RESUBMIT\\\",\\\"remark\\\":\\\"该项目表内收入955000元，综合成本713060元，其他成本71860元，综合毛利为180080元，毛利率约18.86%，低于第一曲线25%的毛利底线。请勾选“特批”，并补充业务价值评估或毛利差额回收计划，至少说明客户/收入与预算承诺、战略或产品/算法价值、可复用资产、总投入与机会成本、可量化结果及风险控制；同时补齐“数据集需求评估（POC）”等与本次特批判断相关的缺失材料。此前试测阶段成本1500+5600元已包含在其他成本71860元内，请勿重复计入。补正前不进入同意判断。\\\"},\\\"effect\\\":\\\"external\\\"}],\\\"sourced_facts\\\":[{\\\"assertion\\\":\\\"当前审批实例为synthetic-PROJ-A，当前任务为synthetic-TASK-A，当前审批人有权审阅，且存在可退回发起人的节点sid-startevent。\\\",\\\"references\\\":[\\\"synthetic-form-A\\\"]},{\\\"assertion\\\":\\\"正式项目范围为1000条，收入为955000元，表内综合成本为713060元，其他成本为71860元；项目备注明确此前试测阶段成本1500+5600元已包含在其他成本中。\\\",\\\"references\\\":[\\\"synthetic-form-A\\\"]},{\\\"assertion\\\":\\\"据上述口径，综合毛利为180080元，综合毛利率约为18.86%，低于第一曲线25%的毛利底线。\\\",\\\"references\\\":[\\\"synthetic-form-A\\\"]},{\\\"assertion\\\":\\\"表单中的“特批”未勾选，“数据集需求评估（POC）”为空，其他项目战略、合同和资源材料仍需继续审阅。\\\",\\\"references\\\":[\\\"synthetic-form-A\\\"]},{\\\"assertion\\\":\\\"适用项目规则要求第一曲线综合毛利低于25%时勾选“特批”，并提交业务价值评估或毛利差额回收计划；未勾选或申请人材料不足时应退回补正，不得由审阅人代勾或直接批准。\\\",\\\"references\\\":[\\\"Business Skill excerpt: stardust-oa-project-review, Project rules 2-3\\\",\\\"Business Skill excerpt: dingtalk-oa-approval, decision table rows 4 and 7a\\\"]}],\\\"authored_judgment\\\":\\\"本轮只评估低毛利特批与差额回收要求。由于毛利率已低于25%，且特批程序和关键价值材料均未完成，当前最小且可逆的正确动作是退回补正。正式项目的战略适配、合同/预算、资源投入和交付风险尚未完成审阅，因此本候选不表达最终立项结论。\\\"},\\\"decision_options\\\":[],\\\"requested_input\\\":null,\\\"needs_human_reason\\\":null,\\\"decision_basis\\\":null,\\\"stage_index\\\":0,\\\"predecessor_review_id\\\":null,\\\"continue_after_execution\\\":false}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":50139,\"cached_input_tokens\":4864,\"cache_write_input_tokens\":0,\"output_tokens\":1300,\"reasoning_output_tokens\":358}}\n",
+        "stderr": "",
+        "tool_item_types": []
+      },
+      "wire": {
+        "ok": true,
+        "error": "",
+        "result": {
+          "outcome": "proposal",
+          "summary": "合成项目立项属于第一曲线且综合毛利率约为18.86%，低于25%门槛；表单未勾选“特批”，且未提交业务价值评估或毛利差额回收计划。当前应退回发起人补正，不能直接同意或拒绝。",
+          "proposal": {
+            "objective": "将合成第一曲线项目立项申请退回发起人，补选低毛利特批并补充足以评估特批合理性的业务价值或毛利差额回收材料。",
+            "actions": [
+              {
+                "description": "退回合成项目立项 OA 给发起人补正第一曲线低毛利特批材料",
+                "action_identity": "revert-synthetic-PROJ-A-low-margin-special-approval",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-A",
+                  "task_id": "synthetic-TASK-A",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "该项目表内收入955000元，综合成本713060元，其他成本71860元，综合毛利为180080元，毛利率约18.86%，低于第一曲线25%的毛利底线。请勾选“特批”，并补充业务价值评估或毛利差额回收计划，至少说明客户/收入与预算承诺、战略或产品/算法价值、可复用资产、总投入与机会成本、可量化结果及风险控制；同时补齐“数据集需求评估（POC）”等与本次特批判断相关的缺失材料。此前试测阶段成本1500+5600元已包含在其他成本71860元内，请勿重复计入。补正前不进入同意判断。"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前审批实例为synthetic-PROJ-A，当前任务为synthetic-TASK-A，当前审批人有权审阅，且存在可退回发起人的节点sid-startevent。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "正式项目范围为1000条，收入为955000元，表内综合成本为713060元，其他成本为71860元；项目备注明确此前试测阶段成本1500+5600元已包含在其他成本中。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "据上述口径，综合毛利为180080元，综合毛利率约为18.86%，低于第一曲线25%的毛利底线。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "表单中的“特批”未勾选，“数据集需求评估（POC）”为空，其他项目战略、合同和资源材料仍需继续审阅。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "适用项目规则要求第一曲线综合毛利低于25%时勾选“特批”，并提交业务价值评估或毛利差额回收计划；未勾选或申请人材料不足时应退回补正，不得由审阅人代勾或直接批准。",
+                "references": [
+                  "Business Skill excerpt: stardust-oa-project-review, Project rules 2-3",
+                  "Business Skill excerpt: dingtalk-oa-approval, decision table rows 4 and 7a"
+                ]
+              }
+            ],
+            "authored_judgment": "本轮只评估低毛利特批与差额回收要求。由于毛利率已低于25%，且特批程序和关键价值材料均未完成，当前最小且可逆的正确动作是退回补正。正式项目的战略适配、合同/预算、资源投入和交付风险尚未完成审阅，因此本候选不表达最终立项结论。"
+          },
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "high",
+          "confidence": 0.98,
+          "rule_coverage": 1.0,
+          "information_completeness": 0.75,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "digest": "ac33dc50e6c9e741bbad722edcd9e94c5460190d7ff2262a7319d538000dc728"
+      },
+      "wire_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "case_id": "false_low_from_prior_trial",
+      "side": "candidate",
+      "semantic_criterion": "Do not demand 特批 or earn-back because the historical 10-unit trial is below 25%; identify 1000-unit current aggregate at 25.334% with trial costs already included; preserve other required review checks.",
+      "case_facts_sha256": "828430b58fed85f5f7e755becf193907936dfe2ff931a705c4120bd797ae39f4",
+      "prompt_sha256": "d3282559f7c74e261e4a3980c3233f125d0b89aecbde6052d5a78ed39d45bb90",
+      "native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "summary": "当前项目正式范围的综合毛利率为25.33%，未低于第一曲线25%毛利底线，因此没有触发“特批”勾选、业务价值评估或回收差额计划的前置要求；历史10条POC试测行不得替代正式项目口径，也不能将已包含在综合成本中的其他成本再次扣除。基于本轮限定的低毛利特批判断无需退回或请示，但其他战略、合同和资源材料仍需完成审阅，当前结论不构成整单同意。",
+          "error_code": null,
+          "error_retryable": false,
+          "error_authorization_required": false,
+          "risk": "high",
+          "confidence": 0.98,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "durable_memories": [],
+          "outcome": "no_action",
+          "proposal": null,
+          "decision_options": [],
+          "requested_input": null,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false
+        },
+        "error": "",
+        "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a139c1-3004-7221-ac39-f8be3cf35ab2\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle, code_mode_only. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"error\",\"message\":\"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"error\",\"message\":\"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_3\",\"type\":\"agent_message\",\"text\":\"{\\\"summary\\\":\\\"当前项目正式范围的综合毛利率为25.33%，未低于第一曲线25%毛利底线，因此没有触发“特批”勾选、业务价值评估或回收差额计划的前置要求；历史10条POC试测行不得替代正式项目口径，也不能将已包含在综合成本中的其他成本再次扣除。基于本轮限定的低毛利特批判断无需退回或请示，但其他战略、合同和资源材料仍需完成审阅，当前结论不构成整单同意。\\\",\\\"error_code\\\":null,\\\"error_retryable\\\":false,\\\"error_authorization_required\\\":false,\\\"risk\\\":\\\"high\\\",\\\"confidence\\\":0.98,\\\"rule_coverage\\\":1.0,\\\"information_completeness\\\":1.0,\\\"durable_memories\\\":[],\\\"outcome\\\":\\\"no_action\\\",\\\"proposal\\\":null,\\\"decision_options\\\":[],\\\"requested_input\\\":null,\\\"needs_human_reason\\\":null,\\\"decision_basis\\\":null,\\\"stage_index\\\":0,\\\"predecessor_review_id\\\":null,\\\"continue_after_execution\\\":false}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":50594,\"cached_input_tokens\":4864,\"cache_write_input_tokens\":0,\"output_tokens\":753,\"reasoning_output_tokens\":516}}\n",
+        "stderr": "2026-10-14T09:32:05.293774Z ERROR codex_skills_extension::host_service: failed to install system skills: io error while remove existing system skills dir: Directory not empty (os error 66)\n",
+        "tool_item_types": []
+      },
+      "wire": {
+        "ok": true,
+        "error": "",
+        "result": {
+          "outcome": "no_action",
+          "summary": "当前项目正式范围的综合毛利率为25.33%，未低于第一曲线25%毛利底线，因此没有触发“特批”勾选、业务价值评估或回收差额计划的前置要求；历史10条POC试测行不得替代正式项目口径，也不能将已包含在综合成本中的其他成本再次扣除。基于本轮限定的低毛利特批判断无需退回或请示，但其他战略、合同和资源材料仍需完成审阅，当前结论不构成整单同意。",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "high",
+          "confidence": 0.98,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "digest": "ebde1aae28a50851f9150cd45bb4c7244190ea04bfcd70b2e2af6ce2f6ecb4a0"
+      },
+      "wire_valid": true,
+      "outcome": "no_action"
+    },
+    {
+      "case_id": "genuine_current_low_margin",
+      "side": "baseline",
+      "semantic_criterion": "Apply the 25% first-curve rule to the genuinely current 10-unit project at 13.415%; propose return for unchecked 特批 and business-value/earn-back material, with no automatic exception grant.",
+      "case_facts_sha256": "b97240d89deaaf6879b96d31cee3371351432b8ba22f8649e3d947ee1afb6da8",
+      "prompt_sha256": "e41d0b6e27b40d93f53d01b7b0dfe74f7a3a94e3a52798f1c13af99e65ed4609",
+      "native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "summary": "合成项目立项审批 synthetic-PROJ-B 属于第一曲线项目，已核实综合毛利率为 13.415%，低于 25% 门槛，且表单未勾选“特批”。依据第一曲线低毛利规则，本阶段应退回发起人，要求勾选“特批”并补充业务价值评估或后续赚回毛利的计划；不应直接拒绝，也不应代替申请人勾选特批。未执行任何外部动作。",
+          "error_code": null,
+          "error_retryable": false,
+          "error_authorization_required": false,
+          "risk": "high",
+          "confidence": 0.99,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "durable_memories": [],
+          "outcome": "proposal",
+          "proposal": {
+            "objective": "将第一曲线项目立项审批 synthetic-PROJ-B 退回发起人，要求针对 13.415% 的低毛利率勾选“特批”，并补充业务价值评估或后续赚回毛利的计划后重新提交。",
+            "actions": [
+              {
+                "description": "将项目立项审批 synthetic-PROJ-B 退回可退回的发起人节点，要求申请人补正第一曲线低毛利项目的特批标记及业务价值材料。",
+                "action_identity": "revert-synthetic-PROJ-B-first-curve-below-25pct-special-approval",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-B",
+                  "task_id": "synthetic-TASK-B",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "该项目属于第一曲线，当前综合毛利率为 13.415%，低于 25% 门槛。请勾选表单中的“特批”，并补充业务价值评估或后续赚回毛利的计划，说明客户/战略价值、可复用价值、成本与风险边界后重新提交；审批人不代替申请人勾选特批。"
+                }
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前审批流程定义和表单明确为“项目立项全流程（第一曲线）”，实例为 synthetic-PROJ-B，当前任务为 synthetic-TASK-B，当前审批人有权审阅。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "当前申请包含 10 条交付，收入为 8200 元，综合成本为 7100 元，范围和期间已核实，综合毛利率为 13.415%。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "当前表单未勾选“特批”；本案可退回发起人节点 sid-startevent。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "当前申请已有客户和范围事实，可供后续独立业务价值评估；本阶段仅处理低毛利项目未勾选特批的退回动作，不推定例外已经获批。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "适用第一曲线项目规则：综合毛利率低于 25% 时，申请人必须勾选“特批”；同时应提交业务价值评估或后续赚回毛利的计划。未满足该程序要求时应退回补正，不应直接拒绝。",
+                "references": [
+                  "stardust-oa-project-review",
+                  "dingtalk-oa-approval"
+                ]
+              }
+            ],
+            "authored_judgment": "这是可补正的程序和材料缺口，不是已查实的违规，也不是当前可以直接拒绝的情形。退回后由申请人补齐特批标记和业务价值材料，再重新审阅是否支持特批；本候选只提出退回动作，不执行该动作。"
+          },
+          "decision_options": [],
+          "requested_input": null,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false
+        },
+        "error": "",
+        "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a139c1-6483-7d32-ae88-12b85f1d2dfe\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle, code_mode_only. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"error\",\"message\":\"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"error\",\"message\":\"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_3\",\"type\":\"agent_message\",\"text\":\"{\\\"summary\\\":\\\"合成项目立项审批 synthetic-PROJ-B 属于第一曲线项目，已核实综合毛利率为 13.415%，低于 25% 门槛，且表单未勾选“特批”。依据第一曲线低毛利规则，本阶段应退回发起人，要求勾选“特批”并补充业务价值评估或后续赚回毛利的计划；不应直接拒绝，也不应代替申请人勾选特批。未执行任何外部动作。\\\",\\\"error_code\\\":null,\\\"error_retryable\\\":false,\\\"error_authorization_required\\\":false,\\\"risk\\\":\\\"high\\\",\\\"confidence\\\":0.99,\\\"rule_coverage\\\":1.0,\\\"information_completeness\\\":1.0,\\\"durable_memories\\\":[],\\\"outcome\\\":\\\"proposal\\\",\\\"proposal\\\":{\\\"objective\\\":\\\"将第一曲线项目立项审批 synthetic-PROJ-B 退回发起人，要求针对 13.415% 的低毛利率勾选“特批”，并补充业务价值评估或后续赚回毛利的计划后重新提交。\\\",\\\"actions\\\":[{\\\"description\\\":\\\"将项目立项审批 synthetic-PROJ-B 退回可退回的发起人节点，要求申请人补正第一曲线低毛利项目的特批标记及业务价值材料。\\\",\\\"action_identity\\\":\\\"revert-synthetic-PROJ-B-first-curve-below-25pct-special-approval\\\",\\\"capability\\\":\\\"dingtalk-oa\\\",\\\"operation\\\":\\\"revert_task\\\",\\\"target\\\":{\\\"process_instance_id\\\":\\\"synthetic-PROJ-B\\\",\\\"task_id\\\":\\\"synthetic-TASK-B\\\",\\\"target_activity_id\\\":\\\"sid-startevent\\\"},\\\"payload\\\":{\\\"action\\\":\\\"REVERT_FOR_RESUBMIT\\\",\\\"remark\\\":\\\"该项目属于第一曲线，当前综合毛利率为 13.415%，低于 25% 门槛。请勾选表单中的“特批”，并补充业务价值评估或后续赚回毛利的计划，说明客户/战略价值、可复用价值、成本与风险边界后重新提交；审批人不代替申请人勾选特批。\\\"}}],\\\"sourced_facts\\\":[{\\\"assertion\\\":\\\"当前审批流程定义和表单明确为“项目立项全流程（第一曲线）”，实例为 synthetic-PROJ-B，当前任务为 synthetic-TASK-B，当前审批人有权审阅。\\\",\\\"references\\\":[\\\"synthetic-form-B\\\"]},{\\\"assertion\\\":\\\"当前申请包含 10 条交付，收入为 8200 元，综合成本为 7100 元，范围和期间已核实，综合毛利率为 13.415%。\\\",\\\"references\\\":[\\\"synthetic-form-B\\\"]},{\\\"assertion\\\":\\\"当前表单未勾选“特批”；本案可退回发起人节点 sid-startevent。\\\",\\\"references\\\":[\\\"synthetic-form-B\\\"]},{\\\"assertion\\\":\\\"当前申请已有客户和范围事实，可供后续独立业务价值评估；本阶段仅处理低毛利项目未勾选特批的退回动作，不推定例外已经获批。\\\",\\\"references\\\":[\\\"synthetic-form-B\\\"]},{\\\"assertion\\\":\\\"适用第一曲线项目规则：综合毛利率低于 25% 时，申请人必须勾选“特批”；同时应提交业务价值评估或后续赚回毛利的计划。未满足该程序要求时应退回补正，不应直接拒绝。\\\",\\\"references\\\":[\\\"stardust-oa-project-review\\\",\\\"dingtalk-oa-approval\\\"]}],\\\"authored_judgment\\\":\\\"这是可补正的程序和材料缺口，不是已查实的违规，也不是当前可以直接拒绝的情形。退回后由申请人补齐特批标记和业务价值材料，再重新审阅是否支持特批；本候选只提出退回动作，不执行该动作。\\\"},\\\"decision_options\\\":[],\\\"requested_input\\\":null,\\\"needs_human_reason\\\":null,\\\"decision_basis\\\":null,\\\"stage_index\\\":0,\\\"predecessor_review_id\\\":null,\\\"continue_after_execution\\\":false}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":50104,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":1254,\"reasoning_output_tokens\":372}}\n",
+        "stderr": "",
+        "tool_item_types": []
+      },
+      "wire": {
+        "ok": true,
+        "error": "",
+        "result": {
+          "outcome": "proposal",
+          "summary": "合成项目立项审批 synthetic-PROJ-B 属于第一曲线项目，已核实综合毛利率为 13.415%，低于 25% 门槛，且表单未勾选“特批”。依据第一曲线低毛利规则，本阶段应退回发起人，要求勾选“特批”并补充业务价值评估或后续赚回毛利的计划；不应直接拒绝，也不应代替申请人勾选特批。未执行任何外部动作。",
+          "proposal": {
+            "objective": "将第一曲线项目立项审批 synthetic-PROJ-B 退回发起人，要求针对 13.415% 的低毛利率勾选“特批”，并补充业务价值评估或后续赚回毛利的计划后重新提交。",
+            "actions": [
+              {
+                "description": "将项目立项审批 synthetic-PROJ-B 退回可退回的发起人节点，要求申请人补正第一曲线低毛利项目的特批标记及业务价值材料。",
+                "action_identity": "revert-synthetic-PROJ-B-first-curve-below-25pct-special-approval",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-B",
+                  "task_id": "synthetic-TASK-B",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "该项目属于第一曲线，当前综合毛利率为 13.415%，低于 25% 门槛。请勾选表单中的“特批”，并补充业务价值评估或后续赚回毛利的计划，说明客户/战略价值、可复用价值、成本与风险边界后重新提交；审批人不代替申请人勾选特批。"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前审批流程定义和表单明确为“项目立项全流程（第一曲线）”，实例为 synthetic-PROJ-B，当前任务为 synthetic-TASK-B，当前审批人有权审阅。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "当前申请包含 10 条交付，收入为 8200 元，综合成本为 7100 元，范围和期间已核实，综合毛利率为 13.415%。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "当前表单未勾选“特批”；本案可退回发起人节点 sid-startevent。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "当前申请已有客户和范围事实，可供后续独立业务价值评估；本阶段仅处理低毛利项目未勾选特批的退回动作，不推定例外已经获批。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "适用第一曲线项目规则：综合毛利率低于 25% 时，申请人必须勾选“特批”；同时应提交业务价值评估或后续赚回毛利的计划。未满足该程序要求时应退回补正，不应直接拒绝。",
+                "references": [
+                  "stardust-oa-project-review",
+                  "dingtalk-oa-approval"
+                ]
+              }
+            ],
+            "authored_judgment": "这是可补正的程序和材料缺口，不是已查实的违规，也不是当前可以直接拒绝的情形。退回后由申请人补齐特批标记和业务价值材料，再重新审阅是否支持特批；本候选只提出退回动作，不执行该动作。"
+          },
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "high",
+          "confidence": 0.99,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "digest": "f2336e2cbb1af8a7887fb9c2d16ce60e87fb2199bd9e9b25661e60f6f3b1ccef"
+      },
+      "wire_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "case_id": "genuine_current_low_margin",
+      "side": "candidate",
+      "semantic_criterion": "Apply the 25% first-curve rule to the genuinely current 10-unit project at 13.415%; propose return for unchecked 特批 and business-value/earn-back material, with no automatic exception grant.",
+      "case_facts_sha256": "b97240d89deaaf6879b96d31cee3371351432b8ba22f8649e3d947ee1afb6da8",
+      "prompt_sha256": "92796fe9c6d6e96a9743fe72e2aa976e0d98bb5822010226375fde92b1a57434",
+      "native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "summary": "合成项目立项 OA 已核实命中第一曲线低于 25% 且未勾选“特批”的规则分支，建议退回发起人补选特批并提交业务价值评估或后续赚回毛利计划；本候选仅提出退回动作，不执行外部操作。",
+          "error_code": null,
+          "error_retryable": false,
+          "error_authorization_required": false,
+          "risk": "high",
+          "confidence": 0.99,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "durable_memories": [],
+          "outcome": "proposal",
+          "proposal": {
+            "objective": "将合成项目立项 OA synthetic-PROJ-B 退回发起人，要求其针对 13.415% 的第一曲线综合毛利率补选“特批”，并提交业务价值评估或后续赚回毛利的计划，完成后重新提交审阅。",
+            "actions": [
+              {
+                "description": "退回合成项目立项 OA synthetic-PROJ-B 的当前审批任务，退回发起人节点并说明低毛利项目的特批勾选及补充材料要求。",
+                "action_identity": "revert-first-curve-low-margin-missing-special-approval-synthetic-PROJ-B",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-B",
+                  "task_id": "synthetic-TASK-B",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "当前申请为第一曲线项目，已核实收入为8200元、综合成本为7100元，综合毛利率为（8200-7100）/8200=13.415%，低于第一曲线25%的毛利率底线。请补选表单中的“特批”，并提交业务价值评估或后续赚回毛利的计划；补充完成后重新提交审阅。"
+                }
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "流程定义和表单明确为“项目立项全流程（第一曲线）”，当前实例为 synthetic-PROJ-B，当前任务为 synthetic-TASK-B，且当前审批人有权审阅。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "当前申请范围和期间已核实，交付数量为10条，收入为8200元，综合成本为7100元，综合毛利率为13.415%。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "表单中的“特批”选项未勾选。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "适用项目规则要求：第一曲线项目综合毛利率低于25%时，申请人必须勾选“特批”；未勾选时退回申请人补选，并补充业务价值评估或后续赚回毛利的计划。",
+                "references": [
+                  "Business Skill excerpt: Stardust OA Project Review, Project rules 2-3",
+                  "Business Skill excerpt: DingTalk OA Approval, decision table row 7a"
+                ]
+              },
+              {
+                "assertion": "当前任务可退回发起人节点 sid-startevent。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              }
+            ],
+            "authored_judgment": "材料已足以判断当前分支：这是已核实范围和期间的第一曲线项目，综合毛利率13.415%低于25%，且表单未勾选特批。按照规则应退回补正，而不是拒绝，也不能替申请人代勾特批或推定例外已经获批。"
+          },
+          "decision_options": [],
+          "requested_input": null,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false
+        },
+        "error": "",
+        "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a139c1-a625-7b51-bcad-e64cf1444f31\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle, code_mode_only. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"error\",\"message\":\"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"error\",\"message\":\"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_3\",\"type\":\"agent_message\",\"text\":\"{\\\"summary\\\":\\\"合成项目立项 OA 已核实命中第一曲线低于 25% 且未勾选“特批”的规则分支，建议退回发起人补选特批并提交业务价值评估或后续赚回毛利计划；本候选仅提出退回动作，不执行外部操作。\\\",\\\"error_code\\\":null,\\\"error_retryable\\\":false,\\\"error_authorization_required\\\":false,\\\"risk\\\":\\\"high\\\",\\\"confidence\\\":0.99,\\\"rule_coverage\\\":1.0,\\\"information_completeness\\\":1.0,\\\"durable_memories\\\":[],\\\"outcome\\\":\\\"proposal\\\",\\\"proposal\\\":{\\\"objective\\\":\\\"将合成项目立项 OA synthetic-PROJ-B 退回发起人，要求其针对 13.415% 的第一曲线综合毛利率补选“特批”，并提交业务价值评估或后续赚回毛利的计划，完成后重新提交审阅。\\\",\\\"actions\\\":[{\\\"description\\\":\\\"退回合成项目立项 OA synthetic-PROJ-B 的当前审批任务，退回发起人节点并说明低毛利项目的特批勾选及补充材料要求。\\\",\\\"action_identity\\\":\\\"revert-first-curve-low-margin-missing-special-approval-synthetic-PROJ-B\\\",\\\"capability\\\":\\\"dingtalk-oa\\\",\\\"operation\\\":\\\"revert_task\\\",\\\"target\\\":{\\\"process_instance_id\\\":\\\"synthetic-PROJ-B\\\",\\\"task_id\\\":\\\"synthetic-TASK-B\\\",\\\"target_activity_id\\\":\\\"sid-startevent\\\"},\\\"payload\\\":{\\\"action\\\":\\\"REVERT_FOR_RESUBMIT\\\",\\\"remark\\\":\\\"当前申请为第一曲线项目，已核实收入为8200元、综合成本为7100元，综合毛利率为（8200-7100）/8200=13.415%，低于第一曲线25%的毛利率底线。请补选表单中的“特批”，并提交业务价值评估或后续赚回毛利的计划；补充完成后重新提交审阅。\\\"}}],\\\"sourced_facts\\\":[{\\\"assertion\\\":\\\"流程定义和表单明确为“项目立项全流程（第一曲线）”，当前实例为 synthetic-PROJ-B，当前任务为 synthetic-TASK-B，且当前审批人有权审阅。\\\",\\\"references\\\":[\\\"synthetic-form-B\\\"]},{\\\"assertion\\\":\\\"当前申请范围和期间已核实，交付数量为10条，收入为8200元，综合成本为7100元，综合毛利率为13.415%。\\\",\\\"references\\\":[\\\"synthetic-form-B\\\"]},{\\\"assertion\\\":\\\"表单中的“特批”选项未勾选。\\\",\\\"references\\\":[\\\"synthetic-form-B\\\"]},{\\\"assertion\\\":\\\"适用项目规则要求：第一曲线项目综合毛利率低于25%时，申请人必须勾选“特批”；未勾选时退回申请人补选，并补充业务价值评估或后续赚回毛利的计划。\\\",\\\"references\\\":[\\\"Business Skill excerpt: Stardust OA Project Review, Project rules 2-3\\\",\\\"Business Skill excerpt: DingTalk OA Approval, decision table row 7a\\\"]},{\\\"assertion\\\":\\\"当前任务可退回发起人节点 sid-startevent。\\\",\\\"references\\\":[\\\"synthetic-form-B\\\"]}],\\\"authored_judgment\\\":\\\"材料已足以判断当前分支：这是已核实范围和期间的第一曲线项目，综合毛利率13.415%低于25%，且表单未勾选特批。按照规则应退回补正，而不是拒绝，也不能替申请人代勾特批或推定例外已经获批。\\\"},\\\"decision_options\\\":[],\\\"requested_input\\\":null,\\\"needs_human_reason\\\":null,\\\"decision_basis\\\":null,\\\"stage_index\\\":0,\\\"predecessor_review_id\\\":null,\\\"continue_after_execution\\\":false}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":50559,\"cached_input_tokens\":20224,\"cache_write_input_tokens\":0,\"output_tokens\":1041,\"reasoning_output_tokens\":224}}\n",
+        "stderr": "",
+        "tool_item_types": []
+      },
+      "wire": {
+        "ok": true,
+        "error": "",
+        "result": {
+          "outcome": "proposal",
+          "summary": "合成项目立项 OA 已核实命中第一曲线低于 25% 且未勾选“特批”的规则分支，建议退回发起人补选特批并提交业务价值评估或后续赚回毛利计划；本候选仅提出退回动作，不执行外部操作。",
+          "proposal": {
+            "objective": "将合成项目立项 OA synthetic-PROJ-B 退回发起人，要求其针对 13.415% 的第一曲线综合毛利率补选“特批”，并提交业务价值评估或后续赚回毛利的计划，完成后重新提交审阅。",
+            "actions": [
+              {
+                "description": "退回合成项目立项 OA synthetic-PROJ-B 的当前审批任务，退回发起人节点并说明低毛利项目的特批勾选及补充材料要求。",
+                "action_identity": "revert-first-curve-low-margin-missing-special-approval-synthetic-PROJ-B",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-B",
+                  "task_id": "synthetic-TASK-B",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "当前申请为第一曲线项目，已核实收入为8200元、综合成本为7100元，综合毛利率为（8200-7100）/8200=13.415%，低于第一曲线25%的毛利率底线。请补选表单中的“特批”，并提交业务价值评估或后续赚回毛利的计划；补充完成后重新提交审阅。"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "流程定义和表单明确为“项目立项全流程（第一曲线）”，当前实例为 synthetic-PROJ-B，当前任务为 synthetic-TASK-B，且当前审批人有权审阅。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "当前申请范围和期间已核实，交付数量为10条，收入为8200元，综合成本为7100元，综合毛利率为13.415%。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "表单中的“特批”选项未勾选。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              },
+              {
+                "assertion": "适用项目规则要求：第一曲线项目综合毛利率低于25%时，申请人必须勾选“特批”；未勾选时退回申请人补选，并补充业务价值评估或后续赚回毛利的计划。",
+                "references": [
+                  "Business Skill excerpt: Stardust OA Project Review, Project rules 2-3",
+                  "Business Skill excerpt: DingTalk OA Approval, decision table row 7a"
+                ]
+              },
+              {
+                "assertion": "当前任务可退回发起人节点 sid-startevent。",
+                "references": [
+                  "synthetic-form-B"
+                ]
+              }
+            ],
+            "authored_judgment": "材料已足以判断当前分支：这是已核实范围和期间的第一曲线项目，综合毛利率13.415%低于25%，且表单未勾选特批。按照规则应退回补正，而不是拒绝，也不能替申请人代勾特批或推定例外已经获批。"
+          },
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "high",
+          "confidence": 0.99,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "digest": "754870a7553a74a2c6a1c26c1f7ebec4bdcb781f6b7e7febc078df53feb962e1"
+      },
+      "wire_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "case_id": "unknown_aggregate_scope",
+      "side": "baseline",
+      "semantic_criterion": "Ask applicant for current-project classification, scope, period and aggregate inclusion facts; do not ask applicant to provide company approval policy or infer low-margin exception from the trial.",
+      "case_facts_sha256": "15a8b48507e319de96440efbde5803ffdbbbca2d1bfd5e7984d5936d8d616bea",
+      "prompt_sha256": "97588355d5111aade1f5bb11625e3ca47cb65ffc1d2fb0bc1d1e2a7d5dbb2311",
+      "native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "summary": "当前项目立项审批不具备批准条件，应退回发起人补正。表单未明确项目分类和本次申请的决定范围，收入成本汇总行与试测行的包含关系及期间也未说明，导致综合毛利率和适用项目规则分支无法核实；“特批”未勾选只有在确认属于第一曲线且毛利低于25%时才进一步适用，不能据此直接拒绝。",
+          "error_code": null,
+          "error_retryable": false,
+          "error_authorization_required": false,
+          "risk": "high",
+          "confidence": 0.97,
+          "rule_coverage": 1.0,
+          "information_completeness": 0.55,
+          "durable_memories": [],
+          "outcome": "proposal",
+          "proposal": {
+            "objective": "退回合成项目立项审批 synthetic-PROJ-C，请发起人补充项目分类、明确本次申请的决定范围，并澄清收入成本数据及适用的项目评审分支后重新提交审阅。",
+            "actions": [
+              {
+                "description": "将项目立项审批退回发起人补正关键事实，保留当前审批任务与退回目标的合成标识。",
+                "action_identity": "oa-revert-synthetic-PROJ-C-material-clarification-v1",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-C",
+                  "task_id": "synthetic-TASK-C",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "请补充并明确：1）本项目是否属于第一曲线、POC或其他项目类别；2）本次立项申请的决定范围，说明1000条收入955000元/成本713060元的汇总行与10条收入8200元/成本7100元的试测行是否存在包含关系，以及两组数据各自对应的期间；3）据此重新给出本次申请范围内的收入、成本和综合毛利率。若确认属于第一曲线且综合毛利率低于25%，请勾选“特批”，并补充业务价值评估或后续赚回毛利的计划。上述事实未澄清前无法完成项目规则分支判断，不能批准。"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前合成审批实例为 synthetic-PROJ-C，当前任务为 synthetic-TASK-C，当前审批人有权审阅，且可退回发起人节点为 sid-startevent。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "流程定义为“项目立项”，但当前表单未核实本项目属于第一曲线、POC或其他项目类别。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "表单同时存在1000条收入955000元/成本713060元的汇总行和10条收入8200元/成本7100元的试测行，但未说明汇总行是否包含试测行、两个期间是否相同，也未标明哪一行是本次申请的决定范围。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "“数据集需求评估（POC）”为空，“特批”未勾选；在项目分类和决定范围尚未确认前，不能据此判断特批分支是否适用。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "适用项目规则要求先核实项目分类、毛利计算范围及其输入；对申请人可补正的关键事实缺口，通用OA规则要求优先退回补正，不得在事实范围不清时批准或直接拒绝。",
+                "references": [
+                  "Business Skill excerpt: stardust-oa-project-review",
+                  "Business Skill excerpt: dingtalk-oa-approval"
+                ]
+              }
+            ],
+            "authored_judgment": "这是申请材料和口径未定义完整，不是已查实的违规，也不是可以直接套用“特批未勾选”的拒绝理由。先退回要求发起人把项目分类、决定范围、期间和毛利计算口径补齐；收到补正后，再重新核对项目规则和是否进入第一曲线特批分支。"
+          },
+          "decision_options": [],
+          "requested_input": null,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false
+        },
+        "error": "",
+        "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a139c1-e264-7ee3-b42b-f04b2c233ff2\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle, code_mode_only. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"error\",\"message\":\"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"error\",\"message\":\"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_3\",\"type\":\"agent_message\",\"text\":\"{\\\"summary\\\":\\\"当前项目立项审批不具备批准条件，应退回发起人补正。表单未明确项目分类和本次申请的决定范围，收入成本汇总行与试测行的包含关系及期间也未说明，导致综合毛利率和适用项目规则分支无法核实；“特批”未勾选只有在确认属于第一曲线且毛利低于25%时才进一步适用，不能据此直接拒绝。\\\",\\\"error_code\\\":null,\\\"error_retryable\\\":false,\\\"error_authorization_required\\\":false,\\\"risk\\\":\\\"high\\\",\\\"confidence\\\":0.97,\\\"rule_coverage\\\":1.0,\\\"information_completeness\\\":0.55,\\\"durable_memories\\\":[],\\\"outcome\\\":\\\"proposal\\\",\\\"proposal\\\":{\\\"objective\\\":\\\"退回合成项目立项审批 synthetic-PROJ-C，请发起人补充项目分类、明确本次申请的决定范围，并澄清收入成本数据及适用的项目评审分支后重新提交审阅。\\\",\\\"actions\\\":[{\\\"description\\\":\\\"将项目立项审批退回发起人补正关键事实，保留当前审批任务与退回目标的合成标识。\\\",\\\"action_identity\\\":\\\"oa-revert-synthetic-PROJ-C-material-clarification-v1\\\",\\\"capability\\\":\\\"dingtalk-oa\\\",\\\"operation\\\":\\\"revert_task\\\",\\\"target\\\":{\\\"process_instance_id\\\":\\\"synthetic-PROJ-C\\\",\\\"task_id\\\":\\\"synthetic-TASK-C\\\",\\\"target_activity_id\\\":\\\"sid-startevent\\\"},\\\"payload\\\":{\\\"action\\\":\\\"REVERT_FOR_RESUBMIT\\\",\\\"remark\\\":\\\"请补充并明确：1）本项目是否属于第一曲线、POC或其他项目类别；2）本次立项申请的决定范围，说明1000条收入955000元/成本713060元的汇总行与10条收入8200元/成本7100元的试测行是否存在包含关系，以及两组数据各自对应的期间；3）据此重新给出本次申请范围内的收入、成本和综合毛利率。若确认属于第一曲线且综合毛利率低于25%，请勾选“特批”，并补充业务价值评估或后续赚回毛利的计划。上述事实未澄清前无法完成项目规则分支判断，不能批准。\\\"},\\\"effect\\\":\\\"external\\\"}],\\\"sourced_facts\\\":[{\\\"assertion\\\":\\\"当前合成审批实例为 synthetic-PROJ-C，当前任务为 synthetic-TASK-C，当前审批人有权审阅，且可退回发起人节点为 sid-startevent。\\\",\\\"references\\\":[\\\"synthetic-form-C\\\"]},{\\\"assertion\\\":\\\"流程定义为“项目立项”，但当前表单未核实本项目属于第一曲线、POC或其他项目类别。\\\",\\\"references\\\":[\\\"synthetic-form-C\\\"]},{\\\"assertion\\\":\\\"表单同时存在1000条收入955000元/成本713060元的汇总行和10条收入8200元/成本7100元的试测行，但未说明汇总行是否包含试测行、两个期间是否相同，也未标明哪一行是本次申请的决定范围。\\\",\\\"references\\\":[\\\"synthetic-form-C\\\"]},{\\\"assertion\\\":\\\"“数据集需求评估（POC）”为空，“特批”未勾选；在项目分类和决定范围尚未确认前，不能据此判断特批分支是否适用。\\\",\\\"references\\\":[\\\"synthetic-form-C\\\"]},{\\\"assertion\\\":\\\"适用项目规则要求先核实项目分类、毛利计算范围及其输入；对申请人可补正的关键事实缺口，通用OA规则要求优先退回补正，不得在事实范围不清时批准或直接拒绝。\\\",\\\"references\\\":[\\\"Business Skill excerpt: stardust-oa-project-review\\\",\\\"Business Skill excerpt: dingtalk-oa-approval\\\"]}],\\\"authored_judgment\\\":\\\"这是申请材料和口径未定义完整，不是已查实的违规，也不是可以直接套用“特批未勾选”的拒绝理由。先退回要求发起人把项目分类、决定范围、期间和毛利计算口径补齐；收到补正后，再重新核对项目规则和是否进入第一曲线特批分支。\\\"},\\\"decision_options\\\":[],\\\"requested_input\\\":null,\\\"needs_human_reason\\\":null,\\\"decision_basis\\\":null,\\\"stage_index\\\":0,\\\"predecessor_review_id\\\":null,\\\"continue_after_execution\\\":false}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":50112,\"cached_input_tokens\":4864,\"cache_write_input_tokens\":0,\"output_tokens\":1360,\"reasoning_output_tokens\":401}}\n",
+        "stderr": "",
+        "tool_item_types": []
+      },
+      "wire": {
+        "ok": true,
+        "error": "",
+        "result": {
+          "outcome": "proposal",
+          "summary": "当前项目立项审批不具备批准条件，应退回发起人补正。表单未明确项目分类和本次申请的决定范围，收入成本汇总行与试测行的包含关系及期间也未说明，导致综合毛利率和适用项目规则分支无法核实；“特批”未勾选只有在确认属于第一曲线且毛利低于25%时才进一步适用，不能据此直接拒绝。",
+          "proposal": {
+            "objective": "退回合成项目立项审批 synthetic-PROJ-C，请发起人补充项目分类、明确本次申请的决定范围，并澄清收入成本数据及适用的项目评审分支后重新提交审阅。",
+            "actions": [
+              {
+                "description": "将项目立项审批退回发起人补正关键事实，保留当前审批任务与退回目标的合成标识。",
+                "action_identity": "oa-revert-synthetic-PROJ-C-material-clarification-v1",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-C",
+                  "task_id": "synthetic-TASK-C",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "请补充并明确：1）本项目是否属于第一曲线、POC或其他项目类别；2）本次立项申请的决定范围，说明1000条收入955000元/成本713060元的汇总行与10条收入8200元/成本7100元的试测行是否存在包含关系，以及两组数据各自对应的期间；3）据此重新给出本次申请范围内的收入、成本和综合毛利率。若确认属于第一曲线且综合毛利率低于25%，请勾选“特批”，并补充业务价值评估或后续赚回毛利的计划。上述事实未澄清前无法完成项目规则分支判断，不能批准。"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前合成审批实例为 synthetic-PROJ-C，当前任务为 synthetic-TASK-C，当前审批人有权审阅，且可退回发起人节点为 sid-startevent。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "流程定义为“项目立项”，但当前表单未核实本项目属于第一曲线、POC或其他项目类别。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "表单同时存在1000条收入955000元/成本713060元的汇总行和10条收入8200元/成本7100元的试测行，但未说明汇总行是否包含试测行、两个期间是否相同，也未标明哪一行是本次申请的决定范围。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "“数据集需求评估（POC）”为空，“特批”未勾选；在项目分类和决定范围尚未确认前，不能据此判断特批分支是否适用。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "适用项目规则要求先核实项目分类、毛利计算范围及其输入；对申请人可补正的关键事实缺口，通用OA规则要求优先退回补正，不得在事实范围不清时批准或直接拒绝。",
+                "references": [
+                  "Business Skill excerpt: stardust-oa-project-review",
+                  "Business Skill excerpt: dingtalk-oa-approval"
+                ]
+              }
+            ],
+            "authored_judgment": "这是申请材料和口径未定义完整，不是已查实的违规，也不是可以直接套用“特批未勾选”的拒绝理由。先退回要求发起人把项目分类、决定范围、期间和毛利计算口径补齐；收到补正后，再重新核对项目规则和是否进入第一曲线特批分支。"
+          },
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "high",
+          "confidence": 0.97,
+          "rule_coverage": 1.0,
+          "information_completeness": 0.55,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "digest": "df5547e0f28a74d898d018be93cd75d43fc42891827820dd9c10602be0963dd3"
+      },
+      "wire_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "case_id": "unknown_aggregate_scope",
+      "side": "candidate",
+      "semantic_criterion": "Ask applicant for current-project classification, scope, period and aggregate inclusion facts; do not ask applicant to provide company approval policy or infer low-margin exception from the trial.",
+      "case_facts_sha256": "15a8b48507e319de96440efbde5803ffdbbbca2d1bfd5e7984d5936d8d616bea",
+      "prompt_sha256": "dcf3311ff32d5e07632a751af43432629a99d96341a49ff4744082a5e251000e",
+      "native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "summary": "建议退回 synthetic-PROJ-C 补正：当前无法确定本次项目的决定范围、项目分类及综合毛利基础，不能据此判断是否适用第一曲线 25% 毛利门槛，也不能判断“特批”是否必须勾选。退回是补充事实，不是拒绝项目。",
+          "error_code": null,
+          "error_retryable": false,
+          "error_authorization_required": false,
+          "risk": "high",
+          "confidence": 0.96,
+          "rule_coverage": 1.0,
+          "information_completeness": 0.45,
+          "durable_memories": [],
+          "outcome": "proposal",
+          "proposal": {
+            "objective": "将项目立项审批 synthetic-PROJ-C 退回发起人，补充并澄清当前项目的分类、决定范围、期间、收入与综合总成本口径，以便重新核算本项目毛利并判断是否适用第一曲线及特批规则。",
+            "actions": [
+              {
+                "description": "退回合成项目立项审批 synthetic-PROJ-C，要求发起人补充项目分类、当前申请决定范围和期间，并明确汇总行与试测行的包含关系及本项目综合总成本口径；补正后重新提交审阅。",
+                "action_identity": "revert-synthetic-PROJ-C-for-financial-scope-and-classification",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-C",
+                  "task_id": "synthetic-TASK-C",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "请补充并澄清以下事实后重新提交：1）本项目当前申请属于第一曲线、POC、其他项目类别中的哪一类，并提供对应事实依据；2）本次申请的决定范围和期间，即应采用哪一行作为当前项目的收入与综合总成本；3）明确收入 955000 元、成本 713060 元的汇总行是否已包含收入 8200 元、成本 7100 元的 10 条试测行，若不包含，请说明两者是否属于同一期间和同一项目；4）补充当前项目综合总成本的完整口径及各组成项，避免重复计算。当前“数据集需求评估（POC）”为空且“特批”未勾选，但在项目分类和毛利基础未明确前，无法判断是否需要特批。补正前不能核算本项目综合毛利，也不能判断是否满足第一曲线 25% 毛利门槛。",
+                  "target_activity_id": "sid-startevent"
+                }
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前合成 OA 实例为 synthetic-PROJ-C，当前任务为 synthetic-TASK-C，当前审批人有权审阅，且可退回发起人节点为 sid-startevent。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "流程定义为“项目立项”，但当前事实未核实本项目属于第一曲线、POC 或其他项目类别。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "表内存在 1000 条收入 955000 元、成本 713060 元的汇总行，以及 10 条收入 8200 元、成本 7100 元的试测行；表单未说明汇总行是否包含试测行、两个期间是否相同，也未标明哪一行是本次申请的决定范围。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "“数据集需求评估（POC）”为空，“特批”未勾选。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "适用的公司项目规则由当前 task-bound 项目 Skill 提供；该规则要求先确定项目分类和财务基础，再判断第一曲线 25% 毛利门槛及低于门槛时的特批路径。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              }
+            ],
+            "authored_judgment": "这是申请事实和财务口径未闭合，不是已证明项目不符合规则。当前最小必要动作是退回发起人补充项目分类、决定范围、期间及汇总成本包含关系；在这些事实明确前，不应代为认定第一曲线、计算毛利、要求勾选特批、同意或拒绝。"
+          },
+          "decision_options": [],
+          "requested_input": null,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false
+        },
+        "error": "",
+        "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a139c2-34c4-7fc3-9d93-fc15eb2418f2\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle, code_mode_only. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"error\",\"message\":\"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"error\",\"message\":\"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_3\",\"type\":\"agent_message\",\"text\":\"{\\\"summary\\\":\\\"建议退回 synthetic-PROJ-C 补正：当前无法确定本次项目的决定范围、项目分类及综合毛利基础，不能据此判断是否适用第一曲线 25% 毛利门槛，也不能判断“特批”是否必须勾选。退回是补充事实，不是拒绝项目。\\\",\\\"error_code\\\":null,\\\"error_retryable\\\":false,\\\"error_authorization_required\\\":false,\\\"risk\\\":\\\"high\\\",\\\"confidence\\\":0.96,\\\"rule_coverage\\\":1.0,\\\"information_completeness\\\":0.45,\\\"durable_memories\\\":[],\\\"outcome\\\":\\\"proposal\\\",\\\"proposal\\\":{\\\"objective\\\":\\\"将项目立项审批 synthetic-PROJ-C 退回发起人，补充并澄清当前项目的分类、决定范围、期间、收入与综合总成本口径，以便重新核算本项目毛利并判断是否适用第一曲线及特批规则。\\\",\\\"actions\\\":[{\\\"description\\\":\\\"退回合成项目立项审批 synthetic-PROJ-C，要求发起人补充项目分类、当前申请决定范围和期间，并明确汇总行与试测行的包含关系及本项目综合总成本口径；补正后重新提交审阅。\\\",\\\"action_identity\\\":\\\"revert-synthetic-PROJ-C-for-financial-scope-and-classification\\\",\\\"capability\\\":\\\"dingtalk-oa\\\",\\\"operation\\\":\\\"revert_task\\\",\\\"target\\\":{\\\"process_instance_id\\\":\\\"synthetic-PROJ-C\\\",\\\"task_id\\\":\\\"synthetic-TASK-C\\\",\\\"target_activity_id\\\":\\\"sid-startevent\\\"},\\\"payload\\\":{\\\"action\\\":\\\"REVERT_FOR_RESUBMIT\\\",\\\"remark\\\":\\\"请补充并澄清以下事实后重新提交：1）本项目当前申请属于第一曲线、POC、其他项目类别中的哪一类，并提供对应事实依据；2）本次申请的决定范围和期间，即应采用哪一行作为当前项目的收入与综合总成本；3）明确收入 955000 元、成本 713060 元的汇总行是否已包含收入 8200 元、成本 7100 元的 10 条试测行，若不包含，请说明两者是否属于同一期间和同一项目；4）补充当前项目综合总成本的完整口径及各组成项，避免重复计算。当前“数据集需求评估（POC）”为空且“特批”未勾选，但在项目分类和毛利基础未明确前，无法判断是否需要特批。补正前不能核算本项目综合毛利，也不能判断是否满足第一曲线 25% 毛利门槛。\\\",\\\"target_activity_id\\\":\\\"sid-startevent\\\"}}],\\\"sourced_facts\\\":[{\\\"assertion\\\":\\\"当前合成 OA 实例为 synthetic-PROJ-C，当前任务为 synthetic-TASK-C，当前审批人有权审阅，且可退回发起人节点为 sid-startevent。\\\",\\\"references\\\":[\\\"synthetic-form-C\\\"]},{\\\"assertion\\\":\\\"流程定义为“项目立项”，但当前事实未核实本项目属于第一曲线、POC 或其他项目类别。\\\",\\\"references\\\":[\\\"synthetic-form-C\\\"]},{\\\"assertion\\\":\\\"表内存在 1000 条收入 955000 元、成本 713060 元的汇总行，以及 10 条收入 8200 元、成本 7100 元的试测行；表单未说明汇总行是否包含试测行、两个期间是否相同，也未标明哪一行是本次申请的决定范围。\\\",\\\"references\\\":[\\\"synthetic-form-C\\\"]},{\\\"assertion\\\":\\\"“数据集需求评估（POC）”为空，“特批”未勾选。\\\",\\\"references\\\":[\\\"synthetic-form-C\\\"]},{\\\"assertion\\\":\\\"适用的公司项目规则由当前 task-bound 项目 Skill 提供；该规则要求先确定项目分类和财务基础，再判断第一曲线 25% 毛利门槛及低于门槛时的特批路径。\\\",\\\"references\\\":[\\\"synthetic-form-C\\\"]}],\\\"authored_judgment\\\":\\\"这是申请事实和财务口径未闭合，不是已证明项目不符合规则。当前最小必要动作是退回发起人补充项目分类、决定范围、期间及汇总成本包含关系；在这些事实明确前，不应代为认定第一曲线、计算毛利、要求勾选特批、同意或拒绝。\\\"},\\\"decision_options\\\":[],\\\"requested_input\\\":null,\\\"needs_human_reason\\\":null,\\\"decision_basis\\\":null,\\\"stage_index\\\":0,\\\"predecessor_review_id\\\":null,\\\"continue_after_execution\\\":false}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":50567,\"cached_input_tokens\":4864,\"cache_write_input_tokens\":0,\"output_tokens\":1361,\"reasoning_output_tokens\":373}}\n",
+        "stderr": "2026-10-14T09:33:12.275474Z ERROR codex_skills_extension::host_service: failed to install system skills: io error while remove existing system skills dir: Directory not empty (os error 66)\n",
+        "tool_item_types": []
+      },
+      "wire": {
+        "ok": true,
+        "error": "",
+        "result": {
+          "outcome": "proposal",
+          "summary": "建议退回 synthetic-PROJ-C 补正：当前无法确定本次项目的决定范围、项目分类及综合毛利基础，不能据此判断是否适用第一曲线 25% 毛利门槛，也不能判断“特批”是否必须勾选。退回是补充事实，不是拒绝项目。",
+          "proposal": {
+            "objective": "将项目立项审批 synthetic-PROJ-C 退回发起人，补充并澄清当前项目的分类、决定范围、期间、收入与综合总成本口径，以便重新核算本项目毛利并判断是否适用第一曲线及特批规则。",
+            "actions": [
+              {
+                "description": "退回合成项目立项审批 synthetic-PROJ-C，要求发起人补充项目分类、当前申请决定范围和期间，并明确汇总行与试测行的包含关系及本项目综合总成本口径；补正后重新提交审阅。",
+                "action_identity": "revert-synthetic-PROJ-C-for-financial-scope-and-classification",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-C",
+                  "task_id": "synthetic-TASK-C",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "请补充并澄清以下事实后重新提交：1）本项目当前申请属于第一曲线、POC、其他项目类别中的哪一类，并提供对应事实依据；2）本次申请的决定范围和期间，即应采用哪一行作为当前项目的收入与综合总成本；3）明确收入 955000 元、成本 713060 元的汇总行是否已包含收入 8200 元、成本 7100 元的 10 条试测行，若不包含，请说明两者是否属于同一期间和同一项目；4）补充当前项目综合总成本的完整口径及各组成项，避免重复计算。当前“数据集需求评估（POC）”为空且“特批”未勾选，但在项目分类和毛利基础未明确前，无法判断是否需要特批。补正前不能核算本项目综合毛利，也不能判断是否满足第一曲线 25% 毛利门槛。",
+                  "target_activity_id": "sid-startevent"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前合成 OA 实例为 synthetic-PROJ-C，当前任务为 synthetic-TASK-C，当前审批人有权审阅，且可退回发起人节点为 sid-startevent。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "流程定义为“项目立项”，但当前事实未核实本项目属于第一曲线、POC 或其他项目类别。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "表内存在 1000 条收入 955000 元、成本 713060 元的汇总行，以及 10 条收入 8200 元、成本 7100 元的试测行；表单未说明汇总行是否包含试测行、两个期间是否相同，也未标明哪一行是本次申请的决定范围。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "“数据集需求评估（POC）”为空，“特批”未勾选。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              },
+              {
+                "assertion": "适用的公司项目规则由当前 task-bound 项目 Skill 提供；该规则要求先确定项目分类和财务基础，再判断第一曲线 25% 毛利门槛及低于门槛时的特批路径。",
+                "references": [
+                  "synthetic-form-C"
+                ]
+              }
+            ],
+            "authored_judgment": "这是申请事实和财务口径未闭合，不是已证明项目不符合规则。当前最小必要动作是退回发起人补充项目分类、决定范围、期间及汇总成本包含关系；在这些事实明确前，不应代为认定第一曲线、计算毛利、要求勾选特批、同意或拒绝。"
+          },
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "high",
+          "confidence": 0.96,
+          "rule_coverage": 1.0,
+          "information_completeness": 0.45,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "digest": "4745600d315fe8063cfde8cc08c9cd1e0adf42ef98d6f403eace68ed08424e2e"
+      },
+      "wire_valid": true,
+      "outcome": "proposal"
+    }
+  ]
+}

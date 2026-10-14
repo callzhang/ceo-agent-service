@@ -259,7 +259,7 @@ class OaRevertHandler(OaDecisionHandler):
     @staticmethod
     def _accepted(response: object) -> bool:
         return (isinstance(response, dict) and response.get("success") is True
-            and response.get("result") is True and response.get("errorCode") == 0)
+            and response.get("result") is True and response.get("dingOpenErrcode") == 0)
 
     @staticmethod
     def _utc_instant(value: object) -> datetime | None:
@@ -281,6 +281,13 @@ class OaRevertHandler(OaDecisionHandler):
 
     @staticmethod
     def _event_time(value: object) -> datetime | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(value / 1000, timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
         if not isinstance(value, str):
             return None
         try:
@@ -340,7 +347,7 @@ class OaRevertHandler(OaDecisionHandler):
         response = prior.get("provider_response")
         principal = self.dws.get_current_user_id()
         dispatch_started = self._utc_instant(prior.get("dispatch_started_at"))
-        accepted_at = self._utc_instant(prior.get("accepted_at"))
+        accepted_at = self._utc_instant(prior.get("accepted_at") or prior.get("response_received_at"))
         observed_at = datetime.now(timezone.utc)
         if (boundary is None or dispatch_started is None or accepted_at is None or not self._accepted(response)
             or not boundary <= dispatch_started <= accepted_at <= observed_at

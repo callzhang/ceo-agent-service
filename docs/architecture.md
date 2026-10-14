@@ -837,6 +837,8 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
+OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`、`success=true` 识别成功；流程操作记录的数字时间按 Unix 毫秒解析，字符串时间按带时区 ISO 或钉钉本地时间解析。成功响应只允许进入只读对账；旧回执若没有 `accepted_at`，只有在上述成功字段通过校验时才以持久化的 `response_received_at` 作为接受边界。完成仍要求原任务已取消、同一审批人唯一写入精确备注的 `REDIRECT_PROCESS`、目标节点出现对应新任务，且全部时间落在派发和接受边界内。证据不完整时保留 uncertain，恢复不重发退回。
+
 candidate_executions 保存租约，candidate_action_attempts 在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
@@ -1268,7 +1270,7 @@ transport，还用 `disabled_servers` 列出后台 Agent 不得使用的个人�
 整表 `enabled = false` 覆盖（Codex 不接受单字段覆盖，占位 transport 不会被启动）。Settings → MCP
 读取 `codex mcp list --json` 展示全局服务器与清单服务器，保存即写回清单，从下一个 Agent turn 生效。
 
-后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。两角色可用具名只读工具 `read_dingtalk_drive_file` 下载单个已授权钉盘节点并提取 PDF、文本或表格内容；下载文件仅保留在该 Agent CLI 进程的 `oa-review-*` 临时目录中，扫描 PDF 返回 OCR 所需路径，进程退出时清理。Codex 清单中的第三方 Memory、Xiaoqing 等工具只开放已列出的读取能力，不能把个人安装的全部 MCP 写能力视为后台授权。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
+后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。两角色可用具名只读工具 `read_dingtalk_drive_file` 下载单个已授权钉盘节点并提取 PDF、文本或表格内容；下载文件仅保留在该 Agent CLI 进程的 `oa-review-*` 临时目录中，扫描 PDF 的无文本页通过已配置的 Stardust OCR 客户端直接读取正文，保留原始页序、页数、下载文件摘要和 OCR 置信度；读取失败返回技术错误，不能解释为申请人未提供材料。进程退出时清理。Codex 清单中的第三方 Memory、Xiaoqing 等工具只开放已列出的读取能力，不能把个人安装的全部 MCP 写能力视为后台授权。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
 
 Codex 后台角色固定 `features.plugins=false`；`codex exec` 固定带 `--disable hooks`（Derek 2026-09-24）。插件 Stop hook 曾使结构化结果重复；长期记忆由 Consumer 在 `durable_memories` 提出、系统写入，见「任务长期记忆」。Consumer 生成候选并按共享 Audit Rules 自检；Audit 只读独立审核；System Executor 执行已持久化审核通过的受控动作。普通工具工作不因产生材料而自动注册为系统受控动作。个人对话中的小青面试或上传没有对应后台系统任务，不设置服务审核项。
 
@@ -2158,3 +2160,16 @@ parent and retargets `business_legacy_links.work_update_id` to the physical
 work-update action. Inverse rebuilds literal old declarations from current
 facts and allocator waters. No constructor or published version selects this
 conversion; it is synthetic local preparation only.
+
+Recorded DingTalk delivery recovery (2026-10-14): startup reconciliation, explicit failed-task completion and protection against failed-run projection all honor the receipt verification state. A recorded receipt with verification.state=ambiguous or failed does not prove delivery and cannot restore done. Positive sent receipts and previously recorded legacy readback receipts keep their existing completion behavior.
+
+Historical terminal Attempt or settlement projections cannot override a current external_action_uncertain/external_action_failed task error. A later verified provider result uses the normal execution completion writer. Original Attempt and settlement history remains unchanged.
+
+Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
+
+
+### 原始触发、当前来源和立项财务口径（2026-10-14）
+
+钉钉 Task 保存原始触发快照和固定回复目标，近期会话是另一次来源读取；同一 message_id 的审批卡片可更新，Task 标明两者来源及正文是否一致。近期已核实的处理结果可证明原请求已解决，后续新请求仍是独立任务。时间事实提供 UTC 及相对原触发的秒数；来源时间不可解析时不推断顺序。Audit 的 source_bindings 由服务在 Consumer 输出后捕获，反馈应修改 Consumer 自己的候选，不能要求 Consumer 重写原始来源快照。
+
+立项财务 Skill 按本次项目范围、期间和综合口径判断毛利；历史试做行不自动代表当前 POC 或第一曲线项目。先核对成本是否已包含，避免重复计入。实际适用的第一曲线项目综合毛利低于 25% 时，原有特批路径继续适用。修订通过新的托管 Skill revision 发布；历史任务冻结输入不被覆盖。

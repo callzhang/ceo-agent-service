@@ -183,8 +183,10 @@ report actual text/page truncation, and the complete serialized tool response
 must fit below the 1 MiB MCP text-block boundary using the same indented
 `pydantic_core.to_json` serialization as the pinned FastMCP SDK, including JSON
 escaping, structural whitespace and duplicated text. An oversized response fails rather than presenting partial
-business evidence as complete. Scanned PDF OCR paths and process-owned temporary
-directory cleanup remain unchanged; failed extraction/serialization removes the
+business evidence as complete. Textless PDF pages are read through the installed Stardust OCR client; page order,
+source hash and OCR confidence remain visible. OCR errors are technical read
+failures rather than evidence of missing applicant material. Process-owned
+temporary directory cleanup remains unchanged; failed extraction/serialization removes the
 new material file. These limits do not grant shell access to DWS credentials.
 
 `retry-source-verified-email-action --account ... --action-id ...` examines one
@@ -1233,6 +1235,8 @@ schema 判断写操作，因此各自失效过一次：
 
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
+OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`、`success=true` 识别成功；流程操作记录的数字时间按 Unix 毫秒解析，字符串时间按带时区 ISO 或钉钉本地时间解析。成功响应只允许进入只读对账；旧回执若没有 `accepted_at`，只有在上述成功字段通过校验时才以持久化的 `response_received_at` 作为接受边界。完成仍要求原任务已取消、同一审批人唯一写入精确备注的 `REDIRECT_PROCESS`、目标节点出现对应新任务，且全部时间落在派发和接受边界内。证据不完整时保留 uncertain，恢复不重发退回。
+
 原生群消息和直接用户消息在 provider 接受、但本地回执尚未保存的中断后，恢复读取原精确目标，并比对持久化审核正文、本人发送者、未撤回、dispatch 时间下界及唯一消息身份，匹配后补存回执而不重派。新 action attempt 在调用 provider 前原子保存 UTC 毫秒 dispatch 时间；旧无时区秒时间不能作为精确归属边界，保持 uncertain。provider 只返回秒时间时，同秒不足以证明在 dispatch 后的消息也保持 uncertain；没有向下取整时间来扩大匹配。空页或多匹配不是无效果证明。文档评论和 OA 评论恢复读取原 node/process instance 并保存只读诊断；尚无已验证的 author/time/body/stable-ID 联合归属契约时，保留 uncertain，不凭相似正文补记成功或再次发送。
 
 candidate_executions 保存租约，candidate_action_attempts 在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
@@ -1245,7 +1249,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 参数、命令、工具输出和从原生记录提取的结果均按需读取。中断运行按原生 `task_started` / `task_complete`
 边界恢复证据，既有投递核对和恢复契约保持不变。
 
-Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点，返回受限正文和当前 MCP 进程临时目录路径；扫描 PDF 可交给选中的 OCR Skill，MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
+Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点，返回受限正文和当前 MCP 进程临时目录路径；扫描 PDF 的无文本页通过已配置的 Stardust OCR 客户端直接读取正文，保留原始页序、页数、下载文件摘要和 OCR 置信度；读取失败返回技术错误，不能解释为申请人未提供材料。MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`。任务工具直接向模型声明；已验证的成功读取使用具名直接调用，但 Agent 仍可能尝试 CodeMode 并在调用错误后恢复，声明方式不保证没有额外步骤。其他工具继续使用 CodeMode；既有角色工具选择、functions 排除、沙箱、会话和路线不变。超长直接调用结果仍可能被原生运行时截断，不能以完整原始回执替代模型实际可见内容的验证。
 
@@ -2953,3 +2957,16 @@ copies nine action families and retargets the retained legacy-link FK. Its
 inverse reads current typed rows and current sequence waters before restoring
 the literal actual or fresh source tables, indexes and original legacy-link
 FK. Neither pure function updates Store/Email markers or invokes a provider.
+
+Recorded DingTalk delivery recovery (2026-10-14): startup reconciliation, explicit failed-task completion and protection against failed-run projection all honor the receipt verification state. A recorded receipt with verification.state=ambiguous or failed does not prove delivery and cannot restore done. Positive sent receipts and previously recorded legacy readback receipts keep their existing completion behavior.
+
+Historical terminal Attempt or settlement projections cannot override a current external_action_uncertain/external_action_failed task error. A later verified provider result uses the normal execution completion writer. Original Attempt and settlement history remains unchanged.
+
+Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
+
+
+### 原始触发、当前来源和立项财务口径（2026-10-14）
+
+钉钉 Task 保存原始触发快照和固定回复目标，近期会话是另一次来源读取；同一 message_id 的审批卡片可更新，Task 标明两者来源及正文是否一致。近期已核实的处理结果可证明原请求已解决，后续新请求仍是独立任务。时间事实提供 UTC 及相对原触发的秒数；来源时间不可解析时不推断顺序。Audit 的 source_bindings 由服务在 Consumer 输出后捕获，反馈应修改 Consumer 自己的候选，不能要求 Consumer 重写原始来源快照。
+
+立项财务 Skill 按本次项目范围、期间和综合口径判断毛利；历史试做行不自动代表当前 POC 或第一曲线项目。先核对成本是否已包含，避免重复计入。实际适用的第一曲线项目综合毛利低于 25% 时，原有特批路径继续适用。修订通过新的托管 Skill revision 发布；历史任务冻结输入不被覆盖。

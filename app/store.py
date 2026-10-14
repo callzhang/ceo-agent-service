@@ -19835,7 +19835,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("reconciled task has no business object key")
             recorded = db.execute(
                 f"select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) "
-                "where external_action_key=? and business_object_key=?",
+                "where external_action_key=? and business_object_key=? "
+                "and coalesce(json_extract(provider_result_json, '$.verification.state'), 'sent')='sent'",
                 (key, business_object_key),
             ).fetchone()
             projected = db.execute(
@@ -20151,6 +20152,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({SENT_REPLY_SQL}) as replies
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
+                        and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
                   )
                 returning id
                 """
@@ -20410,6 +20412,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 set status='done', error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
                 where tasks.record_type='reply_tasks' and tasks.status in ('failed', 'needs_human')
+                  and tasks.error not in ('external_action_uncertain', 'external_action_failed')
                   and exists (
                       select 1
                       from errors as settled
@@ -23912,6 +23915,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({SENT_REPLY_SQL}) as replies
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
+                        and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
                   )
                   and not exists (
                       select 1
@@ -24264,6 +24268,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     limit 1
                 )
                 where tasks.status in ('failed', 'needs_human')
+                  and tasks.error not in ('external_action_uncertain', 'external_action_failed')
                   and (
                       attempts.send_status in ({placeholders})
                       or (

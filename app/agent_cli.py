@@ -64,6 +64,7 @@ MAX_SPREADSHEET_ROWS = 200
 MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 MAX_PDF_PAGES = 100
+PDF_OCR_TIMEOUT_SECONDS = 300
 CLI_TIMEOUT_SECONDS = 15 * 60
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
@@ -469,21 +470,37 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
         raise AgentReadOnlyViolationError("pdf_material_invalid") from exc
     if reader.is_encrypted:
         raise AgentReadOnlyViolationError("pdf_material_encrypted")
+    if not reader.pages:
+        raise AgentReadOnlyViolationError("pdf_material_empty_pages")
     if len(reader.pages) > MAX_PDF_PAGES:
         raise AgentReadOnlyViolationError("pdf_material_page_limit_exceeded")
+
+    extracted_pages: list[dict[str, object]] = []
+    ocr_page_numbers: list[int] = []
+    for index, page in enumerate(reader.pages, start=1):
+        try:
+            page_text = page.extract_text() or ""
+        except (PdfReadError, ValueError):
+            page_text = ""
+        extracted_pages.append({"index": index, "text": page_text})
+        if not page_text.strip():
+            ocr_page_numbers.append(index)
+
+    if ocr_page_numbers:
+        recognized = _ocr_pdf_pages(material_path, ocr_page_numbers)
+        for page in extracted_pages:
+            if page["index"] in recognized:
+                page.update(recognized[page["index"]])
 
     previews: list[dict[str, object]] = []
     remaining_chars = MAX_TEXT_MATERIAL_BYTES
     truncated_text = False
-    for index, page in enumerate(reader.pages, start=1):
-        try:
-            text = page.extract_text() or ""
-        except (PdfReadError, ValueError) as exc:
-            raise AgentReadOnlyViolationError("pdf_material_text_unavailable") from exc
+    for page in extracted_pages:
+        text = page["text"]
         if len(text) > remaining_chars:
             truncated_text = True
             text = text[:remaining_chars]
-        previews.append({"index": index, "text": text})
+        previews.append({**page, "text": text})
         remaining_chars -= len(text)
         if remaining_chars == 0:
             break
@@ -499,6 +516,49 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
         "path": str(material_path),
         "sha256": digest,
     }
+
+
+def _ocr_pdf_pages(material_path: Path, page_numbers: list[int]) -> dict[int, dict[str, object]]:
+    script = Path.home() / ".agents/skills/ocr/scripts/ocr.py"
+    command = [
+        sys.executable, str(script), str(material_path),
+        "--format", "json", "--pages", ",".join(map(str, page_numbers)),
+    ]
+    try:
+        completed = run_bounded_process(command, timeout=PDF_OCR_TIMEOUT_SECONDS)
+        if completed.returncode:
+            raise AgentReadOnlyViolationError("pdf_material_ocr_unavailable")
+        response = json.loads(completed.stdout)
+        items = response["data"]
+        if len(items) != 1:
+            raise ValueError("OCR returned an unexpected number of sources")
+        item = items[0]
+        if item.get("source_id") != f"input-1:{material_path.name}":
+            raise ValueError("OCR source does not match the requested file")
+        requested = set(page_numbers)
+        recognized: dict[int, dict[str, object]] = {}
+        for ocr_page in item["pages"]:
+            index = ocr_page["page_number"]
+            text = ocr_page["text"]
+            if type(index) is not int or index not in requested or index in recognized:
+                raise ValueError("OCR page numbers do not match the request")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("OCR returned an empty scanned page")
+            page: dict[str, object] = {"text": text, "source": "ocr"}
+            confidence = ocr_page.get("confidence", item.get("confidence"))
+            if confidence is not None:
+                page["confidence"] = confidence
+            warnings = [*(item.get("warnings") or []),
+                        *(ocr_page.get("warnings") or [])]
+            if warnings:
+                page["warnings"] = warnings
+            recognized[index] = page
+        if set(recognized) != requested:
+            raise ValueError("OCR omitted a requested page")
+        return recognized
+    except (OSError, subprocess.TimeoutExpired, ProcessOutputLimitError,
+            ValueError, KeyError, TypeError) as exc:
+        raise AgentReadOnlyViolationError("pdf_material_ocr_unavailable") from exc
 
 
 def _download_dingtalk_drive_file(
@@ -543,8 +603,6 @@ def _download_dingtalk_drive_file(
             **extracted,
             "sha256": hashlib.sha256(contents).hexdigest(),
         }
-        if extracted.get("format") == "pdf" and not extracted.get("content", "").strip():
-            result["ocr_required"] = True
         if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
             raise AgentReadOnlyViolationError("drive_material_response_too_large")
         return result
@@ -1331,10 +1389,9 @@ def build_role_server(
         """Read the body of one exact DingTalk Drive attachment for OA review.
 
         Use after drive metadata identifies an accessible attachment node. Returns
-        bounded PDF, workbook, presentation, or text contents. Scanned PDFs set
-        ocr_required and include a temporary path; only send that material to OCR
-        when the current run authorizes the OCR destination. A technical read
-        failure does not mean the applicant omitted the material.
+        bounded PDF, workbook, presentation, or text contents. Scanned PDF pages
+        are read through the configured Stardust OCR client. OCR failure is a
+        technical read failure, not missing applicant material.
         """
         nonlocal drive_material_directory
         from app.dws_client import DwsClient

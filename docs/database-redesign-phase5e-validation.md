@@ -789,3 +789,67 @@ in both reviews. The one-line CI count correction is `a50bd1ac`; main
 `df61056d` was normally merged with only its deployment checkpoint document.
 No runtime changes were added by these fixture corrections. Final complete CI
 and normal production publication are still required.
+
+
+### Concurrent main test repair reconciliation
+
+Published main `a59ed63e` independently repaired the same two OKR fixtures.
+Root normally merged it as `5851ccdb`, retaining main's real-verifier static
+wrappers and outgoing receipt IDs without duplicate aliases. Both functions
+are AST-identical to main; their original business assertions are unchanged
+from `2bf34d59`. The deterministic meeting fixture is also unchanged.
+Fresh sequential SPEC then QUALITY accepted this reconciliation: root passed
+ten nearby checks, SPEC passed two exact cases, and QUALITY passed twelve
+focused checks. Both reviews forbade provider query and subprocess execution
+while independently proving sent versus recall-key-only verification.
+
+The complete app tree is identical to `2bf34d59` at
+`8d5d3b3a7ef4163191c2a0142c4d5aca6724112d`; frontend, scripts and package
+configuration are identical too. Only test code changed. Prior running CI
+`38521548780` remains bound to `2bf34d59`; a new complete CI will bind the
+reconciled candidate before normal publication. Production was independently
+observed at `a59ed63e`, still Store18/Email51, during another deployment.
+No E production migration or permission to bypass quiet is claimed.
+
+
+## Complete CI and latest published-main recovery integration
+
+Complete CI `38521548780` passed at `2bf34d59`:13,083 Python checks,
+118 skips and44 deselections;729 frontend checks with2 skips across46 files;
+workbench build and2 browser checks passed. This success predates subsequent
+main recovery fixes and is not relabeled as final-head CI.
+
+Root normally retained main `d55a21b8` and `e23544c4` as `c4ea21ee` and
+`d6013cb0`. The only application delta from2bf is five existing Store
+recovery methods: three honor explicit receipt verification, and two prevent
+old completion evidence from replacing a current external-action error.
+Both bounded integrations passed sequential independent SPEC then QUALITY.
+The final two guards passed four new negative cases and six existing positive
+cases independently; root also passed60 repair/Attempt Store/release checks.
+Original E persistence interfaces, schemas and all other application files
+remain unchanged. Source-table references in terminal-attempt recovery retain
+E's already approved finite Attempt projection.
+
+Fresh actual-copy and genuine old-code acceptance executed at `74ac6200`
+against published source `d55a21b8`. The online backup and checkout HEAD were
+separate observations; HEAD ended at e23544c4. Actual data had14,846 Attempts
+and476 Memory events,123→121 noninternal tables,471,347,200 bytes unchanged,
+and the original single FK finding unchanged. Both actual and genuine-old
+fresh variants passed forward/current-fact inverse, old-code cold read and
+public substitute-receipt write, and re-forward values/types/allocator equality.
+All owned copied databases and archived code were removed.
+
+At the same74ac execution commit, native approval and settlement recovery each
+finished done with2 real CLI roles,1 fake send,1 verification and1 receipt.
+Each preserved116 original non-FTS tables; reopening added no model calls.
+Only native session/range metadata is retained; all temporary copies were
+removed and no true test send occurred. The constructor/native artifacts keep
+their actual74ac execution binding. A supplemental d601 binding proves the
+four non-Store persistence hashes and six native-path module hashes unchanged,
+and Store AST unchanged outside the last two reviewed startup reconcilers.
+Those two methods are not called by the native harness. The entire Store hash
+is correctly different; no d601 native/copy rerun is claimed.
+
+Exact final-head CI, normal publication and live readback remain outstanding.
+A prior3b push did not start CI while concurrent main conflicted; all known
+conflicts were reconciled normally, keeping latest main claims and E claims.

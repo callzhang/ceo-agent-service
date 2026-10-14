@@ -1,0 +1,326 @@
+{
+  "version": "project-scope-consumer.v2",
+  "manifest_sha256": "a8eec69c6b9b6b792d037c27f28bb5d8443e4300f8c768556f62146c1764a37e",
+  "v1_manifest_sha256": "3b2408b5cd362a031c4012390327fe01336764783060b53ca45e74e67345fc3d",
+  "harness_sha256": "3ca27255627e6060b5b7f9c25091008c0f0fb7a8767e52e7867f9d8bc403e8a7",
+  "shared_harness_sha256": "cef781432368e0697109f09b19eef5a9f1193325fde06862d29e17a214d1c506",
+  "baseline_ref": "c5a2e5164410f6688a79393f1c30a7c29f032732",
+  "baseline_skill_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+  "candidate_skill_sha256": "a605b890951d281afe7b0148b1684b6d821fd8176188bc53dbd7f5980110058d",
+  "generic_skill_sha256": "ca0d2aed99269b25819686fc9a8844e6484ac9b171695314027477a4b7e57d20",
+  "production_user_prompt_template_sha256": "164feb55f0f14f01253f5394eae21e692a64d089e60e868872ec39a2579a1866",
+  "consumer_developer_sha256": "4eed3c1638b5ca715f87356978bd69bd4718a63ff8fba1cf763566cfbe669851",
+  "consumer_schema_sha256": "e73296018727384782713dbe6494238cb4a1884fb196837c247fbbfca1fedb0e",
+  "settings": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "timeout_seconds_per_case": 300,
+    "concurrency": 1,
+    "tools": "none",
+    "provider": "synthetic-inline-only",
+    "current_time": "2026-10-14T12:00:00+08:00"
+  },
+  "results": [
+    {
+      "case_id": "false_low_from_prior_trial",
+      "side": "baseline",
+      "semantic_criterion": "Do not demand 特批 or earn-back because the historical 10-unit trial is below 25%; identify 1000-unit current aggregate at 25.334% with trial costs already included; preserve other required review checks.",
+      "case_facts_sha256": "828430b58fed85f5f7e755becf193907936dfe2ff931a705c4120bd797ae39f4",
+      "prompt_sha256": "d3b18cf74a849ba78168ef93615c3197e4f8201d065fdb3becb7b876799f67c4",
+      "native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "summary": "该第一曲线项目综合毛利约18.86%，低于25%门槛，且表单未勾选“特批”、未提供可核验的业务价值评估或回收毛利差额计划；建议退回发起人补正，当前不应同意或拒绝。",
+          "error_code": null,
+          "error_retryable": false,
+          "error_authorization_required": false,
+          "risk": "high",
+          "confidence": 0.98,
+          "rule_coverage": 1.0,
+          "information_completeness": 0.67,
+          "durable_memories": [],
+          "outcome": "proposal",
+          "proposal": {
+            "objective": "将合成项目立项审批退回发起人，要求针对第一曲线综合毛利低于25%的情形完成特批程序，并补充可核验的业务价值评估或回收毛利差额计划后重新提交审阅。",
+            "actions": [
+              {
+                "description": "退回合成项目立项审批至发起人，要求勾选“特批”，补充业务价值评估或回收毛利差额计划，并补充当前为空的“数据集需求评估（POC）”等本案所需材料后重新提交。",
+                "action_identity": "synthetic-PROJ-A:return-for-low-margin-special-approval-materials",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-A",
+                  "task_id": "synthetic-TASK-A",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "本项目正式范围收入955000元，表内综合成本713060元，其他成本71860元；备注已说明前期试测成本1500+5600元已包含在其他成本内，因此不重复扣除。按此口径综合毛利为180080元，毛利率约18.86%，低于第一曲线25%的毛利底线。请勾选“特批”，并补充可核验的业务价值评估或回收毛利差额计划；当前“数据集需求评估（POC）”为空，也请一并补充相关材料后重新提交。未完成上述补正前不进入同意判断。"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前流程定义和表单为“项目立项全流程（第一曲线）”，当前审批任务属于有权审阅的审批人。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "正式项目范围为1000条，收入为955000元，表内综合成本为713060元，其他成本为71860元。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "项目备注明确说明此前试测阶段成本1500+5600元已包含在其他成本71860元内，因此该成本不应再次重复计入。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "按正式项目口径，综合毛利为955000-713060-71860=180080元，综合毛利率约为18.86%，低于25%。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "表单中的“特批”未勾选，“数据集需求评估（POC）”为空；其他战略、合同和资源材料仍需继续审阅。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "当前已核实可退回发起人节点为sid-startevent。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              }
+            ],
+            "authored_judgment": "本案命中第一曲线项目毛利低于25%且未勾选“特批”的退回分支。此前试测历史行不应被再次扣除，因为其成本已明确包含在正式项目的其他成本中；即使不重复计算，正式项目毛利率仍仅约18.86%。依据项目Skill，不能由审阅人代勾特批，也不能以申请人的结论替代业务价值评估或回收差额计划。当前先完成申请人可补正的材料阶段；补正后再重新审阅其战略价值、客户承诺、成本假设、可衡量结果和风险边界。"
+          },
+          "decision_options": [],
+          "requested_input": null,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false
+        },
+        "raw": "{\"summary\":\"该第一曲线项目综合毛利约18.86%，低于25%门槛，且表单未勾选“特批”、未提供可核验的业务价值评估或回收毛利差额计划；建议退回发起人补正，当前不应同意或拒绝。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"high\",\"confidence\":0.98,\"rule_coverage\":1.0,\"information_completeness\":0.67,\"durable_memories\":[],\"outcome\":\"proposal\",\"proposal\":{\"objective\":\"将合成项目立项审批退回发起人，要求针对第一曲线综合毛利低于25%的情形完成特批程序，并补充可核验的业务价值评估或回收毛利差额计划后重新提交审阅。\",\"actions\":[{\"description\":\"退回合成项目立项审批至发起人，要求勾选“特批”，补充业务价值评估或回收毛利差额计划，并补充当前为空的“数据集需求评估（POC）”等本案所需材料后重新提交。\",\"action_identity\":\"synthetic-PROJ-A:return-for-low-margin-special-approval-materials\",\"capability\":\"dingtalk-oa\",\"operation\":\"revert_task\",\"target\":{\"process_instance_id\":\"synthetic-PROJ-A\",\"task_id\":\"synthetic-TASK-A\",\"target_activity_id\":\"sid-startevent\"},\"payload\":{\"action\":\"REVERT_FOR_RESUBMIT\",\"remark\":\"本项目正式范围收入955000元，表内综合成本713060元，其他成本71860元；备注已说明前期试测成本1500+5600元已包含在其他成本内，因此不重复扣除。按此口径综合毛利为180080元，毛利率约18.86%，低于第一曲线25%的毛利底线。请勾选“特批”，并补充可核验的业务价值评估或回收毛利差额计划；当前“数据集需求评估（POC）”为空，也请一并补充相关材料后重新提交。未完成上述补正前不进入同意判断。\"},\"effect\":\"external\"}],\"sourced_facts\":[{\"assertion\":\"当前流程定义和表单为“项目立项全流程（第一曲线）”，当前审批任务属于有权审阅的审批人。\",\"references\":[\"synthetic-form-A\"]},{\"assertion\":\"正式项目范围为1000条，收入为955000元，表内综合成本为713060元，其他成本为71860元。\",\"references\":[\"synthetic-form-A\"]},{\"assertion\":\"项目备注明确说明此前试测阶段成本1500+5600元已包含在其他成本71860元内，因此该成本不应再次重复计入。\",\"references\":[\"synthetic-form-A\"]},{\"assertion\":\"按正式项目口径，综合毛利为955000-713060-71860=180080元，综合毛利率约为18.86%，低于25%。\",\"references\":[\"synthetic-form-A\"]},{\"assertion\":\"表单中的“特批”未勾选，“数据集需求评估（POC）”为空；其他战略、合同和资源材料仍需继续审阅。\",\"references\":[\"synthetic-form-A\"]},{\"assertion\":\"当前已核实可退回发起人节点为sid-startevent。\",\"references\":[\"synthetic-form-A\"]}],\"authored_judgment\":\"本案命中第一曲线项目毛利低于25%且未勾选“特批”的退回分支。此前试测历史行不应被再次扣除，因为其成本已明确包含在正式项目的其他成本中；即使不重复计算，正式项目毛利率仍仅约18.86%。依据项目Skill，不能由审阅人代勾特批，也不能以申请人的结论替代业务价值评估或回收差额计划。当前先完成申请人可补正的材料阶段；补正后再重新审阅其战略价值、客户承诺、成本假设、可衡量结果和风险边界。\"},\"decision_options\":[],\"requested_input\":null,\"needs_human_reason\":null,\"decision_basis\":null,\"stage_index\":0,\"predecessor_review_id\":null,\"continue_after_execution\":false}",
+        "tool_item_types": [],
+        "error": ""
+      },
+      "wire": {
+        "ok": true,
+        "error": "",
+        "result": {
+          "outcome": "proposal",
+          "summary": "该第一曲线项目综合毛利约18.86%，低于25%门槛，且表单未勾选“特批”、未提供可核验的业务价值评估或回收毛利差额计划；建议退回发起人补正，当前不应同意或拒绝。",
+          "proposal": {
+            "objective": "将合成项目立项审批退回发起人，要求针对第一曲线综合毛利低于25%的情形完成特批程序，并补充可核验的业务价值评估或回收毛利差额计划后重新提交审阅。",
+            "actions": [
+              {
+                "description": "退回合成项目立项审批至发起人，要求勾选“特批”，补充业务价值评估或回收毛利差额计划，并补充当前为空的“数据集需求评估（POC）”等本案所需材料后重新提交。",
+                "action_identity": "synthetic-PROJ-A:return-for-low-margin-special-approval-materials",
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                  "process_instance_id": "synthetic-PROJ-A",
+                  "task_id": "synthetic-TASK-A",
+                  "target_activity_id": "sid-startevent"
+                },
+                "payload": {
+                  "action": "REVERT_FOR_RESUBMIT",
+                  "remark": "本项目正式范围收入955000元，表内综合成本713060元，其他成本71860元；备注已说明前期试测成本1500+5600元已包含在其他成本内，因此不重复扣除。按此口径综合毛利为180080元，毛利率约18.86%，低于第一曲线25%的毛利底线。请勾选“特批”，并补充可核验的业务价值评估或回收毛利差额计划；当前“数据集需求评估（POC）”为空，也请一并补充相关材料后重新提交。未完成上述补正前不进入同意判断。"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "当前流程定义和表单为“项目立项全流程（第一曲线）”，当前审批任务属于有权审阅的审批人。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "正式项目范围为1000条，收入为955000元，表内综合成本为713060元，其他成本为71860元。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "项目备注明确说明此前试测阶段成本1500+5600元已包含在其他成本71860元内，因此该成本不应再次重复计入。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "按正式项目口径，综合毛利为955000-713060-71860=180080元，综合毛利率约为18.86%，低于25%。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "表单中的“特批”未勾选，“数据集需求评估（POC）”为空；其他战略、合同和资源材料仍需继续审阅。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              },
+              {
+                "assertion": "当前已核实可退回发起人节点为sid-startevent。",
+                "references": [
+                  "synthetic-form-A"
+                ]
+              }
+            ],
+            "authored_judgment": "本案命中第一曲线项目毛利低于25%且未勾选“特批”的退回分支。此前试测历史行不应被再次扣除，因为其成本已明确包含在正式项目的其他成本中；即使不重复计算，正式项目毛利率仍仅约18.86%。依据项目Skill，不能由审阅人代勾特批，也不能以申请人的结论替代业务价值评估或回收差额计划。当前先完成申请人可补正的材料阶段；补正后再重新审阅其战略价值、客户承诺、成本假设、可衡量结果和风险边界。"
+          },
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "high",
+          "confidence": 0.98,
+          "rule_coverage": 1.0,
+          "information_completeness": 0.67,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "digest": "e49d4c103f3c56c54edb34351d3153161022b259c38177d6186751069e8807cd"
+      },
+      "wire_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "case_id": "false_low_from_prior_trial",
+      "side": "candidate",
+      "semantic_criterion": "Do not demand 特批 or earn-back because the historical 10-unit trial is below 25%; identify 1000-unit current aggregate at 25.334% with trial costs already included; preserve other required review checks.",
+      "case_facts_sha256": "828430b58fed85f5f7e755becf193907936dfe2ff931a705c4120bd797ae39f4",
+      "prompt_sha256": "794d1340349f43f276bf09c3c04532fab8859ab64fafa218006cbceb9563f200",
+      "native": {
+        "ok": false,
+        "exit_code": 1,
+        "result": null,
+        "raw": "",
+        "tool_item_types": [],
+        "error": "native_cli_exit_1_without_json_error_event"
+      },
+      "wire": {
+        "ok": false,
+        "error": "missing JSON result",
+        "result": null,
+        "digest": null
+      },
+      "wire_valid": false,
+      "outcome": null
+    },
+    {
+      "case_id": "genuine_current_low_margin",
+      "side": "baseline",
+      "semantic_criterion": "Apply the 25% first-curve rule to the genuinely current 10-unit project at 13.415%; propose return for unchecked 特批 and business-value/earn-back material, with no automatic exception grant.",
+      "case_facts_sha256": "b97240d89deaaf6879b96d31cee3371351432b8ba22f8649e3d947ee1afb6da8",
+      "prompt_sha256": "e41d0b6e27b40d93f53d01b7b0dfe74f7a3a94e3a52798f1c13af99e65ed4609",
+      "native": {
+        "ok": false,
+        "exit_code": 1,
+        "result": null,
+        "raw": "",
+        "tool_item_types": [],
+        "error": "native_cli_exit_1_without_json_error_event"
+      },
+      "wire": {
+        "ok": false,
+        "error": "missing JSON result",
+        "result": null,
+        "digest": null
+      },
+      "wire_valid": false,
+      "outcome": null
+    },
+    {
+      "case_id": "genuine_current_low_margin",
+      "side": "candidate",
+      "semantic_criterion": "Apply the 25% first-curve rule to the genuinely current 10-unit project at 13.415%; propose return for unchecked 特批 and business-value/earn-back material, with no automatic exception grant.",
+      "case_facts_sha256": "b97240d89deaaf6879b96d31cee3371351432b8ba22f8649e3d947ee1afb6da8",
+      "prompt_sha256": "3e1986a510f890303138cba9acc94dc96540e6094cabf4eda25d68ea6d45cee2",
+      "native": {
+        "ok": false,
+        "exit_code": 1,
+        "result": null,
+        "raw": "",
+        "tool_item_types": [],
+        "error": "native_cli_exit_1_without_json_error_event"
+      },
+      "wire": {
+        "ok": false,
+        "error": "missing JSON result",
+        "result": null,
+        "digest": null
+      },
+      "wire_valid": false,
+      "outcome": null
+    },
+    {
+      "case_id": "unknown_aggregate_scope",
+      "side": "baseline",
+      "semantic_criterion": "Ask applicant for current-project classification, scope, period and aggregate inclusion facts; do not ask applicant to provide company approval policy or infer low-margin exception from the trial.",
+      "case_facts_sha256": "15a8b48507e319de96440efbde5803ffdbbbca2d1bfd5e7984d5936d8d616bea",
+      "prompt_sha256": "97588355d5111aade1f5bb11625e3ca47cb65ffc1d2fb0bc1d1e2a7d5dbb2311",
+      "native": {
+        "ok": false,
+        "exit_code": 1,
+        "result": null,
+        "raw": "",
+        "tool_item_types": [],
+        "error": "native_cli_exit_1_without_json_error_event"
+      },
+      "wire": {
+        "ok": false,
+        "error": "missing JSON result",
+        "result": null,
+        "digest": null
+      },
+      "wire_valid": false,
+      "outcome": null
+    },
+    {
+      "case_id": "unknown_aggregate_scope",
+      "side": "candidate",
+      "semantic_criterion": "Ask applicant for current-project classification, scope, period and aggregate inclusion facts; do not ask applicant to provide company approval policy or infer low-margin exception from the trial.",
+      "case_facts_sha256": "15a8b48507e319de96440efbde5803ffdbbbca2d1bfd5e7984d5936d8d616bea",
+      "prompt_sha256": "77747032c0e7065fd6c949e0deaee53b8bc2340e2e82079176fecfd9c3da2248",
+      "native": {
+        "ok": false,
+        "exit_code": 1,
+        "result": null,
+        "raw": "",
+        "tool_item_types": [],
+        "error": "native_cli_exit_1_without_json_error_event"
+      },
+      "wire": {
+        "ok": false,
+        "error": "missing JSON result",
+        "result": null,
+        "digest": null
+      },
+      "wire_valid": false,
+      "outcome": null
+    }
+  ]
+}

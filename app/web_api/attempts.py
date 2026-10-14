@@ -867,6 +867,11 @@ def build_attempt_detail(
         status_message = rerun_block_reason
     elif attempt.send_status == "failed" and rerun.explanation:
         status_message = rerun.explanation
+    if reply_task is not None and reply_task.status == "failed" and reply_task.error in {"external_action_uncertain", "external_action_failed"}:
+        # Historical sent projections and Agent summaries precede the current
+        # delivery readback and cannot override its failure/uncertainty.
+        status_message = attention.reason if attention else reply_task.error
+        requires_decision = False
     try:
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:

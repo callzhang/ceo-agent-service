@@ -1,0 +1,47 @@
+{
+  "version": "attempt-review-context.v2",
+  "baseline_ref": "c5a2e516",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "source_boundary": "Authentic failure-derived sanitized tool-free Audit comparison; not a live service or provider execution. Same subject, facts, role instructions and model; only context renderer changes.",
+  "cases": [
+    {
+      "id": "mutable_card_resolved",
+      "source_attempt": 15452,
+      "kind": "card",
+      "expected_outcomes": [
+        "approve"
+      ],
+      "criterion": "Original Derek node is agreed; current card points to another approver. Approve no_action without requiring Consumer to modify service-generated historical source_bindings."
+    },
+    {
+      "id": "reply_after_trigger",
+      "source_attempt": 15436,
+      "kind": "reply",
+      "expected_outcomes": [
+        "approve"
+      ],
+      "criterion": "Reply at +319 seconds resolves original request; follow-up at +401 seconds has its own completed read/reply task. Approve ending the old task; do not invent reversed chronology or demand a different reply target."
+    },
+    {
+      "id": "unanswered_original_control",
+      "source_attempt": 15436,
+      "kind": "unanswered",
+      "expected_outcomes": [
+        "return",
+        "reject"
+      ],
+      "criterion": "No later source answers original request. Reject or return unsupported no_action rather than infer completion from chronology alone."
+    },
+    {
+      "id": "changed_reply_target_control",
+      "source_attempt": 15436,
+      "kind": "wrong_target",
+      "expected_outcomes": [
+        "return",
+        "reject"
+      ],
+      "criterion": "Later source can inform content but cannot change fixed reply_to_message target; return actual wrong target."
+    }
+  ]
+}
