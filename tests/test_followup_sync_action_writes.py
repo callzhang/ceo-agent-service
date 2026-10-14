@@ -3,6 +3,7 @@
 from contextlib import closing
 from datetime import datetime
 import sqlite3
+import time
 
 import pytest
 
@@ -255,3 +256,66 @@ def test_physical_draft_fk_matches_source_affinity(variant, parent_value):
             actual = insert_sync_action(target, "business_task_follow_up_send_attempts", child)
             assert actual.lastrowid == expected.lastrowid
             _rows(source, target, "business_task_follow_up_send_attempts", variant)
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+@pytest.mark.parametrize("draft_id,state", ((None, "claimed"), (float("nan"), "claimed"),
+                                             (404, "wrong"), (404, "claimed")))
+def test_ignored_business_attempt_observes_native_constraints_first(variant, draft_id, state):
+    source, target = _pair(variant)
+    with closing(source), closing(target):
+        row = values("business_task_follow_up_send_attempts") | {
+            "id": 50, "draft_id": draft_id, "state": state,
+        }
+        if draft_id == 404 and state == "claimed":
+            with pytest.raises(sqlite3.IntegrityError):
+                _insert_source(source, "business_task_follow_up_send_attempts", row, ignore=True)
+            with pytest.raises(sqlite3.IntegrityError):
+                insert_sync_action(target, "business_task_follow_up_send_attempts", row, ignore=True)
+        else:
+            assert _insert_source(source, "business_task_follow_up_send_attempts", row, ignore=True).rowcount == 0
+            assert insert_sync_action(target, "business_task_follow_up_send_attempts", row, ignore=True).rowcount == 0
+        assert source.execute("select seq from sqlite_sequence where name='business_task_follow_up_send_attempts'").fetchone() == target.execute(
+            "select seq from sqlite_sequence where name='actions:business_task_follow_up_send_attempts'").fetchone()
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+def test_ignored_unique_conflict_precedes_missing_draft_fk(variant):
+    source, target = _pair(variant)
+    with closing(source), closing(target):
+        parent = values("business_task_follow_ups")
+        _insert_source(source, "business_task_follow_ups", parent)
+        insert_sync_action(target, "business_task_follow_ups", parent)
+        first = values("business_task_follow_up_send_attempts")
+        _insert_source(source, "business_task_follow_up_send_attempts", first)
+        insert_sync_action(target, "business_task_follow_up_send_attempts", first)
+        conflict = first | {"id": 50, "draft_id": 404}
+        assert _insert_source(source, "business_task_follow_up_send_attempts", conflict, ignore=True).rowcount == 0
+        assert insert_sync_action(target, "business_task_follow_up_send_attempts", conflict, ignore=True).rowcount == 0
+        assert source.execute("select seq from sqlite_sequence where name='business_task_follow_up_send_attempts'").fetchone() == target.execute(
+            "select seq from sqlite_sequence where name='actions:business_task_follow_up_send_attempts'").fetchone()
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+def test_omitted_timestamp_defaults_share_native_statement_time(variant):
+    source, target = _pair(variant)
+    with closing(source), closing(target):
+        kind = "follow_up_send_attempts"
+        row = values(kind)
+        _insert_source(source, kind, row)
+        assert source.execute(f"select created_at=updated_at from {kind}").fetchone()[0] == 1
+        seen = 0
+
+        def pause_between_separate_clock_reads(statement):
+            nonlocal seen
+            if statement.lower().strip() == "select current_timestamp":
+                seen += 1
+                if seen == 2:
+                    time.sleep(1.1)
+
+        target.set_trace_callback(pause_between_separate_clock_reads)
+        try:
+            insert_sync_action(target, kind, row)
+        finally:
+            target.set_trace_callback(None)
+        assert target.execute("select sync_created_at=sync_updated_at from actions where record_type=?", (kind,)).fetchone()[0] == 1

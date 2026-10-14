@@ -67,3 +67,28 @@ native SQLITE_FULL whole-transaction rollback. Ruff and diff checks passed.
 These are synthetic database checks; source migration, caller conversion and
 live behavior remain unselected. The measured physical child-FK scan described
 above remains a Task 6 performance gate before activation.
+
+SPEC review of `8b49248f` found two additional source counterexamples.
+First, the initial BEFORE typed-parent trigger aborted `INSERT OR IGNORE`
+before SQLite could skip a business send-attempt row with a NULL/NaN draft,
+invalid state or duplicate claim token; native source still raised its
+per-family sequence to the explicit attempted ID. A genuinely unresolved
+non-NULL draft must still fail even under `OR IGNORE`. The repair moves the
+typed-parent check to AFTER row constraints. A missing non-NULL source parent
+uses a nonmatching BLOB physical endpoint for that statement: SQLite integer
+rowids cannot match it, so it cannot silently identify another draft or be
+persisted as a valid parent. Native CHECK/UNIQUE/NOT NULL can skip first;
+otherwise the existing typed check and physical FK reject the write. Both
+source layouts passed the previously RED missing/NULL/NaN/unique combinations
+and preserved sequence presence and value.
+
+Second, one SELECT per omitted default let a boundary between seconds make
+`created_at` and `updated_at` disagree within one insert. All omitted default
+expressions are now evaluated in one SQLite SELECT under the writer lock,
+matching SQLite's one-statement timestamp behavior while preserving the actual
+layout's empty `follow_up_drafts.updated_at`. A trace-delayed two-clock-read
+regression was RED in both layouts and is GREEN. The final focused selection
+is 107 passed across source oracle, target declarations/writers and Email
+storage; Ruff and diff checks passed. Task 1B awaits fresh sequential SPEC
+then QUALITY acceptance. No migration, activation, release or provider action
+was performed.

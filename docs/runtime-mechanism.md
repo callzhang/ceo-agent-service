@@ -6,7 +6,11 @@ scaffold. No Store constructor, release router or caller selects them. Task 1A
 supplies finite constraints and projections. Task 1B supplies source-shaped
 insert, update, delete and optional projected CAS, with SQLite-lock-held defaults
 and one public-ID allocator per source family. Business send attempts resolve
-the exact draft public ID to their physical parent action. Migration and runtime
+the exact draft public ID to their physical parent action. Omitted defaults for
+one row share one SQLite statement time. The typed parent check runs after
+ordinary row constraints, so `INSERT OR IGNORE` preserves native constraint
+ordering and sequence progress; unresolved non-NULL parents still fail the
+native FK path. Migration and runtime
 selection remain separate follow-up work.
 
 DingTalk delivery verification reads outgoing identifiers only from the native

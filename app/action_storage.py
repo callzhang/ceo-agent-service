@@ -1038,9 +1038,11 @@ def _sync_variant(db):
 
 def _sync_payload(db, kind, values):
     defaults = SYNC_DEFAULTS[_sync_variant(db)][kind]
+    missing = tuple(field for field in SYNC_FIELDS[kind] if field in defaults and field not in values)
+    evaluated = (dict(zip(missing, db.execute("select " + ",".join(defaults[field] for field in missing)).fetchone(), strict=True))
+                 if missing else {})
     return _reply_payload({
-        field: values[field] if field in values else
-        db.execute("select " + defaults[field]).fetchone()[0] if field in defaults else None
+        field: values[field] if field in values else evaluated.get(field)
         for field in SYNC_FIELDS[kind]
         if field != "id" and not (kind == "business_task_follow_up_send_attempts" and field == "draft_id")
     })
@@ -1053,7 +1055,9 @@ def _sync_parent(db, value):
         "select id from actions where record_type='business_task_follow_ups' "
         "and cast(legacy_key as integer)=?", (value,),
     ).fetchone()
-    return row[0] if row else None
+    # A BLOB cannot identify SQLite's integer rowid. Keep a non-NULL source
+    # reference non-NULL so native CHECK/IGNORE runs before the FK failure.
+    return row[0] if row else b""
 
 
 def insert_sync_action(db: sqlite3.Connection, kind: str, values: dict, *, ignore=False) -> ActionWriteResult:

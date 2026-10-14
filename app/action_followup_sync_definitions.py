@@ -733,12 +733,12 @@ def sync_schema_parts(existing_references, reply_variant):
             indexes.append(f"create {'unique ' if unique else ''}index idx_actions_sync_{kind}_{ordinal} "
                            f"on actions({columns}) where {where}")
     triggers = [
-        "create trigger trg_actions_sync_draft_parent_insert before insert on actions "
+        "create trigger trg_actions_sync_draft_parent_insert after insert on actions "
         "when new.record_type='business_task_follow_up_send_attempts' and "
         "not exists(select 1 from actions p where p.id=new.sync_draft_action_id "
         "and p.record_type='business_task_follow_ups') "
         "begin select raise(abort,'follow-up draft parent type mismatch'); end",
-        "create trigger trg_actions_sync_draft_parent_update before update of sync_draft_action_id on actions "
+        "create trigger trg_actions_sync_draft_parent_update after update of sync_draft_action_id on actions "
         "when new.record_type='business_task_follow_up_send_attempts' and "
         "not exists(select 1 from actions p where p.id=new.sync_draft_action_id "
         "and p.record_type='business_task_follow_ups') "

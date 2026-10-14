@@ -9,7 +9,11 @@ declared business edges still target their retained business tables. This
 candidate now has source-shaped insert, update and delete operations for the
 nine families. Each kind retains its independent native public-ID sequence;
 omitted defaults are evaluated under the SQLite writer lock and caller-owned
-transactions remain caller-owned. This does not select the declaration or
+transactions remain caller-owned. All omitted defaults for one row are read in
+one SQLite statement, so source timestamp pairs remain coherent. Business
+draft parent validation follows native row constraints: ignored NOT NULL,
+CHECK or UNIQUE rows do not attempt FK validation, while a missing non-NULL
+parent remains a failed FK write. This does not select the declaration or
 change runtime task behavior.
 
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
