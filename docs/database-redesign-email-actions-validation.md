@@ -1,5 +1,21 @@
 # Email action storage preparation: Tasks 2A and 2B
 
+## Task4 current-schema factory preparation (unselected)
+
+The neutral classification factory creates the exact post-Email51 30-column
+parent, including its legacy flag CHECK and without the retired
+`action_plan_json` column. The retained Email factory creates the 19 current
+business tables, 10 independent indexes and 19 independent triggers, while a
+separate call creates only the empty migration ledger. It reuses the current
+category table/binding/index constants and the current required trigger SQL;
+it creates no old thirteen action tables, external action blockers, seed rows
+or markers. Both factories run on the caller's connection without an implicit
+commit. Archived `2773d6f4` fresh-constructor SQLite metadata supplies the
+independent fixture. Six focused tests passed for exact native declarations,
+repeat calls, rollback, and opt-in Email29 action writes under foreign keys.
+Current Store and Email constructors still use their existing paths; release
+coordination, activation, and production acceptance remain open.
+
 ## Task3A-2 local forward/current-fact inverse
 
 `app/action_email_storage.py` now has standalone forward and inverse functions

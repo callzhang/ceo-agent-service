@@ -265,6 +265,17 @@ not Task3B implementation or execution evidence.
 
 ## Task 4: Paired release, constructors, DAO and external triggers
 
+**Unselected foundation prepared 2026-10-14:** `app/email_classification_schema.py`
+provides the full post-Email51 classification-parent DDL, and
+`app/email_current_schema.py` provides the retained non-action Email DDL as
+19 business tables, 10 independent indexes and 19 independent triggers. The
+empty migration ledger has a separate factory. Both factories use the caller's
+connection and transaction and create no seed rows or markers. The exact
+declarations were checked against a fresh database constructed by archived
+`2773d6f4` code; that metadata-only oracle is in
+`tests/fixtures/email_current_schema_2773.json`. Neither current constructor
+calls these factories. The items below remain open as one paired integration.
+
 **Files:** new `app/action_email_schema_release.py`; existing Store/Email release selectors; `app/store.py`; `app/email_store.py`; new `tests/test_email_action_schema_release.py`, `tests/test_email_action_callers.py`.
 
 - [ ] First write a regression against `prepare_database_schema_release` at `app/store_schema_release.py:120-129`: it currently rejects simultaneous Store/Email changes. Add the exact approved source-pair to target-pair coordinator path before independently preparing either single release; preserve rejection for every other unsupported simultaneous pair. Do not leave Email51 claiming its old 13-table validator contract after removing those tables. The source capture includes `(Store marker value, updated_at)`, all Email migration ledger `(version,applied_at)` rows, source Email marker and exact declarations. `publish` commits the 29-type schema, thirteen-table/trigger transition and both target markers atomically. `rollback` restores both marker values/timestamps and the exact source Email ledger while reconstructing all current facts, original thirteen declarations/trigger sets and the previous sixteen-type actions with their native codec/allocator state.
