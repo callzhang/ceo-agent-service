@@ -1344,3 +1344,5 @@ reverts committed work they did not author.
 | codex-followup-sync-plan-acceptance | Email actions worktree: followup-sync plan acceptance appendix, source validation and own claim row | Root records sequential independent SPEC then QUALITY of plan/mapad8852d0; splits Task1 into declaration and mutation units without changing atomic publication. No runtime/version/provider change. | accepted planning only 2026-10-14 |
 
 | codex-business-source-preparation | Email actions worktree: new docs/database-redesign-business-source-preparation.md and own claim row | Root records bounded readonly business/provenance schema and unresolved exact-body source paths; no target fields, migration, policy or provider change. | source preparation only 2026-10-14 |
+
+| codex-followup-sync-definitions-acceptance | Email actions worktree: appended followup-sync validation/plan and own claim row | Root records sequential independent SPEC then QUALITY of1cfeb2fe, including native legacy-NOTNULL repair and explicit pre-activation FK performance gap. No writer, migration, version or production change. | accepted disabled Task1A only 2026-10-14; Task1B next |

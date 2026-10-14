@@ -200,3 +200,15 @@ Both remain disabled, with no constructor, release or version selection.
 Neither Task1 nor source-write/default/locking equivalence is complete until
 1B passes. This changes commit/review boundaries only; all nine families still
 form one atomic data publication unit with their finite external dependency.
+
+
+### Task1A acceptance and measured pre-activation index item
+
+Task1A at1cfeb2fe passed sequential independent SPEC then QUALITY after the
+legacy draft_id NOT NULL repair; Task1B remains unimplemented. The new native
+sync_draft_action_id self-FK scans unrelated action rows on parent DELETE.
+Carry its measured source/target VM comparison into Task6 and remove that
+growth before activation with an evidence-required supporting index. Include
+native FK parent DELETE/public-key mutation, not only application SELECTs, in
+the performance matrix. This is a storage access requirement, not a new policy
+or permission to change source fields/constraints or unrelated Email behavior.
