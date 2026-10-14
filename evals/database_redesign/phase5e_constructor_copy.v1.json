@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "scope": "OFFLINE Phase5E paired constructor copy acceptance",
+  "observed_at": "2026-10-14T03:41:24.123091+00:00",
+  "candidate_commit": "6c7b7a719414c24e3d89e75134e93b643094aa27",
+  "actual_old_source_ref": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
+  "production_head_start": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
+  "production_head_end": "9a2a23fcaad6eb73f6131d5b7a70d22ae02418cd",
+  "production_binding": "Non-atomic: online SQLite backup and production checkout HEAD were read separately; exact Store18/Email51 and source schema fingerprints bind the copy.",
+  "candidate_source_sha256": {
+    "app/action_reply_storage.py": "72e84e6c8d6be31e39115bcaea1432b4ba6267bbb091610666ad75653415e10c",
+    "app/action_reply_schema_release.py": "eed6dc3ec404e58d52b1562da8c10fcb1a94823698f009f9758fd7997b0ad6fd",
+    "app/action_storage.py": "426334f1ce22ed12f6b32b01911cdefb6d763a99726141a4d14ea84ac5da4555",
+    "app/store.py": "aed6789f0206d39b417fc839dce846ca597a89e0ec3daaf3d81c643c33fae10d",
+    "app/store_schema_release.py": "d0605e18dcbeffcbda904d2177559db5ff312ad3e203f07c0ab30447b8605c8f"
+  },
+  "cases": {
+    "actual_online_backup": {
+      "source_variant": "actual",
+      "source_schema_sha256": "9f4b174573596030e0716d4360b8f445049691ead1e39ac6e979f61676815b98",
+      "source_attempts": 14830,
+      "source_memory_events": 476,
+      "source_tables": 123,
+      "target_tables": 121,
+      "source_file_bytes": 471347200,
+      "target_file_bytes": 471347200,
+      "baseline_fk_findings": 1,
+      "synthetic_attempts_after": 3,
+      "synthetic_memory_after": 2,
+      "old_code_read_unchanged": true,
+      "old_code_public_write_receipt": true,
+      "current_fact_inverse": true,
+      "republish_values_types_waters_equal": true
+    },
+    "old_fresh_constructor": {
+      "source_variant": "fresh_candidate17",
+      "source_schema_sha256": "9b511108327b52d132b73ccf8aefc7e47bc39fb565be0e59b15d98b16a8c39bc",
+      "source_attempts": 0,
+      "source_memory_events": 0,
+      "source_tables": 123,
+      "target_tables": 121,
+      "source_file_bytes": 1982464,
+      "target_file_bytes": 2068480,
+      "baseline_fk_findings": 0,
+      "synthetic_attempts_after": 3,
+      "synthetic_memory_after": 2,
+      "old_code_read_unchanged": true,
+      "old_code_public_write_receipt": true,
+      "current_fact_inverse": true,
+      "republish_values_types_waters_equal": true
+    }
+  },
+  "checks": {
+    "owned_temporary_copies_cleaned": true,
+    "provider_calls": 0,
+    "production_mutations": 0,
+    "native_cli_calls": 0,
+    "all_copy_assertions_passed": true
+  },
+  "evidence_limit": "Private rows, row hashes, archived code and copied databases were transient and deleted. Offline storage compatibility only; no native role, provider, CI, deployment or live readback claim."
+}

@@ -528,3 +528,29 @@ commit. Task5 is accepted locally. Actual production-copy current-fact inverse,
 separate-process original-code cold read and write, native substituted execution,
 final CI, normal deployment and live readback remain required. Production still
 declares Store18 / Email51, and the full ten-table-plus-ledger goal is unfinished.
+
+## Task 6 offline paired-constructor copy acceptance
+
+The isolated `scripts/validate_action_reply_copy.py` harness uses a SQLite
+online backup of the latest production Store18/Email51 database and a separate
+fresh Store18 database created by an archived, explicit production source ref.
+Both run the real Store19 release constructor, current-fact inverse, a
+separate-process old-code cold read and public Attempt/Memory write, then the
+real Store19 release constructor again. It compares all retained rows and SQLite
+types, public IDs, allocator waters, business queue status/order, source
+declarations, the raw Store marker timestamp, and unchanged unrelated tables.
+Synthetic bodies and receipts are copy-only; the old Memory result is parsed
+locally from a fake tool result. The harness invokes no native CLI or provider.
+All source copies and archived code are owned by one temporary directory and
+cleaned after the run. Exact aggregate results and non-atomic production HEAD
+binding are recorded in
+`evals/database_redesign/phase5e_constructor_copy.v1.json`. The final run
+passed on the actual source (14,830 Attempts, 476 Memory events, 123 to 121
+noninternal tables, one unchanged source FK finding) and genuinely old fresh
+source (zero initial reply facts, 123 to 121 tables, zero FK findings). The
+actual-copy SQLite file stayed 471,347,200 bytes after republishing, so the
+two-table reduction is logical rather than a measured file-size saving.
+The separate focused release, public-ID and source checks passed 86 tests
+with two fixture-dependent skips; Ruff and diff checks passed. This proves
+offline storage compatibility only; native role, final CI, deployment and live
+readback remain separate gates.
