@@ -23,6 +23,7 @@ SOURCE_TABLES = (
     "email_direct_retry_requests", "email_feedback_requests",
     "email_reply_dispatch_claims", "email_reply_receipts",
 )
+REPLACED_TABLES = ("actions", *SOURCE_TABLES)
 EXTERNAL_TRIGGER_NAMES = (
     "trg_email_direct_action_blocks_account_delete",
     "trg_email_direct_action_blocks_account_update",
@@ -81,13 +82,13 @@ def _external_dependencies(db):
         for kind, name, owner, sql in objects:
             if kind == "trigger" and (storage.sqlite_schema_name(name) in allowed or
                                       storage.sqlite_schema_name(owner) in
-                                      {"actions", *(storage.sqlite_schema_name(t) for t in SOURCE_TABLES)}):
+                                      {storage.sqlite_schema_name(t) for t in REPLACED_TABLES}):
                 continue
             if kind == "table" and storage.sqlite_schema_name(name) in virtual:
                 columns = [row[1] for row in db.execute(f"pragma table_xinfo({_quote(name)})")]
                 sql = f"create table {_quote(name)} (" + ",".join(map(_quote, columns)) + ")"
             parser.execute(sql)
-        storage._no_sql_dependencies(parser, set(SOURCE_TABLES))
+        storage._no_sql_dependencies(parser, set(REPLACED_TABLES))
 
 
 def capture_email_action_source(db: sqlite3.Connection) -> dict:
@@ -120,7 +121,7 @@ def capture_email_action_source(db: sqlite3.Connection) -> dict:
     )]
     if _fingerprint(external) != EXTERNAL_TRIGGERS_FINGERPRINT:
         raise ValueError("unsupported external Email trigger declaration")
-    storage._no_inbound(db, set(SOURCE_TABLES))
+    storage._no_inbound(db, set(REPLACED_TABLES))
     _external_dependencies(db)
     allowed_sequences = set(storage.ACTION_SEQUENCE_NAMES.values()) | {
         storage.DELIVERY_SEQUENCE_NAME, *storage.REPLY_SEQUENCE_NAMES.values(),

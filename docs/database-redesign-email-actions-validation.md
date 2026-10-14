@@ -14,6 +14,15 @@ bodies, unexpected inbound FKs/views/triggers, target object-name collisions,
 mixed action types and allocator aliases refuse before any mutation. SQLite's
 rename parser checks external SQL dependencies on schema-only scratch data.
 
+Independent SPEC review found that the first closure check covered only the
+thirteen old Email tables, while the next unit also rebuilds `actions`. Six
+deterministic tests (an outside inbound FK, view and trigger referencing
+`actions` under each frozen pair) were RED because preflight accepted them.
+The closure now checks `actions` and all thirteen Email tables together with
+the existing native FK and schema-only rename checks. All six cases are GREEN;
+the selected suite reports 269 passed and 6 skipped. This changes only
+candidate source refusal; no runtime route or migration DDL was added.
+
 The synthetic tests cover empty sources, colliding existing action IDs and
 original Email ROWIDs, deleted high ROWIDs, preserved sequence zero/high-water,
 and refusal without changing source schema or action rows. The first capture

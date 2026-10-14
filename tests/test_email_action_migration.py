@@ -118,6 +118,7 @@ def test_rejects_cross_pair_variant(db, source):
 
 @pytest.mark.parametrize("mutation", (
     "changed_table", "inbound_table", "outside_view", "outside_trigger",
+    "inbound_action_table", "outside_action_view", "outside_action_trigger",
     "target_name_collision", "changed_actions", "changed_external_trigger",
     "email_allocator_alias", "unexpected_sequence",
 ))
@@ -126,10 +127,17 @@ def test_refuses_unsupported_source_without_mutation(db, mutation):
         db.execute("create index unexpected_email_plan on email_action_plans(category)")
     elif mutation == "inbound_table":
         db.execute("create table external_child(id integer references email_action_attempts(id))")
+    elif mutation == "inbound_action_table":
+        db.execute("create table external_action_child(id integer references actions(id))")
     elif mutation == "outside_view":
         db.execute("create view unexpected_email_view as select * from email_actions")
+    elif mutation == "outside_action_view":
+        db.execute("create view unexpected_action_view as select id from actions")
     elif mutation == "outside_trigger":
         db.execute("create trigger unexpected_email_trigger after insert on email_accounts begin select count(*) from email_actions; end")
+    elif mutation == "outside_action_trigger":
+        db.execute("create trigger unexpected_action_trigger after insert on email_accounts "
+                   "begin select count(*) from actions; end")
     elif mutation == "target_name_collision":
         db.execute("create table idx_actions_email_public_key(id integer)")
     elif mutation == "changed_actions":
