@@ -16,16 +16,18 @@ This is a docs-only implementation plan, not target code or migration acceptance
 
 The approved structure is `docs/superpowers/specs/2026-10-11-database-redesign-design.md`. Source contracts are the two frozen 2026-10-13 Email action JSON/map pairs: nine tables/103 fields and four children/41 fields. Their measured actual source was Store16/Email51 at `d7397203`; those are historical observations, never the publication predecessor. The accompanying `2026-10-14-database-redesign-email-actions-field-map.csv` independently names all 144 actual source columns and their exact target path. No field is retired in this plan.
 
-Constructor/caller integration, release/version selection and migration activation start only after E is normally published and root captures the actual immediate predecessor commit, Store/Email markers, literal actions/Email declarations, generated columns, FKs, indexes, triggers and native sequence metadata. The unselected pure storage unit Task3A below may be developed against the exact reviewed E sixteen-type candidate plus frozen thirteen-table sources before publication; its synthetic/candidate-prepared test databases are never called an actual published predecessor or production migration acceptance. Record those verified values in a new `docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json` and source map. Refuse a changed declaration outside the enumerated source variants before mutation. Do not assign a target Store/Email version until that binding exists. A numeric release name is deliberately absent here; assigning one now would falsely reserve an unpublished predecessor.
+Constructor/caller integration, release/version selection and migration activation start only after E is normally published and root captures the actual immediate predecessor commit, Store/Email markers, literal actions/Email declarations, generated columns, FKs, indexes, triggers and native sequence metadata. The unselected pure storage unit Task3A below may be developed against the exact reviewed E sixteen-type candidate plus frozen thirteen-table sources before publication; its synthetic/candidate-prepared test databases are never called an actual published predecessor or production migration acceptance. Only after actual E publication, record the verified immediate published predecessor values in a new `docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json` and source map; candidate and synthetic preparation values never populate that artifact. Refuse a changed declaration outside the enumerated source variants before mutation. Do not assign a target Store/Email version until that binding exists. A numeric release name is deliberately absent here; assigning one now would falsely reserve an unpublished predecessor.
 
 Task2's opt-in storage unit and Task3A's unselected pure storage unit may proceed
 independently against the frozen thirteen
 source declarations and the reviewed E candidate's exact sixteen-type manifest
 while remote E CI runs. Its default remains disabled, and no Store/Email
-initializer, migration entry point, release selector or marker is changed by
-that unit. Integrate reviewed E increments first; preserve all preceding
-manifests and compare the actual published source again in Task1 before any
-source migration or activation. This scheduling distinction does not mark the
+initializer, automatic migration route, release selector or marker is changed by
+those units. Standalone pure migration functions and explicit test-only invocation
+are allowed in Task3A; no constructor or runtime caller selects them. Integrate
+reviewed E increments first; preserve all preceding manifests and compare the
+actual published source again in Task1 before actual-source migration acceptance,
+constructor/caller/release integration or activation. This scheduling distinction does not mark the
 published-source binding complete or allow candidate data to masquerade as
 production evidence.
 
@@ -297,5 +299,6 @@ the actually published Phase5E predecessor.
 
 Sequential SPEC/QUALITY also accepted the scheduling clarification allowing
 only disabled opt-in Task2 storage preparation before that publication.
-Task1, source migration, constructor integration, marker allocation and release
-retain their actual-predecessor requirements.
+Task1 published-source binding, Task3B actual-source migration acceptance,
+constructor/caller integration, marker allocation and release retain their
+actual-predecessor requirements; Task3A remains unselected preparation only.
