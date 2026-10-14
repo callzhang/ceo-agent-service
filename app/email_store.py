@@ -73,7 +73,22 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import AGENT_RUN_SQL
+from app.action_storage import (
+    ActionWriteResult, EMAIL_ACTION_PROJECTIONS, email_action_projection,
+    insert_action, insert_email_action, update_email_action,
+)
 
+
+# Partial unpublished Email29 DAO integration. Default constructor selection is
+# coupled with the remaining DAO/validator paths in the final activation.
+EMAIL_PLAN_SQL = EMAIL_ACTION_PROJECTIONS["email_action_plans"]
+EMAIL_DIRECT_ACTION_SQL = EMAIL_ACTION_PROJECTIONS["email_actions"]
+EMAIL_ATTEMPT_SQL = EMAIL_ACTION_PROJECTIONS["email_action_attempts"]
+EMAIL_RETRY_SQL = EMAIL_ACTION_PROJECTIONS["email_direct_retry_requests"]
+EMAIL_FEEDBACK_SQL = EMAIL_ACTION_PROJECTIONS["email_feedback_requests"]
+EMAIL_REPLY_CLAIM_SQL = EMAIL_ACTION_PROJECTIONS["email_reply_dispatch_claims"]
+EMAIL_UNSUBSCRIBE_RECEIPT_SQL = EMAIL_ACTION_PROJECTIONS["email_unsubscribe_receipts"]
+EMAIL_DIRECT_ACTION_LOCATOR_SQL = email_action_projection("email_actions", include_rowid=True)
 
 EMAIL_SCHEMA_VERSION = 51
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
@@ -1791,7 +1806,7 @@ def _retry_is_due(next_attempt_at: object, claimed_at: str) -> bool:
 
 def _explicit_direct_retry_sql(alias: str, attempt_offset: int = 0) -> str:
     return (
-        "exists(select 1 from email_direct_retry_requests retry_request "
+        f"exists(select 1 from ({EMAIL_RETRY_SQL}) retry_request "
         f"where retry_request.action_id={alias}.action_id "
         f"and retry_request.attempt_number={alias}.attempt_count+{attempt_offset})"
     )
@@ -1800,7 +1815,7 @@ def _explicit_direct_retry_sql(alias: str, attempt_offset: int = 0) -> str:
 def _direct_retry_configuration_sql(alias: str) -> str:
     return (
         f"(NOT {_explicit_direct_retry_sql(alias, 1)} OR EXISTS("
-        "select 1 from email_direct_retry_requests r join email_accounts cfg "
+        f"select 1 from ({EMAIL_RETRY_SQL}) r join email_accounts cfg "
         f"on cfg.account_id={alias}.account_id where r.action_id={alias}.action_id "
         f"and r.attempt_number={alias}.attempt_count+1 "
         "and r.account_configuration_snapshot=json_array(cfg.account_id,cfg.email_address,"
@@ -8303,7 +8318,7 @@ class EmailStore:
         return {
             row["action_plan_id"]: row
             for row in db.execute(
-                "select * from email_action_plans "
+                f"select * from ({EMAIL_PLAN_SQL}) "
                 "where action_plan_id in (select value from json_each(?))",
                 (_json_dump(plan_ids),),
             )
@@ -8450,7 +8465,7 @@ class EmailStore:
             (request["classification_id"],),
         ).fetchone()
         plan_row = db.execute(
-            "select * from email_action_plans where action_plan_id=?",
+            f"select * from ({EMAIL_PLAN_SQL}) where action_plan_id=?",
             (request["resulting_action_plan_id"],),
         ).fetchone()
         if classification is None or plan_row is None:
@@ -8589,7 +8604,7 @@ class EmailStore:
         now: str,
     ) -> None:
         existing_by_id = db.execute(
-            "select * from email_action_plans where action_plan_id=?",
+            f"select * from ({EMAIL_PLAN_SQL}) where action_plan_id=?",
             (plan.action_plan_id,),
         ).fetchone()
         encoded_actions = _json_dump([action.value for action in plan.actions])
@@ -8645,8 +8660,8 @@ class EmailStore:
             self._ensure_direct_action_rows(db, plan, now=now)
             return
         version_row = db.execute(
-            """
-            select action_plan_id from email_action_plans
+            f"""
+            select action_plan_id from ({EMAIL_PLAN_SQL})
             where classification_id=? and action_plan_version=?
             """,
             (plan.classification_id, plan.action_plan_version),
@@ -8657,7 +8672,7 @@ class EmailStore:
                 f"classification {plan.classification_id}"
             )
         latest = db.execute(
-            "select max(action_plan_version) from email_action_plans where classification_id=?",
+            f"select max(action_plan_version) from ({EMAIL_PLAN_SQL}) where classification_id=?",
             (plan.classification_id,),
         ).fetchone()[0]
         expected_version = 1 if latest is None else int(latest) + 1
@@ -8666,31 +8681,25 @@ class EmailStore:
                 f"ActionPlan version must be {expected_version} for classification "
                 f"{plan.classification_id}"
             )
-        db.execute(
-            """
-            insert into email_action_plans (
-                action_plan_id, action_plan_version, classification_id,
-                account_id, category, classification_source, confidence,
-                model_id, config_version, actions_json, action_parameters_json,
-                authorization_snapshot_json, legacy_serialization_pre_v16, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                plan.action_plan_id,
-                plan.action_plan_version,
-                plan.classification_id,
-                plan.account_id,
-                plan.category,
-                plan.classification_source,
-                plan.confidence,
-                plan.model_id,
-                plan.config_version,
-                encoded_actions,
-                encoded_parameters,
-                encoded_authorizations,
-                0,
-                plan.created_at.isoformat(),
-            ),
+        insert_email_action(
+            db,
+            "email_action_plans",
+            {
+                "action_plan_id": plan.action_plan_id,
+                "action_plan_version": plan.action_plan_version,
+                "classification_id": plan.classification_id,
+                "account_id": plan.account_id,
+                "category": plan.category,
+                "classification_source": plan.classification_source,
+                "confidence": plan.confidence,
+                "model_id": plan.model_id,
+                "config_version": plan.config_version,
+                "actions_json": encoded_actions,
+                "action_parameters_json": encoded_parameters,
+                "authorization_snapshot_json": encoded_authorizations,
+                "legacy_serialization_pre_v16": 0,
+                "created_at": plan.created_at.isoformat(),
+            },
         )
         self._ensure_direct_action_rows(db, plan, now=now)
 
@@ -8703,26 +8712,22 @@ class EmailStore:
     ) -> None:
         for action in plan.direct_actions:
             parameters = dict(plan.action_parameters.get(action, {}))
-            db.execute(
-                """
-                insert into email_actions (
-                    action_id, action_plan_id, classification_id, account_id,
-                    action_type, parameters_json, config_version, status,
-                    created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-                on conflict(action_plan_id, action_type) do nothing
-                """,
-                (
-                    _direct_action_id(plan.action_plan_id, action),
-                    plan.action_plan_id,
-                    plan.classification_id,
-                    plan.account_id,
-                    action.value,
-                    _json_dump(parameters),
-                    plan.config_version,
-                    now,
-                    now,
-                ),
+            insert_email_action(
+                db,
+                "email_actions",
+                {
+                    "action_id": _direct_action_id(plan.action_plan_id, action),
+                    "action_plan_id": plan.action_plan_id,
+                    "classification_id": plan.classification_id,
+                    "account_id": plan.account_id,
+                    "action_type": action.value,
+                    "parameters_json": _json_dump(parameters),
+                    "config_version": plan.config_version,
+                    "status": "pending",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                ignore_plan_action_conflict=True,
             )
 
     @staticmethod
@@ -9468,7 +9473,7 @@ class EmailStore:
 
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select
                     classifications.id as classification_id,
                     classifications.account_id as account_id,
@@ -9485,7 +9490,7 @@ class EmailStore:
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
-                join email_action_plans as plans
+                join ({EMAIL_PLAN_SQL}) as plans
                   on plans.classification_id=classifications.id
                  and plans.action_plan_id=?
                 where classifications.id=?
@@ -9568,11 +9573,11 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             authorization = db.execute(
-                """
+                f"""
                 select plans.actions_json, plans.action_plan_version,
                        messages.thread_identity
                 from email_classifications as classifications
-                join email_action_plans as plans
+                join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=classifications.current_action_plan_id
                  and plans.classification_id=classifications.id
                 join email_messages as messages
@@ -9762,7 +9767,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             claim = db.execute(
-                """
+                f"""
                 select claims.*, classifications.current_action_plan_id,
                        classifications.status as classification_status,
                        plans.actions_json, accounts.enabled,
@@ -9771,7 +9776,7 @@ class EmailStore:
                 from email_reply_dispatch_claims as claims
                 join email_classifications as classifications
                   on classifications.id=claims.classification_id
-                join email_action_plans as plans
+                join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=claims.action_plan_id
                 join email_accounts as accounts
                   on accounts.account_id=claims.account_id
@@ -10291,7 +10296,7 @@ class EmailStore:
                        messages.thread_identity,
                        accounts.enabled, accounts.updated_at as account_updated_at
                 from email_classifications as classifications
-                join email_action_plans as plans
+                join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=?
                  and plans.classification_id=classifications.id
                 join email_messages as messages
@@ -12408,12 +12413,12 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             plan = db.execute(
-                """
+                f"""
                 select plans.*, classifications.stable_message_identity
                   as classification_message_identity,
                        messages.account_id as message_account_id,
                        messages.thread_identity as message_thread_identity
-                from email_action_plans as plans
+                from ({EMAIL_PLAN_SQL}) as plans
                 join email_classifications as classifications
                   on classifications.id=plans.classification_id
                 join email_messages as messages
@@ -13386,7 +13391,7 @@ class EmailStore:
             wanted = action_status.strip()
             if wanted == "none":
                 clauses.append(
-                    " and not exists (select 1 from email_actions as filter_action"
+                    f" and not exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as filter_action"
                     " where filter_action.classification_id=classifications.id"
                     " and filter_action.action_plan_id=classifications.current_action_plan_id)"
                 )
@@ -13397,7 +13402,7 @@ class EmailStore:
                 if wanted == "failed_not_retriable":
                     retriable_sql = f"not {retriable_sql}"
                 clauses.append(
-                    " and exists (select 1 from email_actions as filter_action"
+                    f" and exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as filter_action"
                     " where filter_action.classification_id=classifications.id"
                     " and filter_action.action_plan_id=classifications.current_action_plan_id"
                     " and filter_action.status='failed'"
@@ -13408,7 +13413,7 @@ class EmailStore:
                 if statuses is None:
                     raise ValueError("action_status is invalid")
                 clauses.append(
-                    " and exists (select 1 from email_actions as filter_action"
+                    f" and exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as filter_action"
                     " where filter_action.classification_id=classifications.id"
                     " and filter_action.action_plan_id=classifications.current_action_plan_id"
                     " and filter_action.status in ("
@@ -13437,10 +13442,10 @@ class EmailStore:
                 select actions.classification_id, actions.action_type,
                        actions.status, actions.error, actions.attempt_count,
                        actions.next_attempt_at, actions.provider_operation,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count) as explicit_retry_attempt,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count+1) as explicit_retry_scheduled,
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count) as explicit_retry_attempt,
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count+1) as explicit_retry_scheduled,
                        {_direct_retry_configuration_sql('actions')} as explicit_retry_configuration_matches
-                from email_actions as actions
+                from ({EMAIL_DIRECT_ACTION_SQL}) as actions
                 join email_classifications as classifications
                   on classifications.id=actions.classification_id
                  and classifications.current_action_plan_id=actions.action_plan_id
@@ -14099,24 +14104,24 @@ class EmailStore:
             if classification is None:
                 return []
             action_rows = db.execute(
-                """
+                f"""
                 select action_id, action_type, status, attempt_count,
                        provider_operation, provider_result_id, error,
                        started_at, finished_at, created_at
-                from email_actions
+                from ({EMAIL_DIRECT_ACTION_SQL})
                 where classification_id=?
                 order by created_at, action_id
                 """,
                 (classification_id,),
             ).fetchall()
             attempts = db.execute(
-                """
+                f"""
                 select attempts.action_id, attempts.attempt_number,
                        attempts.status, attempts.provider_operation,
                        attempts.provider_result_id, attempts.error,
                        attempts.started_at, attempts.finished_at
-                from email_action_attempts as attempts
-                join email_actions as actions
+                from ({EMAIL_ATTEMPT_SQL}) as attempts
+                join ({EMAIL_DIRECT_ACTION_SQL}) as actions
                   on actions.action_id=attempts.action_id
                 where actions.classification_id=?
                 order by attempts.action_id, attempts.attempt_number
@@ -15088,8 +15093,8 @@ class EmailStore:
         )
         with self._connect() as db:
             rows = db.execute(
-                """
-                select started_at, finished_at from email_actions
+                f"""
+                select started_at, finished_at from ({EMAIL_DIRECT_ACTION_SQL})
                 where status in ('done', 'skipped') and finished_at>=?
                 """,
                 (cutoff,),
@@ -15130,7 +15135,7 @@ class EmailStore:
             actions = {
                 str(row["status"]): int(row["n"])
                 for row in db.execute(
-                    "select status, count(*) as n from email_actions "
+                    f"select status, count(*) as n from ({EMAIL_DIRECT_ACTION_SQL}) "
                     "where created_at>=? group by status",
                     (since,),
                 )
@@ -15141,7 +15146,7 @@ class EmailStore:
             actions["failed"] = int(
                 db.execute(
                     "select count(*) from email_classifications as classifications "
-                    "where exists (select 1 from email_actions as failed_action "
+                    f"where exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as failed_action "
                     "where failed_action.classification_id=classifications.id "
                     "and failed_action.action_plan_id="
                     "classifications.current_action_plan_id "
@@ -15153,7 +15158,7 @@ class EmailStore:
             actions["failed_retriable"] = int(
                 db.execute(
                     "select count(*) from email_classifications as classifications "
-                    "where exists (select 1 from email_actions as failed_action "
+                    f"where exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as failed_action "
                     "where failed_action.classification_id=classifications.id "
                     "and failed_action.action_plan_id="
                     "classifications.current_action_plan_id "
@@ -16035,7 +16040,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             request = db.execute(
-                "select * from email_feedback_requests where feedback_request_id=?",
+                f"select * from ({EMAIL_FEEDBACK_SQL}) where feedback_request_id=?",
                 (feedback_request_id,),
             ).fetchone()
             if request is not None:
@@ -16074,9 +16079,9 @@ class EmailStore:
                         "email classification current ActionPlan changed"
                     )
                 current_plan = db.execute(
-                    """
+                    f"""
                     select action_plan_version
-                    from email_action_plans
+                    from ({EMAIL_PLAN_SQL})
                     where action_plan_id=? and classification_id=?
                     """,
                     (expected_current_action_plan_id, row_id),
@@ -16152,25 +16157,20 @@ class EmailStore:
                 raise EmailClassificationConflict(
                     "email classification was changed concurrently"
                 )
-            db.execute(
-                """
-                insert into email_feedback_requests (
-                    feedback_request_id, classification_id, category,
-                    expected_current_action_plan_id, resulting_action_plan_id,
-                    applied_at
-                ) values (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    feedback_request_id,
-                    row_id,
-                    category,
-                    expected_current_action_plan_id,
-                    action_plan.action_plan_id,
-                    applied_at,
-                ),
+            insert_email_action(
+                db,
+                "email_feedback_requests",
+                {
+                    "feedback_request_id": feedback_request_id,
+                    "classification_id": row_id,
+                    "category": category,
+                    "expected_current_action_plan_id": expected_current_action_plan_id,
+                    "resulting_action_plan_id": action_plan.action_plan_id,
+                    "applied_at": applied_at,
+                },
             )
             request = db.execute(
-                "select * from email_feedback_requests where feedback_request_id=?",
+                f"select * from ({EMAIL_FEEDBACK_SQL}) where feedback_request_id=?",
                 (feedback_request_id,),
             ).fetchone()
             assert request is not None
@@ -16285,8 +16285,8 @@ class EmailStore:
             ):
                 return None
             unfinished = db.execute(
-                """
-                select 1 from email_actions
+                f"""
+                select 1 from ({EMAIL_DIRECT_ACTION_SQL})
                 where classification_id=? and status in ('pending', 'processing')
                 """,
                 (row["id"],),
@@ -16305,8 +16305,8 @@ class EmailStore:
             if not actions:
                 return None
             current_plan = db.execute(
-                """
-                select action_plan_version from email_action_plans
+                f"""
+                select action_plan_version from ({EMAIL_PLAN_SQL})
                 where action_plan_id=? and classification_id=?
                 """,
                 (row["current_action_plan_id"], row["id"]),
@@ -16417,7 +16417,7 @@ class EmailStore:
                 raise EmailActionPlanConflict("ActionPlan account does not match")
             self._assert_no_email_reply_dispatch_in_flight(db, classification_id)
             existing = db.execute(
-                "select action_plan_id from email_action_plans where action_plan_id=?",
+                f"select action_plan_id from ({EMAIL_PLAN_SQL}) where action_plan_id=?",
                 (action_plan.action_plan_id,),
             ).fetchone()
             if existing is not None and (
@@ -16469,8 +16469,8 @@ class EmailStore:
     ) -> None:
         if (
             db.execute(
-                """
-            select 1 from email_reply_dispatch_claims
+                f"""
+            select 1 from ({EMAIL_REPLY_CLAIM_SQL})
             where classification_id=? and status='dispatching'
             """,
                 (classification_id,),
@@ -16478,6 +16478,28 @@ class EmailStore:
             is not None
         ):
             raise EmailReplyDispatchConflict("email_reply_dispatch_in_flight")
+
+    @staticmethod
+    def _update_direct_action(
+        db: sqlite3.Connection, action_id: str, values: dict, *,
+        expected_status: str | None = None,
+        expected_started_at: str | None = None,
+        expected_attempt_count: int | None = None,
+    ):
+        # Every caller owns its original writer transaction. Recheck the exact
+        # source predicates before resolving its structural ROWID; the accepted
+        # writer updates that source identity rather than the physical action ID.
+        locator = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=? "
+            "and (? is null or status=?) and (? is null or started_at=?) "
+            "and (? is null or attempt_count=?)",
+            (action_id, expected_status, expected_status,
+             expected_started_at, expected_started_at,
+             expected_attempt_count, expected_attempt_count),
+        ).fetchone()
+        if locator is None:
+            return ActionWriteResult(None, 0)
+        return update_email_action(db, "email_actions", locator[0], values)
 
     def append_action_attempt(
         self,
@@ -16498,7 +16520,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             action = db.execute(
-                "select * from email_actions where action_id=?", (action_id,)
+                f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?", (action_id,)
             ).fetchone()
             if action is None:
                 raise EmailActionAttemptConflict(
@@ -16511,7 +16533,7 @@ class EmailStore:
                     f"invalid current action status for {action_id}"
                 )
             latest = db.execute(
-                "select max(attempt_number) from email_action_attempts where action_id=?",
+                f"select max(attempt_number) from ({EMAIL_ATTEMPT_SQL}) where action_id=?",
                 (action_id,),
             ).fetchone()[0]
             expected_attempt = 1 if latest is None else int(latest) + 1
@@ -16523,49 +16545,38 @@ class EmailStore:
                 raise EmailActionAttemptConflict(
                     f"attempt number must be {expected_attempt} for {action_id}"
                 )
-            cursor = db.execute(
-                """
-                insert into email_action_attempts (
-                    action_id, attempt_number, status, provider_operation,
-                    provider_target, provider_result_id, error, started_at,
-                    finished_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    action_id,
-                    attempt_number,
-                    status,
-                    provider_operation,
-                    provider_target,
-                    provider_result_id,
-                    error,
-                    started_at,
-                    finished_at,
-                ),
+            cursor = insert_action(
+                db,
+                "email_action_attempts",
+                {
+                    "action_id": action_id,
+                    "attempt_number": attempt_number,
+                    "status": status,
+                    "provider_operation": provider_operation,
+                    "provider_target": provider_target,
+                    "provider_result_id": provider_result_id,
+                    "error": error,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                },
             )
-            db.execute(
-                """
-                update email_actions
-                set status=?, attempt_count=?, started_at=?, finished_at=?,
-                    provider_operation=?, provider_target=?, provider_result_id=?,
-                    error=?, updated_at=?
-                where action_id=?
-                """,
-                (
-                    status,
-                    attempt_number,
-                    started_at,
-                    finished_at,
-                    provider_operation,
-                    provider_target,
-                    provider_result_id,
-                    error,
-                    self._now(),
-                    action_id,
-                ),
+            self._update_direct_action(
+                db,
+                action_id,
+                {
+                    "status": status,
+                    "attempt_count": attempt_number,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                    "provider_operation": provider_operation,
+                    "provider_target": provider_target,
+                    "provider_result_id": provider_result_id,
+                    "error": error,
+                    "updated_at": self._now(),
+                },
             )
             row = db.execute(
-                "select * from email_action_attempts where id=?",
+                f"select * from ({EMAIL_ATTEMPT_SQL}) where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
         assert row is not None
@@ -16623,22 +16634,22 @@ class EmailStore:
                 phase_started_at = monotonic()
                 try:
                     attempt_number = int(row["attempt_count"]) + 1
-                    updated = db.execute(
-                        """
-                        update email_actions
-                        set status='processing', started_at=?, finished_at='',
-                            next_attempt_at='',
-                            provider_operation='', provider_target='',
-                            provider_result_id='', error='', updated_at=?
-                        where action_id=? and status=? and attempt_count=?
-                        """,
-                        (
-                            claimed_at,
-                            claimed_at,
-                            row["action_id"],
-                            row["status"],
-                            row["attempt_count"],
-                        ),
+                    updated = self._update_direct_action(
+                        db,
+                        row["action_id"],
+                        {
+                            "status": "processing",
+                            "started_at": claimed_at,
+                            "finished_at": "",
+                            "next_attempt_at": "",
+                            "provider_operation": "",
+                            "provider_target": "",
+                            "provider_result_id": "",
+                            "error": "",
+                            "updated_at": claimed_at,
+                        },
+                        expected_status=row["status"],
+                        expected_attempt_count=row["attempt_count"],
                     ).rowcount
                     if updated != 1:
                         raise EmailActionAttemptConflict(
@@ -16682,9 +16693,9 @@ class EmailStore:
     ) -> sqlite3.Row | None:
         eligible: list[sqlite3.Row] = []
         candidate_classifications = db.execute(
-            """
+            f"""
             select distinct a.classification_id
-            from email_actions as a
+            from ({EMAIL_DIRECT_ACTION_SQL}) as a
             cross join email_classifications as c on c.id=a.classification_id
             where a.status in ('pending', 'failed')
               and c.status='processed'
@@ -16693,16 +16704,16 @@ class EmailStore:
         ).fetchall()
         for candidate_classification in candidate_classifications:
             siblings = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id, p.actions_json,
                        p.action_plan_version,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
-                from email_actions as a
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
                 join email_classifications as c on c.id=a.classification_id
-                join email_action_plans as p on p.action_plan_id=a.action_plan_id
+                join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
                 where a.classification_id=?
                   and c.status='processed'
                 """,
@@ -16761,7 +16772,7 @@ class EmailStore:
 
         with self._connect() as db:
             rows = db.execute(
-                "select action_id, action_type from email_actions where action_plan_id=?",
+                f"select action_id, action_type from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
                 (action_plan_id,),
             ).fetchall()
         action_types = {row["action_type"] for row in rows}
@@ -16793,7 +16804,7 @@ class EmailStore:
     def direct_action_statuses_for_plan(self, action_plan_id: str) -> dict[str, str]:
         with self._connect() as db:
             rows = db.execute(
-                "select action_id, status from email_actions where action_plan_id=?",
+                f"select action_id, status from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
                 (action_plan_id,),
             ).fetchall()
         return {str(row["action_id"]): str(row["status"]) for row in rows}
@@ -16805,15 +16816,15 @@ class EmailStore:
 
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select a.action_id, a.action_type, a.status,
                        t.provider_operation, t.provider_target,
                        t.provider_result_id, t.finished_at
-                from email_actions as a
-                join email_action_attempts as t
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                join ({EMAIL_ATTEMPT_SQL}) as t
                   on t.id=(
                     select max(latest.id)
-                    from email_action_attempts as latest
+                    from ({EMAIL_ATTEMPT_SQL}) as latest
                     where latest.action_id=a.action_id and latest.status='done'
                   )
                 where a.action_plan_id=? and a.status='done'
@@ -16830,11 +16841,11 @@ class EmailStore:
 
         missing_ids: list[int] = []
         with self._connect() as db:
-            identity_sql = """
+            identity_sql = f"""
                 select c.id, c.account_id, c.stable_message_identity,
                        p.action_plan_version
                 from email_classifications as c
-                join email_action_plans as p
+                join ({EMAIL_PLAN_SQL}) as p
                   on p.action_plan_id=c.current_action_plan_id
                 where c.status='processed'
                   and instr(p.actions_json, '"unsubscribe"') > 0
@@ -16881,7 +16892,7 @@ class EmailStore:
                     f"""
                     select c.*, p.action_plan_version, p.actions_json
                     from email_classifications as c
-                    join email_action_plans as p
+                    join ({EMAIL_PLAN_SQL}) as p
                       on p.action_plan_id=c.current_action_plan_id
                     where c.id in ({placeholders})
                     order by c.id
@@ -16979,7 +16990,7 @@ class EmailStore:
         payload = _task_payload(typed_task)
         _validate_task_identity(typed_task, payload)
         source = db.execute(
-            "select 1 from email_classifications c join email_action_plans p "
+            f"select 1 from email_classifications c join ({EMAIL_PLAN_SQL}) p "
             "on p.action_plan_id=c.current_action_plan_id where c.id=? and c.status='processed' "
             "and c.account_id=? and c.stable_message_identity=? "
             "and p.action_plan_id=? and p.action_plan_version=?",
@@ -17022,11 +17033,11 @@ class EmailStore:
         terminal: list[dict[str, Any]] = []
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select c.id, c.account_id, c.stable_message_identity,
                        p.action_plan_version
                 from email_classifications as c
-                join email_action_plans as p
+                join ({EMAIL_PLAN_SQL}) as p
                   on p.action_plan_id=c.current_action_plan_id
                 where c.status='processed'
                   and instr(p.actions_json, '"unsubscribe"') > 0
@@ -17070,10 +17081,10 @@ class EmailStore:
                 }:
                     continue
                 classification = db.execute(
-                    """
+                    f"""
                     select c.*, p.action_plan_version, p.actions_json
                     from email_classifications as c
-                    join email_action_plans as p
+                    join ({EMAIL_PLAN_SQL}) as p
                       on p.action_plan_id=c.current_action_plan_id
                     where c.id=? and c.status='processed'
                       and p.action_plan_version=?
@@ -17132,16 +17143,16 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id, p.actions_json,
                        p.action_plan_version,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
-                from email_actions as a
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
                 join email_classifications as c on c.id=a.classification_id
-                join email_action_plans as p on p.action_plan_id=a.action_plan_id
+                join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
                 where a.action_id=? and c.status='processed'
                 """,
                 (action_id,),
@@ -17149,7 +17160,7 @@ class EmailStore:
             if row is None or row["action_plan_id"] != row["current_action_plan_id"]:
                 return None
             siblings = db.execute(
-                "select action_type, status from email_actions where action_plan_id=?",
+                f"select action_type, status from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
                 (row["action_plan_id"],),
             ).fetchall()
             if any(item["status"] == "processing" for item in siblings):
@@ -17169,15 +17180,22 @@ class EmailStore:
             ):
                 return None
             attempt_number = int(row["attempt_count"]) + 1
-            updated = db.execute(
-                """
-                update email_actions
-                set status='processing', started_at=?, finished_at='',
-                    next_attempt_at='', provider_operation='', provider_target='',
-                    provider_result_id='', error='', updated_at=?
-                where action_id=? and status=? and attempt_count=?
-                """,
-                (claimed_at, claimed_at, row["action_id"], row["status"], row["attempt_count"]),
+            updated = self._update_direct_action(
+                db,
+                row["action_id"],
+                {
+                    "status": "processing",
+                    "started_at": claimed_at,
+                    "finished_at": "",
+                    "next_attempt_at": "",
+                    "provider_operation": "",
+                    "provider_target": "",
+                    "provider_result_id": "",
+                    "error": "",
+                    "updated_at": claimed_at,
+                },
+                expected_status=row["status"],
+                expected_attempt_count=row["attempt_count"],
             ).rowcount
             if updated != 1:
                 raise EmailActionAttemptConflict(
@@ -17213,7 +17231,7 @@ class EmailStore:
                 f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity
-                from email_actions as a
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
                 join email_classifications as c on c.id=a.classification_id
                 where a.status='failed' and a.account_id=?
                   and a.action_type in ({placeholders})
@@ -17263,13 +17281,13 @@ class EmailStore:
             if account_configuration_snapshot != current_configuration_snapshot:
                 return False
             row = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity, p.actions_json,
                        p.action_plan_version
-                from email_actions a join email_classifications c
+                from ({EMAIL_DIRECT_ACTION_SQL}) a join email_classifications c
                   on c.id=a.classification_id
-                join email_action_plans p on p.action_plan_id=a.action_plan_id
+                join ({EMAIL_PLAN_SQL}) p on p.action_plan_id=a.action_plan_id
                 where a.action_id=? and a.status='failed' and c.status='processed'
                   and a.action_plan_id=c.current_action_plan_id
                 """, (expected.action_id,),
@@ -17283,13 +17301,13 @@ class EmailStore:
                 actual != expected or row["parameters_json"] != failed.parameters_json
                 or row["next_attempt_at"]
                 or db.execute(
-                    "select 1 from email_direct_retry_requests where action_id=? and attempt_number=?",
+                    f"select 1 from ({EMAIL_RETRY_SQL}) where action_id=? and attempt_number=?",
                     (expected.action_id, expected.attempt_number),
                 ).fetchone() is not None
                 or row["error"] != failed.error
                 or row["provider_operation"] != failed.provider_operation
                 or db.execute(
-                    "select 1 from email_actions where action_plan_id=? and status='processing'",
+                    f"select 1 from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=? and status='processing'",
                     (expected.action_plan_id,),
                 ).fetchone() is not None
                 or not self._direct_action_predecessors_done(db, row)
@@ -17302,16 +17320,26 @@ class EmailStore:
                     "plan": expected.action_plan_id, "config": expected.config_version,
                     "parameters": failed.parameters_json,
                 }, sort_keys=True).encode("utf-8")).hexdigest()
-                db.execute(
-                    "insert into email_direct_retry_requests values (?,?,?,?,?)",
-                    (expected.action_id, expected.attempt_number, proof, current_configuration_snapshot, requested_at),
+                insert_action(
+                    db,
+                    "email_direct_retry_requests",
+                    {
+                        "action_id": expected.action_id,
+                        "attempt_number": expected.attempt_number,
+                        "source_readback_digest": proof,
+                        "account_configuration_snapshot": current_configuration_snapshot,
+                        "requested_at": requested_at,
+                    },
                 )
-                db.execute(
-                    """update email_actions set next_attempt_at=?,
-                       updated_at=? where action_id=? and status='failed'
-                       and attempt_count=?""",
-                    (requested_at, requested_at,
-                     expected.action_id, expected.attempt_number - 1),
+                self._update_direct_action(
+                    db,
+                    expected.action_id,
+                    {
+                        "next_attempt_at": requested_at,
+                        "updated_at": requested_at,
+                    },
+                    expected_status="failed",
+                    expected_attempt_count=expected.attempt_number - 1,
                 )
             return True
 
@@ -17338,11 +17366,11 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id
-                from email_actions as a
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
                 join email_classifications as c on c.id=a.classification_id
                 where a.action_id=? and c.status='processed'
                 """,
@@ -17356,21 +17384,28 @@ class EmailStore:
             ):
                 return None
             busy = db.execute(
-                "select 1 from email_actions "
+                f"select 1 from ({EMAIL_DIRECT_ACTION_SQL}) "
                 "where action_plan_id=? and status='processing'",
                 (row["action_plan_id"],),
             ).fetchone()
             if busy is not None:
                 return None
-            db.execute(
-                """
-                update email_actions
-                set status='processing', started_at=?, finished_at='',
-                    next_attempt_at='', provider_operation='', provider_target='',
-                    provider_result_id='', error='', updated_at=?
-                where action_id=? and status='failed' and attempt_count=?
-                """,
-                (claimed_at, claimed_at, action_id, expected_attempt_count),
+            self._update_direct_action(
+                db,
+                action_id,
+                {
+                    "status": "processing",
+                    "started_at": claimed_at,
+                    "finished_at": "",
+                    "next_attempt_at": "",
+                    "provider_operation": "",
+                    "provider_target": "",
+                    "provider_result_id": "",
+                    "error": "",
+                    "updated_at": claimed_at,
+                },
+                expected_status="failed",
+                expected_attempt_count=expected_attempt_count,
             )
             return self._claimed_direct_action(
                 row,
@@ -17394,7 +17429,7 @@ class EmailStore:
                 "direct action is absent from its ActionPlan"
             )
         siblings = db.execute(
-            "select action_type, status, parameters_json from email_actions "
+            f"select action_type, status, parameters_json from ({EMAIL_DIRECT_ACTION_SQL}) "
             "where classification_id=? and action_plan_id=?",
             (row["classification_id"], row["action_plan_id"]),
         ).fetchall()
@@ -17432,7 +17467,7 @@ class EmailStore:
     @staticmethod
     def _direct_retry_configuration_matches(db: sqlite3.Connection, row: sqlite3.Row) -> bool:
         request = db.execute(
-            "select account_configuration_snapshot from email_direct_retry_requests "
+            f"select account_configuration_snapshot from ({EMAIL_RETRY_SQL}) "
             "where action_id=? and attempt_number=?",
             (row["action_id"], int(row["attempt_count"]) + 1),
         ).fetchone()
@@ -17462,8 +17497,8 @@ class EmailStore:
             action_plan_version=int(row["action_plan_version"]),
         )
         receipt = db.execute(
-            """
-            select outcome from email_unsubscribe_receipts
+            f"""
+            select outcome from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
             where action_identity=? and action_plan_id=? and classification_id=?
             """,
             (action_identity, row["action_plan_id"], row["classification_id"]),
@@ -17564,12 +17599,12 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.status as classification_status,
                        c.current_action_plan_id
-                from email_actions as a
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
                 join email_classifications as c on c.id=a.classification_id
                 where a.action_id=?
                 """,
@@ -17580,7 +17615,7 @@ class EmailStore:
                     f"unknown direct email action {action.action_id}"
                 )
             if db.execute(
-                "select 1 from email_direct_retry_requests where action_id=? and attempt_number=?",
+                f"select 1 from ({EMAIL_RETRY_SQL}) where action_id=? and attempt_number=?",
                 (action.action_id, action.attempt_number),
             ).fetchone() is not None:
                 next_attempt_at = ""
@@ -17668,57 +17703,45 @@ class EmailStore:
                     raise EmailActionAttemptConflict(
                         f"provider locator changed for {action.action_id}"
                     )
-            cursor = db.execute(
-                """
-                insert into email_action_attempts (
-                    action_id, attempt_number, status, provider_operation,
-                    provider_target, provider_result_id, error, started_at,
-                    finished_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    action.action_id,
-                    action.attempt_number,
-                    status,
-                    provider_operation,
-                    provider_target,
-                    provider_result_id,
-                    error,
-                    action.claim_started_at,
-                    finished_at,
-                ),
+            cursor = insert_action(
+                db,
+                "email_action_attempts",
+                {
+                    "action_id": action.action_id,
+                    "attempt_number": action.attempt_number,
+                    "status": status,
+                    "provider_operation": provider_operation,
+                    "provider_target": provider_target,
+                    "provider_result_id": provider_result_id,
+                    "error": error,
+                    "started_at": action.claim_started_at,
+                    "finished_at": finished_at,
+                },
             )
-            updated = db.execute(
-                """
-                update email_actions
-                set status=?, attempt_count=?, finished_at=?,
-                    next_attempt_at=?,
-                    provider_operation=?, provider_target=?, provider_result_id=?,
-                    error=?, updated_at=?
-                where action_id=? and status='processing' and started_at=?
-                  and attempt_count=?
-                """,
-                (
-                    status,
-                    action.attempt_number,
-                    finished_at,
-                    next_attempt_at,
-                    provider_operation,
-                    provider_target,
-                    provider_result_id,
-                    error,
-                    finished_at,
-                    action.action_id,
-                    action.claim_started_at,
-                    action.attempt_number - 1,
-                ),
+            updated = self._update_direct_action(
+                db,
+                action.action_id,
+                {
+                    "status": status,
+                    "attempt_count": action.attempt_number,
+                    "finished_at": finished_at,
+                    "next_attempt_at": next_attempt_at,
+                    "provider_operation": provider_operation,
+                    "provider_target": provider_target,
+                    "provider_result_id": provider_result_id,
+                    "error": error,
+                    "updated_at": finished_at,
+                },
+                expected_status="processing",
+                expected_started_at=action.claim_started_at,
+                expected_attempt_count=action.attempt_number - 1,
             ).rowcount
             if updated != 1:
                 raise EmailActionAttemptConflict(
                     f"direct action claim changed for {action.action_id}"
                 )
             attempt = db.execute(
-                "select * from email_action_attempts where id=?",
+                f"select * from ({EMAIL_ATTEMPT_SQL}) where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
         assert attempt is not None
@@ -17743,9 +17766,9 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             rows = db.execute(
-                """
+                f"""
                 select a.*, c.stable_message_identity
-                from email_actions as a
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
                 join email_classifications as c on c.id=a.classification_id
                 where a.status='processing' and a.started_at < ?
                 order by a.action_id
@@ -17755,51 +17778,45 @@ class EmailStore:
             for row in rows:
                 attempt_number = int(row["attempt_count"]) + 1
                 explicit_retry = db.execute(
-                    "select 1 from email_direct_retry_requests where action_id=? and attempt_number=?",
+                    f"select 1 from ({EMAIL_RETRY_SQL}) where action_id=? and attempt_number=?",
                     (row["action_id"], attempt_number),
                 ).fetchone() is not None
-                db.execute(
-                    """
-                    insert into email_action_attempts (
-                        action_id, attempt_number, status, provider_operation,
-                        provider_target, provider_result_id, error, started_at,
-                        finished_at
-                    ) values (?, ?, 'failed', 'startup_recovery', ?, '',
-                              'stale_processing_recovered', ?, ?)
-                    """,
-                    (
-                        row["action_id"],
-                        attempt_number,
-                        row["stable_message_identity"],
-                        row["started_at"],
-                        recovered_at,
-                    ),
+                insert_action(
+                    db,
+                    "email_action_attempts",
+                    {
+                        "action_id": row["action_id"],
+                        "attempt_number": attempt_number,
+                        "status": "failed",
+                        "provider_operation": "startup_recovery",
+                        "provider_target": row["stable_message_identity"],
+                        "provider_result_id": "",
+                        "error": "stale_processing_recovered",
+                        "started_at": row["started_at"],
+                        "finished_at": recovered_at,
+                    },
                 )
-                updated = db.execute(
-                    """
-                    update email_actions
-                set status='failed', attempt_count=?, finished_at=?,
-                        next_attempt_at=?,
-                        provider_operation='startup_recovery', provider_target=?,
-                        provider_result_id='', error='stale_processing_recovered',
-                        updated_at=?
-                    where action_id=? and status='processing' and started_at=?
-                      and attempt_count=?
-                    """,
-                    (
-                        attempt_number,
-                        recovered_at,
-                        _next_attempt_at(
+                updated = self._update_direct_action(
+                    db,
+                    row["action_id"],
+                    {
+                        "status": "failed",
+                        "attempt_count": attempt_number,
+                        "finished_at": recovered_at,
+                        "next_attempt_at": _next_attempt_at(
                             recovered_at,
                             attempt_number=attempt_number,
                             retryable=not explicit_retry,
                         ),
-                        row["stable_message_identity"],
-                        recovered_at,
-                        row["action_id"],
-                        row["started_at"],
-                        row["attempt_count"],
-                    ),
+                        "provider_operation": "startup_recovery",
+                        "provider_target": row["stable_message_identity"],
+                        "provider_result_id": "",
+                        "error": "stale_processing_recovered",
+                        "updated_at": recovered_at,
+                    },
+                    expected_status="processing",
+                    expected_started_at=row["started_at"],
+                    expected_attempt_count=row["attempt_count"],
                 ).rowcount
                 if updated != 1:
                     raise EmailActionAttemptConflict(
@@ -17813,11 +17830,11 @@ class EmailStore:
         """Mail the service flagged important in the mailbox within [start, end)."""
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select classifications.sender, classifications.subject,
                        classifications.preview, classifications.category,
                        classifications.received_at, actions.finished_at
-                from email_actions as actions
+                from ({EMAIL_DIRECT_ACTION_SQL}) as actions
                 join email_classifications as classifications
                   on classifications.id=actions.classification_id
                 where actions.action_type='flag_important'
@@ -17835,8 +17852,8 @@ class EmailStore:
     def list_action_attempts(self, action_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
-                """
-                select * from email_action_attempts
+                f"""
+                select * from ({EMAIL_ATTEMPT_SQL})
                 where action_id=? order by attempt_number
                 """,
                 (action_id,),

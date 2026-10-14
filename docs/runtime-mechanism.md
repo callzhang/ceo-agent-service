@@ -3022,3 +3022,23 @@ exception leaves the transaction unchanged. No selector, constructor, DAO or
 default action flag invokes this preparation. The genuine paired initializer
 and complete constructor/DAO/validator/version switch remain one later coupled
 activation, with separate Task5/6 acceptance.
+
+
+## Email13 group4B DAO WIP boundary
+
+The unpublished candidate's current plan/direct/feedback/retry/attempt DAO reads
+now use finite actions projections. All direct claim, completion, explicit retry
+release and stale-recovery transitions keep their original writer transactions
+and guard outcomes. A finite direct-action helper rechecks the original public
+action ID and supplied status/start/attempt-count predicates, then mutates the
+resolved source ROWID through the accepted writer. A failed CAS still raises or
+returns the original caller outcome, and the caller's full transaction rolls
+back. Attempt IDs come from the original independent AUTO namespace.
+
+Operation creation preserves the exact plan/type `DO NOTHING` conflict target,
+without suppressing other native constraints. The two shared C/D dependency
+reads are converted solely to allow the B call paths; C/D lifecycle writes,
+startup metadata/durable validation and constructor activation remain deferred.
+The default schema is still Store19/Email51, so this partial branch does not
+claim usable default business paths, paired publication readiness, or native/
+provider acceptance.

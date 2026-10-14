@@ -495,3 +495,106 @@ using the same target version pair; current checking establishes paired marker
 consistency rather than publication-instance ownership. Independent reviewers
 found no introduced supported call path and accepted this as a nonblocking
 preparation limitation; no new policy field or ownership guard was added.
+
+
+## Group4B partial plan/direct/feedback/retry DAO preparation
+
+Group4B changes only current five-family SQL in `EmailStore`, the two authorized
+shared C/D read guards, and one narrow accepted writer interface. All current
+FROM/JOIN references to `email_action_plans`, `email_actions`,
+`email_action_attempts`, `email_direct_retry_requests` and
+`email_feedback_requests` at/after `_current_action_plan_rows` now use explicit
+finite projections. The module-level explicit-retry/configuration SQL is
+converted too. An AST scan reports zero remaining physical five-family
+FROM/JOIN/INSERT/UPDATE references in that current-method range. Historical
+migration/DDL and startup validators remain E/F work.
+
+The fourteen original write sites across ten methods use accepted source-shaped
+writers. `_update_direct_action` selects the original structural ROWID with the
+original public-ID/status/start/count guards in the existing writer transaction.
+It preserves zero-row CAS outcomes, and the original caller still controls
+rollback. Attempt helper `lastrowid` remains the independent public attempt ID.
+The narrowly named `ignore_plan_action_conflict` option emits the exact native
+Email-operation `(plan,type)` partial conflict target. It does not replace it
+with broad `OR IGNORE`, preempt CHECK/NOT NULL/FK errors, or alter allocator
+semantics. Both original helpers' default behavior and DDL remain unchanged.
+
+`tests/test_email_action_plan_direct_dao.py` first failed at the missing narrow
+helper keyword and at the original physical direct-action read on an explicitly
+converted copy. The helper and public read then passed. Thirteen focused cases
+use genuine archived2773 public methods and the native SQL source oracle, with
+explicit supporting target guard/index checks. The genuine fresh source is
+created by both real old default constructors. Target setup
+explicitly converts an owned copy using the accepted pure helper and creates a
+test-only EmailStore object; it makes no claim that the unfinished target
+default constructor can open that copy. A fixture source ROWID is-7 and its
+real attempt allocator is advanced to700 by native insert/delete before copying.
+The first new public attempt is701, independently of physical `actions.id`.
+
+The comparisons cover immutable plan replay/conflicts; NULL-prior feedback,
+replay, different-intent and stale-current-plan refusals; append/reapply with
+current versus retired plans; direct polling, claim, dependency order, delayed
+retry, successful receipts, stale claim rejection, recovery, reconciliation and
+concurrent single-winner claims; immutable source-verified explicit retries;
+mailbox/progress/filter projections; attempt sequencing; and the unchanged
+reply-in-flight refusal. A native after-attempt-insert mutation makes the final
+CAS fail in both implementations, proving that the entire transaction, including
+the attempt row, rolls back. No provider is called.
+
+The real current/retired-plan polling call path uses existing typed Email
+indexes in representative EXPLAIN output. Adding3000 unrelated action records
+changes total SQLite VM steps from5751 to5752 and preserves the selected current
+public action ID. No index was added. The selected new DAO/storage/writer/
+migration/paired-protocol regression passed176 cases in85.06s. A strengthened
+native-source versus helper check additionally ignored an explicit signed-MAX
+ROWID duplicate and verified that the next ordinary ROWID remains2; that scoped
+check passed. Ruff and diff checks passed.
+
+Remaining current physical C/D SQL is explicit, not hidden behind a router:
+
+- Reply: `get_email_reply_receipt`, `claim_email_reply_dispatch`,
+  `get_email_reply_dispatch_claim`, `mark_email_reply_dispatch_uncertain`,
+  `release_email_reply_dispatch_retryable`,
+  `recover_terminated_email_reply_dispatch_claims`, `persist_email_reply_receipt`.
+- Unsubscribe state/lifecycle: `claim_email_unsubscribe_write`,
+  `get_email_unsubscribe_claim`, `get_email_unsubscribe_state_snapshot`,
+  `get_email_unsubscribe_terminal_snapshot`,
+  `_validate_email_unsubscribe_terminal_snapshot`, `get_email_unsubscribe_effect`,
+  `persist_email_unsubscribe_continuation`, `get_email_unsubscribe_continuation`,
+  `append_email_unsubscribe_step`, `list_email_unsubscribe_steps`,
+  `list_orphaned_email_unsubscribe_claim_owners`,
+  `release_orphaned_email_unsubscribe_claim`,
+  `repair_email_unsubscribe_effect_journal`,
+  `retire_email_unsubscribe_claim_for_direct_run`,
+  `recover_terminated_email_unsubscribe_claims`,
+  `mark_email_unsubscribe_uncertain`, `release_email_unsubscribe_failed_operation`,
+  `release_failed_email_unsubscribe_for_explicit_retry`,
+  `advance_email_unsubscribe_phase`, `persist_email_unsubscribe_terminal`,
+  `get_email_unsubscribe_receipt`.
+- Mixed views/cancellation/task recovery: `list_unsubscribe_classifications`,
+  `list_email_context_receipts`, `backfill_email_unsubscribe_entry_url`,
+  `get_email_unsubscribe_entry_url`, `list_email_classification_observability`,
+  `list_missing_unsubscribe_action_tasks`, `get_email_unsubscribe_cancellation`,
+  `cancel_failed_email_unsubscribe_task`, `_unsubscribe_cancellation_decision`,
+  `list_terminal_unsubscribe_tasks_missing_receipts`.
+
+The mixed observability/context APIs above are not claimed fully target-runnable
+by B. B-family joins within C/D methods have changed, while their remaining
+C/D-specific reads and writes are deliberately deferred. The finite scan finds
+38 current methods with these residual physical C/D accesses. E/F still owns
+`_REQUIRED_*` metadata, `_validate_schema_shape`, `_validate_durable_state`,
+`_validate_durable_rows`, historical initialization/migration dispatch, seed
+factoring, both fresh constructor orders, the coordinator/subprocess, real
+version allocation and final coupled default activation. External direct
+consumers and full copy/native/CI/production acceptance remain Task5/6.
+
+Store/Email default versions, constructors, schema selectors and action schema
+flags are untouched. This unpublished B DAO code requires explicit Email29
+preparation, while selected default schemas remain Store19/Email51; the partial
+branch is therefore not an independently runnable default release. There is no
+alternate DAO, compatibility router, view/dual writer, new policy, native CLI,
+provider action, push, deployment or production mutation. Full Task4 remains
+open. Independent SPEC then QUALITY review of group4B remains pending.
+
+Owned task temporary roots, genuine old-code copies and copied test databases
+were inspected and removed after checks; no historical test archive is retained.

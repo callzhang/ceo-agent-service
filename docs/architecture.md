@@ -2227,3 +2227,31 @@ transaction. This is Task4A preparation only: current constructors, validators,
 DAO, Store19/Email51 markers and default sixteen-action plus thirteen-table
 layout remain selected. Genuine target default constructors, the paired
 subprocess, final coupled activation and Task5/6 acceptance remain open.
+
+
+### Email13 group4B partial DAO integration
+
+The unpublished Email candidate now reads the five plan/direct/attempt/retry/
+feedback families through their finite typed projections and writes through the
+accepted source-shaped helpers. The existing method APIs, original writer
+transactions, current-plan CAS, direct dependency ordering, explicit retry
+records and successful receipt selection remain unchanged. Direct scalar writes
+resolve the original source ROWID with the original status/start/count guards
+inside the caller's writer transaction; the physical `actions.id` is never used
+as a source identity. Attempt insertion returns its independent public
+AUTOINCREMENT ID, including continuity after a deleted high ID.
+
+The confined `ignore_plan_action_conflict` Email-operation helper option uses
+SQLite's exact `(email_action_plan_id,email_action_type)` partial unique conflict
+target. Only that duplicate is ignored; unrelated public-key, CHECK, NOT NULL
+and FK failures remain native errors. This does not broaden existing `ignore`
+behavior or change any declaration. The shared feedback reply-in-flight guard
+and direct-action unsubscribe-receipt dependency read use their existing finite
+projections; all remaining C/D writers are deferred.
+
+This is partial DAO WIP, not a separately runnable default runtime. The converted
+methods require an explicitly prepared Email29 database, while default Store19/
+Email51 constructors, validators and release selectors still select the old
+schema. Remaining unsubscribe/reply methods and mixed observability reads still
+require their planned conversion. Final constructor/validator/DAO/marker
+activation remains coupled, with Task5/6 acceptance separately open.
