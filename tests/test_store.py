@@ -3558,6 +3558,45 @@ def test_settlement_evidence_reconcile_commits_between_bounded_batches(
     assert second is not None and second.status == "skipped"
 
 
+def test_settlement_reconcile_preserves_uncertain_external_action(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-settlement-uncertain",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-settlement-uncertain",
+        trigger_create_time="2026-09-20 09:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please handle this",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    with store._connect() as db:
+        db.execute(
+            "update tasks set status='failed', error='external_action_uncertain' "
+            "where record_type='reply_tasks' and id=?",
+            (task.id,),
+        )
+        db.execute(
+            "insert into errors (conversation_id, message_id, kind, detail, "
+            "resolved_at, resolution) values (?, ?, ?, ?, current_timestamp, ?)",
+            (
+                task.conversation_id,
+                task.trigger_message_id,
+                "reply_task_already_settled",
+                "A stale settlement record must not override uncertain delivery.",
+                "A stale settlement record must not override uncertain delivery.",
+            ),
+        )
+
+    assert store.reconcile_unresolved_reply_tasks_with_settlement_evidence() == 0
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error == "external_action_uncertain"
+
+
 def test_skip_failed_reply_task_with_terminal_no_action_run(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
