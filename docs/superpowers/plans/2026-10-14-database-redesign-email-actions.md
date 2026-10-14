@@ -267,6 +267,17 @@ not Task3B implementation or execution evidence.
 
 **Scheduling accepted:** docs-only7d239490 passed sequential independent SPEC then QUALITY; this accepts sequencing only, not4A implementation or activation.
 
+**Task4A accepted, unselected (2026-10-14):** implementation `2fead6ee` passed
+sequential independent SPEC then QUALITY. Each reviewer independently ran all53
+protocol cases; QUALITY also passed8 lifecycle/marker probes and Ruff/diff checks.
+Exact paired source capture, atomic supplied-target publication and current-fact
+inverse are accepted within this preparation scope. No default version, DAO,
+constructor or coordinator selects the protocol. Target-default subprocess and
+real coordinator lifecycle evidence remain Task4F. Reusing a completed release
+object across a distinct later publication can inverse that later same-version
+pair; this has no introduced4A call path and is recorded as a bounded lifecycle
+limitation, not a new ownership policy or guard. Full Task4 remains open.
+
 **Implementation scheduling clarification (2026-10-14):** the selected
 constructor/DAO/validator/marker transition remains one paired activation and
 publication. Source inspection found hundreds of old-family references and about90 active

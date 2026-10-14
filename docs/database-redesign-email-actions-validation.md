@@ -472,3 +472,26 @@ Store release, Email release and prior Attempt/Memory release test files.
 Ruff and `git diff --check` passed. Owned temporary test roots were inspected
 and removed after verification. This result is local protocol regression
 evidence, not integrated Task4/runtime publication acceptance.
+
+
+### Independent Task4A acceptance, 2026-10-14
+
+Candidate `2fead6ee8ef2bfa23fd7c295693cf981cca55b5b` passed sequential
+independent SPEC then QUALITY for the unselected paired publication protocol.
+SPEC independently ran53 protocol cases in25.41s. QUALITY independently ran
+the same53 in36.16s plus8 lifecycle/marker probes across both supported source
+variants. Ruff and commit whitespace checks passed; the candidate was clean.
+The probes verify post-commit readback failure leaves an inverseable valid
+target, and split marker clocks, extra Email ledger rows or a missing target
+ledger row refuse readback/inverse without mutation. Owned temporary fixtures
+were removed. No full suite, production/provider/native CLI, push or deployment
+was performed for this unit.
+
+The accepted protocol matches source Store19/Email51 and uses explicitly supplied
+test target markers. It is not selected by current constructors, coordinator or
+DAOs. All final default-constructor/coordinator/subprocess checks remain Task4F.
+A stale already-completed release object can inverse a distinct later publication
+using the same target version pair; current checking establishes paired marker
+consistency rather than publication-instance ownership. Independent reviewers
+found no introduced supported call path and accepted this as a nonblocking
+preparation limitation; no new policy field or ownership guard was added.
