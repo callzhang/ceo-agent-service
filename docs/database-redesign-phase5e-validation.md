@@ -1,5 +1,43 @@
 # Phase5E source refresh and execution boundary
 
+## Task 3A independent and online-copy acceptance
+
+The opt-in forward/current-fact inverse at `4f98d82e` passed independent SPEC
+and QUALITY review. Seventeen migration checks passed, including source and
+post-forward observer rebinds to a later physical parent in both source modes.
+The complete E gate passed 453 tests with eight variant-specific skips; six
+preceding migration/release files passed 125 tests. Independent probes also
+confirmed exact source/target objects and active reference guards after both
+directions. Task 3 remains unfinished: this unit does not set a release marker,
+activate Store, convert callers or implement paired publication.
+
+The root then made a latest online SQLite backup in an owned temporary directory
+and exercised the standalone migration on real current data. The exact source
+contained 14,823 Attempts, 476 Memory events and 6,607 existing action facts.
+Forward, synthetic copy-only new results/receipts and parent rebind, deletion,
+current-fact inverse, and a new-process migration-module re-forward passed.
+All 120 unrelated tables retained their value/type hashes, retained action
+physical values/types were identical, current public allocator waters survived,
+and the one original FK diagnostic was unchanged. Full integrity checks passed
+before forward, after inverse and after re-forward. The inverse retained two
+new synthetic Attempts and one synthetic Memory receipt, without resurrecting
+the deleted Attempt. No provider was called and no production row was changed.
+
+The 64.4-second probe cleaned its temporary database afterward. Its file remained
+471,347,200 bytes: this acceptance proves facts and schema transitions, not
+physical reclamation. Only concise metadata is retained in
+[`phase5e_storage_copy.v1.json`](../evals/database_redesign/phase5e_storage_copy.v1.json).
+The synthetic results are not verified external business outcomes. The subprocess
+used the migration module; actual old-code and candidate Store constructors,
+paired publication failures, native substituted execution, final CI and normal
+deployment remain required.
+
+After this probe production was observed at `492259b5`, from a separate audit
+feedback-context release. Its storage files and the source declarations are
+unchanged from the earlier Store18 binding. The database copy was bound by exact
+schema fingerprints; it was not an atomic checkout-and-database capture. Latest
+main must be integrated before paired release and caller work.
+
 ## Task 2 opt-in finite storage checkpoint
 
 The isolated E candidate adds two opt-in `actions` record types with separate
