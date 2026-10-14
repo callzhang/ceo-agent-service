@@ -302,3 +302,14 @@ only disabled opt-in Task2 storage preparation before that publication.
 Task1 published-source binding, Task3B actual-source migration acceptance,
 constructor/caller integration, marker allocation and release retain their
 actual-predecessor requirements; Task3A remains unselected preparation only.
+
+
+### Reviewed Task3A scheduling amendment
+
+The docs-only sequencing change in `30aed444` and `c2db834f` passed fresh
+independent SPEC review followed by independent QUALITY review. Both verified
+that synthetic/candidate preparation cannot populate the published-source
+artifact, allocate release markers, activate constructors/callers, or replace
+Task3B actual-predecessor/current-fact inverse acceptance. No runtime changed.
+Task3A starts with a separately reviewed source-capture/refusal unit before
+forward/inverse implementation; full Task3 remains incomplete until Task3B.
