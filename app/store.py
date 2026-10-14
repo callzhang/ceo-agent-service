@@ -30462,7 +30462,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   on task.channel=attempts.attempt_channel
                  and task.conversation_id=attempts.attempt_conversation_id
                  and task.trigger_message_id=attempts.attempt_trigger_message_id
-                join latest_task_attempts as latest
+                left join latest_task_attempts as latest
                   on latest.task_id=task.id
                 left join runs as agent_run
                   on agent_run.id=attempts.attempt_agent_run_id
@@ -30471,9 +30471,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 join wechat_deliveries as delivery
                   on delivery.reply_task_id=task.id
                  and delivery.execution_generation=task.execution_generation
+                 and delivery.conversation_id=attempts.attempt_conversation_id
                 where attempts.record_type='reply_attempts'
                   and attempts.attempt_send_status='failed'
-                  and latest.latest_attempt_id=cast(attempts.legacy_key as integer)
+                  and (latest.latest_attempt_id is null or latest.latest_attempt_id=
+                       cast(attempts.legacy_key as integer))
                   and attempts.attempt_channel='wechat'
                   and (run_task.id is null or agent_run.execution_generation=
                        run_task.execution_generation)
