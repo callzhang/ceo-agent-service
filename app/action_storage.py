@@ -796,6 +796,23 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
     variant = _reply_variant_for(db)
     if kind == "reply_attempts" and variant == "fresh_memory_fk" and set(values) & _ATTEMPT_HISTORICAL:
         raise ValueError("historical attempt fields absent from fresh variant")
+    if not values or kind == "memory_write_events" and set(values) == {"payload_json"}:
+        raise ValueError("action update requires fields")
+    predicate = _identity_predicate(kind)
+    identity_arguments = list(_identity_arguments(kind, public_id))
+    if where_sql:
+        projection = reply_action_projection(kind, variant)
+        predicate += f" and cast(legacy_key as integer) in (select id from ({projection}) where id=? and ({where_sql}))"
+        identity_arguments.extend((public_id, *parameters))
+    # SQLite binds every SET and WHERE input before it scans rows, but applies
+    # row-level affinity and FK constraints only to selected rows.
+    bound = (*values.values(), *identity_arguments)
+    db.execute("select " + ",".join("?" for _ in bound), bound)
+    # Lock before checking existence so no concurrent writer can insert or
+    # change the candidate between the scan and the real UPDATE.
+    db.execute("update sqlite_sequence set seq=seq where 0")
+    if db.execute(f"select 1 from actions where {predicate} limit 1", identity_arguments).fetchone() is None:
+        return db.execute("update actions set legacy_key=legacy_key where 0")
     assignments, arguments, paths = [], [], []
     for field, value in values.items():
         if field == "id":
@@ -819,12 +836,7 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
         arguments.extend(paths)
     if not assignments:
         raise ValueError("action update requires fields")
-    predicate = _identity_predicate(kind)
-    arguments.extend(_identity_arguments(kind, public_id))
-    if where_sql:
-        projection = reply_action_projection(kind, variant)
-        predicate += f" and cast(legacy_key as integer) in (select id from ({projection}) where id=? and ({where_sql}))"
-        arguments.extend((public_id, *parameters))
+    arguments.extend(identity_arguments)
     return db.execute(f"update actions set {','.join(assignments)} where {predicate}", arguments)
 
 
@@ -833,7 +845,8 @@ def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ign
     _check_fields(record_type, values)
     automatic = ((record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies") and values.get("id") is None
                  or record_type in REPLY_ACTION_TYPES and _reply_auto_id(values))
-    locked = automatic or (record_type in REPLY_ACTION_TYPES and ignore)
+    locked = automatic or (record_type in REPLY_ACTION_TYPES and (ignore or record_type == "memory_write_events"
+                             and _reply_variant_for(db) == "fresh_memory_fk"))
     owned = locked and not db.in_transaction and (
         db.isolation_level is None or getattr(db, "autocommit", None) is True
     )

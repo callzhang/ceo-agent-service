@@ -446,6 +446,68 @@ def test_ignored_duplicate_after_public_id_update_advances_native_water(pair, ki
         assert storage.insert_action(target, kind, values).lastrowid == updated_id + 1
 
 
+@pytest.mark.parametrize("replacement", [None, 2.5, "nonnumeric"])
+def test_absent_attempt_update_defers_row_constraints(pair, replacement):
+    source, target, _ = pair
+    assert source.execute("update reply_attempts set id=? where id=999", (replacement,)).rowcount == 0
+    assert storage.update_action(target, "reply_attempts", 999, {"id": replacement}).rowcount == 0
+
+
+def test_absent_fresh_memory_update_defers_parent_resolution(pair):
+    source, target, variant = pair
+    if variant != "fresh_candidate17":
+        pytest.skip("fresh typed parent contract")
+    assert source.execute("update memory_write_events set attempt_id=999 where id=999").rowcount == 0
+    assert storage.update_action(target, "memory_write_events", 999, {"attempt_id": 999}).rowcount == 0
+    parent = insert_source(source, "reply_attempts", REQUIRED).lastrowid
+    storage.insert_action(target, "reply_attempts", REQUIRED)
+    event = {"attempt_id": parent, "event_type": "memory_write", "payload_json": "{}"}
+    mid = insert_source(source, "memory_write_events", event).lastrowid
+    storage.insert_action(target, "memory_write_events", event)
+    assert source.execute("update memory_write_events set attempt_id=999 where id=? and 0", (mid,)).rowcount == 0
+    assert storage.update_action(target, "memory_write_events", mid, {"attempt_id": 999}, where_sql="0").rowcount == 0
+
+
+def test_absent_update_still_rejects_unbindable_input(pair):
+    source, target, _ = pair
+    with pytest.raises(sqlite3.ProgrammingError):
+        source.execute("update reply_attempts set id=? where id=999", (object(),))
+    with pytest.raises(sqlite3.ProgrammingError):
+        storage.update_action(target, "reply_attempts", 999, {"id": object()})
+
+
+@pytest.mark.parametrize("mode", ["deferred", "autocommit", "outer", "savepoint"])
+def test_fresh_explicit_insert_parent_failure_transaction_matches_source(mode):
+    outcomes = []
+    for target in (False, True):
+        with closing(sqlite3.connect(":memory:", isolation_level=None if mode == "autocommit" else "")) as db:
+            db.execute("pragma foreign_keys=on")
+            if target:
+                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                storage.create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk")
+            else:
+                for table in ("reply_attempts", "memory_write_events"):
+                    db.execute(CAPTURE["fresh_candidate17"]["tables"][table]["sql"])
+            db.execute("create table pending(value text)")
+            db.commit()
+            if mode == "outer":
+                db.execute("begin")
+                db.execute("insert into pending values('caller')")
+            elif mode == "savepoint":
+                db.execute("savepoint caller")
+                db.execute("insert into pending values('caller')")
+            values = {"id": 8, "attempt_id": 999, "event_type": "memory_write", "payload_json": "{}"}
+            with pytest.raises(sqlite3.IntegrityError):
+                if target:
+                    storage.insert_action(db, "memory_write_events", values)
+                else:
+                    insert_source(db, "memory_write_events", values)
+            outcomes.append((db.in_transaction, db.execute("select count(*) from pending").fetchone()[0]))
+    expected = (mode != "autocommit", int(mode in ("outer", "savepoint")))
+    assert outcomes == [expected, expected]
+
+
 def test_fresh_full_precedes_missing_parent_and_rolls_back_caller_work():
     outcomes = []
     for target in (False, True):

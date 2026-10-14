@@ -48,6 +48,18 @@ SQLite CASE result for every finite payload value. The focused gate passed
 passed. Independent SPEC/QUALITY re-review, migration,
 publication and production readback remain separate gates.
 
+The subsequent independent QUALITY review found two write-ordering differences.
+Source `UPDATE` binds all inputs and acquires a writer transaction before
+checking row constraints; a missing row or false predicate returns zero even
+for an invalid public ID or unknown fresh Memory parent. The E update path now
+binds inputs, locks and checks the exact predicate before row-specific key or
+parent resolution. Fresh Memory explicit insert likewise acquires its writer
+transaction before resolving a typed parent, retaining native failure state
+for deferred, autocommit, outer transaction and savepoint callers. Focused
+source-versus-target regressions cover those modes and unbindable inputs; the
+full local gate passed 397 tests with eight variant-specific skips, with Ruff
+and `git diff --check` passing. This remains opt-in foundation evidence only.
+
 ## Earlier source preparation
 
 The work below was source preparation for the approved Attempt/Memory action
