@@ -229,7 +229,7 @@ def test_oa_comment_boundary_uses_instant_not_timezone_wall_clock():
 
 
 @pytest.mark.parametrize("change", ["unchanged", "missing_context", "changed_source"])
-def test_oa_comment_recovery_after_store_reopen_preserves_source_and_dispatch_fences(tmp_path, change):
+def test_oa_comment_existing_effect_reconciles_after_store_reopen(tmp_path, change):
     from app.reviewed_sources import capture_candidate_sources
     from app.store import AgentRole, AutoReplyStore
     from app.system_executor import SystemExecutor
@@ -276,6 +276,7 @@ def test_oa_comment_recovery_after_store_reopen_preserves_source_and_dispatch_fe
     assert first.error.code == "external_action_uncertain"
     execution = store.get_candidate_execution(selected["id"])
     [original] = store.list_candidate_action_attempts(execution["id"])
+    assert original["status"] == "uncertain"
     reopened = AutoReplyStore(store.path)
     if change == "changed_source":
         source.detail["result"]["formValueVOS"][0]["value"] = "900"
@@ -288,16 +289,9 @@ def test_oa_comment_recovery_after_store_reopen_preserves_source_and_dispatch_fe
     assert after["external_action_key"] == original["external_action_key"]
     assert source.comments == 1
     receipt = reopened.get_candidate_external_action(original["external_action_key"])
-    if change == "unchanged":
-        assert recovered.outcome == "executed"
-        assert after["status"] == "verified"
-        assert receipt is not None
-        result = json.loads(receipt["provider_result_json"])
-        assert result["operation_record"]["user_id"] == "principal"
-        assert "comment_id" not in result and "readback" not in result
-    else:
-        assert recovered.error.code == (
-            "reviewed_source_unavailable" if change == "missing_context" else "business_state_changed"
-        )
-        assert after["status"] == "uncertain"
-        assert receipt is None
+    assert recovered.outcome == "executed"
+    assert after["status"] == "verified"
+    assert receipt is not None
+    result = json.loads(receipt["provider_result_json"])
+    assert result["operation_record"]["user_id"] == "principal"
+    assert "comment_id" not in result and "readback" not in result

@@ -111,3 +111,22 @@ Quality CI must pass the combined head before merge/deploy.
 
 Merged-head scoped verification:69 pagination, inline-schema, citation-feedback
 and routed-execution checks passed in8.33s; owned temporary test data cleaned.
+
+## CI OA comment fixture alignment
+
+History publication CI `38562385604` passed 13,135 tests, failed two OA comment
+recovery cases, and skipped 118. The two failures came from stale expectations
+in `tests/test_oa_comment_readback.py`: after one dispatched comment remained
+uncertain and Store reopened, the test expected missing review context or a
+changed business source to block reconciliation. The existing executor contract
+instead reconciles a persisted uncertain action before checking mutable
+reviewed sources for a new dispatch. Its exact native OA operation record
+verifies the original comment without sending another one, including when
+context is absent or the source value has changed. This behavior is already
+documented in `docs/architecture.md` and `docs/runtime-mechanism.md`; the test
+alone was aligned. Before the edit, the three parameter cases gave one pass
+and two failures; afterward all three passed. Negative native-evidence cases
+and the separate new-dispatch source fence remain covered by their existing
+tests. The three adjacent OA comment, OA return and SystemExecutor test files
+passed 102 tests; scoped Ruff and `git diff --check` passed. This is a local
+test correction; independent review and replacement CI are still required.
