@@ -79,3 +79,21 @@ Native DML probes establish independent overlapping IDs for all nine AUTOINCREME
 The oracle distinguishes global nonempty provider-ID uniqueness on legacy links from the business link's one-creating/active-per-Task partial index, legacy draft dedupe without UNIQUE from business follow-up UNIQUE dedupe, attempt claim-token UNIQUE from nonunique idempotency UUID and draft/revision pairs, and each outbox's operation-key UNIQUE. Its invalid CHECK/NOT NULL probes use actual captured valid states and demonstrate nullable receipt fields remain NULL. All CHECK-governed columns in this nine-family capture are NOT NULL, so there is no nullable CHECK operand here on which a three-valued NULL pass could be claimed. Immediate NO ACTION insert/update/delete FK failures and permissible unconstrained legacy scalar references are tested separately. Native conditional UPDATE rowcounts show the SQL CAS primitive only; the tests do not prove whole DAO or provider behavior. With zero owned triggers, a syntactically valid revision rewrite/delete remains possible at the source SQL layer.
 
 This observation is limited to the frozen Store18/Email51 source variants. The published predecessor after E/Email, target schema, migration/inverse, constructors, caller conversion, provider effects, CI and deployment remain separate gates.
+
+## Independent native-source oracle acceptance
+
+Source-only oracle `9d6dd6ec` passed sequential independent SPEC and QUALITY.
+Both ran all20focused cases. SPEC added12in-memory assertions across both
+source variants for child-FK updates, outbox/link parent rejection, nullable
+legacy-link associations and incoming-child updates. QUALITY added26paired
+assertions for unconstrained legacy status, partial uniqueness on UPDATE,
+failed-UPDATE preservation, legacy provider-ID uniqueness, duplicate business
+provider IDs across Tasks and all8CHECKconstraints on UPDATE. No actionable
+finding remained. These are source behavior observations, not an exhaustive
+scalar-affinity/workflow matrix or target-equivalence proof.
+
+The SPEC review's accidentally created, previously absent `.venv` and
+`uv.lock` were removed by verified exact paths; QUALITY used only closed
+in-memory databases. The final worktree was clean. Published-predecessor
+binding, target mapping/storage, current-fact inverse, constructor/release
+and provider acceptance remain separate future units.

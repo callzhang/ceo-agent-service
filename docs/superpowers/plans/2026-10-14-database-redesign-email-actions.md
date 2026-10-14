@@ -16,9 +16,10 @@ This is a docs-only implementation plan, not target code or migration acceptance
 
 The approved structure is `docs/superpowers/specs/2026-10-11-database-redesign-design.md`. Source contracts are the two frozen 2026-10-13 Email action JSON/map pairs: nine tables/103 fields and four children/41 fields. Their measured actual source was Store16/Email51 at `d7397203`; those are historical observations, never the publication predecessor. The accompanying `2026-10-14-database-redesign-email-actions-field-map.csv` independently names all 144 actual source columns and their exact target path. No field is retired in this plan.
 
-Migration, constructor integration and publication start only after E is normally published and root captures the actual immediate predecessor commit, Store/Email markers, literal actions/Email declarations, generated columns, FKs, indexes, triggers and native sequence metadata. Record those verified values in a new `docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json` and source map. Refuse a changed declaration outside the enumerated source variants before mutation. Do not assign a target Store/Email version until that binding exists. A numeric release name is deliberately absent here; assigning one now would falsely reserve an unpublished predecessor.
+Constructor/caller integration, release/version selection and migration activation start only after E is normally published and root captures the actual immediate predecessor commit, Store/Email markers, literal actions/Email declarations, generated columns, FKs, indexes, triggers and native sequence metadata. The unselected pure storage unit Task3A below may be developed against the exact reviewed E sixteen-type candidate plus frozen thirteen-table sources before publication; its synthetic/candidate-prepared test databases are never called an actual published predecessor or production migration acceptance. Record those verified values in a new `docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json` and source map. Refuse a changed declaration outside the enumerated source variants before mutation. Do not assign a target Store/Email version until that binding exists. A numeric release name is deliberately absent here; assigning one now would falsely reserve an unpublished predecessor.
 
-Task2's opt-in storage unit may proceed independently against the frozen thirteen
+Task2's opt-in storage unit and Task3A's unselected pure storage unit may proceed
+independently against the frozen thirteen
 source declarations and the reviewed E candidate's exact sixteen-type manifest
 while remote E CI runs. Its default remains disabled, and no Store/Email
 initializer, migration entry point, release selector or marker is changed by
@@ -190,6 +191,27 @@ Target counterparts call the interfaces defined above with the same values and a
 - [x] Run `pytest -q tests/test_email_action_storage.py tests/test_action_storage.py tests/test_action_receipt_storage.py tests/test_action_postfix_storage.py tests/test_reply_attempt_action_storage.py`; expected all selected cases pass and prior manifests match unchanged. Commit storage and its focused tests/docs only.
 
 ## Task 3: Forward/current-fact inverse and exact dependency closure
+
+Execute this in two reviewed units. **3A** implements only unselected pure
+capture/forward/current-fact inverse functions and finite dependency translation,
+with tests using synthetic source DDL or explicitly candidate-prepared copies.
+It may proceed while E publication waits because the default constructors,
+release selectors, source/target markers and caller paths are unchanged. Its
+source preflight must match the complete canonical reviewed E sixteen-type
+manifest (both established global variants) and the frozen thirteen source
+families/objects; changed or extra dependencies refuse before mutation. It
+must never weaken validation, load a guessed source variant, write a schema
+marker, import/run a provider, or create a current-constructor activation path.
+No target Store/Email version or published-source artifact is assigned here.
+
+**3B** remains gated on the actual E publication and Task1 binding: recheck the
+complete actual predecessor, then run latest-copy current-fact conversion,
+actual archived-old-code cold read/write and re-forward, refreshing anything
+that differs. Candidate-only old-code or candidate-prepared-copy results cannot
+satisfy that published-source gate. Task4 constructor/caller/release integration
+and any activation require both units and that real binding to pass. This is
+an implementation scheduling change, not an alternate migration or production
+publication path. Full Task3 remains incomplete until3B passes.
 
 **Files:** new `app/action_email_storage.py`; new `tests/test_email_action_migration.py`.
 
