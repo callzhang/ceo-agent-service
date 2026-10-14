@@ -777,7 +777,7 @@ def test_real_store_human_confirmation_persists_plain_string_category(
     assert type(application.confirmed["action_plan"]["category"]) is str
     with sqlite3.connect(store.path) as db:
         stored_category = db.execute(
-            "select category from email_action_plans where action_plan_id=?",
+            f"select category from ({EMAIL_PLAN_SQL}) where action_plan_id=?",
             (application.resulting_action_plan_id,),
         ).fetchone()[0]
     assert type(stored_category) is str
@@ -3800,8 +3800,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_schema_migrations")) == 1
     assert len(_fetchall(database, "select * from email_messages")) == 1
     assert len(_fetchall(database, "select * from email_classifications")) == 1
-    assert len(_fetchall(database, "select * from email_action_plans")) == 1
-    assert len(_fetchall(database, "select * from email_actions")) == 1
+    assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 1
+    assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 1
 
 
 def test_current_email_schema_persists_external_training_payload(tmp_path: Path) -> None:
@@ -6277,8 +6277,8 @@ def test_rescan_updates_locator_without_replacing_final_decision_or_plan(
     assert rescanned["model_id"] == first["model_id"]
     assert rescanned["current_action_plan_id"] == first["current_action_plan_id"]
     assert len(_fetchall(database, "select * from email_messages")) == 1
-    assert len(_fetchall(database, "select * from email_action_plans")) == 1
-    assert len(_fetchall(database, "select * from email_actions")) == 1
+    assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 1
+    assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 1
 
 
 def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
@@ -6336,22 +6336,23 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
         dict(row)
         for row in _fetchall(
             database,
-            "select * from email_action_plans order by action_plan_version",
+            f"select * from ({EMAIL_PLAN_SQL}) order by action_plan_version",
         )
     ]
     actions_before = [
         dict(row)
-        for row in _fetchall(database, "select * from email_actions order by action_id")
+        for row in _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by action_id")
     ]
     training_before = store.list_training_examples()
+    count_sources = {
+        "email_messages": "email_messages",
+        "email_classifications": "email_classifications",
+        "email_action_plans": f"({EMAIL_PLAN_SQL})",
+        "email_actions": f"({EMAIL_DIRECT_ACTION_SQL})",
+    }
     counts_before = {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
-        for table in (
-            "email_messages",
-            "email_classifications",
-            "email_action_plans",
-            "email_actions",
-        )
+        table: _fetchall(database, f"select count(*) as count from {source}")[0]["count"]
+        for table, source in count_sources.items()
     }
 
     moved = _classification(
@@ -6436,17 +6437,17 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
         dict(row)
         for row in _fetchall(
             database,
-            "select * from email_action_plans order by action_plan_version",
+            f"select * from ({EMAIL_PLAN_SQL}) order by action_plan_version",
         )
     ] == plans_before
     assert [
         dict(row)
-        for row in _fetchall(database, "select * from email_actions order by action_id")
+        for row in _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by action_id")
     ] == actions_before
     assert store.list_training_examples() == training_before
     assert {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
-        for table in counts_before
+        table: _fetchall(database, f"select count(*) as count from {source}")[0]["count"]
+        for table, source in count_sources.items()
     } == counts_before
 
 
@@ -6925,7 +6926,7 @@ def test_direct_action_probe_is_not_a_reservation(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "_next_direct_action_row", claim_between_probe_and_transaction)
     assert store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00") is None
     assert probes == [False, True]
-    rows = _fetchall(database, "select status from email_actions")
+    rows = _fetchall(database, f"select status from ({EMAIL_DIRECT_ACTION_SQL})")
     assert [row["status"] for row in rows] == ["processing"]
 
 
@@ -6980,7 +6981,7 @@ def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
 
     old_action = _fetchall(
         database,
-        "select * from email_actions where action_plan_id=?",
+        f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
         (original.action_plan.action_plan_id,),
     )[0]
     assert old_action["status"] == "pending"
@@ -7159,7 +7160,7 @@ def test_concurrent_direct_action_claim_has_one_winner(tmp_path: Path):
         results = list(pool.map(claim, stores))
 
     assert sum(result is not None for result in results) == 1
-    current = _fetchall(database, "select * from email_actions")[0]
+    current = _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")[0]
     assert current["status"] == "processing"
     assert current["attempt_count"] == 0
 
@@ -7197,7 +7198,7 @@ def test_processing_action_blocks_concurrent_sibling_claims(tmp_path: Path):
     assert results == [None, None]
     statuses = _fetchall(
         database,
-        "select action_type, status from email_actions order by action_type",
+        f"select action_type, status from ({EMAIL_DIRECT_ACTION_SQL}) order by action_type",
     )
     assert {row["action_type"]: row["status"] for row in statuses} == {
         "archive": "pending",
@@ -7490,7 +7491,7 @@ def test_explicit_historical_move_dependencies_gate_exact_and_global_claims(
         action["action_type"]: action["action_id"]
         for action in _fetchall(
             database,
-            "select action_type, action_id from email_actions "
+            f"select action_type, action_id from ({EMAIL_DIRECT_ACTION_SQL}) "
             "where classification_id=?",
             (classification["id"],),
         )
@@ -7581,7 +7582,7 @@ def test_explicit_historical_trash_dependency_gates_exact_and_global_claims(
         action["action_type"]: action["action_id"]
         for action in _fetchall(
             database,
-            "select action_type, action_id from email_actions "
+            f"select action_type, action_id from ({EMAIL_DIRECT_ACTION_SQL}) "
             "where classification_id=?",
             (classification["id"],),
         )
@@ -8015,7 +8016,7 @@ def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
     assert attempt["status"] == "done"
     current = _fetchall(
         database,
-        "select * from email_actions where action_id=?",
+        f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?",
         (claimed.action_id,),
     )[0]
     assert current["status"] == "done"
@@ -10919,7 +10920,7 @@ def test_a_skipped_attempt_is_terminal_and_schedules_no_retry(tmp_path: Path):
         store,
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
-    action_id = _fetchall(database, "select action_id from email_actions")[0][
+    action_id = _fetchall(database, f"select action_id from ({EMAIL_DIRECT_ACTION_SQL})")[0][
         "action_id"
     ]
 
@@ -10989,7 +10990,7 @@ def test_exhausted_interrupted_claim_recovers_after_retry_ceiling(tmp_path: Path
 
     exhausted = _fetchall(
         tmp_path / "exhausted-interrupted-claim.sqlite3",
-        "select status, attempt_count, error from email_actions",
+        f"select status, attempt_count, error from ({EMAIL_DIRECT_ACTION_SQL})",
     )[0]
     assert exhausted["status"] == "failed"
     assert exhausted["error"] == "stale_processing_recovered"
@@ -11205,7 +11206,7 @@ def test_a_training_label_correction_never_moves_or_trashes_the_message(
     with sqlite3.connect(database) as db:
         actions_by_classification = dict(
             db.execute(
-                "select classification_id, count(*) from email_actions "
+                f"select classification_id, count(*) from ({EMAIL_DIRECT_ACTION_SQL}) "
                 "group by classification_id"
             ).fetchall()
         )

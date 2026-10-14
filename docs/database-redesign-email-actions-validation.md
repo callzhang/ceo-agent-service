@@ -1765,3 +1765,26 @@ publication gate.
 ### Task5B1 independent acceptance, 2026-10-14
 
 Root accepts8989d5d4e0dcd550a96a7b513f52538f0076afdf over63eefeb023ae60706142c691c434908d531595ed for only six current scan/plan/reference tests. Fresh SPEC independently ran the exact six cases:6 passed2.65s, scoped Ruff and commit whitespace exit0, clean frozen HEAD and owned temp absent. Subsequent fresh QUALITY inspected actual projections and used an AST comparison reversing only two imports and13 finite SELECT substitutions: both entire test-file ASTs exactly matched the parent, confirming all assertions/helpers/surrounding tests unchanged. QUALITY did not repeat already sufficient six-case execution and created no temporary files. Both reviewers PASS. No runtime change, historical/shared fixture adaptation, broad gate, latest-copy/native proof, CI or deployment is implied.
+
+### Task5B2: fourteen current direct-read tests
+
+The next bounded batch selected fourteen current tests in `test_email_store.py`:
+human-confirmed category, current idempotent reopen, two rescan snapshots,
+probe/claim/concurrent sibling behavior, exact historical-action dependencies,
+completed and skipped attempts, interrupted-claim retry, and training-label
+correction. Although one test retains `migration` in its name, its setup uses
+fresh current EmailStore and repeats only current constructor opens; it has no
+old marker or historical migration path. The unmodified fourteen ran RED with
+`14 failed in 5.14s`, exit 1, at their direct reads of retired plan/action
+tables. Their selected reads now use the existing `EMAIL_PLAN_SQL` and
+`EMAIL_DIRECT_ACTION_SQL` source-shaped projections. Original columns, filters,
+order, counts under the same logical table names, complete row dictionaries,
+claim/attempt/dependency/retry behavior and every assertion remain intact.
+No helper or runtime source changed; an accidental draft hunk in an unrelated
+historical test was removed before GREEN and is absent from the final diff.
+
+The same fourteen then reported `14 passed in 5.07s`, exit 0. Both runs owned
+and removed their `/tmp/email13-task5b2-*` root, verified absent afterward.
+Historical H, shared rebuild S, current mutation/metadata T and the selected
+Task5/6/7 final gates remain open; this local test alignment is not deployable
+acceptance.
