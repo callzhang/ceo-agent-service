@@ -4,6 +4,7 @@ from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
+from tempfile import TemporaryDirectory
 
 import pytest
 from test_email_action_storage import _cases
@@ -289,6 +290,84 @@ def test_main_rows_and_temp_shadows_stay_separate_through_inverse(db, source):
     assert db.execute("select * from temp.email_action_plans").fetchone() == (b'\x00temp',)
     assert _schema(db) == main_before
     assert list(db.execute("select type,name,sql from temp.sqlite_schema order by type,name")) == temp_before
+
+
+@pytest.mark.parametrize("attachment", ("unqualified_owner", "explicit_owner", "view_body", "trigger_body"))
+def test_forward_refuses_temp_dependency_before_drop(db, attachment):
+    if attachment == "unqualified_owner":
+        db.execute("create temp trigger temp_source_guard before update on email_unsubscribe_cancellations "
+                   "begin select 1; end")
+    elif attachment == "explicit_owner":
+        db.execute("create temp trigger temp_source_guard before update on main.email_unsubscribe_cancellations "
+                   "begin select 1; end")
+    elif attachment == "view_body":
+        db.execute("create temp view temp_source_observer as select action_identity "
+                   "from main.email_unsubscribe_cancellations")
+    else:
+        db.execute("create temp table unrelated_owner(id integer)")
+        db.execute("create temp trigger temp_source_guard before update on unrelated_owner "
+                   "begin select count(*) from main.email_unsubscribe_cancellations; end")
+    main_before = _schema(db)
+    temp_before = list(db.execute("select type,name,tbl_name,sql from temp.sqlite_schema order by rowid"))
+    with pytest.raises(ValueError, match="dependency"):
+        migrate_email_action_schema(db)
+    assert _schema(db) == main_before
+    assert list(db.execute("select type,name,tbl_name,sql from temp.sqlite_schema order by rowid")) == temp_before
+
+
+@pytest.mark.parametrize("attachment", ("unqualified_owner", "explicit_owner", "view_body", "trigger_body"))
+def test_inverse_refuses_temp_dependency_before_drop(db, attachment):
+    state = migrate_email_action_schema(db)
+    if attachment == "unqualified_owner":
+        db.execute("create temp trigger temp_target_guard before update on actions "
+                   "begin select 1; end")
+    elif attachment == "explicit_owner":
+        db.execute("create temp trigger temp_target_guard before update on main.actions "
+                   "begin select 1; end")
+    elif attachment == "view_body":
+        db.execute("create temp view temp_target_observer as select id from main.actions")
+    else:
+        db.execute("create temp table unrelated_owner(id integer)")
+        db.execute("create temp trigger temp_target_guard before update on unrelated_owner "
+                   "begin select count(*) from main.actions; end")
+    main_before = _schema(db)
+    temp_before = list(db.execute("select type,name,tbl_name,sql from temp.sqlite_schema order by rowid"))
+    with pytest.raises(ValueError, match="dependency"):
+        restore_email_action_schema(db, state)
+    assert _schema(db) == main_before
+    assert list(db.execute("select type,name,tbl_name,sql from temp.sqlite_schema order by rowid")) == temp_before
+
+
+def test_temp_rename_chronology_rebinds_unqualified_owner_without_refusal(db):
+    db.execute("create temp table earlier_name(id integer)")
+    db.execute("create temp trigger temp_observer before update on actions begin select 1; end")
+    db.execute("alter table temp.earlier_name rename to actions")
+    before = list(db.execute("select type,name,tbl_name,sql from temp.sqlite_schema order by rowid"))
+    state = migrate_email_action_schema(db)
+    assert list(db.execute("select type,name,tbl_name,sql from temp.sqlite_schema order by rowid")) == before
+    restore_email_action_schema(db, state)
+    assert list(db.execute("select type,name,tbl_name,sql from temp.sqlite_schema order by rowid")) == before
+
+
+def test_source_capture_with_temp_is_readonly_on_file_backed_main(db, source):
+    with TemporaryDirectory(prefix="email-action-3a2-readonly-", dir="/tmp") as directory:
+        path = Path(directory) / "source.sqlite3"
+        contents = db.serialize(name="main")
+        path.write_bytes(contents)
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as readonly:
+            readonly.execute("create temp table actions(record_type text)")
+            readonly.execute("create temp table unrelated_owner(id integer)")
+            readonly.execute("create temp trigger unrelated_guard before update on unrelated_owner "
+                             "begin select 1; end")
+            temp_before = list(readonly.execute(
+                "select type,name,tbl_name,sql from temp.sqlite_schema order by rowid"))
+            readonly.execute("pragma query_only=on")
+            captured = capture_email_action_source(readonly)
+            assert captured["email_variant"] == source
+            assert readonly.execute("pragma query_only").fetchone() == (1,)
+            assert list(readonly.execute(
+                "select type,name,tbl_name,sql from temp.sqlite_schema order by rowid")) == temp_before
+        assert path.read_bytes() == contents
 
 
 def test_inverse_rejects_external_dependency_before_mutation(db):

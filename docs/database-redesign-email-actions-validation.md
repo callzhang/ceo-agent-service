@@ -44,6 +44,28 @@ passed. These are synthetic tests only. Task3B still must bind the actual
 published E predecessor and validate current production-copy/old-code behavior
 before any release decision.
 
+Independent Task3A-2 SPEC review found a MAIN/TEMP dependency gap after
+`090dc101`: dropping a MAIN source table or `actions` could silently delete a
+TEMP trigger attached to it. The previous schema-only rename check inspected
+only MAIN declarations; a historically created unqualified TEMP trigger can
+keep identical SQL during rename yet disappear on DROP. Sixteen new cases
+(four dependency forms in both forward/inverse directions and both frozen
+variants) were RED because conversion proceeded. The local preflight now
+replays MAIN declarations first and every TEMP table, view, index and trigger
+in TEMP schema creation order inside a separate SQLite connection. Native
+per-table rename and DROP probes under scratch savepoints compare external
+MAIN and TEMP view/trigger declarations, then roll back. They refuse only
+dependencies that SQLite would rewrite or remove. The 16 formerly failing
+cases pass, while unrelated same-name TEMP tables, indexes and triggers still
+survive both transitions unchanged. A TEMP table renamed after a trigger was
+created follows SQLite's actual rebound ownership and remains allowed. A
+file-backed read-only MAIN with TEMP objects and `query_only=ON` still permits
+read-only source capture; scratch writes never touch either live schema.
+After the correction, the bounded Email source/definition/writer and older
+reply/storage selection passed **382 tests with 6 existing skips**. Scoped
+Ruff and diff checks passed. This remains local synthetic evidence; independent
+SPEC and then QUALITY review are pending.
+
 ## Task 3A-1: unselected source capture
 
 `app/action_email_storage.py` now provides a read-only candidate source capture

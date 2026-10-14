@@ -2927,8 +2927,11 @@ a caller-owned foreign-key-off transaction, translating the thirteen external
 blockers and preserving the original locators and allocator waters. They are
 unselected candidate functions; published-source binding, paired release and
 production acceptance remain required before an Email schema release. This is
-local storage preparation,
-not a production Store/Email version.
+local storage preparation, not a production Store/Email version. Preflight
+replays MAIN and TEMP schema bindings in a separate SQLite connection and
+probes rename and DROP effects before touching the caller's tables. A TEMP
+trigger or view that would change or disappear is refused; unrelated TEMP
+objects remain untouched.
 Generated Email columns are scoped to their exact source family membership;
 same-named payload members on an older action never appear as Email fields.
 An Email-only CHECK keeps the older task/run/action physical reference slots

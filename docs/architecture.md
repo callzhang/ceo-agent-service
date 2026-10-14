@@ -2126,7 +2126,9 @@ source ROWID namespaces, two AUTOINCREMENT waters, existing sixteen action
 types and all thirteen external blockers. The caller owns the foreign-key-off
 transaction; no Store/Email constructor selects these functions. Actual
 published-predecessor binding, paired release and production acceptance remain
-pending. The focused validation boundary is recorded in
+pending. Preflight uses a schema-only SQLite rename/drop probe across MAIN and
+TEMP, refusing dependencies that would be rewritten or silently removed while
+leaving unrelated TEMP objects intact. The focused validation boundary is recorded in
 `docs/database-redesign-email-actions-validation.md`.
 Each generated Email source column returns NULL for all older action types and
 for Email kinds that lack that original field; its finite CASE reads only the

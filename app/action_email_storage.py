@@ -70,28 +70,88 @@ def _sequence(db, name):
     return rows[0][0] if rows else None
 
 
-def _external_dependencies(db):
-    """Apply SQLite's own rename parser after omitting the thirteen known blockers."""
+def _external_dependencies(db, targets=REPLACED_TABLES):
+    """Probe MAIN and TEMP references with SQLite's own schema rewrite rules."""
     objects = [tuple(row) for row in db.execute(
         "select type,name,tbl_name,sql from main.sqlite_schema "
         "where type in ('table','view','trigger') and sql is not null "
         "and name not glob 'sqlite_*' "
         "order by case type when 'table' then 0 when 'view' then 1 else 2 end,name"
     )]
-    virtual = {storage.sqlite_schema_name(row[1]) for row in db.execute("pragma table_list")
-               if row[0] == "main" and row[2] == "virtual"}
+    temp_objects = [tuple(row) for row in db.execute(
+        "select type,name,tbl_name,sql from temp.sqlite_schema "
+        "where type in ('table','view','index','trigger') and sql is not null "
+        "and name not glob 'sqlite_*' order by rowid"
+    )]
+    virtual = {(row[0], storage.sqlite_schema_name(row[1])) for row in db.execute(
+        "pragma table_list") if row[2] == "virtual"}
     allowed = {storage.sqlite_schema_name(name) for name in EXTERNAL_TRIGGER_NAMES}
+    target_names = {storage.sqlite_schema_name(name) for name in targets}
     with closing(sqlite3.connect(":memory:")) as parser:
         for kind, name, owner, sql in objects:
             if kind == "trigger" and (storage.sqlite_schema_name(name) in allowed or
-                                      storage.sqlite_schema_name(owner) in
-                                      {storage.sqlite_schema_name(t) for t in REPLACED_TABLES}):
+                                      storage.sqlite_schema_name(owner) in target_names):
                 continue
-            if kind == "table" and storage.sqlite_schema_name(name) in virtual:
+            if kind == "table" and ("main", storage.sqlite_schema_name(name)) in virtual:
                 columns = [row[1] for row in db.execute(f"pragma main.table_xinfo({_quote(name)})")]
                 sql = f"create table {_quote(name)} (" + ",".join(map(_quote, columns)) + ")"
             parser.execute(sql)
-        storage._no_sql_dependencies(parser, set(REPLACED_TABLES))
+        for kind, name, _owner, sql in temp_objects:
+            if kind == "table" and ("temp", storage.sqlite_schema_name(name)) in virtual:
+                columns = [row[1] for row in db.execute(f"pragma temp.table_xinfo({_quote(name)})")]
+                sql = f"CREATE TABLE {_quote(name)} (" + ",".join(map(_quote, columns)) + ")"
+            parser.execute(_temp_create_sql(kind, sql))
+        main_external = _schema_references(parser, "main", target_names, allowed)
+        temp_external = _schema_references(parser, "temp", set(), set())
+        names = {storage.sqlite_schema_name(row[1]) for row in objects + temp_objects}
+        for table in targets:
+            replacement = "_email_dependency_" + table
+            while storage.sqlite_schema_name(replacement) in names:
+                replacement += "_"
+            names.add(storage.sqlite_schema_name(replacement))
+            parser.execute("savepoint email_dependency_probe")
+            try:
+                parser.execute(f"alter table main.{_quote(table)} rename to {_quote(replacement)}")
+                if (_schema_references(parser, "main", target_names, allowed) != main_external or
+                        _schema_references(parser, "temp", set(), set()) != temp_external):
+                    raise ValueError(f"unsupported Email SQL dependency on {table}")
+            finally:
+                parser.execute("rollback to email_dependency_probe")
+                parser.execute("release email_dependency_probe")
+            parser.execute("savepoint email_dependency_probe")
+            try:
+                parser.execute(f"drop table main.{_quote(table)}")
+                if _schema_references(parser, "temp", set(), set()) != temp_external:
+                    raise ValueError(f"unsupported Email TEMP dependency on {table}")
+            finally:
+                parser.execute("rollback to email_dependency_probe")
+                parser.execute("release email_dependency_probe")
+
+
+def _temp_create_sql(kind, sql):
+    prefixes = {
+        "table": ("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE "),
+        "view": ("CREATE VIEW IF NOT EXISTS ", "CREATE VIEW "),
+        "index": ("CREATE UNIQUE INDEX IF NOT EXISTS ", "CREATE INDEX IF NOT EXISTS ",
+                  "CREATE UNIQUE INDEX ", "CREATE INDEX "),
+        "trigger": ("CREATE TRIGGER IF NOT EXISTS ", "CREATE TRIGGER "),
+    }
+    for prefix in prefixes[kind]:
+        if sql.startswith(prefix):
+            return sql.replace(prefix, prefix + "temp.", 1)
+    raise ValueError("unsupported TEMP schema declaration")
+
+
+def _schema_references(db, schema, target_names, allowed):
+    return {(schema, kind, storage.sqlite_schema_name(name)): sql
+            for kind, name, owner, sql in db.execute(
+                f"select type,name,tbl_name,sql from {schema}.sqlite_schema "
+                "where type in ('table','view','index','trigger') and sql is not null "
+                "and name not glob 'sqlite_*'")
+            if kind in ("view", "trigger") and not (
+                schema == "main" and kind == "trigger" and (
+                    storage.sqlite_schema_name(name) in allowed or
+                    storage.sqlite_schema_name(owner) in target_names))}
 
 
 def capture_email_action_source(db: sqlite3.Connection) -> dict:
@@ -399,7 +459,7 @@ def restore_email_action_schema(db: sqlite3.Connection, state: dict) -> dict:
                                    (name,)).fetchone():
                 raise ValueError("unsupported inverse source name collision")
     storage._no_inbound(db, {"actions"})
-    _external_dependencies(db)
+    _external_dependencies(db, ("actions",))
     allowed_sequences = set(storage.ACTION_SEQUENCE_NAMES.values()) | {
         storage.DELIVERY_SEQUENCE_NAME, *storage.REPLY_SEQUENCE_NAMES.values(),
         *(f"actions:{kind}" for kind in EMAIL_AUTOINCREMENT_TYPES),
