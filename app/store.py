@@ -208,6 +208,7 @@ SQLITE_READ_CACHE_SIZE = -65536
 SQLITE_MMAP_SIZE_BYTES = 0
 STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
 STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
+DONE_FAILED_RUN_RECONCILE_BATCH_SIZE = 100
 AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
 AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
@@ -24202,9 +24203,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         receipt_placeholders = ", ".join(
             "?" for _ in terminal_unsubscribe_outcomes
         )
-        with self._immediate_write_transaction() as db:
-            receipt_exclusion = ""
-            receipt_parameters: list[str] = []
+        receipt_exclusion = ""
+        receipt_parameters: list[str] = []
+        with self._connect() as db:
             if self._email_unsubscribe_receipts_table_exists(db):
                 receipt_exclusion = f"""
                   and not exists (
@@ -24216,9 +24217,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                 """
                 receipt_parameters = terminal_unsubscribe_outcomes
-            rows = db.execute(
-                f"""
-                select tasks.id, tasks.execution_generation, runs.structured_error_json
+            candidate_sql = f"""
+                select tasks.id, tasks.execution_generation, runs.id as run_id,
+                       runs.structured_error_json
                 from ({REPLY_TASK_SQL}) as tasks
                 join ({AGENT_RUN_SQL}) as runs on runs.id=(
                     select latest.id
@@ -24246,27 +24247,47 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         and trim(coalesce(settled.resolution, ''))<>''
                   )
                   {receipt_exclusion}
-                order by tasks.id
-                """,
+            """
+            candidates = db.execute(
+                candidate_sql + " order by tasks.id",
                 receipt_parameters,
             ).fetchall()
-            repaired = 0
-            for row in rows:
-                cursor = db.execute(
-                    """
-                    update tasks as reply_tasks
-                    set status='failed', error=?, available_at='', locked_at=null,
-                        updated_at=current_timestamp
-                    where reply_tasks.record_type='reply_tasks' and id=? and status='done' and execution_generation=?
-                    """,
-                    (
-                        self._agent_run_failure_code(row["structured_error_json"]),
-                        row["id"],
-                        row["execution_generation"],
-                    ),
-                )
-                repaired += cursor.rowcount
-            return repaired
+
+        repaired = 0
+        for offset in range(0, len(candidates), DONE_FAILED_RUN_RECONCILE_BATCH_SIZE):
+            batch = candidates[offset:offset + DONE_FAILED_RUN_RECONCILE_BATCH_SIZE]
+            batch_predicates = " or ".join(
+                "(tasks.id=? and tasks.execution_generation=? and runs.id=?)"
+                for _ in batch
+            )
+            batch_parameters = [
+                value
+                for row in batch
+                for value in (row["id"], row["execution_generation"], row["run_id"])
+            ]
+            with self._immediate_write_transaction() as db:
+                rows = db.execute(
+                    candidate_sql
+                    + f" and ({batch_predicates}) order by tasks.id",
+                    [*receipt_parameters, *batch_parameters],
+                ).fetchall()
+                for row in rows:
+                    cursor = db.execute(
+                        """
+                        update tasks as reply_tasks
+                        set status='failed', error=?, available_at='', locked_at=null,
+                            updated_at=current_timestamp
+                        where reply_tasks.record_type='reply_tasks' and id=?
+                          and status='done' and execution_generation=?
+                        """,
+                        (
+                            self._agent_run_failure_code(row["structured_error_json"]),
+                            row["id"],
+                            row["execution_generation"],
+                        ),
+                    )
+                    repaired += cursor.rowcount
+        return repaired
 
     def reconcile_failed_reply_tasks_with_confirmation_required_runs(self) -> int:
         """Repair old confirmation projections as truthful technical failures.

@@ -1583,9 +1583,9 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 
 启动恢复 `reconcile_done_reply_tasks_with_failed_current_run` 会校正当前执行代最新 run 为
 `failed`、但 task 投影误为 `done` 的回复任务，并保留成功外部动作和已收口错误的排除条件。
-它在事务内用 `external_action_results(business_object_key, external_action_key)`、
-`sent_replies(external_action_key)` 与 `errors(conversation_id, message_id, kind)` 索引做反查，
-避免逐条扫描回执和错误表延长写锁。
+候选扫描在只读连接完成；写入按固定大小分批，每批在短写事务内重新核对 task ID、执行代、
+最新失败 run、成功外部动作、已收口错误及适用的邮件终态回执。外部读取或扫描不会持有全局写锁，
+并发改变或已收口的候选在写入前被排除；候选状态条件和历史保留规则不变。
 
 ## 进程、租约和恢复
 

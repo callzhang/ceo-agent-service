@@ -2682,6 +2682,69 @@ def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> N
     assert updated.error == "codex_process_failed"
 
 
+def test_reconcile_done_failed_runs_commits_between_bounded_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_ids: list[int] = []
+    for index in range(2):
+        store.enqueue_reply_task(
+            conversation_id=f"cid-reconcile-batch-{index}",
+            conversation_title="Direct chat",
+            single_chat=True,
+            trigger_message_id=f"msg-reconcile-batch-{index}",
+            trigger_create_time="2026-09-14 10:00:00",
+            trigger_sender="Derek",
+            trigger_text="Please handle this",
+        )
+        [task] = store.claim_reply_tasks(limit=1)
+        task_ids.append(task.id)
+        run = _claim_audit_run(
+            store, task.id, task.execution_generation, owner="audit"
+        ).run
+        store.fail_agent_run(
+            run.id, {"code": "codex_process_failed"}, owner="audit"
+        )
+        with store._connect() as db:
+            db.execute(
+                "update tasks set status='done', error='' where record_type='reply_tasks' and id=?",
+                (task.id,),
+            )
+
+    monkeypatch.setattr(store_module, "DONE_FAILED_RUN_RECONCILE_BATCH_SIZE", 1)
+    original_transaction = store._immediate_write_transaction
+    committed_batches = 0
+    interleaved_writer_acquired = False
+
+    @contextmanager
+    def transaction_with_competing_writer():
+        nonlocal committed_batches, interleaved_writer_acquired
+        with original_transaction() as db:
+            yield db
+        committed_batches += 1
+        if committed_batches == 1:
+            with store._connect() as other_writer:
+                other_writer.execute("begin immediate")
+                other_writer.execute(
+                    "update tasks set status='skipped' where record_type='reply_tasks' and id=?",
+                    (task_ids[1],),
+                )
+                other_writer.execute("commit")
+            interleaved_writer_acquired = True
+
+    monkeypatch.setattr(
+        store, "_immediate_write_transaction", transaction_with_competing_writer
+    )
+
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 1
+    assert committed_batches == 2
+    assert interleaved_writer_acquired
+    first = store.get_reply_task(task_ids[0])
+    second = store.get_reply_task(task_ids[1])
+    assert first is not None and first.status == "failed"
+    assert second is not None and second.status == "skipped"
+
+
 def test_generic_store_skips_email_receipt_reconciliation_without_email_schema(
     tmp_path: Path,
 ) -> None:

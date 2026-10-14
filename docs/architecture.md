@@ -357,7 +357,8 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 `failed`、且没有成功外部动作或已收口错误的 `done` task 改回真实失败投影。此恢复按
 `external_action_results.business_object_key`、`sent_replies.external_action_key` 和
 `errors(conversation_id, message_id, kind)` 索引反查，不在写事务中为每条 task 扫描整张回执和
-错误表；原有状态条件及历史保留规则不变。
+错误表。候选扫描在只读连接完成，写入按固定大小分批；每批在短写事务内重新核验 task ID、执行代、
+最新失败 run、外部成功动作和已收口错误。并发变化的候选会跳过，不会被旧扫描结果覆盖；历史保留规则不变。
 
 旧版本曾在同一个 `reply_task` 的不同 generation 各写入一条 `reply_attempt` 投影。此类遗留行仍
 保留其 `agent_run` 作为执行事实，但 History（包括 Console API）只展示该 task 的最新 Attempt；它们
