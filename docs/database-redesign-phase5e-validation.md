@@ -1,5 +1,30 @@
 # Phase5E source refresh and execution boundary
 
+## CI integration fixture repair
+
+GitHub Actions run 38515824334 completed 13,080 tests and failed three after
+the Phase5E branch incorporated the published DingTalk send verifier. Two OKR
+CLI tests replaced DwsClient with a fake that omitted the now-required
+`verify_message_send_result` method. Their fake send results also contained
+only `processQueryKey`, which identifies a recall operation, not an outgoing
+message. The fakes now use the real verifier against an explicit outgoing
+`openMessageId`; the existing request, persisted reply and send assertions
+remain in place.
+
+The third failure was in a same-timestamp successor-claim test. The test wrote
+the first claim's `locked_at` into the row after acquiring the second claim,
+but still passed the second claim object with its original timestamp to the
+release method. If those claims crossed a SQLite one-second boundary, the
+release correctly left the lock in place. The fixture now first forces the
+captured claim times one second apart, confirms the second time in the row,
+then aligns the second claim object with the deliberately rewritten row time.
+The two distinct claim tokens and original release assertions remain. Removing
+that final object alignment produced a deterministic local failure; restoring
+it passed. No runtime code or delivery policy changed. The two OKR tests failed
+locally before repair; all three reported tests passed afterward. The eight
+nearby OKR tests, four delivery-cleanup tests, full 422 affected-file tests,
+Ruff and diff checks also passed.
+
 ## Task 3B1 paired release unit acceptance
 
 Independent SPEC review found that rollback read its marker before taking the

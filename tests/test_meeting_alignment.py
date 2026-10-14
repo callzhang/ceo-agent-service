@@ -288,9 +288,22 @@ def test_delivery_cleanup_cannot_release_same_timestamp_successor(tmp_path):
     first = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
     store.reset_ready_to_send_meeting_alignment_jobs()
     second = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    # Model claims on opposite sides of a one-second SQLite timestamp boundary.
+    later_lock = (datetime.fromisoformat(first.locked_at) + timedelta(seconds=1)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    second = second.model_copy(update={"locked_at": later_lock})
+    assert first.locked_at != second.locked_at
+    with sqlite3.connect(store.path) as db:
+        db.execute("update tasks set locked_at=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
+                   (later_lock, job_id))
+    assert store.get_meeting_alignment_job(job_id).locked_at == second.locked_at
     with sqlite3.connect(store.path) as db:
         db.execute("update tasks set locked_at=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
                    (first.locked_at, job_id))
+    # The release requires the successor's token and its observed row lock time.
+    # Match the DTO to the row after deliberately making their timestamps equal.
+    second = second.model_copy(update={"locked_at": first.locked_at})
     store.release_ready_to_send_meeting_alignment_claims([first])
     remaining = store.get_meeting_alignment_job(job_id)
     assert remaining.locked_at == first.locked_at
