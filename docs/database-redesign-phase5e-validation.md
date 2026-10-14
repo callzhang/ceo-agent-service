@@ -665,3 +665,46 @@ write, and re-forward with the repaired manifest. Production HEAD remained
 evidence replaces the prior code binding in
 `evals/database_redesign/phase5e_constructor_copy.v1.json`; no native role
 or production write was performed in this rerun.
+
+## First complete CI and bounded repairs
+
+Quality run `38509683217` at `6dfb439a` completed with 15 failures,
+13,045 passes, 118 skips and 44 deselections. Eleven failures were historical
+fixtures/current-constructor expectations: old marker assertions, a direct
+write to retired `reply_attempts`, and fixtures skipping the genuine D boundary
+before current E initialization. Commit `28d94e86` retains their original
+business/receipt/physical-ID/watermark assertions, uses the finite Attempt
+timestamp writer, and crosses the actual inverse/forward schema boundaries.
+Its bounded gate was RED 11 failures/75 passes, then GREEN 86 passes.
+
+Four failures exposed a platform-dependent status plan: Linux/Python3.12.15
+selected the created-time index using only `record_type` for the unchanged
+status equality/created-time ordering query. The inspected CI output does not
+establish its SQLite version. Local Python3.12.11/SQLite3.53.4 selected the
+status index before and after repair; local GREEN is not Linux GREEN.
+Commit `5c3c41ff` changes only the E status index to lead with
+`(record_type,attempt_send_status,attempt_created_at)`, preserving its partial
+predicate, original query, fields, ordering and VM budgets. The new same-type
+20-to-1,020-row case holds matches fixed while adding earlier nonmatching
+Attempts. Target work remains 104 to 82 VM steps, source 37 to 34, with the
+status index and no temporary sort in both variants. No `INDEXED BY`,
+`ANALYZE`, older manifest or business-policy change was introduced.
+
+Fresh independent SPEC accepted both repair commits and ran 271 focused tests
+with six variant-specific skips; it independently compared all four earlier
+six/nine/twelve/fourteen-type factory definitions byte-for-byte. Fresh QUALITY
+accepted both repair commits, independently passed 94 cases on local
+SQLite3.53.4 and verified the same old-manifest equality. A new complete remote
+CI remains required. Root's four migration/publication
+test files also passed all 50 cases on the repaired candidate.
+
+The offline actual-copy and genuine archived-old fresh-constructor harness was
+refreshed at `06fcafa7`: latest source had 14,837 Attempts and 476 Memory events,
+123 source to 121 target noninternal tables, unchanged actual file bytes and
+the one original FK finding. Both variants passed current-fact inverse, old-code
+cold read and public substitute-receipt write, and re-forward with exact
+values/types/allocator waters. All owned copies/archives were removed and no
+provider, production write or native role ran. The native lifecycle artifact
+remains explicitly bound to `c47e6f4a`; the later runtime delta is this one
+status-index declaration, not a new native-model verification. Final Linux CI,
+normal publication and live readback are still required.

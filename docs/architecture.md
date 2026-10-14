@@ -2012,8 +2012,8 @@ Audit 工具记录只从原生会话的指定行范围读取；缺失原生记�
 不会把已退休的数据库工具正文当作替代。已有业务结果、原始回执和排队审查
 标记继续保留。发布 quiet-wait 的候选、回执、postfix、delivery、任务、会议和
 定时来源只接受完整的 Store19 actual 或 fresh manifest，仍保留旧版本的准确选择。
-Store19 的 Attempt 创建时间索引以 `record_type` 开头，使时间范围读取在
-同类型记录增长时仍走该索引；Reply 公共 ID 排序索引声明为唯一，帮助 fresh
+Store19 的 Attempt 创建时间及状态索引以 `record_type` 开头，使时间范围与
+原有状态排序读取在同类型记录增长时仍有准确索引；Reply 公共 ID 排序索引声明为唯一，帮助 fresh
 Memory 的公共父 ID 精确读取先定位父记录、再走 Memory 父索引。该唯一性已由
 既有全局公共 ID 唯一索引和整数规范文本约束保证；Memory 的 LEFT JOIN、
 字段及旧六／九／十二／十四类型声明不变。
