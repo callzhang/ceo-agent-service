@@ -2047,3 +2047,14 @@ retain userId, openDingTalkId and other source fields without turning a display
 name into an identifier. A source that supplies only a string has empty details.
 This is source delivery, not an identity-verification result; existing recipient,
 Audit, routing and execution contracts continue to apply.
+
+### DingTalk message-list response contract
+
+DingTalk message-list readers require a structured object response. JSON `null`,
+a non-object legacy result envelope, or a missing `messages` array in the
+canonical `im.message-list.v1` contract is a typed provider-contract failure,
+never an empty-message success. Unread reads do not
+retry an invalid `null` response through the recent-message fallback; valid but
+unrecognized object envelopes retain the existing fallback behavior. Read-only
+message commands make only the configured bounded retry for JSON `null`; if it
+persists, the typed failure remains visible to normal recovery and Attention.
