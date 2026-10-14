@@ -2,7 +2,7 @@
 
 ## CI integration fixture repair
 
-GitHub Actions run 38515824334 completed 13,080 tests and failed three after
+GitHub Actions run 38515824334 passed 13,080 tests and failed three after
 the Phase5E branch incorporated the published DingTalk send verifier. Two OKR
 CLI tests replaced DwsClient with a fake that omitted the now-required
 `verify_message_send_result` method. Their fake send results also contained
