@@ -628,8 +628,14 @@ def email_schema_parts(reply_value_check):
             for kind, pair in EMAIL_COMPOSITE_KEYS.items():
                 if field in pair:
                     cases.append(f"when record_type='{kind}' then {_encoded_value('legacy_key', '$[' + str(pair.index(field)) + ']')}")
-            cases.append(f"else {_encoded_value('payload_json', '$.' + field)}")
-            expr = "case " + " ".join(cases) + " end" if len(cases) > 1 else cases[0][5:]
+            payload_kinds = tuple(
+                kind for kind, fields in EMAIL_FIELDS.items()
+                if field in fields and field not in EMAIL_COMPOSITE_KEYS.get(kind, ())
+            )
+            if payload_kinds:
+                scope = ",".join(repr(kind) for kind in payload_kinds)
+                cases.append(f"when record_type in ({scope}) then {_encoded_value('payload_json', '$.' + field)}")
+            expr = "case " + " ".join(cases) + " end"
         generated.append(f"email_{field} {affinity} generated always as ({expr}) virtual")
     public_cases = " ".join(
         f"when record_type='{kind}' then email_{field}"
@@ -637,7 +643,7 @@ def email_schema_parts(reply_value_check):
     )
     generated.append(f"email_public_key text generated always as (case {public_cases} end) virtual")
     for parent, discriminator in (("email_action_plans", "email_plan_parent_type"),
-                                  ("email_actions", "email_action_parent_type"),
+                                  ("email_actions", "email_operation_parent_type"),
                                   ("email_unsubscribe_claims", "email_claim_parent_type")):
         kinds = tuple(kind for kind, fks in EMAIL_SOURCE_FKS.items()
                       if any(fk[1] == parent for fk in fks))
@@ -666,7 +672,7 @@ def email_schema_parts(reply_value_check):
                           f"on update {update} on delete {delete}")
             else:
                 discriminator = {"email_action_plans": "email_plan_parent_type",
-                                 "email_actions": "email_action_parent_type",
+                                 "email_actions": "email_operation_parent_type",
                                  "email_unsubscribe_claims": "email_claim_parent_type"}[parent]
                 clause = (f"foreign key({discriminator},email_{field}) references "
                           f"actions(record_type,email_public_key) on update {update} on delete {delete}")

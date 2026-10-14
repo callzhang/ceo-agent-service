@@ -8,7 +8,8 @@ from contextlib import closing
 import pytest
 
 from app.action_storage import (
-    EMAIL_ACTION_PROJECTIONS, create_action_schema, _action_definitions,
+    ACTION_PROJECTIONS, EMAIL_ACTION_PROJECTIONS, create_action_schema,
+    insert_action, _action_definitions,
     _encoded_sqlite_value,
 )
 from app.action_email_definitions import (
@@ -39,6 +40,9 @@ def test_email_opt_in_has_all_thirteen_native_fields_and_default_is_unchanged(va
         assert {"email_" + c["name"] for table in _source_tables(variant).values()
                 for c in table["columns"] if c["name"] != "id"} <= columns
         assert "email_public_key" in columns
+        assert "email_operation_parent_type" in columns
+        assert any(row[3] == "email_operation_parent_type" for row in db.execute(
+            "pragma foreign_key_list(actions)"))
         for kind, indexes in EMAIL_SOURCE_INDEXES.items():
             for number, (unique, fields) in enumerate(indexes):
                 name = f"idx_actions_email_{kind}_{number}"
@@ -78,6 +82,36 @@ def test_finite_metadata_matches_frozen_source_objects():
             column["name"]: column["dflt_value"] for column in table["columns"]
             if column["dflt_value"] is not None
         }
+
+
+def test_email_generated_fields_are_null_for_older_actions_and_absent_email_fields():
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("pragma foreign_keys=on")
+        db.execute("create table tasks(id integer primary key, record_type text)")
+        db.execute("create table runs(id integer primary key, record_type text, legacy_key text)")
+        db.execute("create table email_classifications(id integer primary key)")
+        db.execute("insert into runs(id,record_type,legacy_key) values(1,'agent_runs','1')")
+        create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
+        insert_action(db, "external_action_results", dict(
+            external_action_key="older-key", business_object_key="business",
+            action_identity="older-identity", operation="send",
+            target_identifiers_json="raw targets", provider_result_json="raw result",
+            result_digest="digest", first_agent_run_id=1,
+        ))
+        old = db.execute(ACTION_PROJECTIONS["external_action_results"]).fetchone()
+        assert old[0] == "older-key"
+        assert "older-identity" in old
+        assert db.execute("select email_action_identity,email_created_at,email_operation "
+                          "from actions where record_type='external_action_results'").fetchone() == (
+                              None, None, None,
+                          )
+        cancellation = dict(action_identity="cancel", decision_json="{}")
+        db.execute("insert into actions(record_type,legacy_key,payload_json) values(?,?,?)",
+                   ("email_unsubscribe_cancellations", "1", json.dumps(cancellation)))
+        assert db.execute("select email_action_identity,email_decision_json,email_status,email_created_at "
+                          "from actions where record_type='email_unsubscribe_cancellations'").fetchone() == (
+                              "cancel", "{}", None, None,
+                          )
 
 
 def _insert(db, kind, values):

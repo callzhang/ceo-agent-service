@@ -42,3 +42,19 @@ with 351 tests and 6 existing skips. This is local storage evidence only.
 The six pre-Email action table/index/trigger manifests (6, 9, 12, 14 and both
 16-type variants) were compared byte for byte against this branch's preceding
 `app/action_storage.py` definition with `include_email=False` and matched.
+
+Independent specification review found that the first candidate's generated
+Email field expression could read a same-named payload member on an older
+action type. A valid `external_action_results` row exposed its
+`action_identity`, `operation` and `created_at` through Email-prefixed columns.
+The regression was observed RED, then fixed by finite per-field record-type
+CASE membership. All Email-prefixed fields now return NULL outside the exact
+Email kinds that own each original field, including within the thirteen-type
+family. The approved operation FK discriminator name is
+`email_operation_parent_type`. The focused target suite is now 8 cases; the
+larger source/native mutation matrix belongs to the independent review, not
+to this local focused validation.
+After this correction, the selected target and older storage/reply files passed
+with 352 tests and 6 existing skips; scoped Ruff and diff checks passed.
+The six default-disabled manifests remained byte-identical to the pre-fix
+commit.

@@ -2109,3 +2109,7 @@ all Store/Email constructors and runtime callers. Allocation/writer helpers,
 external source-table triggers, migration and publication are separate pending
 units; the focused validation boundary is recorded in
 `docs/database-redesign-email-actions-validation.md`.
+Each generated Email source column returns NULL for all older action types and
+for Email kinds that lack that original field; its finite CASE reads only the
+record types owning the field. The operation-parent discriminator uses the
+approved `email_operation_parent_type` name.

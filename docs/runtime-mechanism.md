@@ -2904,3 +2904,5 @@ Signed source ROWID allocation, AUTOINCREMENT writer semantics, external Email
 trigger closure and source/current-fact migration remain to be implemented
 before an Email schema release. The candidate is local storage preparation,
 not a production Store/Email version.
+Generated Email columns are scoped to their exact source family membership;
+same-named payload members on an older action never appear as Email fields.
