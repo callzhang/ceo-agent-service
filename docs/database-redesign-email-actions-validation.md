@@ -1761,3 +1761,7 @@ Each test run owned and removed its `/tmp/email13-task5b1-*` root, verified
 absent afterward. Historical H, shared native-rebuild S and other current T
 fixtures remain deferred; this unit is not a full Email Task5 acceptance or
 publication gate.
+
+### Task5B1 independent acceptance, 2026-10-14
+
+Root accepts8989d5d4e0dcd550a96a7b513f52538f0076afdf over63eefeb023ae60706142c691c434908d531595ed for only six current scan/plan/reference tests. Fresh SPEC independently ran the exact six cases:6 passed2.65s, scoped Ruff and commit whitespace exit0, clean frozen HEAD and owned temp absent. Subsequent fresh QUALITY inspected actual projections and used an AST comparison reversing only two imports and13 finite SELECT substitutions: both entire test-file ASTs exactly matched the parent, confirming all assertions/helpers/surrounding tests unchanged. QUALITY did not repeat already sufficient six-case execution and created no temporary files. Both reviewers PASS. No runtime change, historical/shared fixture adaptation, broad gate, latest-copy/native proof, CI or deployment is implied.
