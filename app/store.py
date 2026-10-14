@@ -23938,7 +23938,28 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                 """
                 receipt_parameters = terminal_unsubscribe_outcomes
-            candidate_sql = f"""
+            shared_exclusions = f"""
+                and not exists (
+                    select 1
+                    from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
+                    join ({SENT_REPLY_SQL}) as replies
+                      on replies.external_action_key=actions.external_action_key
+                    where actions.business_object_key=tasks.business_object_key
+                      and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
+                )
+                and not exists (
+                    select 1
+                    from errors as settled
+                    where settled.conversation_id=tasks.conversation_id
+                      and settled.message_id=tasks.trigger_message_id
+                      and settled.kind='reply_task_already_settled'
+                      and trim(coalesce(settled.resolved_at, ''))<>''
+                      and trim(coalesce(settled.resolution, ''))<>''
+                )
+                {receipt_exclusion}
+            """
+            candidates = db.execute(
+                f"""
                 select tasks.id, tasks.execution_generation, runs.id as run_id,
                        runs.structured_error_json
                 from ({REPLY_TASK_SQL}) as tasks
@@ -23951,37 +23972,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     limit 1
                 )
                 where tasks.status='done' and runs.status='failed'
-                  and not exists (
-                      select 1
-                      from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
-                      join ({SENT_REPLY_SQL}) as replies
-                        on replies.external_action_key=actions.external_action_key
-                      where actions.business_object_key=tasks.business_object_key
-                        and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
-                  )
-                  and not exists (
-                      select 1
-                      from errors as settled
-                      where settled.conversation_id=tasks.conversation_id
-                        and settled.message_id=tasks.trigger_message_id
-                        and settled.kind='reply_task_already_settled'
-                        and trim(coalesce(settled.resolved_at, ''))<>''
-                        and trim(coalesce(settled.resolution, ''))<>''
-                  )
-                  {receipt_exclusion}
-            """
-            candidates = db.execute(
-                candidate_sql + " order by tasks.id",
+                  {shared_exclusions}
+                order by tasks.id
+                """,
                 receipt_parameters,
             ).fetchall()
 
         repaired = 0
         for offset in range(0, len(candidates), DONE_FAILED_RUN_RECONCILE_BATCH_SIZE):
             batch = candidates[offset:offset + DONE_FAILED_RUN_RECONCILE_BATCH_SIZE]
-            batch_predicates = " or ".join(
-                "(tasks.id=? and tasks.execution_generation=? and runs.id=?)"
-                for _ in batch
-            )
+            batch_values = ", ".join("(?, ?, ?)" for _ in batch)
             batch_parameters = [
                 value
                 for row in batch
@@ -23989,9 +23989,35 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ]
             with self._immediate_write_transaction() as db:
                 rows = db.execute(
-                    candidate_sql
-                    + f" and ({batch_predicates}) order by tasks.id",
-                    [*receipt_parameters, *batch_parameters],
+                    f"""
+                    with batch_candidates(task_id, execution_generation, run_id) as (
+                        values {batch_values}
+                    )
+                    select tasks.id, tasks.execution_generation,
+                           runs.id as run_id, runs.structured_error_json
+                    from batch_candidates
+                    join tasks on tasks.id=batch_candidates.task_id
+                      and tasks.record_type='reply_tasks'
+                    join runs on runs.id=batch_candidates.run_id
+                      and runs.record_type='agent_runs'
+                    where tasks.status='done'
+                      and tasks.execution_generation=batch_candidates.execution_generation
+                      and runs.task_id=tasks.id
+                      and runs.execution_generation=tasks.execution_generation
+                      and runs.status='failed'
+                      and runs.id=(
+                          select latest.id
+                          from runs as latest
+                          where latest.record_type='agent_runs'
+                            and latest.task_id=tasks.id
+                            and latest.execution_generation=tasks.execution_generation
+                          order by latest.id desc
+                          limit 1
+                      )
+                      {shared_exclusions}
+                    order by tasks.id
+                    """,
+                    [*batch_parameters, *receipt_parameters],
                 ).fetchall()
                 for row in rows:
                     cursor = db.execute(
