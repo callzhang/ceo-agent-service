@@ -151,3 +151,58 @@ assertion for all three cases. Focused merged verification passed110 cases in
 startup-reconciliation cases. Scoped Ruff and whitespace checks passed. The
 owned temporary root was cleaned. This is local integration evidence; a new
 complete remote Quality run, normal deployment and live readback remain pending.
+
+## Publication and production readback
+
+Final reviewed candidate `ec4ddf185b593362ccf13198361ce28e35ae38e0` passed
+Quality `38568763727`: 13,138 Python tests (118 skipped, 44 deselected),
+729 frontend tests (2 skipped), the frontend build, and two real browser tests.
+PR86 was squash-merged as `666f4078eb27526325cb60ea2f5b093f0b7fe8b8`;
+the candidate and merge have identical entire Git tree
+`ce735dcd0d9d00e25c46e5aeba7d99ed516f8068`.
+Normal `python -m app.deploy` waited for ordinary quiet, exited0, and moved
+production from834b8348 to666f4078. Readback found the production checkout
+clean at that exact commit, launchd running with PID31985, and healthz ok.
+No bypass, manual process termination, schema change or test send occurred.
+
+Read-only live observations on2026-10-14 around14:00–14:06UTC:
+
+- The first combined History request timed out after20.018s. Subsequent
+  list-only request (`include_chart=0`) returned20 rows/35,218 total in0.063s;
+  separate24h chart returned in3.238s; combined list/chart returned20 rows
+  and chart in3.033s. These are individual observations, not a latency bound.
+- Attention returned20 grouped items/26 total in5.565s. Status returned in
+  7.374s initially and21.585s on the later probe. The service was running,
+  but system health remained degraded with2 reported violations, including
+  missing active recovery for a latest Reply Attempt and native-delivery
+  evidence coverage15 readable/504 unavailable. This release does not repair
+  or claim resolution of those findings.
+- All dispatcher queues reported0 pending/due/running. Business queues
+  reported3 pending Email provider actions and0 processing;31 failed rows
+  remained across reported business queues. No new test work was created;
+  this observation does not establish absence of every pre-existing failure.
+- In a temporary browser tab, History visibly loaded20 rows/35,218 total,
+  switched from24h83 events to1w478 events, and filtered to74 scheduled-agent
+  records. Selecting done returned an explicit empty result; clearing it
+  restored74 records. Page2 visibly loaded a different20 records with21–40
+  pagination. Opening existing Attempt14757 rendered its business status,
+  adopted audit explanation and8 internal runs. Trigger expansion worked.
+  Its native process sources were explicitly unavailable; no native evidence
+  or business outcome was reconstructed from those missing sources.
+- The detail API returned its normal item envelope in6.001s. No feedback,
+  rerun, recall, send, retry, approval or other business mutation was invoked.
+
+This accepts publication and the specifically observed History read surfaces.
+It does not establish universal Console performance, resolve degraded health,
+validate every task/provider branch, or complete the10-core-table redesign.
+Production remains Store19/Email51; Email13/Followup9 remain candidates.
+
+Postdeploy read-only SQLite inspection at approximately14:09UTC found121
+noninternal physical tables,476,065,792 database bytes and5,821,592 WAL bytes.
+These live file sizes can change with ordinary work; no compaction was run.
+Attention also visibly rendered26 unresolved problems in the temporary tab.
+
+Status API readback succeeded as above, but the actual Status page remained
+loading across the bounded browser observations; no browser error was captured.
+Status visual acceptance is not passed. The owned temporary browser tab was
+closed after the read checks; pre-existing user tabs were left untouched.

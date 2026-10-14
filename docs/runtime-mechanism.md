@@ -2960,3 +2960,14 @@ Claude/Friday single-message bridges serialize the complete output schema as com
 ## Task citation mismatch diagnostics
 
 Existing current-Project citation validation reports both the expected immutable WorkItem source_ref and the received reference when they differ. The existing repair path receives those known values. Validation conditions, result contract, repair budget, routing and permissions remain unchanged; no additional prompt rule is added. Verification is documented in docs/native-input-evidence-release-validation.md.
+
+
+History latest-task lookup publication666f4078 passed exact-tree full Quality
+and normal deployment on2026-10-14. Production PID31985 and healthz were read
+back; live History list/chart, type/status controls, pagination and an existing
+Attempt detail were opened. Initial20s combined-request timeout and variable
+Status latency remain recorded; system health still reported degraded and
+unavailable historical native delivery evidence. This is scoped read acceptance,
+not proof of all task execution or provider outcomes. See
+`docs/database-redesign-history-query-validation.md` for exact evidence.
+No schema or retention change is part of this History release.
