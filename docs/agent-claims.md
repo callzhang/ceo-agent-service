@@ -1,3 +1,5 @@
+| codex-followup-sync-target-plan | Email-actions worktree: new docs/superpowers/plans/2026-10-14-database-redesign-followup-sync-plan.md; new docs/superpowers/specs/2026-10-14-database-redesign-followup-sync-field-map.csv; own claim row only | Bounded executable target plan and exact 150-field mapping for approved nine follow-up/Todo-sync families. Documentation only; no runtime/tests/source artifacts/versions/provider/native CLI/production/push/deploy. | locally prepared 2026-10-14: exact 150-row source/default/type coverage and AST 0 production/50 test create calls verified; root independent review pending |
+
 | codex-phase5d-delivery-migration | Isolated phase5d worktree: app/action_delivery_storage.py; tests/test_action_delivery_migration.py; own claim row | Finite opt-in twelve-type plus sent-reply/observer source to fourteen-type actions and inverse, preserving current facts and native watermarks; no Store, release, provider, push or deploy. | active 2026-10-13 |
 # Concurrent agent file claims
 
