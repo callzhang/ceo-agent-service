@@ -356,3 +356,51 @@ def test_latest_paired_copy_rejects_rollback_fact_loss(latest_fresh, monkeypatch
     monkeypatch.setattr(ActionEmailSchemaRelease, "rollback", corrupt_after_rollback)
     with pytest.raises(AssertionError):
         proof._paired_case(path, old, repo)
+
+
+def test_attention_counter_includes_unrelated_console_category():
+    fixture_only = [{"category": "Email action", "status": "failed"}]
+    unrelated = fixture_only + [{"category": "Work item", "status": "failed"}]
+    assert proof._attention_category_status_counts(fixture_only) == [
+        ["Email action", "failed", 1]
+    ]
+    assert proof._attention_category_status_counts(unrelated) == [
+        ["Email action", "failed", 1], ["Work item", "failed", 1]
+    ]
+
+
+def test_current_attention_counter_reads_actual_console_surface(tmp_path, monkeypatch):
+    import app.audit_web as audit_web
+    from app.email_store import EmailStore
+    from app.store import AutoReplyStore
+
+    path = tmp_path / "current-attention.sqlite3"
+    AutoReplyStore(path)
+    EmailStore(path)
+    rows = [{"category": "Work item", "status": "failed"}]
+    monkeypatch.setattr(audit_web, "_queue_attention_rows", lambda store: rows)
+    assert proof._current_counters(path)["attention_counts"] == [["Work item", "failed", 1]]
+
+
+def test_old_attention_counter_includes_another_accounts_failed_action(latest_fresh):
+    old, path, _repo = latest_fresh
+    seeded = proof._old_process(old, path, "seed", "baseline-proof-account")
+    assert proof._old_process(old, path, "fail_other_account", seeded["failed_action_id"]) == {
+        "failed": True
+    }
+    assert proof._old_process(old, path, "counters")["attention_counts"] == [
+        ["Email action", "failed", 1]
+    ]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    (
+        ["email-action:999", 999, "failed"],
+        ["email-action:42", 42, "done"],
+        ["email-action:999", 42, "failed"],
+    ),
+)
+def test_old_history_guard_rejects_wrong_locator_status_or_logical_id(entry):
+    with pytest.raises(AssertionError):
+        proof._assert_old_failed_history({"native_rowid": 42, "entries": [entry]})

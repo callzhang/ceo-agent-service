@@ -307,6 +307,7 @@ def _other_sequences(db):
 
 OLD_PROGRAM = r'''
 import json, sqlite3, sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from app.store import AutoReplyStore
@@ -426,17 +427,39 @@ elif mode == 'write':
     print(json.dumps({'feedback_applied':first.applied,'feedback_replayed':not second.applied,
                       'receipt_public_replay':True,'retry_completed':True}))
 elif mode == 'counters':
-    from app.audit_web import _email_action_queue_snapshot
+    from app.audit_web import _email_action_queue_snapshot, _queue_attention_rows
     with sqlite3.connect(path) as db:
         db.row_factory=sqlite3.Row
         queue=_email_action_queue_snapshot(db)
     history=store.list_operation_logs_with_count(limit=1,source_tables=('email_actions',))[0]
-    attention=len(email.list_failed_direct_actions(account_id='copy-only-account',
-        action_types=(EmailAction.LABEL,EmailAction.TRASH),limit=10000))
+    attention=Counter((row['category'],row['status']) for row in _queue_attention_rows(store))
     print(json.dumps({'queue_counts':queue['counts'],'queue_pending':queue['pending'],
         'queue_processing':queue['processing'],'queue_failed':queue['failed'],
         'queue_retryable':queue['retryable'],'history_count':history,
-        'attention_failed':attention}))
+        'attention_counts':[[category,status,count] for (category,status),count
+                            in sorted(attention.items())]}))
+elif mode == 'failed_history':
+    failed_id=sys.argv[3]
+    with sqlite3.connect(path) as db:
+        native=db.execute('select rowid from email_actions where action_id=?',
+                          (failed_id,)).fetchall()
+    assert len(native)==1
+    source_id=native[0][0]
+    entries=[[item.id,item.source_id,item.status]
+             for item in store.list_operation_logs(source_tables=('email_actions',))
+             if item.source_id==source_id]
+    print(json.dumps({'native_rowid':source_id,'entries':entries}))
+elif mode == 'fail_other_account':
+    failed_id=sys.argv[3]
+    claimed=email.claim_direct_action(action_id=failed_id,
+        claimed_at='2026-10-14T01:01:00+00:00')
+    assert claimed is not None
+    result=email.complete_direct_action_attempt(claimed,status='failed',
+        provider_operation='label',provider_target=claimed.locator.stable_message_identity,
+        provider_result_id='',error='probe',retryable=False,
+        finished_at='2026-10-14T01:01:01+00:00')
+    assert result['status']=='failed'
+    print(json.dumps({'failed':True}))
 elif mode == 'current':
     classification_id=int(sys.argv[3]); identity=sys.argv[4]
     direct_id=sys.argv[5]; failed_id=sys.argv[6]; retry_id=sys.argv[7]
@@ -681,16 +704,13 @@ def _current_public_writes(path, seeded):
 
 
 def _current_counters(path):
-    from app.audit_web import _email_action_queue_snapshot
-    from app.email_classifier_contracts import EmailAction
-    from app.email_store import EmailStore
+    from app.audit_web import _email_action_queue_snapshot, _queue_attention_rows
     from app.store import AutoReplyStore
 
     with closing(sqlite3.connect(path)) as db:
         db.row_factory = sqlite3.Row
         queue = _email_action_queue_snapshot(db)
     store = AutoReplyStore(path)
-    email = EmailStore(path)
     return {
         "queue_counts":queue["counts"], "queue_pending":queue["pending"],
         "queue_processing":queue["processing"], "queue_failed":queue["failed"],
@@ -698,11 +718,19 @@ def _current_counters(path):
         "history_count":store.list_operation_logs_with_count(
             limit=1, source_tables=("email_actions",)
         )[0],
-        "attention_failed":len(email.list_failed_direct_actions(
-            account_id="copy-only-account", action_types=(EmailAction.LABEL, EmailAction.TRASH),
-            limit=10000,
-        )),
+        "attention_counts":_attention_category_status_counts(_queue_attention_rows(store)),
     }
+
+
+def _attention_category_status_counts(rows):
+    counts = Counter((row["category"], row["status"]) for row in rows)
+    return [[category, status, count] for (category, status), count in sorted(counts.items())]
+
+
+def _assert_old_failed_history(observation):
+    source_rowid = observation["native_rowid"]
+    assert type(source_rowid) is int
+    assert observation["entries"] == [[f"email-action:{source_rowid}", source_rowid, "failed"]]
 
 
 def _case(path, oldroot, *, fresh, null_plans):
@@ -1083,6 +1111,7 @@ def _paired_case(path, oldroot, repo):
     assert _old_process(oldroot, path, "counters") == current_counters
     _old_process(oldroot, path, "prewrite_read", seeded["classification_id"], "copy-only-reply",
                  seeded["direct_action_id"], seeded["failed_action_id"], seeded["retry_action_id"])
+    _assert_old_failed_history(_old_process(oldroot, path, "failed_history", seeded["failed_action_id"]))
     donor = path.with_name(path.stem + "-paired-old-donor.sqlite3")
     assert not donor.exists()
     _copy(path, donor)
@@ -1098,6 +1127,7 @@ def _paired_case(path, oldroot, repo):
     }
     _old_process(oldroot, path, "read", seeded["classification_id"], "copy-only-reply",
                  seeded["direct_action_id"], seeded["failed_action_id"], seeded["retry_action_id"])
+    _assert_old_failed_history(_old_process(oldroot, path, "failed_history", seeded["failed_action_id"]))
     with closing(sqlite3.connect(path)) as db, closing(sqlite3.connect(donor)) as donor_db:
         after_old = _source_facts(db)
         after_old_waters = _source_waters(db)
