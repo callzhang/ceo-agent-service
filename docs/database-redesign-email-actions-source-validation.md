@@ -61,3 +61,16 @@ The [published-source capture](superpowers/specs/2026-10-14-database-redesign-em
 The two scoped source-oracle files now cover each of the thirteen external blocker paths, both action attempt-count trigger directions, immediate FK failure, BLOB composite public keys, and `INSERT OR REPLACE` refusal for the immutable retry identity, in addition to their earlier rowid/public-key cases. `python -m pytest -q tests/test_email_action_source.py tests/test_email_action_children_source.py` with an owned `/tmp` `TemporaryDirectory` basetemp reported **68 passed**. This is source-only SQLite evidence. It does not establish target migration, inverse/copy acceptance, old-code compatibility, provider effects, or UI readiness.
 
 Independent SPEC review found one missing ordinary-ROWID contrast: unlike an AUTOINCREMENT table, an ignored duplicate carrying an explicit signed-maximum ROWID does not advance `email_actions` allocation. The source-only regression executes on both frozen physical variants and verifies the next ordinary insert receives ROWID 2 after an existing ROWID 1. The same two oracle files now report **70 passed** in a cleaned owned `/tmp` basetemp; Ruff and whitespace checks pass. This repair changes no target storage or production state.
+
+
+## Published-source independent acceptance
+
+Root accepted Task1 at `467b4dc2` after sequential independent SPEC then QUALITY.
+SPEC initially found the missing ordinary-rowid ignored-high contract; the
+separate repair proves ignored explicit maximum ordinary rowid does not advance
+allocation, in both frozen variants. SPEC recheck independently passed70 cases;
+QUALITY independently passed the same70 cases, Ruff, compilation and diff check.
+The counts overlap. Both accepted exact actual13-table/144-field metadata,
+13 external blockers,12 inbound FKs and the full69-object sixteen-type actual
+actions declaration. No application code, target marker, constructor, provider
+or production data changed. Actual-copy/genuine-old-code proof is still pending.

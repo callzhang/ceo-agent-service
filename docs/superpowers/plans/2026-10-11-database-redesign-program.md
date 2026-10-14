@@ -281,3 +281,12 @@ Email13 now starts Task1 binding against actual published5691f6c7; Task3B
 latest-copy/genuine-old-code read/write/re-forward remains required before
 constructors, paired markers or any activation. The ten-core-table plus one
 ledger objective remains active and incomplete.
+
+
+Email13 Task1 is now accepted at467b4dc2 after sequential independent SPEC and
+QUALITY, against actual publishedeb797e6b Store19/Email51. Exact13-source-table
+metadata/144 fields and all declared closure match. The source-only70 checks
+include the repaired ordinary-rowid ignored-MAX behavior. This does not accept
+Task3B, constructors, callers, activation or publication. Next: preserve that
+published main increment, then actual-copy/current-fact inverse and genuine
+archived-old-code cold read/write/re-forward proof.

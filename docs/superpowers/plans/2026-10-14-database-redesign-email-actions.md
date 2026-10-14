@@ -141,9 +141,17 @@ Attempts/steps extend existing native AUTOINCREMENT sequence strategy with two s
 
 **Files:** published-source JSON/map; source-only tests owned by the source-oracle agent; `docs/database-redesign-email-actions-source-validation.md`.
 
-- [ ] After E deployment, read actual production commit/markers and schema/aggregate metadata with read-only URI and one transaction. Compare all thirteen declarations, own/external objects, old sixteen actions manifest and both claim physical-order variants to frozen source. No business row body or credentials enter artifacts.
-- [ ] Independently validate source-only cases for all nine NULL PKs, source rowid zero/negative/deleted-high/ignored insert/max allocation, public key/ROWID UPDATE, BLOB keys, native FK immediate timing, duplicate and OR REPLACE behavior, 13 external blockers, 2 count triggers and 3 retry immutable triggers. Include a NULL prior feedback plan independently of its non-NULL feedback PK.
-- [ ] Run `pytest -q tests/test_email_action_source.py tests/test_email_action_children_source.py`; expected all native source cases pass, with only documented opposite-variant skips. These are source evidence, never target evidence. Commit source evidence independently of target code.
+- [x] After E deployment, read actual production commit/markers and schema/aggregate metadata with read-only URI and one transaction. Compare all thirteen declarations, own/external objects, old sixteen actions manifest and both claim physical-order variants to frozen source. No business row body or credentials enter artifacts.
+- [x] Independently validate source-only cases for all nine NULL PKs, source rowid zero/negative/deleted-high/ignored insert/max allocation, public key/ROWID UPDATE, BLOB keys, native FK immediate timing, duplicate and OR REPLACE behavior, 13 external blockers, 2 count triggers and 3 retry immutable triggers. Include a NULL prior feedback plan independently of its non-NULL feedback PK.
+- [x] Run `pytest -q tests/test_email_action_source.py tests/test_email_action_children_source.py`; expected all native source cases pass, with only documented opposite-variant skips. These are source evidence, never target evidence. Commit source evidence independently of target code.
+
+**Task1 accepted locally at `467b4dc2` (2026-10-14):** sequential independent
+SPEC then QUALITY passed actual published `eb797e6b` Store19/Email51 binding,
+exact thirteen-table/144-field metadata and complete sixteen-type source action
+manifest. Ordinary-rowid ignored-MAX source coverage was repaired after SPEC;
+70 scoped source cases pass independently. This is source evidence only.
+Task3B latest-copy, genuine published-old-code cold read/write and re-forward
+remain mandatory before Task4 or target version allocation.
 
 ## Task 2: Implement finite storage and native constraint parity
 
