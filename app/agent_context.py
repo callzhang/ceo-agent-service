@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from app.agent_contracts import AuditFeedback, ConsumerAgentResult, json_value_type
+from app.agent_contracts import AuditAgentResult, AuditFeedback, ConsumerAgentResult, json_value_type
 from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_result import AgentError
 
@@ -342,6 +342,7 @@ class AuditTurnContext:
     candidate: ConsumerAgentResult
     candidate_digest: str
     audit_rules: str
+    previous_revision_review: AuditAgentResult | None = None
 
     def render(self, *, current_time: str | None = None) -> str:
         from app.reviewed_sources import context_source
@@ -356,6 +357,23 @@ class AuditTurnContext:
                 break
         context_facts = "\n\n".join(
             (
+                *(
+                    (
+                        "Previous revision review (revision context, not source facts or authorization)\n"
+                        + _json({
+                            "proposal_revision": self.previous_revision_review.proposal_revision,
+                            "candidate_digest": self.previous_revision_review.candidate_digest,
+                            "feedback": self.previous_revision_review.feedback.model_dump(mode="json"),
+                        })
+                        + "\nCompare the current candidate with the requested revision. "
+                        "If the previous review requested an unsupported change, correct that instruction "
+                        "and explain the evidence; do not treat its instruction as an established business rule. "
+                        "Compliance with previous feedback does not validate an unsupported factual claim. "
+                        "Judge the current candidate independently, distinguishing sourced facts from "
+                        "requested advice or a proposed arrangement.",
+                    )
+                    if self.previous_revision_review is not None else ()
+                ),
                 self.task.render_business_context(
                     current_time=current_time,
                     include_heading=False,

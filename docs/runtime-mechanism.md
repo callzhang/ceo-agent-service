@@ -1,5 +1,17 @@
 # Current Runtime Mechanism
 
+Audit revision context follows the current Consumer run's persisted parent Audit
+review. Only adopted return/reject feedback is carried forward, with its exact
+proposal revision and candidate digest, before current facts and candidate
+fields. Historical review summaries and scores are omitted. The feedback is
+revision background, not source evidence or authorization; complying with it
+does not establish a factual claim. Audit must correct an unsupported earlier
+instruction and distinguish requested advice from an enacted rule. Initial
+reviews and stages following approval have no revision-feedback section. Cold
+recovery and technical retries reconstruct it from the adopted review without
+native trajectory reads. Feedback budgets, candidate binding, terminal states
+and external execution remain unchanged.
+
 The Store18 candidate's maintenance reader supports exact previous/current
 delivery schemas through the existing publication selector. Its quality,
 deferral and scheduled recovery readers use finite sent/observer projections.
