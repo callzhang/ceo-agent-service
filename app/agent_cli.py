@@ -1529,6 +1529,39 @@ def build_role_server(
         events = DwsClient().list_calendar_events(start, end)
         return {"events": [item.model_dump(mode="json") for item in events]}
 
+    def list_dingtalk_mailboxes() -> dict[str, object]:
+        """Read the current identity's DingTalk mailboxes."""
+        from app.dws_client import DwsClient
+        dws = DwsClient()
+        return dws.run_json([dws.dws_bin, "mail", "mailbox", "list", "--format", "json"])
+
+    def read_dingtalk_mail_thread(email: str, conversation_id: str) -> dict[str, object]:
+        """Read the complete original mail thread by mailbox and conversationId."""
+        from app.dws_client import DwsClient
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "mail", "+thread", "--email", email,
+            "--id", conversation_id, "--format", "json",
+        ])
+
+    def read_dingtalk_mail_message(email: str, message_id: str) -> dict[str, object]:
+        """Read original message body and attachment metadata by exact messageId."""
+        from app.dws_client import DwsClient
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "mail", "+message", "--email", email,
+            "--id", message_id, "--format", "json",
+        ])
+
+    def read_dingtalk_mail_sent_status(email: str, internet_message_id: str) -> dict[str, object]:
+        """Read sent status using the provider's internetMessageId."""
+        from app.dws_client import DwsClient
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "mail", "message", "verify", "--email", email,
+            "--internet-message-id", internet_message_id, "--format", "json",
+        ])
+
     def read_dingtalk_group_members(conversation_id: str) -> dict[str, object]:
         """Read the complete bounded users/bots roster for an exact group ID.
 
@@ -1735,6 +1768,10 @@ def build_role_server(
         ("read_dingtalk_oa_tasks", read_dingtalk_oa_tasks),
         ("read_dingtalk_oa_revert_activities", read_dingtalk_oa_revert_activities),
         ("read_dingtalk_calendar_event", read_dingtalk_calendar_event),
+        ("list_dingtalk_mailboxes", list_dingtalk_mailboxes),
+        ("read_dingtalk_mail_thread", read_dingtalk_mail_thread),
+        ("read_dingtalk_mail_message", read_dingtalk_mail_message),
+        ("read_dingtalk_mail_sent_status", read_dingtalk_mail_sent_status),
         ("list_dingtalk_calendar_events", list_dingtalk_calendar_events),
         ("search_dingtalk_contacts", search_dingtalk_contacts),
         ("read_dingtalk_group_members", read_dingtalk_group_members),

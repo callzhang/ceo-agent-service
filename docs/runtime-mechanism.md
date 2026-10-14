@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整会话、单封原文与发送状态读取：
+`list_dingtalk_mailboxes`、`read_dingtalk_mail_thread`、`read_dingtalk_mail_message`、
+`read_dingtalk_mail_sent_status`。这些接口直接调用现有 DWS 原生只读命令，保留其完整 JSON
+正文、附件、分页与状态信息及原始错误；线程使用 conversationId，单封使用 messageId，
+发送状态使用 internetMessageId。它们不发送邮件、不增加审核规则，也不开放 Audit 命令执行。
+
 Audit revision context follows the current Consumer run's persisted parent Audit
 review. Only adopted return/reject feedback is carried forward, with its exact
 proposal revision and candidate digest, before current facts and candidate
