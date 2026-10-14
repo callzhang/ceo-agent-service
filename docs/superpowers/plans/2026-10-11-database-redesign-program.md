@@ -414,3 +414,21 @@ preparation is accepted; current target validators are not default constructors.
 F paired release/locking/constructor/default selection remains next, then Task5
 external consumers and latest-copy/native/publication. Production is unchanged
 Store19/Email51/121tables; full10-core-table plus ledger remains unfinished.
+
+
+2026-10-14: Email Task4F20bebe37 passed sequential independent SPEC then QUALITY.
+The local candidate now selects Store2026-10-14.1/Email52/29-kind actions with
+the true paired subprocess, both real constructor orders and current-fact inverse.
+SPEC passed48 new F plus16 protocol/three existing-repair cases; QUALITY passed
+four focused cases and independent late old/new DAO writes, BLOB metadata and
+genuine old strict cold read/write. Existing provider signal-column repair stays.
+Cached construction has a measured schema-validation cost (roughly14–16ms on
+temporary empty DBs), accepted without adding another cache layer.
+
+This is not publication or full Task4 acceptance. Task5 external consumers and
+deferred current/historical SQL-test adaptation are next, followed by a latest
+actual production-copy/source refresh, native fake-provider proof and full CI/
+normal deploy/readback. Last production readback remains Store19/Email51/121
+tables at666f4078; source main4eb7abb8 is its documentation-only successor.
+HistoryPR86 is separately deployed with its limited UI/degraded-health boundary;
+it does not change Email schema. The full10-core-table plus ledger goal is open.

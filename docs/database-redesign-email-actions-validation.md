@@ -1,5 +1,40 @@
 # Email action storage preparation: Tasks 2A and 2B
 
+## Task4F independent acceptance, 2026-10-14
+
+Root accepts only the coupled F unit at20bebe37265c17041732f149d1e4da7da0376ef8
+(parent5dd1af7f) after sequential independent SPEC then QUALITY. SPEC independently
+ran all48 F cases (48 passed,192.78s),16 selected protocol cases (15.14s),
+two existing Store repair cases and one feedback-round repair case. Its additional
+genuine2773 Store19-only and empty-Email-ledger-only counterexamples were refused
+by both real constructors and the coordinator without changing bytes or making WAL.
+
+QUALITY independently passed four focused crash/unsupported-inverse/concurrent/
+existing-provider-repair cases (20.33s). A separate real old-DAO write after
+prepare, real child publication, new-DAO write after forward, current-fact inverse
+and genuine old strict cold read/write retained both results and the original
+BLOB Store timestamp plus complete two-version BLOB Email ledger. Cached-path
+missing-index repair and unknown-action-trigger refusal also passed. Reviewers
+left HEAD/status unchanged and verified all their owned temporary roots absent.
+These independent results remain separate from the implementation's82-pass and
+119-pass/1-failure batches and the later single-case corrections described below.
+
+Root's isolated60-open measurement compared published4eb Store19 with F: cached
+constructor median3.3378ms versus14.1731ms; QUALITY's separate30-open candidate
+median was16.473ms. The additional action-manifest check scans schema metadata,
+not action rows. Existing feedback guard reads remain present. QUALITY accepted
+the bounded cost and selected29/known-repair consistency without recommending
+another cache layer. These empty temporary-DB timings are not production request
+latency or throughput evidence. Root's temporary archive/databases were removed
+and their absence verified.
+
+This acceptance selects local Store2026-10-14.1/Email52 defaults but does not make
+the branch deployable: Task5 external old-table consumers and the exact deferred
+current/historical test adaptations below remain open. Task6 must refresh the
+actual production copy and immediate published-source binding, then prove native
+fake-provider behavior; Task7 CI, normal deployment and live readback remain open.
+No production migration, provider call, push or deploy follows from this review.
+
 ## Task4 current-schema factory preparation (unselected)
 
 The neutral classification factory creates the exact post-Email51 30-column

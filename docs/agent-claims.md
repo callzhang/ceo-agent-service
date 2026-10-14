@@ -1454,3 +1454,5 @@ reverts committed work they did not author.
 | codex-email13-seeds-e1-acceptance | Email integration: E1 acceptance in scoped Email plan/validation/program and own claim only | Record sequential independent SPEC then QUALITY; no runtime/default/constructor change. | active 2026-10-14 |
 
 | codex-email13-validation-e2-acceptance | Email integration: E2 acceptance in scoped Email plan/validation/program and own claim only | Record sequential independent SPEC/QUALITY of current validators and finite installer, maintaining exact partial/source boundaries. No runtime/default change. | active 2026-10-14 |
+
+| codex-email13-coupled-f-acceptance | Email integration: appended F acceptance in Email validation/plan/program and own claim only | Record sequential independent SPEC then QUALITY of20bebe37, existing repair preservation, measured cache cost and exact pending gates. No runtime/provider/publication change. | root documentation only 2026-10-14; Task5 next, branch not deployable |

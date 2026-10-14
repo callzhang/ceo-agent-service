@@ -509,3 +509,18 @@ reopen. Genuine51 versus52 reproduced its omission, then the added48th F test an
 two direct startup cases passed3 after restoring the single existing call. No
 new repair policy or broader matrix was added; exact RED/GREEN evidence is in the
 validation document.
+
+### Task4F review acceptance, 2026-10-14
+
+Sequential independent SPEC then QUALITY accepted20bebe37. SPEC independently
+passed48 F cases,16 selected protocol cases and three existing repair cases;
+QUALITY passed four focused regressions and its own cache/current-fact/BLOB/
+genuine-old-code probes. Both left the candidate clean and removed owned temps.
+The existing provider-column repair is preserved. Schema-only action validation
+adds measured cached-constructor cost (root median14.1731ms, independent QUALITY
+16.473ms); no production throughput claim or new cache layer follows.
+
+Only this coupled unit is accepted. Task5 consumers and the deferred old-SQL
+test adaptations remain required, then fresh actual-copy/native evidence and
+CI/publication. Do not close the complete Task4 named test gate or deploy this
+branch on the strength of F review alone. Task5 is the next implementation unit.
