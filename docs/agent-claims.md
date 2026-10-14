@@ -1472,3 +1472,5 @@ reverts committed work they did not author.
 | codex-email13-5b0-acceptance | Email integration: own acceptance paragraphs in validation/plan/program and this claim only | Record sequential independent SPEC then QUALITY of4a9de752; restore original Email refusal while preserving Store repairs; authorize bounded six current-T tests next. No runtime/provider/publication changes. | root documentation 2026-10-14; overall10+1 unfinished |
 
 | codex-email13-5b1-acceptance | Email integration: own validation/plan/program acceptance paragraphs and this claim | Record sequential SPEC and QUALITY of8989d5d4; six current tests preserve complete assertions. No runtime/provider/publication change. | root documentation 2026-10-14; broader fixture and publication gates open |
+
+| codex-email13-5b2-acceptance | Email integration: own validation acceptance paragraph and this claim only | Record fresh sequential SPEC/QUALITY ofe9d38852 fourteen current read tests. No runtime/provider/publication changes. | root documentation 2026-10-14; broader gates remain open |

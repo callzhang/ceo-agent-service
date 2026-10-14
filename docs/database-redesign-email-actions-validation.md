@@ -1788,3 +1788,7 @@ and removed their `/tmp/email13-task5b2-*` root, verified absent afterward.
 Historical H, shared rebuild S, current mutation/metadata T and the selected
 Task5/6/7 final gates remain open; this local test alignment is not deployable
 acceptance.
+
+### Task5B2 independent acceptance, 2026-10-14
+
+Root accepts e9d38852c6a22fdac64bf5afcdf47a50c59baef4 over6dc0b946d7eaba5469950e29d962e8ea13e53d82. Fresh SPEC independently ran exactly14 cases:14 passed11.80s, lint/diff exit0, all nonselected AST nodes unchanged, owned temp removed. Fresh QUALITY inspected all14 bodies and verified reversing only21 finite projection substitutions and the count-map adaptation makes the entire module AST identical to its parent. No assertions/helpers/H/S/otherT changes; source aliases/order/direct record-type filters retain row identity and count semantics. QUALITY did not rerun sufficient existing execution and created no temps. Both reviewers verified clean frozen HEAD and PASS. This only accepts current reads; fixture mutations, corruption/history tests, dynamic SQL sites, broader gates, latest-copy/native/CI/publication and full10+1 remain open.
