@@ -62,13 +62,15 @@ def test_exact_published_source_variants_are_captured(tmp_path, variant):
         assert captured["counts"] == {"reply_attempts": 0, "memory_write_events": 0}
 
 
-def test_current_fresh_store_constructor_matches_frozen_fresh_source(tmp_path):
+def test_current_fresh_store_constructor_has_canonical_fresh_reply_actions(tmp_path):
     path = tmp_path / "fresh.sqlite3"
     AutoReplyStore(path)
     with closing(sqlite3.connect(path)) as db:
-        db.execute("create table email_schema_migrations(version integer primary key,applied_at text not null)")
-        db.execute("insert into email_schema_migrations values(51,'source')")
-        assert capture_reply_source(db)["variant"] == "fresh_candidate17"
+        assert db.execute("select value from service_state where key='store_schema_version'").fetchone()[0] == "2026-10-13.5"
+        assert action_storage.action_schema_is_current(db, include_reply=True,
+            reply_variant="fresh_memory_fk")
+        assert not db.execute("select 1 from sqlite_schema where name in "
+            "('reply_attempts','memory_write_events')").fetchone()
 
 
 @pytest.mark.parametrize("change", (

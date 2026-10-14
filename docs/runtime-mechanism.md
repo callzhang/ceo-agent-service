@@ -2781,6 +2781,14 @@ work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选�
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
 
+Phase5E 隔离分支的 Store19 候选以完整十六类型 action manifest 验证
+Attempt/Memory；实际 Store18 升级和 fresh 创建分别保留无 Memory 外键与有
+Memory 父外键的唯一规范模式。缺失辅助对象的重启修复先匹配整套模式，不能
+凭一列推断或把 actual 修成 fresh。Store 内部的 Attempt/Memory CRUD 已路由
+到有限 action reader/writer；Memory 写入完成只更新相同事件 ID 的
+pending/failed/written 状态、episode、错误和更新时间，不增加重试次数或重建
+删除的事件。候选版本尚未上线，外部 SQL 调用者和发布验收仍待后续单元。
+
 
 ### Full document native output delivery
 

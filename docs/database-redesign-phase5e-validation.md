@@ -388,3 +388,53 @@ with eight variant skips; the six focused earlier delivery/postfix/receipt
 migration and release files passed 125 tests. Ruff and diff check passed.
 No publication, caller, production-copy or old-code constructor gate was
 completed by this correction.
+
+## Task 4 candidate Store integration (unpublished)
+
+The isolated branch now declares candidate Store19 `2026-10-13.5` and routes
+the real Store initializer through the reviewed exact Store18 to Store19
+Attempt/Memory migration inside an FK-off immediate transaction. It checks the
+complete core and sixteen-type action manifest before updating the marker.
+Fresh construction creates only the fresh Memory-FK variant. A current Store19
+restart or missing-auxiliary-object repair first validates the whole actual or
+fresh canonical manifest, then repairs that same variant. Unknown, mixed or
+malformed shapes are rejected before core mutation. The old physical Attempt
+and Memory tables, columns and indexes are removed from the current required
+schema. This is a local candidate only; the production Store marker remains
+18 and Email marker 51. No push, deployment or provider action occurred.
+
+Store-internal Attempt SELECTs use one explicit 54-field public-ID projection
+that is common to both canonical variants. Memory SELECTs use the validated
+variant's projection; inserts, updates and deletes use the finite action
+writers. Existing eligibility, leases, generations, row counts and update
+times are retained under the ordinary writer transaction. Memory extraction
+parses only the transient audit events, deletes all prior events for the
+selected Attempt even when replacement input is malformed or empty, and
+rebuilds typed events with `{}` payload projections. The retired raw tool body
+is not serialized into stored Memory. A routed completion updates only the
+same eligible event ID to written with the supplied episode and clears the
+error; it cannot recreate a deleted event or increment attempts.
+
+Focused local checks passed: 18 new Store integration cases; 10 routed Memory
+completion cases; 64 selected Store Attempt/Memory, history, reconciliation and
+compaction cases; and 16 current-schema reconciliation/history fixture cases.
+The synthesized Store18 source tests use an exact published marker, Email51
+metadata, captured old table DDL and old fourteen-type action declarations
+constructed from a fresh temporary Store. They do not substitute for an
+old-code cold constructor or a production-copy test. One older
+`test_source13_workbench_lease_values_survive_before_recovery_index` fixture
+advances only to Store17 before invoking the current Store19 constructor. Its
+current-auxiliary-table copy also no longer supplies the retired Attempt/Memory
+declarations, so it needs those exact frozen source declarations, Email51
+metadata and the Store17 to Store18 advancement. The assertion was not
+weakened here. The original
+removed-universal-runtime repair regression passes unchanged: a current Store
+with the two known universal tables still archives unreferenced history before
+dropping them. External callers still reading physical Attempt/Memory
+tables are assigned to Task 5, including the reviewed-human Attention path.
+
+The preceding public-ID index unit at `0436c399` passed independent SPEC and
+QUALITY review; its focused gate was 217 passed, six skipped, with Ruff and
+diff checks clean. This Task 4 candidate is awaiting its own independent
+reviews and the remaining Task 5/6 publication gates. Retiring these two
+tables does not complete the larger ten-core-table-plus-ledger redesign.

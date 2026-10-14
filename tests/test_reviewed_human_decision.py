@@ -11,7 +11,7 @@ from app.reviewed_candidates import candidate_digest
 from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import build_attempt_detail
 
-from app.action_storage import CANDIDATE_EXECUTION_SQL, CANDIDATE_SELECTION_SQL, CANDIDATE_SUPPLEMENT_SQL
+from app.action_storage import CANDIDATE_EXECUTION_SQL, CANDIDATE_SELECTION_SQL, CANDIDATE_SUPPLEMENT_SQL, update_action
 
 
 def _question():
@@ -79,7 +79,7 @@ def _approved_question(path: Path):
         audit_summary="Reviewed current choice", send_status="needs_human",
     )
     with store._connect() as db:
-        db.execute("update reply_attempts set agent_run_id=? where id=?", (audit.id, attempt_id))
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
         db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
     return store, task, candidate, review, attempt_id
 
@@ -173,7 +173,7 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
         human_decision_options_json=json.dumps(options),
     )
     with store._connect() as db:
-        db.execute("update reply_attempts set agent_run_id=? where id=?", (run.id, attempt_id))
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id})
         db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
     reopened = AutoReplyStore(path)
     assert reopened.reconcile_invalid_needs_human_projections() == 0
@@ -248,7 +248,7 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
         db.execute("update tasks set channel='scheduled' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
         db.execute("update tasks set channel='scheduled', trigger_message_json=? where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
                    (json.dumps(saved_execution), task.id))
-        db.execute("update reply_attempts set channel='scheduled' where id=?", (attempt_id,))
+        update_action(db, "reply_attempts", attempt_id, {"channel": "scheduled"})
     scheduled_task = store.get_reply_task_for_message(task.conversation_id, task.trigger_message_id, channel="scheduled")
     assert scheduled_task is not None
     assert _is_valid_rerun_trigger_json(scheduled_task.trigger_message_json, channel="scheduled")
@@ -260,7 +260,7 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
     second, _task, candidate, review, attempt_id = _approved_question(tmp_path / "scheduled-choice.sqlite3")
     with second._connect() as db:
         db.execute("update tasks set channel='scheduled' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (_task.id,))
-        db.execute("update reply_attempts set channel='scheduled' where id=?", (attempt_id,))
+        update_action(db, "reply_attempts", attempt_id, {"channel": "scheduled"})
     assert _submit(second, attempt_id, kind="select", candidate_id=candidate["id"],
                    review_id=review["id"], option_key="stop")[0] == 303
 
@@ -278,7 +278,8 @@ def test_selected_execution_refusal_keeps_block_reason_in_status(tmp_path):
     store.finish_candidate_execution(execution["id"], "executor", "failed", {"error": error})
     with store._connect() as db:
         db.execute("update tasks set status='failed',error=? where record_type='reply_tasks' and cast(legacy_key as integer)=?", (error["code"], task.id))
-        db.execute("update reply_attempts set send_status='failed',send_error=? where id=?", (error["code"], attempt_id))
+        update_action(db, "reply_attempts", attempt_id,
+                      {"send_status": "failed", "send_error": error["code"]})
     original_task = store.get_reply_task(task.id)
     original_execution = store.get_candidate_execution(candidate["id"])
     original_candidate = store.current_reviewed_candidate(task.id, task.execution_generation)

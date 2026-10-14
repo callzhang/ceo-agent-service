@@ -1987,6 +1987,15 @@ work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选�
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
 
+Phase5E 候选 Store19（`2026-10-13.5`）初始化将 Reply Attempt 和
+Memory Write Event 放入有限 `actions` 类型，保留各自公共整数 ID；物理
+`reply_attempts` 和 `memory_write_events` 表退役。准确 Store18 来源通过同一
+事务内的配对迁移与完整 manifest 核验，空库创建采用 fresh Memory 父外键模式；
+已迁移的 actual 模式在重启和辅助索引修复时继续保持无 Memory 外键模式。
+内部 Store 的读取使用显式 Attempt 投影，写入使用有限 action writer；Memory
+正文不复制到目标，`payload_json` 读取为 `{}`，仅保留准确的排队业务标记。
+本段是隔离分支候选行为，未发布、未部署；外部调用者与完整发布门仍待后续单元。
+
 
 ### Full document native output delivery
 

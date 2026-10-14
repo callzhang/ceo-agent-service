@@ -26,6 +26,7 @@ from app.agent_runtime_router import (
     RoutedResultCodec,
 )
 from app.codex_decision import _decision_text_candidates, _iter_json_payloads
+from app.action_storage import update_action
 from app.store import AutoReplyStore
 
 WRITE_SCHEMA_PATH = (
@@ -120,14 +121,14 @@ def run_codex_memory_write(
         idle_timeout_seconds=idle_timeout_seconds,
     )
     with store._connect() as db:
-        cursor = db.execute(
-            """
-            update memory_write_events
-            set status='written', memory_episode_id=?, last_error='',
-                updated_at=current_timestamp
-            where id=? and status in ('pending', 'failed', 'written')
-            """,
-            (result.episode_uuid, event_id),
+        # Take the ordinary writer lock before reading SQLite's timestamp.
+        db.execute("update sqlite_sequence set seq=seq where 0")
+        updated_at = db.execute("select current_timestamp").fetchone()[0]
+        cursor = update_action(
+            db, "memory_write_events", event_id,
+            {"status": "written", "memory_episode_id": result.episode_uuid,
+             "last_error": "", "updated_at": updated_at},
+            where_sql="status in ('pending', 'failed', 'written')",
         )
         if cursor.rowcount != 1:
             raise ValueError("memory write event is not eligible")

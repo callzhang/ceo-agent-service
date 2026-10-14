@@ -499,6 +499,25 @@ def reply_action_projection(kind, reply_variant):
         fields.append(expression + " as " + field)
     join = "left join actions p on p.id=a.memory_attempt_ref and p.record_type='reply_attempts'" if kind == "memory_write_events" and reply_variant == "fresh_memory_fk" else ""
     return f"select {','.join(fields)} from actions a {join} where a.record_type='{kind}' and a.record_type<>'external_action_results' and a.record_type not in ({_POSTFIX_TYPES_SQL}) and a.record_type<>'sent_reply_observers'"
+
+
+# Both canonical E declarations contain the 54 current Attempt fields. This
+# explicit projection omits only the four preserved actual-source history fields.
+REPLY_ATTEMPT_COMMON_SQL = reply_action_projection("reply_attempts", "fresh_memory_fk")
+
+
+def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=False) -> str:
+    """Select one complete canonical E declaration, including its FK and indexes."""
+    matches = [
+        variant for variant in REPLY_VARIANTS
+        if action_schema_is_current(
+            db, allow_missing_objects=allow_missing_objects,
+            include_reply=True, reply_variant=variant,
+        )
+    ]
+    if len(matches) != 1:
+        raise sqlite3.IntegrityError("unsupported or mixed Attempt/Memory action schema")
+    return matches[0]
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
 CANDIDATE_SELECTION_SQL = ACTION_PROJECTIONS["candidate_selections"]

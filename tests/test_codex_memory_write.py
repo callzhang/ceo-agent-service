@@ -7,6 +7,7 @@ import json
 import pytest
 
 from app.agent_runtime_router import RoutedCodexExecutionError
+from app.action_storage import insert_action, reply_action_projection
 from app.codex_memory_write import (
     CodexMemoryWriteFailed,
     memory_result_from_typed_output,
@@ -44,14 +45,10 @@ def _seed_memory_write_event(store: AutoReplyStore) -> int:
         sensitivity_kind="general",
     )
     with store._connect() as db:
-        cursor = db.execute(
-            """
-            insert into memory_write_events (attempt_id, event_type, payload_json)
-            values (?, 'memory_write', '{}')
-            """,
-            (attempt_id,),
-        )
-        return int(cursor.lastrowid)
+        result = insert_action(db, "memory_write_events", {
+            "attempt_id": attempt_id, "event_type": "memory_write",
+        })
+        return int(result.lastrowid)
 
 
 def test_memory_write_uses_source_parent_and_persists_only_routed_result(
@@ -87,8 +84,9 @@ def test_memory_write_uses_source_parent_and_persists_only_routed_result(
     ) in call["prompt"]
     with store._connect() as db:
         row = db.execute(
-            "select status, memory_episode_id from memory_write_events where id=?",
-            (event_id,),
+            "select status, memory_episode_id from "
+            f"({reply_action_projection('memory_write_events', 'fresh_memory_fk')}) "
+            "where id=?", (event_id,),
         ).fetchone()
     assert dict(row) == {"status": "written", "memory_episode_id": "episode-1"}
 
