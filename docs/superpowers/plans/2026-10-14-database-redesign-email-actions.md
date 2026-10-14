@@ -265,6 +265,48 @@ not Task3B implementation or execution evidence.
 
 ## Task 4: Paired release, constructors, DAO and external triggers
 
+**Implementation scheduling clarification (2026-10-14):** the selected
+constructor/DAO/validator/marker transition remains one paired activation and
+publication. Source inspection found hundreds of old-family references and about90 active
+DAO/validator methods; genuine old default constructors reject the pure29-kind
+conversion. A partial constructor selection therefore cannot be a passing
+intermediate release. Develop/review these bounded preparation groups first:
+
+- **4A, unselected paired-release protocol:** new action_email_schema_release
+  module and confined fault/current-fact tests only. Capture source Store19
+  value/timestamp, complete Email51 ledger, exact13/old16 declarations and FK
+  baseline in one read snapshot. The caller explicitly supplies a target pair;
+  tests use sentinel markers, not allocated published versions. Atomic DDL and
+  both marker writes use the accepted pure conversion; inverse reconstructs
+  current facts and restores the exact source timestamp/ledger, with unsupported
+  inverse refusing before commit. No old-row backup or stale DB restoration.
+  Test before-DDL/after-capture/during-conversion/after-first-marker/before-commit
+  failure rollback, current receipt backfill and native allocator advancement.
+  No current selector, constructor, constants, DAO or default action flag is
+  changed. A confined callback may exercise the protocol, but it is not a
+  genuine target-default constructor proof; the paired subprocess remains
+  deferred until final activation.
+- **B–D, exact DAO groups:** plan/direct/feedback and current-plan CAS;
+  unsubscribe lease/effect/continuation/step/terminal/cancellation; reply
+  claims/receipts. Preserve existing transaction and mutation semantics. These
+  may be logical work-in-progress commits on the unpublished integration branch;
+  do not create a second selected DAO, a compatibility router/mixin, or claim
+  independently working default runtime while the coupled migration is partial.
+- **E, target validators and seed factoring:** exact metadata/durable checks,
+  translated existing external triggers and current fresh defaults. Direct
+  History/context/Web API consumers remain Task5 where already assigned.
+- **F, final coupled activation:** exact paired coordinator and real subprocess,
+  both fresh constructor orders/current reopen, whole selected DAO/validator
+  set, target marker allocation/default29 selection, all mandatory real default
+  constructor and failure tests. Only this complete coupled unit may proceed
+  to integrated copy/native/CI/publication gates.
+
+This changes development/review sequencing only. It does not change the144
+source fields, accepted SQL/application contracts, retention, policies or the
+atomic final publication requirement. The substantive requirements below stay
+open until their full relevant checks pass; unselected4A is not Task4 completion.
+
+
 **Foundation preparation accepted, unselected:** neutral current classification
 and retained non-action DDL factories0a1929a0 passed sequential independent
 SPEC then QUALITY. Genuine2773 native49-object parity, transaction/savepoint
