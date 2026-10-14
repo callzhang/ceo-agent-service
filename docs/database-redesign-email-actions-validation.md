@@ -1819,3 +1819,27 @@ deferred; this is not full Task5 or publication acceptance.
 ### Task5B3 independent acceptance, 2026-10-14
 
 Root accepts53e75043468070ebb374425de44847a56424258b overd369932df7835ad006ad2497320451f43901493f. Fresh SPEC independently ran9 cases:9 passed3.94s, scoped lint/diff exit0; exact six tests/assertions and sourceROWID identity checked, own temp removed. Subsequent fresh QUALITY inspected complete matching row sets, sourceROWID versus public/physical identity, unchanged predicate/value/transaction behavior and existing generated plan-column authorizer; independent AST verifies assertions/decorators and all surrounding nonimport code unchanged. It did not repeat sufficient tests or create temps. Both PASS and frozen cleanHEAD verified. Synthetic poll/report states remain scoped fixtures, not strict cold-valid histories. Remaining corruption/metadata/history/dynamic SQL tests and broader copy/native/CI/publication/full10+1 gates are open.
+
+### Task5B4: ten current corruption and rejection tests
+
+Ten selected symbols expand to thirteen cases. The unmodified cases ran RED:
+`13 failed in 4.59s`, pytest exit 1, each at direct SQL against a retired
+Email action family. The selected bodies now resolve all rows matching their
+original predicates via finite source-shaped projections. Plan, direct-action
+and unsubscribe-receipt mutations use the corresponding source ROWID with
+`update_email_action`; unsubscribe-step mutation uses its original public
+AUTOINCREMENT `id` with `update_action`, never physical `actions.id`. Exact
+stored strings, digest bytes, 16 KiB boundary, plan JSON, action parameters
+and `action_identity` conditions are unchanged. The invalid `discarded` status
+must still raise SQLite `IntegrityError` from the target CHECK, while all
+business-corruption read/open errors retain their original types and match
+assertions. No target trigger was disabled.
+
+The selected GREEN run reported `13 passed in 4.79s`, pytest exit 0. The
+nonselected module AST is identical to its parent after excluding imports and
+the ten named functions. Scoped Ruff and diff-check pass; RED and GREEN each
+removed and verified absence of their `/tmp/email13-task5b4-*` root. The
+shared `_create_action_with_attempts` helper, attempt-count trigger fixtures,
+metadata rebuild S, historical H, composite effect/retry fixtures, other
+current T and two dynamic cursor-count tests remain deferred. This is not a
+full Task5 or publication gate.

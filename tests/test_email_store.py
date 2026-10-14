@@ -41,6 +41,7 @@ from app.email_store import (
     EMAIL_PLAN_SQL,
     EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL,
     EMAIL_UNSUBSCRIBE_RECEIPT_SQL,
+    EMAIL_UNSUBSCRIBE_STEP_SQL,
     StoredEmailLocator,
     EmailActionAttemptConflict,
     EmailActionPlanConflict,
@@ -60,7 +61,7 @@ from app.email_task_adapter import email_action_identity
 from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
 from app.store import AgentRole, AutoReplyStore
-from app.action_storage import update_email_action
+from app.action_storage import email_action_projection, update_action, update_email_action
 
 
 def _frozen_training_observation(**overrides):
@@ -6717,7 +6718,7 @@ def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
         store,
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
-    action_id = _fetchall(database, "select action_id from email_actions")[0][
+    action_id = _fetchall(database, f"select action_id from ({EMAIL_DIRECT_ACTION_SQL})")[0][
         "action_id"
     ]
 
@@ -6751,7 +6752,7 @@ def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
         2,
     ]
     current = _fetchall(
-        database, "select * from email_actions where action_id=?", (action_id,)
+        database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?", (action_id,)
     )[0]
     assert current["status"] == "done"
     assert current["attempt_count"] == 2
@@ -6782,10 +6783,12 @@ def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
         )
     with pytest.raises(sqlite3.IntegrityError, match="status"):
         with sqlite3.connect(database) as db:
-            db.execute(
-                "update email_actions set status='discarded' where action_id=?",
+            action_rows = db.execute(
+                f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
                 (action_id,),
-            )
+            ).fetchall()
+            for action_row in action_rows:
+                update_email_action(db, "email_actions", action_row[0], {"status": "discarded"})
 
 
 def test_direct_action_claim_does_not_materialize_settled_history(tmp_path: Path, monkeypatch):
@@ -8463,13 +8466,14 @@ def test_corrupt_historical_action_plan_is_rejected_on_open(tmp_path: Path):
         confirmed_category=EmailCategory.NOTIFICATION,
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            update email_action_plans
-            set actions_json='["not-an-email-action"]'
-            where action_plan_version=1
-            """
-        )
+        plan_rows = db.execute(
+            f"select rowid from ({email_action_projection('email_action_plans', include_rowid=True)}) "
+            "where action_plan_version=1"
+        ).fetchall()
+        for plan_row in plan_rows:
+            update_email_action(db, "email_action_plans", plan_row[0], {
+                "actions_json": '["not-an-email-action"]',
+            })
 
     with pytest.raises(EmailPersistenceCorruption, match="ActionPlan"):
         EmailStore(database)
@@ -8556,15 +8560,15 @@ def test_startup_rejects_noncanonical_or_unsafe_unsubscribe_result_text(
         result_text="Unsubscribed",
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_unsubscribe_receipts "
-            "set result_text=?, observation_digest=? where action_identity=?",
-            (
-                unsafe_result_text,
-                sha256(unsafe_result_text.encode("utf-8")).hexdigest(),
-                authorization["action_identity"],
-            ),
-        )
+        receipt_rows = db.execute(
+            f"select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchall()
+        for receipt_row in receipt_rows:
+            update_email_action(db, "email_unsubscribe_receipts", receipt_row[0], {
+                "result_text": unsafe_result_text,
+                "observation_digest": sha256(unsafe_result_text.encode("utf-8")).hexdigest(),
+            })
 
     with pytest.raises(
         EmailPersistenceCorruption,
@@ -8582,11 +8586,14 @@ def test_startup_rejects_wrong_untruncated_unsubscribe_observation_digest(
         result_text="Unsubscribed",
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_unsubscribe_receipts set observation_digest=? "
-            "where action_identity=?",
-            ("f" * 64, authorization["action_identity"]),
-        )
+        receipt_rows = db.execute(
+            f"select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchall()
+        for receipt_row in receipt_rows:
+            update_email_action(db, "email_unsubscribe_receipts", receipt_row[0], {
+                "observation_digest": "f" * 64,
+            })
 
     with pytest.raises(
         EmailPersistenceCorruption,
@@ -8613,15 +8620,15 @@ def test_startup_rejects_empty_nonempty_unsubscribe_digest_mismatch(
         result_text="Unsubscribed",
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_unsubscribe_receipts "
-            "set result_text=?, observation_digest=? where action_identity=?",
-            (
-                result_text,
-                observation_digest,
-                authorization["action_identity"],
-            ),
-        )
+        receipt_rows = db.execute(
+            f"select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchall()
+        for receipt_row in receipt_rows:
+            update_email_action(db, "email_unsubscribe_receipts", receipt_row[0], {
+                "result_text": result_text,
+                "observation_digest": observation_digest,
+            })
 
     with pytest.raises(
         EmailPersistenceCorruption,
@@ -8640,15 +8647,15 @@ def test_unsubscribe_result_read_fails_closed_after_durable_row_corruption(
     )
     unsafe_result_text = "https://news.example.com/unsubscribe?token=private-query"
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_unsubscribe_receipts "
-            "set result_text=?, observation_digest=? where action_identity=?",
-            (
-                unsafe_result_text,
-                sha256(unsafe_result_text.encode("utf-8")).hexdigest(),
-                authorization["action_identity"],
-            ),
-        )
+        receipt_rows = db.execute(
+            f"select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchall()
+        for receipt_row in receipt_rows:
+            update_email_action(db, "email_unsubscribe_receipts", receipt_row[0], {
+                "result_text": unsafe_result_text,
+                "observation_digest": sha256(unsafe_result_text.encode("utf-8")).hexdigest(),
+            })
 
     with pytest.raises(EmailPersistenceCorruption):
         store.get_email_unsubscribe_receipt(str(authorization["action_identity"]))
@@ -8699,11 +8706,14 @@ def test_exact_16kib_untruncated_result_requires_matching_observation_digest(
     assert receipt["result_text_truncated"] is False
     assert receipt["observation_digest"] == receipt["result_text_digest"]
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_unsubscribe_receipts set observation_digest=? "
-            "where action_identity=?",
-            ("f" * 64, authorization["action_identity"]),
-        )
+        receipt_rows = db.execute(
+            f"select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchall()
+        for receipt_row in receipt_rows:
+            update_email_action(db, "email_unsubscribe_receipts", receipt_row[0], {
+                "observation_digest": "f" * 64,
+            })
 
     with pytest.raises(EmailPersistenceCorruption, match="observation digest"):
         EmailStore(database)
@@ -8716,11 +8726,14 @@ def test_stored_bounded_result_digest_is_always_verified(tmp_path: Path) -> None
         result_text="Unsubscribed",
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_unsubscribe_receipts set result_text_digest=? "
-            "where action_identity=?",
-            ("f" * 64, authorization["action_identity"]),
-        )
+        receipt_rows = db.execute(
+            f"select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchall()
+        for receipt_row in receipt_rows:
+            update_email_action(db, "email_unsubscribe_receipts", receipt_row[0], {
+                "result_text_digest": "f" * 64,
+            })
 
     with pytest.raises(EmailPersistenceCorruption, match="bounded result digest"):
         EmailStore(database)
@@ -8930,11 +8943,14 @@ def test_unsubscribe_terminal_snapshot_rejects_step_effect_digest_tamper(
         result_text="Unsubscribed",
     )
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update email_unsubscribe_steps set effect_digest=? "
-            "where action_identity=?",
-            ("f" * 64, authorization["action_identity"]),
-        )
+        step_rows = db.execute(
+            f"select id from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchall()
+        for step_row in step_rows:
+            update_action(db, "email_unsubscribe_steps", step_row[0], {
+                "effect_digest": "f" * 64,
+            })
 
     with pytest.raises(EmailPersistenceCorruption, match="effect-bound"):
         store.get_email_unsubscribe_terminal_snapshot(
@@ -9451,10 +9467,13 @@ def test_direct_action_parameters_must_match_immutable_plan(tmp_path: Path):
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_actions set parameters_json=?",
-            ('{"labels":["silently-changed"]}',),
-        )
+        action_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})"
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row[0], {
+                "parameters_json": '{"labels":["silently-changed"]}',
+            })
 
     with pytest.raises(EmailPersistenceCorruption, match="immutable direct action"):
         EmailStore(database)
