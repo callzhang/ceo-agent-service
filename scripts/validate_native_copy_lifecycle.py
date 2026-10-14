@@ -123,23 +123,175 @@ class InMemoryProvider:
 
 
 def original_rows_unchanged(source, candidate):
-    with sqlite3.connect(candidate) as db:
-        db.execute("attach database ? as baseline", (str(source),))
-        virtual = [r[0] for r in db.execute("select name from baseline.sqlite_master where type='table' and sql like 'CREATE VIRTUAL TABLE%'")]
-        tables = [r[0] for r in db.execute("select name from baseline.sqlite_master where type='table' and name not like 'sqlite_%'")
+    # The target Email trigger names main explicitly, so SQLite cannot load a
+    # second target copy as an ATTACHed schema. Compare rows on two read-only
+    # connections instead; rowid (or WITHOUT ROWID primary key) bounds memory.
+    with sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True) as baseline, \
+            sqlite3.connect(candidate.resolve().as_uri() + "?mode=ro", uri=True) as db:
+        virtual = [r[0] for r in baseline.execute("select name from sqlite_master where type='table' and sql like 'CREATE VIRTUAL TABLE%'")]
+        tables = [r[0] for r in baseline.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%'")
                   if not any(r[0] == v or r[0].startswith(v + "_") for v in virtual)]
+        without_rowid = {row[1] for row in baseline.execute("pragma table_list") if row[4]}
         changed = {}
         for table in tables:
             quoted = '"' + table.replace('"', '""') + '"'
-            count = db.execute(f"select count(*) from (select * from baseline.{quoted} except select * from main.{quoted})").fetchone()[0]
+            if table in without_rowid:
+                pk = [row[1] for row in sorted(
+                    baseline.execute(f"pragma table_info({quoted})"), key=lambda row: row[5]
+                ) if row[5]]
+                assert pk
+                keys = ",".join('quote("' + name.replace('"', '""') + '")' for name in pk)
+                order = ",".join(str(i) for i in range(1, len(pk) + 1))
+                projection = keys + ",*"
+                key_indexes = tuple(range(len(pk)))
+            else:
+                order = "rowid"
+                projection = "rowid,*"
+                key_indexes = (0,)
+            source_rows = baseline.execute(f"select {projection} from {quoted} order by {order}")
+            candidate_rows = iter(db.execute(f"select {projection} from {quoted} order by {order}"))
+            current = next(candidate_rows, None)
+            count = 0
+            for expected in source_rows:
+                expected_key = tuple(expected[i] for i in key_indexes)
+                while current is not None and tuple(current[i] for i in key_indexes) < expected_key:
+                    current = next(candidate_rows, None)
+                if current is None or tuple(current[i] for i in key_indexes) != expected_key:
+                    count += 1
+                    continue
+                if tuple(current) != tuple(expected):
+                    count += 1
+                current = next(candidate_rows, None)
             if count:
                 changed[table] = count
         fks = {tuple(r) for r in db.execute("pragma foreign_key_check")}
-    with sqlite3.connect(source) as db:
-        original_fks = {tuple(r) for r in db.execute("pragma foreign_key_check")}
+        original_fks = {tuple(r) for r in baseline.execute("pragma foreign_key_check")}
     assert not changed, changed
     assert fks == original_fks
     return len(tables)
+
+
+def _backup_database(source, destination):
+    assert not destination.exists()
+    with sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True) as original, \
+            sqlite3.connect(destination) as copy:
+        original.backup(copy)
+
+
+def _file_sha256(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _publish_email_pair(repo, candidate):
+    from app.action_email_schema_release import TARGET_EMAIL_VERSION, TARGET_STORE_VERSION
+    from app.action_email_storage import SOURCE_TABLES
+    from app.action_storage import ALL_ACTION_TYPES_WITH_REPLY, reply_schema_is_current
+    from app.email_store import EmailStore
+    from app.store import AutoReplyStore
+    from app.store_schema_release import prepare_database_schema_release
+    from app.action_email_definitions import EMAIL_TYPES_ORDER
+
+    release = prepare_database_schema_release(repo, candidate)
+    assert release is not None and release.original_version[0] == "2026-10-13.5"
+    assert release.versions[-1][0] == 51
+    release.publish()
+    AutoReplyStore(candidate)
+    EmailStore(candidate)
+    with sqlite3.connect(candidate) as db:
+        store_version = db.execute(
+            "select value from service_state where key='store_schema_version'"
+        ).fetchone()
+        email_version = db.execute("select max(version) from email_schema_migrations").fetchone()
+        tables = {row[0] for row in db.execute(
+            "select name from sqlite_schema where type='table'"
+        )}
+        assert store_version == (TARGET_STORE_VERSION,)
+        assert email_version == (TARGET_EMAIL_VERSION,)
+        assert len(ALL_ACTION_TYPES_WITH_REPLY) + len(EMAIL_TYPES_ORDER) == 29
+        assert not tables.intersection(SOURCE_TABLES)
+        assert reply_schema_is_current(db, include_email=True)
+    return {"store": store_version[0], "email": email_version[0],
+            "action_types": 29, "retired_email_tables": len(SOURCE_TABLES)}
+
+
+def _exercise_current_email(candidate):
+    """Use current public Email APIs with one isolated in-memory provider result."""
+    from datetime import datetime, timezone
+
+    from app.email_classifier_contracts import (
+        EmailAction, EmailCategory, EmailClassification, EmailClassificationStatus,
+        build_email_action_plan,
+    )
+    from app.email_store import EmailStore, EMAIL_DIRECT_ACTION_LOCATOR_SQL
+    from app.store import AutoReplyStore
+
+    email = EmailStore(candidate)
+    store = AutoReplyStore(candidate)
+    unique = uuid4().hex
+    account_id = "native-copy-" + unique
+    classification_id = uuid4().int & ((1 << 63) - 1) or 1
+    message_id = f"<native-copy-{unique}@example.test>"
+    identity = f"{account_id}:message-id:{message_id}"
+    now = datetime(2026, 10, 14, tzinfo=timezone.utc)
+    plan = build_email_action_plan(
+        classification_id=classification_id, account_id=account_id,
+        category=EmailCategory.WORK, classification_source="model",
+        confidence=0.98, model_id="native-copy:deterministic",
+        config_version="native-copy:v1", actions=(EmailAction.MARK_READ,),
+        action_parameters={EmailAction.MARK_READ: {}}, created_at=now,
+    )
+    classification = EmailClassification.model_validate({
+        "classification_id": classification_id, "stable_message_identity": identity,
+        "provider_locator": {"account_id": account_id, "folder": "INBOX",
+                             "uidvalidity": 42, "uid": 41, "rfc_message_id": message_id,
+                             "thread_id": "native-copy-thread-" + unique},
+        "category": EmailCategory.WORK, "confidence": 0.98, "margin": 0.42,
+        "probabilities": {"work": 0.98}, "model_id": "native-copy:deterministic",
+        "config_version": "native-copy:v1", "status": EmailClassificationStatus.PROCESSED,
+        "classification_source": "model", "action_plan": plan,
+    })
+    email.upsert_classification(
+        classification, sender="sender@example.test", subject="Native copy source",
+        model_text="Durable source text", received_at=now.isoformat(),
+    )
+    action_ids = email.direct_action_ids_for_plan(plan.action_plan_id)
+    assert len(action_ids) == 1
+    action_id = action_ids[0]
+    context = email.list_email_context_thread(
+        account_id=account_id, stable_message_identity=identity,
+    )
+    assert len(context) == 1 and context[0]["stable_message_identity"] == identity
+    assert email.list_email_context_receipts(
+        account_id=account_id, stable_message_identity=identity,
+    ) == []
+    claimed = email.claim_direct_action(action_id=action_id, claimed_at=now.isoformat())
+    assert claimed is not None and claimed.action_id == action_id
+    result = email.complete_direct_action_attempt(
+        claimed, status="done", provider_operation="mark_read",
+        provider_target=identity, provider_result_id="in-memory-" + unique,
+        error="", finished_at="2026-10-14T00:00:01+00:00",
+    )
+    attempts = email.list_action_attempts(action_id)
+    assert result["status"] == "done" and len(attempts) == 1
+    assert attempts[0]["provider_result_id"] == "in-memory-" + unique
+    with sqlite3.connect(candidate) as db:
+        source_rowid = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
+            (action_id,),
+        ).fetchone()[0]
+    history = [item for item in store.list_operation_logs(source_tables=("email_actions",))
+               if item.source_id == source_rowid]
+    assert len(history) == 1 and history[0].id == f"email-action:{source_rowid}"
+    assert history[0].status == "done"
+    reopened = EmailStore(candidate)
+    assert reopened.list_action_attempts(action_id) == attempts
+    assert len(reopened.list_email_context_thread(
+        account_id=account_id, stable_message_identity=identity,
+    )) == 1
+    return {"context_messages": len(context), "prior_context_receipts": 0,
+            "direct_attempts": len(attempts), "direct_status": "done",
+            "provider_result_persisted": True, "history_locator_valid": True}
 
 
 def run(root, case="approve"):
@@ -147,10 +299,15 @@ def run(root, case="approve"):
     assert root.parent == Path("/private/tmp") and root.name.startswith("ceo-native-copy.")
     source = root / "source.sqlite3"
     metadata = json.loads((root / "source-meta.json").read_text())
-    assert hashlib.sha256(source.read_bytes()).hexdigest() == metadata["sha256"]
+    assert _file_sha256(source) == metadata["sha256"]
     candidate_path = root / "candidate.sqlite3"
     assert not candidate_path.exists()
     shutil.copyfile(source, candidate_path)
+    published_pair = _publish_email_pair(ROOT, candidate_path)
+    target_baseline = root / "pre-native-target.sqlite3"
+    _backup_database(candidate_path, target_baseline)
+    target_baseline_hash = _file_sha256(target_baseline)
+    assert _file_sha256(source) == metadata["sha256"]
     workspace = root / "workspace"
     workspace.mkdir()
     # This test needs only the real task-bound local MCP, injected by role builders.
@@ -261,7 +418,9 @@ def run(root, case="approve"):
     completed = worker.process_claimed_reply_task(task)
     runs = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
     current = store.get_reply_task(task.id)
-    report = {"case": case, "interrupted": interrupted, "source": metadata, "task_id": task.id, "conversation_id": key, "status": current.status,
+    report = {"case": case, "interrupted": interrupted, "source": metadata,
+        "published_pair": published_pair, "native_baseline_phase": "post_email_publication",
+        "task_id": task.id, "conversation_id": key, "status": current.status,
         "completed": completed, "native_invocations": native.calls,
         "provider_calls": len(provider.calls), "verification_calls": len(provider.verifications), "runs": []}
     for run in runs:
@@ -306,8 +465,10 @@ def run(root, case="approve"):
     recovered = AgentOrchestrator(store=reopened, consumer=object(), audit=object(), system_executor=None)
     assert recovered.persisted_terminal_result(reopened.get_reply_task(task.id)).status == ("no_action" if case == "no_action" else "executed")
     report["reopen_no_new_invocation"] = len(native.calls)
-    report["original_tables_unchanged"] = original_rows_unchanged(source, candidate_path)
-    assert hashlib.sha256(source.read_bytes()).hexdigest() == metadata["sha256"]
+    report["email_direct"] = _exercise_current_email(candidate_path)
+    report["original_tables_unchanged"] = original_rows_unchanged(target_baseline, candidate_path)
+    assert _file_sha256(source) == metadata["sha256"]
+    assert _file_sha256(target_baseline) == target_baseline_hash
     report["passed"] = True
     (root / "native-result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
     print(json.dumps({"event": "acceptance_pass", "task_id": task.id, "native_invocations": len(native.calls),
