@@ -366,7 +366,8 @@ def test_reply_lookup_indices_survive_other_type_volume(pair):
     parent_column = "memory_attempt_id" if variant == "actual" else "memory_attempt_ref"
     physical_parent = aid if variant == "actual" else storage.action_physical_id(target, "reply_attempts", aid)
     cases = [
-        ("idx_actions_public_id", "select id from actions where " + storage._identity_predicate("reply_attempts"),
+        (("idx_actions_public_id", "idx_actions_reply_public_order"),
+         "select id from actions where " + storage._identity_predicate("reply_attempts"),
          storage._identity_arguments("reply_attempts", aid)),
         ("idx_actions_reply_trigger_message", "select id from actions where record_type='reply_attempts' and attempt_trigger_message_id=?", ("m",)),
         ("idx_actions_reply_status", "select id from actions where record_type='reply_attempts' and attempt_send_status=? order by attempt_created_at", ("pending",)),
@@ -374,9 +375,14 @@ def test_reply_lookup_indices_survive_other_type_volume(pair):
         ("idx_actions_memory_status", "select id from actions where record_type='memory_write_events' and memory_status=? order by " +
          ("cast(legacy_key as integer)" if variant == "actual" else "memory_updated_at"), ("pending",)),
     ]
+    assert target.execute(cases[0][1], cases[0][2]).fetchall() == [
+        (storage.action_physical_id(target, "reply_attempts", aid),)]
+    assert storage.action_physical_id(target, "reply_attempts", aid) != \
+        storage.action_physical_id(target, "memory_write_events", 1)
     for name, sql, arguments in cases:
         plan = target.execute("explain query plan " + sql, arguments).fetchall()
-        assert any(name in row[3] for row in plan), (name, plan)
+        expected = (name,) if isinstance(name, str) else name
+        assert any(index in row[3] for index in expected for row in plan), (name, plan)
 
 
 def test_fresh_ignored_memory_constraints_advance_native_allocator(pair):

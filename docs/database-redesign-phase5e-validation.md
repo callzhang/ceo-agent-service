@@ -584,3 +584,33 @@ were cleaned; no native transcript was copied and native sessions remain in
 the normal native home. Concise references and aggregate evidence are in
 `evals/database_redesign/phase5e_native_copy.v1.json`. No real outbound action,
 production mutation, complete CI, deployment or live readback is claimed here.
+
+## Task 6 source index matrix and bounded-growth repair
+
+The captured actual and fresh source DDL supplied all seven Attempt and both
+Memory lookup indexes for a source/Store19 result, query-plan and SQLite VM-step
+matrix. The same 20 logical Attempt/Memory rows were tested with 20 then 1,020
+unrelated sent actions; all nine translated index paths returned source-equivalent
+values, including raw NUL text and scalar `agent_run_id`, and stayed within the
+existing +100-step target budget. The original created-at range and exact
+Memory-parent query were also tested while their **own** table grew from 20 to
+1,020 rows with fixed matches. Before repair, source created-range work was
+37→30 steps while either target variant grew 440→11,419; fresh source Memory
+parent work was 20→16 while target grew 275→10,247. Results matched, but
+target plans scanned public-ID order rather than the selective source path.
+
+The Store19-only created index now begins with `record_type`, so the same
+created-range target query uses that index at 99→78 steps. The existing Reply
+public-order index is declared unique on its unchanged keys/predicate; the
+existing global public-ID uniqueness and canonical integer-text constraint
+already enforce that property. SQLite now starts fresh Memory equality at its
+single Reply parent, then uses the Memory parent index at 86→58 steps.
+The Memory LEFT JOIN, fields, old schema versions and public API are unchanged.
+An existing physical-ID test accepts either equivalent unique point-lookup
+index and still checks the resolved Attempt physical row against the overlapping
+Memory public ID. The four older 6/9/12/14-type manifests retained their exact
+pre-edit metadata hashes. RED was three failures across the two created variants
+and fresh Memory parent; after repair the nine-file focused gate passed 325
+tests with eight fixture-dependent skips. Ruff and diff checks passed. This
+remains an unpublished candidate correction; final CI, push, deployment and
+live readback are separate gates.

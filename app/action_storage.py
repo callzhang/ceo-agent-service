@@ -385,11 +385,11 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if include_reply:
         memory_parent = "memory_attempt_ref" if reply_variant == "fresh_memory_fk" else "memory_attempt_id"
         indexes += (
-            "create index idx_actions_reply_public_order on actions(record_type,cast(legacy_key as integer)) where record_type='reply_attempts'",
+            "create unique index idx_actions_reply_public_order on actions(record_type,cast(legacy_key as integer)) where record_type='reply_attempts'",
             "create index idx_actions_memory_public_order on actions(record_type,cast(legacy_key as integer)) where record_type='memory_write_events'",
             "create index idx_actions_reply_trigger_message on actions(attempt_trigger_message_id) where record_type='reply_attempts'",
             "create index idx_actions_reply_status on actions(attempt_send_status,attempt_created_at) where record_type='reply_attempts'",
-            "create index idx_actions_reply_created on actions(attempt_created_at,cast(legacy_key as integer)) where record_type='reply_attempts'",
+            "create index idx_actions_reply_created on actions(record_type,attempt_created_at,cast(legacy_key as integer)) where record_type='reply_attempts'",
             "create index idx_actions_reply_oa_history on actions(attempt_oa_process_instance_id,attempt_created_at desc,cast(legacy_key as integer) desc) where record_type='reply_attempts' and attempt_oa_process_instance_id<>''",
             "create index idx_actions_reply_trigger_history on actions(attempt_conversation_id,attempt_trigger_message_id,attempt_action,cast(legacy_key as integer) desc) where record_type='reply_attempts'",
             "create index idx_actions_reply_current_trigger on actions(attempt_channel,attempt_conversation_id,attempt_trigger_message_id,attempt_updated_at desc,cast(legacy_key as integer) desc) where record_type='reply_attempts'",
