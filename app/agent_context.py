@@ -190,22 +190,33 @@ class AgentTaskContext:
             for index, material in enumerate(materials):
                 material["reference"] = {"source_ref": f"{source_reference}.materials[{index}].reference"}
         effective_current_time = current_time or _current_local_time()
+        trigger_instant = _context_instant(self.trigger_create_time)
+        trigger_authority = {
+            "authoritative_message_id": self.trigger_message_id,
+            "instruction": (
+                "The authoritative input for this task is the Original trigger "
+                "with this message_id. Decide what that message requires. "
+                "Recent conversation context and materials may establish that "
+                "this original request has already been resolved. A later "
+                "request is a different task and must not replace, redirect, "
+                "or add to the original task objective."
+            ),
+        }
+        if self.channel == "dingtalk":
+            trigger_authority["reply_target_message_id"] = self.trigger_message_id
+        same_id_messages = [
+            {
+                "message_id": message.message_id,
+                "text_matches_frozen_trigger": message.text == self.trigger_text,
+            }
+            for message in self.messages
+            if message.message_id == self.trigger_message_id
+        ]
         sections = [
             "Current turn execution time\n"
             + effective_current_time,
             "Task trigger authority\n"
-            + _json(
-                {
-                    "authoritative_message_id": self.trigger_message_id,
-                    "instruction": (
-                        "The authoritative input for this task is the Original trigger "
-                        "with this message_id. Decide what that message requires. "
-                        "Recent conversation context and materials are supporting "
-                        "evidence only; they must not replace, redirect, or add a "
-                        "different task to the trigger."
-                    ),
-                }
-            ),
+            + _json(trigger_authority),
             "Canonical time facts\n"
             + _json(
                 {
@@ -221,12 +232,17 @@ class AgentTaskContext:
                             "create_time": _canonical_context_time(
                                 message.create_time
                             ),
+                            "seconds_from_trigger": _seconds_between(
+                                trigger_instant, _context_instant(message.create_time)
+                            ),
                         }
                         for message in self.messages
                     ],
                     "comparison_rule": (
-                        "Compare only the UTC values. A DingTalk timestamp without "
-                        "an explicit offset is Asia/Shanghai before conversion."
+                        "Compare only the UTC values. seconds_from_trigger is computed from UTC "
+                        "instants: negative is earlier, "
+                        "zero is simultaneous, positive is later, and null means unavailable. "
+                        "A DingTalk timestamp without an explicit offset is Asia/Shanghai."
                     ),
                 }
             ),
@@ -234,6 +250,18 @@ class AgentTaskContext:
             "Recent conversation context\n" + _json(messages),
             "Raw material references and exact read commands\n" + _json(materials),
         ]
+        if self.channel == "dingtalk":
+            sections.insert(2, "Task input provenance\n" + _json({
+                "snapshot_source": "queued_task_input",
+                "snapshot_fields": ["trigger_text", "trigger_create_time", "trigger_raw_payload"],
+                "context_source": "recent_conversation_read",
+                "same_id_context_messages": same_id_messages,
+                "interpretation": (
+                    "The queued trigger is the saved task input and exact reply target. "
+                    "A current card or message with the same ID may render differently; "
+                    "that later read is current context, not a replacement for the saved trigger."
+                ),
+            }))
         if self.required_proposal_action:
             sections.append(
                 "Task-bound proposal contract\n"
@@ -391,6 +419,22 @@ class AuditTurnContext:
                     "A field-type observation must match its exact JSON Pointer path, literal value, "
                     "and JSON type here; do not infer the type from identifier appearance."
                 ),
+                *(
+                    (
+                        "Service-captured source binding provenance\n"
+                        + _json({
+                            "managed_by": "service",
+                            "capture_point": "after_consumer_result_before_audit",
+                            "providers": [binding.provider for binding in self.candidate.source_bindings],
+                        })
+                        + "\nConsumer cannot edit source_bindings in the adopted candidate: the service "
+                        "captures them from the task context and referenced provider objects. "
+                        "Review Consumer-authored fields against the saved trigger and current facts. "
+                        "If a current card changed, identify the change and its effect on the proposed "
+                        "action; do not request a revision of a service-captured historical binding.",
+                    )
+                    if self.candidate.source_bindings else ()
+                ),
                 "Candidate revision\n"
                 + _json(
                     {
@@ -437,20 +481,38 @@ def _canonical_context_time(value: str) -> dict[str, str]:
     raw = value.strip()
     if not raw:
         return {"raw": "", "status": "missing"}
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
+    parsed = _context_instant(raw)
+    if parsed is None:
         return {"raw": raw, "status": "unparseable"}
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=_DINGTALK_MESSAGE_TIME_ZONE)
-        assumed_timezone = "Asia/Shanghai"
-    else:
-        assumed_timezone = "explicit"
     return {
         "raw": raw,
-        "assumed_timezone": assumed_timezone,
+        "assumed_timezone": "explicit" if _has_explicit_timezone(raw) else "Asia/Shanghai",
         "utc": parsed.astimezone(timezone.utc).isoformat(),
     }
+
+
+def _context_instant(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_DINGTALK_MESSAGE_TIME_ZONE)
+    return parsed.astimezone(timezone.utc)
+
+
+def _has_explicit_timezone(value: str) -> bool:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+    except ValueError:
+        return False
+
+
+def _seconds_between(start: datetime | None, end: datetime | None) -> int | float | None:
+    if start is None or end is None:
+        return None
+    seconds = (end - start).total_seconds()
+    return int(seconds) if seconds.is_integer() else seconds
 
 
 _CONSUMER_AGENT_RULES = """## Application Result Contract

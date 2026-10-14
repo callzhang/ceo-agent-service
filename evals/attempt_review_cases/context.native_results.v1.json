@@ -1,0 +1,305 @@
+{
+  "manifest": {
+    "version": "attempt-review-context.v1",
+    "baseline_ref": "c5a2e516",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "source_boundary": "Authentic failure-derived sanitized tool-free Audit comparison; not a live service or provider execution. Same subject, facts, role instructions and model; only context renderer changes.",
+    "cases": [
+      {
+        "id": "mutable_card_resolved",
+        "source_attempt": 15452,
+        "kind": "card",
+        "expected_outcomes": [
+          "approve"
+        ],
+        "criterion": "Original Derek node is agreed; current card points to another approver. Approve no_action without requiring Consumer to modify service-generated historical source_bindings."
+      },
+      {
+        "id": "reply_after_trigger",
+        "source_attempt": 15436,
+        "kind": "reply",
+        "expected_outcomes": [
+          "approve"
+        ],
+        "criterion": "Reply at +319 seconds resolves original request; follow-up at +401 seconds has its own completed read/reply task. Approve ending the old task; do not invent reversed chronology or demand a different reply target."
+      },
+      {
+        "id": "unanswered_original_control",
+        "source_attempt": 15436,
+        "kind": "unanswered",
+        "expected_outcomes": [
+          "return",
+          "reject"
+        ],
+        "criterion": "No later source answers original request. Reject or return unsupported no_action rather than infer completion from chronology alone."
+      },
+      {
+        "id": "changed_reply_target_control",
+        "source_attempt": 15436,
+        "kind": "wrong_target",
+        "expected_outcomes": [
+          "return",
+          "reject"
+        ],
+        "criterion": "Later source can inform content but cannot change fixed reply_to_message target; return actual wrong target."
+      }
+    ]
+  },
+  "baseline_source_sha256": "d20dbd65982650ad7ea4aa0099e120098e8ef9534d6ae46a23f3b935d9b90f6f",
+  "candidate_source_sha256": "be3e736ffabe6174b07caaae3927cd54d2236179a8a4f4f1e1082eeea38d1a6b",
+  "developer_sha256": "178cf9eecaefb9fedfcdd032977b2081a2da9c35b8aca5119dc8c524ed6c9f15",
+  "results": [
+    {
+      "id": "mutable_card_resolved",
+      "side": "baseline",
+      "prompt_sha256": "7e333b548a225efe165f4ff7eef7de2b15043163557f3d23356185a390409eb0",
+      "result": {
+        "outcome": "approve",
+        "summary": "approve：原始触发要求处理 original-node；已核实 Principal 已在同一对话明确同意 original-node，且当前 next-node 由另一位审批人处理。因此原请求已有有效回复，候选的不再回复与当前业务状态一致；未将后续节点误称为整个流程完成。",
+        "proposal_revision": 3,
+        "candidate_digest": "d531312b29c68427cef99a128c0c2fa0579d85ba58dbc4e6904594189d98d6cd",
+        "evidence_refs": [
+          "task_context:original-card",
+          "task_context:approval-notice",
+          "candidate:/outcome",
+          "candidate:/summary",
+          "candidate:/source_bindings/0/value/messages"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.97,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"approve：原始触发要求处理 original-node；已核实 Principal 已在同一对话明确同意 original-node，且当前 next-node 由另一位审批人处理。因此原请求已有有效回复，候选的不再回复与当前业务状态一致；未将后续节点误称为整个流程完成。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.97,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":3,\"candidate_digest\":\"d531312b29c68427cef99a128c0c2fa0579d85ba58dbc4e6904594189d98d6cd\",\"evidence_refs\":[\"task_context:original-card\",\"task_context:approval-notice\",\"candidate:/outcome\",\"candidate:/summary\",\"candidate:/source_bindings/0/value/messages\"],\"feedback\":null}",
+      "error": "",
+      "binding_correct": false,
+      "outcome_passed": false,
+      "semantic_criterion": "Original Derek node is agreed; current card points to another approver. Approve no_action without requiring Consumer to modify service-generated historical source_bindings."
+    },
+    {
+      "id": "mutable_card_resolved",
+      "side": "candidate",
+      "prompt_sha256": "41d49ec8cd688010753732063f5dd9d0f2340019112d94247c08a28424c48842",
+      "result": {
+        "outcome": "approve",
+        "summary": "approve：当前候选正确依据权威原始触发处理原节点。原始触发中的 taskId 为 original-node，Principal 已在同一会话明确同意 original-node；当前消息内容虽显示为后续节点 next-node，但不能替换权威触发，也没有证据表明需要代表 Principal 再次回复。候选保持 no_action，且未声称整个审批流程已结束，符合当前事实与交付范围。",
+        "proposal_revision": 3,
+        "candidate_digest": "d531312b29c68427cef99a128c0f2fa0579d85ba58dbc4e6904594189d98d6cd",
+        "evidence_refs": [
+          "task_context:original-card",
+          "task_trigger_authority:original-card",
+          "canonical_time_facts",
+          "recent_conversation:approval-notice",
+          "candidate:/outcome",
+          "candidate:/summary",
+          "candidate:/source_bindings/0/value/trigger_text"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"approve：当前候选正确依据权威原始触发处理原节点。原始触发中的 taskId 为 original-node，Principal 已在同一会话明确同意 original-node；当前消息内容虽显示为后续节点 next-node，但不能替换权威触发，也没有证据表明需要代表 Principal 再次回复。候选保持 no_action，且未声称整个审批流程已结束，符合当前事实与交付范围。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":3,\"candidate_digest\":\"d531312b29c68427cef99a128c0f2fa0579d85ba58dbc4e6904594189d98d6cd\",\"evidence_refs\":[\"task_context:original-card\",\"task_trigger_authority:original-card\",\"canonical_time_facts\",\"recent_conversation:approval-notice\",\"candidate:/outcome\",\"candidate:/summary\",\"candidate:/source_bindings/0/value/trigger_text\"],\"feedback\":null}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "Original Derek node is agreed; current card points to another approver. Approve no_action without requiring Consumer to modify service-generated historical source_bindings."
+    },
+    {
+      "id": "reply_after_trigger",
+      "side": "baseline",
+      "prompt_sha256": "cfc39aa0635a0ccc113d48ca1dc4b4ca346ac4156baf7f3e3951c6ca0f8929c1",
+      "result": {
+        "outcome": "approve",
+        "summary": "批准当前候选：原请求已由 Principal 在现有回复及后续独立任务中完成回应，当前没有未处理的交付动作；不应针对原消息重复发送回复。",
+        "proposal_revision": 3,
+        "candidate_digest": "6c71017466a4ced5fc774fc4083ec82407916ee423c7ff561d6366f4692ef88d",
+        "evidence_refs": [
+          "task_context:original-request",
+          "task_context:existing-reply",
+          "task_context:followup-request",
+          "task_context:followup-result",
+          "candidate:/outcome",
+          "candidate:/summary"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"批准当前候选：原请求已由 Principal 在现有回复及后续独立任务中完成回应，当前没有未处理的交付动作；不应针对原消息重复发送回复。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.98,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":3,\"candidate_digest\":\"6c71017466a4ced5fc774fc4083ec82407916ee423c7ff561d6366f4692ef88d\",\"evidence_refs\":[\"task_context:original-request\",\"task_context:existing-reply\",\"task_context:followup-request\",\"task_context:followup-result\",\"candidate:/outcome\",\"candidate:/summary\"],\"feedback\":null}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "Reply at +319 seconds resolves original request; follow-up at +401 seconds has its own completed read/reply task. Approve ending the old task; do not invent reversed chronology or demand a different reply target."
+    },
+    {
+      "id": "reply_after_trigger",
+      "side": "candidate",
+      "prompt_sha256": "814e15689d3a65abe4d6be0be7bfcb7bd8642e37c4acebad069c58506a0a20bb",
+      "result": {
+        "outcome": "return",
+        "summary": "候选不应关闭原请求：原始触发仍是当前待处理的交付目标，现有回复及后续任务结果不能替代本轮对原请求的回应。请重新生成针对原始消息的完整回复候选，并绑定原始消息的回复目标。",
+        "proposal_revision": 3,
+        "candidate_digest": "6c71017466a4ced5fc774fc4083ec82407916ee423c7ff561d6366f4692ef88d",
+        "evidence_refs": [
+          "task_context:original-request",
+          "canonical_time_facts",
+          "candidate_revision:3"
+        ],
+        "feedback": {
+          "rule": "原触发是权威请求；近期上下文和其他任务结果只能作为补充证据，不能替换或关闭原业务目标。对需要回复的原始请求，必须准备绑定该触发消息的完整回复候选。",
+          "observation": "原始请求“请核对结算单和读取能力。”仍是本轮唯一权威目标。候选将 outcome 设为 no_action，并以已有回复和另一任务处理新消息为理由关闭本轮，但这些事实没有证明原始请求已在当前控制中完成，也不能把 followup-result 当作原始请求的替代交付。",
+          "requested_revision": "保留原始消息作为回复目标，重新生成针对“请核对结算单和读取能力”的完整 reply_to_message 候选，提供准确的核对结果、读取能力结果及必要的下一步；不要以已有回复或另一任务处理后续消息为理由返回 no_action。",
+          "observation_basis": "business",
+          "candidate_field_assertions": []
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"候选不应关闭原请求：原始触发仍是当前待处理的交付目标，现有回复及后续任务结果不能替代本轮对原请求的回应。请重新生成针对原始消息的完整回复候选，并绑定原始消息的回复目标。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"medium\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"return\",\"proposal_revision\":3,\"candidate_digest\":\"6c71017466a4ced5fc774fc4083ec82407916ee423c7ff561d6366f4692ef88d\",\"evidence_refs\":[\"task_context:original-request\",\"canonical_time_facts\",\"candidate_revision:3\"],\"feedback\":{\"rule\":\"原触发是权威请求；近期上下文和其他任务结果只能作为补充证据，不能替换或关闭原业务目标。对需要回复的原始请求，必须准备绑定该触发消息的完整回复候选。\",\"observation\":\"原始请求“请核对结算单和读取能力。”仍是本轮唯一权威目标。候选将 outcome 设为 no_action，并以已有回复和另一任务处理新消息为理由关闭本轮，但这些事实没有证明原始请求已在当前控制中完成，也不能把 followup-result 当作原始请求的替代交付。\",\"requested_revision\":\"保留原始消息作为回复目标，重新生成针对“请核对结算单和读取能力”的完整 reply_to_message 候选，提供准确的核对结果、读取能力结果及必要的下一步；不要以已有回复或另一任务处理后续消息为理由返回 no_action。\",\"observation_basis\":\"business\",\"candidate_field_assertions\":[]}}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": false,
+      "semantic_criterion": "Reply at +319 seconds resolves original request; follow-up at +401 seconds has its own completed read/reply task. Approve ending the old task; do not invent reversed chronology or demand a different reply target."
+    },
+    {
+      "id": "unanswered_original_control",
+      "side": "baseline",
+      "prompt_sha256": "9f941a216ca2550f2b8330bcc9a6f9246544b6fd8098444950fe7c6e7edc1513",
+      "result": {
+        "outcome": "return",
+        "summary": "候选方案不能执行：它把仍未完成的原请求错误判定为无需回复，并以未核实的后续处理作为不重复发送的依据。",
+        "proposal_revision": 3,
+        "candidate_digest": "ba500c96b6756d90f9c9dce052a97eb0c68f4b235a82ea2ba855098f447d1d2c",
+        "evidence_refs": [
+          "original-request"
+        ],
+        "feedback": {
+          "rule": "原触发是权威请求；只有已核实的后续回应或已完成的独立处理才能证明原请求无需继续响应。候选不得添加未经来源支持的完成结论。",
+          "observation": "原请求“请核对结算单和读取能力。”仍是当前唯一权威触发。候选的 source_bindings 仅记录该原请求，materials 为空；当前事实未提供任何已核实的后续回应、独立处理结果或完成回执。因此“原请求已经得到后续回应，新消息已由另一任务处理”没有事实依据。",
+          "requested_revision": "保留原请求目标，重新生成候选：基于可核实材料决定如何回应或请求完成核对所需的具体材料；不得以未核实的后续回应、另一任务处理或“不重复发送”作为结论。",
+          "observation_basis": "candidate_fields",
+          "candidate_field_assertions": [
+            {
+              "path": [
+                "summary"
+              ],
+              "value": "原请求已经得到后续回应，新消息已由另一任务处理，不重复发送。",
+              "json_type": "string"
+            },
+            {
+              "path": [
+                "proposal"
+              ],
+              "value": null,
+              "json_type": "null"
+            }
+          ]
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"候选方案不能执行：它把仍未完成的原请求错误判定为无需回复，并以未核实的后续处理作为不重复发送的依据。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"return\",\"proposal_revision\":3,\"candidate_digest\":\"ba500c96b6756d90f9c9dce052a97eb0c68f4b235a82ea2ba855098f447d1d2c\",\"evidence_refs\":[\"original-request\"],\"feedback\":{\"rule\":\"原触发是权威请求；只有已核实的后续回应或已完成的独立处理才能证明原请求无需继续响应。候选不得添加未经来源支持的完成结论。\",\"observation\":\"原请求“请核对结算单和读取能力。”仍是当前唯一权威触发。候选的 source_bindings 仅记录该原请求，materials 为空；当前事实未提供任何已核实的后续回应、独立处理结果或完成回执。因此“原请求已经得到后续回应，新消息已由另一任务处理”没有事实依据。\",\"requested_revision\":\"保留原请求目标，重新生成候选：基于可核实材料决定如何回应或请求完成核对所需的具体材料；不得以未核实的后续回应、另一任务处理或“不重复发送”作为结论。\",\"observation_basis\":\"candidate_fields\",\"candidate_field_assertions\":[{\"path\":[\"summary\"],\"value\":\"原请求已经得到后续回应，新消息已由另一任务处理，不重复发送。\",\"json_type\":\"string\"},{\"path\":[\"proposal\"],\"value\":null,\"json_type\":\"null\"}]}}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "No later source answers original request. Reject or return unsupported no_action rather than infer completion from chronology alone."
+    },
+    {
+      "id": "unanswered_original_control",
+      "side": "candidate",
+      "prompt_sha256": "3c0a6aabae3044da2decfdfbc929e4bc025415bbbcb591d1917493ccc121b801",
+      "result": {
+        "outcome": "return",
+        "summary": "退回候选：原请求要求核对结算单并读取能力，当前候选却以“已由另一任务处理”为由不采取行动；已提供事实未证明该请求已完成或已有后续回应，因此不能将其标记为 no_action。",
+        "proposal_revision": 3,
+        "candidate_digest": "ba500c96b6756d90f9c9dce052a97eb0c68f4b235a82ea2ba855098f447d1d2c",
+        "evidence_refs": [
+          "task_trigger:original-request",
+          "candidate_source_binding:task_context/original-request",
+          "candidate_field:/outcome",
+          "candidate_field:/summary"
+        ],
+        "feedback": {
+          "rule": "原触发是权威请求；仅在已有可核实的完成结果或已发送的对应回复时，才能将任务标记为 no_action。不得以未提供证据的“另一任务已处理”替代对原请求的处理。",
+          "observation": "权威原请求的内容是“请核对结算单和读取能力。”当前候选选择 no_action，并声称“原请求已经得到后续回应，新消息已由另一任务处理，不重复发送”，但当前来源绑定仅包含该原请求，materials 为空，未提供后续回应、结算单核对结果、读取能力结果或对应已完成回复的可核实证据。",
+          "requested_revision": "重新生成候选，直接围绕 original-request 处理“核对结算单和读取能力”：补充实际可核实的结算单与读取能力结果，并在需要对 Applicant 回复时提出完整的 reply_to_message 动作；只有存在当前请求已完成且可核实的后续回复或结果时，才可保留 no_action，并附上相应来源证据。",
+          "observation_basis": "business",
+          "candidate_field_assertions": []
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"退回候选：原请求要求核对结算单并读取能力，当前候选却以“已由另一任务处理”为由不采取行动；已提供事实未证明该请求已完成或已有后续回应，因此不能将其标记为 no_action。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"medium\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"return\",\"proposal_revision\":3,\"candidate_digest\":\"ba500c96b6756d90f9c9dce052a97eb0c68f4b235a82ea2ba855098f447d1d2c\",\"evidence_refs\":[\"task_trigger:original-request\",\"candidate_source_binding:task_context/original-request\",\"candidate_field:/outcome\",\"candidate_field:/summary\"],\"feedback\":{\"rule\":\"原触发是权威请求；仅在已有可核实的完成结果或已发送的对应回复时，才能将任务标记为 no_action。不得以未提供证据的“另一任务已处理”替代对原请求的处理。\",\"observation\":\"权威原请求的内容是“请核对结算单和读取能力。”当前候选选择 no_action，并声称“原请求已经得到后续回应，新消息已由另一任务处理，不重复发送”，但当前来源绑定仅包含该原请求，materials 为空，未提供后续回应、结算单核对结果、读取能力结果或对应已完成回复的可核实证据。\",\"requested_revision\":\"重新生成候选，直接围绕 original-request 处理“核对结算单和读取能力”：补充实际可核实的结算单与读取能力结果，并在需要对 Applicant 回复时提出完整的 reply_to_message 动作；只有存在当前请求已完成且可核实的后续回复或结果时，才可保留 no_action，并附上相应来源证据。\",\"observation_basis\":\"business\",\"candidate_field_assertions\":[]}}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "No later source answers original request. Reject or return unsupported no_action rather than infer completion from chronology alone."
+    }
+  ]
+}

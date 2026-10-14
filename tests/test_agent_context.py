@@ -365,7 +365,7 @@ def test_context_marks_trigger_as_authoritative_over_recent_context():
 
     assert "Task trigger authority" in rendered
     assert '"authoritative_message_id": "mid"' in rendered
-    assert "supporting evidence only" in rendered
+    assert "this original request has already been resolved" in rendered
     assert '"text": "我今天需要休息一天"' in rendered
     assert '"text": "预算已经确认。"' in rendered
 

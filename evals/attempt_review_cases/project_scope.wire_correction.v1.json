@@ -1,0 +1,158 @@
+{
+  "version": "project-scope-audit-wire-correction.v1",
+  "manifest_sha256": "3b2408b5cd362a031c4012390327fe01336764783060b53ca45e74e67345fc3d",
+  "previous_run_sha256": "130e9202eb9e4a022ce0c6125f1b2e3f674bd50e3dc84b17dd8b0c43c4eb8048",
+  "harness_sha256": "76f3a606ff469a94d72b49531bfba87f73dd1deed59196dc7f69e8b9a5c66dfb",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "results": [
+    {
+      "case_id": "false_low_from_prior_trial",
+      "side": "baseline",
+      "original_prompt_sha256": "6362af52b99a414ae83165183169daeeaa0722da7f70d2876891c2d76bb241c8",
+      "correction_prompt_sha256": "3f71872d3aed0c68c9b93266d703364ce5d8517cbe4c5b0bb91c485a2c31a92d",
+      "previous_native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "summary": "退回动作方向基本符合第一曲线低毛利且未勾选“特批”的规则分支，但候选将历史“前期10条POC试测”错误地当作本次正式项目的审批口径，并据此计算毛利率和撰写退回理由；同时把“没有说明如何回收毛利差额”作为已核实事实，当前证据不足以支持该断言。应保留退回发起人的动作，但按正式项目1000条的收入与成本重算，并仅写入当前已核实的补正要求。",
+          "error_code": null,
+          "error_retryable": false,
+          "error_authorization_required": false,
+          "risk": "medium",
+          "confidence": 0.99,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "outcome": "return",
+          "proposal_revision": 0,
+          "candidate_digest": "82a4186601c677669831a0728f8600c1f285262f46cded3a196859dffb63549143",
+          "evidence_refs": [
+            "synthetic-form-A"
+          ],
+          "feedback": {
+            "rule": "Exact frozen dingtalk-oa-approval and stardust-oa-project-review Skills: first-curve projects with comprehensive gross margin below 25% must use the formal project's margin basis; if the special-approval box is not checked, return the application to select it. A return reason must identify the actual application gap and may not assert unsupported missing facts.",
+            "observation": "The verified formal project scope is 1000 items with revenue 955000 yuan, comprehensive cost 713060 yuan, and other cost 71860 yuan, where the prior 1500+5600 yuan trial cost is already included. The resulting gross margin is 170080/955000, approximately 17.8%, below 25%. The separate historical 10-item POC row is not the formal project's margin basis. The candidate instead states that this is a 10-item POC with revenue 8200 yuan, cost 7100 yuan, and 13.4% margin, and its proposed remark asks for a business-value assessment or earn-back plan while the supplied facts do not independently establish that no such material was provided.",
+            "requested_revision": "Keep the existing revert_task action and target, but revise the authored judgment, summary, sourced facts, objective if needed, and remark to use the formal 1000-item project figures and approximately 17.8% comprehensive gross margin. State that “特批” is not checked and require the applicant to select it. Require a business-value assessment or earn-back plan only if the current application evidence confirms that neither was supplied; do not treat the historical 10-item POC row or the empty POC dataset-demand field as proof of the formal project's margin or proof that no earn-back/value material exists.",
+            "observation_basis": "business",
+            "candidate_field_assertions": []
+          }
+        },
+        "raw": "{\"summary\":\"退回动作方向基本符合第一曲线低毛利且未勾选“特批”的规则分支，但候选将历史“前期10条POC试测”错误地当作本次正式项目的审批口径，并据此计算毛利率和撰写退回理由；同时把“没有说明如何回收毛利差额”作为已核实事实，当前证据不足以支持该断言。应保留退回发起人的动作，但按正式项目1000条的收入与成本重算，并仅写入当前已核实的补正要求。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"medium\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"return\",\"proposal_revision\":0,\"candidate_digest\":\"82a4186601c677669831a0728f8600c1f285262f46cded3a196859dffb63549143\",\"evidence_refs\":[\"synthetic-form-A\"],\"feedback\":{\"rule\":\"Exact frozen dingtalk-oa-approval and stardust-oa-project-review Skills: first-curve projects with comprehensive gross margin below 25% must use the formal project's margin basis; if the special-approval box is not checked, return the application to select it. A return reason must identify the actual application gap and may not assert unsupported missing facts.\",\"observation\":\"The verified formal project scope is 1000 items with revenue 955000 yuan, comprehensive cost 713060 yuan, and other cost 71860 yuan, where the prior 1500+5600 yuan trial cost is already included. The resulting gross margin is 170080/955000, approximately 17.8%, below 25%. The separate historical 10-item POC row is not the formal project's margin basis. The candidate instead states that this is a 10-item POC with revenue 8200 yuan, cost 7100 yuan, and 13.4% margin, and its proposed remark asks for a business-value assessment or earn-back plan while the supplied facts do not independently establish that no such material was provided.\",\"requested_revision\":\"Keep the existing revert_task action and target, but revise the authored judgment, summary, sourced facts, objective if needed, and remark to use the formal 1000-item project figures and approximately 17.8% comprehensive gross margin. State that “特批” is not checked and require the applicant to select it. Require a business-value assessment or earn-back plan only if the current application evidence confirms that neither was supplied; do not treat the historical 10-item POC row or the empty POC dataset-demand field as proof of the formal project's margin or proof that no earn-back/value material exists.\",\"observation_basis\":\"business\",\"candidate_field_assertions\":[]}}",
+        "tool_item_types": [],
+        "error": ""
+      },
+      "corrected_native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "candidate_digest": "82a4186601c677669831a0728f8600c1f285262f46cded3a196859dffb63549143",
+          "confidence": 0.99,
+          "error_authorization_required": false,
+          "error_code": null,
+          "error_retryable": false,
+          "evidence_refs": [
+            "synthetic-form-A"
+          ],
+          "feedback": {
+            "candidate_field_assertions": [],
+            "observation": "The verified formal project scope is 1000 items with revenue 955000 yuan, comprehensive cost 713060 yuan, and other cost 71860 yuan, where the prior 1500+5600 yuan trial cost is already included. The resulting gross margin is 170080/955000, approximately 17.8%, below 25%. The separate historical 10-item POC row is not the formal project's margin basis. The candidate instead states that this is a 10-item POC with revenue 8200 yuan, cost 7100 yuan, and 13.4% margin, and its proposed remark asks for a business-value assessment or earn-back plan while the supplied facts do not independently establish that no such material was provided.",
+            "observation_basis": "business",
+            "requested_revision": "Keep the existing revert_task action and target, but revise the authored judgment, summary, sourced facts, objective if needed, and remark to use the formal 1000-item project figures and approximately 17.8% comprehensive gross margin. State that “特批” is not checked and require the applicant to select it. Require a business-value assessment or earn-back plan only if the current application evidence confirms that neither was supplied; do not treat the historical 10-item POC row or the empty POC dataset-demand field as proof of the formal project's margin or proof that no earn-back/value material exists.",
+            "rule": "Exact frozen dingtalk-oa-approval and stardust-oa-project-review Skills: first-curve projects with comprehensive gross margin below 25% must use the formal project's margin basis; if the special-approval box is not checked, return the application to select it. A return reason must identify the actual application gap and may not assert unsupported missing facts."
+          },
+          "information_completeness": 1.0,
+          "outcome": "return",
+          "proposal_revision": 0,
+          "risk": "medium",
+          "rule_coverage": 1.0,
+          "summary": "退回动作方向基本符合第一曲线低毛利且未勾选“特批”的规则分支，但候选将历史“前期10条POC试测”错误地当作本次正式项目的审批口径，并据此计算毛利率和撰写退回理由；同时把“没有说明如何回收毛利差额”作为已核实事实，当前证据不足以支持该断言。应保留退回发起人的动作，但按正式项目1000条的收入与成本重算，并仅写入当前已核实的补正要求。"
+        },
+        "raw": "{\"candidate_digest\":\"82a4186601c677669831a0728f8600c1f285262f46cded3a196859dffb63549143\",\"confidence\":0.99,\"error_authorization_required\":false,\"error_code\":null,\"error_retryable\":false,\"evidence_refs\":[\"synthetic-form-A\"],\"feedback\":{\"candidate_field_assertions\":[],\"observation\":\"The verified formal project scope is 1000 items with revenue 955000 yuan, comprehensive cost 713060 yuan, and other cost 71860 yuan, where the prior 1500+5600 yuan trial cost is already included. The resulting gross margin is 170080/955000, approximately 17.8%, below 25%. The separate historical 10-item POC row is not the formal project's margin basis. The candidate instead states that this is a 10-item POC with revenue 8200 yuan, cost 7100 yuan, and 13.4% margin, and its proposed remark asks for a business-value assessment or earn-back plan while the supplied facts do not independently establish that no such material was provided.\",\"observation_basis\":\"business\",\"requested_revision\":\"Keep the existing revert_task action and target, but revise the authored judgment, summary, sourced facts, objective if needed, and remark to use the formal 1000-item project figures and approximately 17.8% comprehensive gross margin. State that “特批” is not checked and require the applicant to select it. Require a business-value assessment or earn-back plan only if the current application evidence confirms that neither was supplied; do not treat the historical 10-item POC row or the empty POC dataset-demand field as proof of the formal project's margin or proof that no earn-back/value material exists.\",\"rule\":\"Exact frozen dingtalk-oa-approval and stardust-oa-project-review Skills: first-curve projects with comprehensive gross margin below 25% must use the formal project's margin basis; if the special-approval box is not checked, return the application to select it. A return reason must identify the actual application gap and may not assert unsupported missing facts.\"},\"information_completeness\":1.0,\"outcome\":\"return\",\"proposal_revision\":0,\"risk\":\"medium\",\"rule_coverage\":1.0,\"summary\":\"退回动作方向基本符合第一曲线低毛利且未勾选“特批”的规则分支，但候选将历史“前期10条POC试测”错误地当作本次正式项目的审批口径，并据此计算毛利率和撰写退回理由；同时把“没有说明如何回收毛利差额”作为已核实事实，当前证据不足以支持该断言。应保留退回发起人的动作，但按正式项目1000条的收入与成本重算，并仅写入当前已核实的补正要求。\"}",
+        "tool_item_types": [],
+        "error": ""
+      },
+      "corrected_wire": {
+        "ok": false,
+        "error": "role_wire_contract_invalid",
+        "result": null,
+        "digest": null
+      },
+      "only_digest_changed": true,
+      "digest_binding_correct": false
+    },
+    {
+      "case_id": "false_low_from_prior_trial",
+      "side": "candidate",
+      "original_prompt_sha256": "20e3049457e3aeb5ac3847a3c12102ef614b50402605d25fe41f68f9a7706e33",
+      "correction_prompt_sha256": "48b6b0db8449a73e10b471d1df1659bfe4814b899cd24abad8b945e030c11d9e",
+      "previous_native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "summary": "退回候选不适用：候选将历史“前期10条POC试测”行错误地当作正式项目的当前毛利口径。已核实的正式项目范围为1000条，收入955000元，表内综合成本713060元，且此前试测成本1500+5600元已包含在其他成本71860元中；正式项目综合毛利率为（955000−713060）/955000≈25.33%，不能据此触发低于25%的第一曲线特批退回分支。应重新评估当前正式项目范围和成本口径；在现有事实下，不能以历史试测行认定未达25%或要求勾选特批、补充差额回收方案。",
+          "error_code": null,
+          "error_retryable": false,
+          "error_authorization_required": false,
+          "risk": "medium",
+          "confidence": 0.99,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "outcome": "return",
+          "proposal_revision": 0,
+          "candidate_digest": "82a4186601c677669831a0726bfed3a196859dffb63549143",
+          "evidence_refs": [
+            "synthetic-form-A"
+          ],
+          "feedback": {
+            "rule": "Exact frozen project review Skill — Project rules 2 and 3; required review output for current-project scope, period, inclusion relationship and comprehensive margin.",
+            "observation": "候选的判断基础把历史“前期10条POC试测”收入8200元、成本7100元、13.4%毛利率作为本次正式项目的毛利口径。该做法与当前事实冲突：正式项目范围是1000条，收入955000元，表内综合成本713060元；1500+5600元的此前试测成本已经包含在其他成本71860元内，不能再次将历史试测行作为当前项目的独立决策范围或重复口径。按正式项目数据计算综合毛利率约为25.33%，当前事实没有证明第一曲线项目低于25%。此外，POC需求评估字段为空本身也不能证明本案属于10条POC或证明其缺少POC要求。",
+            "requested_revision": "删除基于历史10条POC试测行触发低毛利特批的结论和退回动作；按正式项目1000条范围、当前项目期间及成本包含关系重新计算并评估毛利。只有在重新核实后确认正式第一曲线项目综合毛利率低于25%时，才可依据规则检查“特批”勾选及业务价值评估/差额回收方案；若当前正式项目毛利率确为约25.33%，不得要求申请人因该历史试测行勾选特批或补充差额回收方案。",
+            "observation_basis": "business",
+            "candidate_field_assertions": []
+          }
+        },
+        "raw": "{\"summary\":\"退回候选不适用：候选将历史“前期10条POC试测”行错误地当作正式项目的当前毛利口径。已核实的正式项目范围为1000条，收入955000元，表内综合成本713060元，且此前试测成本1500+5600元已包含在其他成本71860元中；正式项目综合毛利率为（955000−713060）/955000≈25.33%，不能据此触发低于25%的第一曲线特批退回分支。应重新评估当前正式项目范围和成本口径；在现有事实下，不能以历史试测行认定未达25%或要求勾选特批、补充差额回收方案。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"medium\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"return\",\"proposal_revision\":0,\"candidate_digest\":\"82a4186601c677669831a0726bfed3a196859dffb63549143\",\"evidence_refs\":[\"synthetic-form-A\"],\"feedback\":{\"rule\":\"Exact frozen project review Skill — Project rules 2 and 3; required review output for current-project scope, period, inclusion relationship and comprehensive margin.\",\"observation\":\"候选的判断基础把历史“前期10条POC试测”收入8200元、成本7100元、13.4%毛利率作为本次正式项目的毛利口径。该做法与当前事实冲突：正式项目范围是1000条，收入955000元，表内综合成本713060元；1500+5600元的此前试测成本已经包含在其他成本71860元内，不能再次将历史试测行作为当前项目的独立决策范围或重复口径。按正式项目数据计算综合毛利率约为25.33%，当前事实没有证明第一曲线项目低于25%。此外，POC需求评估字段为空本身也不能证明本案属于10条POC或证明其缺少POC要求。\",\"requested_revision\":\"删除基于历史10条POC试测行触发低毛利特批的结论和退回动作；按正式项目1000条范围、当前项目期间及成本包含关系重新计算并评估毛利。只有在重新核实后确认正式第一曲线项目综合毛利率低于25%时，才可依据规则检查“特批”勾选及业务价值评估/差额回收方案；若当前正式项目毛利率确为约25.33%，不得要求申请人因该历史试测行勾选特批或补充差额回收方案。\",\"observation_basis\":\"business\",\"candidate_field_assertions\":[]}}",
+        "tool_item_types": [],
+        "error": ""
+      },
+      "corrected_native": {
+        "ok": true,
+        "exit_code": 0,
+        "result": {
+          "candidate_digest": "82a4186601c677669831a07206c1f285262f46cded3a196859dffb63549143",
+          "confidence": 0.99,
+          "error_authorization_required": false,
+          "error_code": null,
+          "error_retryable": false,
+          "evidence_refs": [
+            "synthetic-form-A"
+          ],
+          "feedback": {
+            "candidate_field_assertions": [],
+            "observation": "候选的判断基础把历史“前期10条POC试测”收入8200元、成本7100元、13.4%毛利率作为本次正式项目的毛利口径。该做法与当前事实冲突：正式项目范围是1000条，收入955000元，表内综合成本713060元；1500+5600元的此前试测成本已经包含在其他成本71860元内，不能再次将历史试测行作为当前项目的独立决策范围或重复口径。按正式项目数据计算综合毛利率约为25.33%，当前事实没有证明第一曲线项目低于25%。此外，POC需求评估字段为空本身也不能证明本案属于10条POC或证明其缺少POC要求。",
+            "observation_basis": "business",
+            "requested_revision": "删除基于历史10条POC试测行触发低毛利特批的结论和退回动作；按正式项目1000条范围、当前项目期间及成本包含关系重新计算并评估毛利。只有在重新核实后确认正式第一曲线项目综合毛利率低于25%时，才可依据规则检查“特批”勾选及业务价值评估/差额回收方案；若当前正式项目毛利率确为约25.33%，不得要求申请人因该历史试测行勾选特批或补充差额回收方案。",
+            "rule": "Exact frozen project review Skill — Project rules 2 and 3; required review output for current-project scope, period, inclusion relationship and comprehensive margin."
+          },
+          "information_completeness": 1.0,
+          "outcome": "return",
+          "proposal_revision": 0,
+          "risk": "medium",
+          "rule_coverage": 1.0,
+          "summary": "退回候选不适用：候选将历史“前期10条POC试测”行错误地当作正式项目的当前毛利口径。已核实的正式项目范围为1000条，收入955000元，表内综合成本713060元，且此前试测成本1500+5600元已包含在其他成本71860元中；正式项目综合毛利率为（955000−713060）/955000≈25.33%，不能据此触发低于25%的第一曲线特批退回分支。应重新评估当前正式项目范围和成本口径；在现有事实下，不能以历史试测行认定未达25%或要求勾选特批、补充差额回收方案。"
+        },
+        "raw": "{\"candidate_digest\":\"82a4186601c677669831a07206c1f285262f46cded3a196859dffb63549143\",\"confidence\":0.99,\"error_authorization_required\":false,\"error_code\":null,\"error_retryable\":false,\"evidence_refs\":[\"synthetic-form-A\"],\"feedback\":{\"candidate_field_assertions\":[],\"observation\":\"候选的判断基础把历史“前期10条POC试测”收入8200元、成本7100元、13.4%毛利率作为本次正式项目的毛利口径。该做法与当前事实冲突：正式项目范围是1000条，收入955000元，表内综合成本713060元；1500+5600元的此前试测成本已经包含在其他成本71860元内，不能再次将历史试测行作为当前项目的独立决策范围或重复口径。按正式项目数据计算综合毛利率约为25.33%，当前事实没有证明第一曲线项目低于25%。此外，POC需求评估字段为空本身也不能证明本案属于10条POC或证明其缺少POC要求。\",\"observation_basis\":\"business\",\"requested_revision\":\"删除基于历史10条POC试测行触发低毛利特批的结论和退回动作；按正式项目1000条范围、当前项目期间及成本包含关系重新计算并评估毛利。只有在重新核实后确认正式第一曲线项目综合毛利率低于25%时，才可依据规则检查“特批”勾选及业务价值评估/差额回收方案；若当前正式项目毛利率确为约25.33%，不得要求申请人因该历史试测行勾选特批或补充差额回收方案。\",\"rule\":\"Exact frozen project review Skill — Project rules 2 and 3; required review output for current-project scope, period, inclusion relationship and comprehensive margin.\"},\"information_completeness\":1.0,\"outcome\":\"return\",\"proposal_revision\":0,\"risk\":\"medium\",\"rule_coverage\":1.0,\"summary\":\"退回候选不适用：候选将历史“前期10条POC试测”行错误地当作正式项目的当前毛利口径。已核实的正式项目范围为1000条，收入955000元，表内综合成本713060元，且此前试测成本1500+5600元已包含在其他成本71860元中；正式项目综合毛利率为（955000−713060）/955000≈25.33%，不能据此触发低于25%的第一曲线特批退回分支。应重新评估当前正式项目范围和成本口径；在现有事实下，不能以历史试测行认定未达25%或要求勾选特批、补充差额回收方案。\"}",
+        "tool_item_types": [],
+        "error": ""
+      },
+      "corrected_wire": {
+        "ok": false,
+        "error": "role_wire_contract_invalid",
+        "result": null,
+        "digest": null
+      },
+      "only_digest_changed": true,
+      "digest_binding_correct": false
+    }
+  ]
+}

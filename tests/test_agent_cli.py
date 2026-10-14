@@ -322,25 +322,24 @@ def test_dingtalk_drive_file_downloads_exact_node_and_extracts_text(
     assert result.get("ocr_required") is None
 
 
-def test_dingtalk_drive_file_marks_scanned_pdf_for_ocr(
+def test_dingtalk_drive_file_propagates_ocr_failure_and_cleans_download(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     class Dws:
         def download_drive_file(self, *_args, **_kwargs):
             return b"scan"
 
-    monkeypatch.setattr(
-        agent_cli,
-        "read_text_file",
-        lambda path: {"format": "pdf", "content": "", "path": path},
-    )
-    result = agent_cli._download_dingtalk_drive_file(
-        dws=Dws(), node_id="scan-1", space_id="space-1",
-        file_name="scan.pdf", material_root=tmp_path,
-    )
+    def unreadable(_path):
+        raise AgentReadOnlyViolationError("pdf_material_ocr_unavailable")
 
-    assert result["ocr_required"] is True
-    assert Path(result["path"]).is_file()
+    monkeypatch.setattr(agent_cli, "read_text_file", unreadable)
+    with pytest.raises(AgentReadOnlyViolationError, match="pdf_material_ocr_unavailable"):
+        agent_cli._download_dingtalk_drive_file(
+            dws=Dws(), node_id="scan-1", space_id="space-1",
+            file_name="scan.pdf", material_root=tmp_path,
+        )
+
+    assert list(tmp_path.glob("*.pdf")) == []
 
 
 @pytest.mark.parametrize("file_name", ["../proof.pdf", "", ".", "a/b.pdf"])

@@ -11,6 +11,8 @@ Use together with `$dingtalk-oa-approval` for Stardust approvals whose primary b
 
 Classify from the live process definition and form content, not title alone. A project can also trigger a separate finance, contract, or access/change review; load each relevant business Skill independently. This Skill does not supply contract-signing authority.
 
+The company project criteria are supplied by this Skill. Read the applicable, task-bound revision before assessing rule coverage; an initial prompt or triage Skill that omits the project rules is not evidence that the applicant failed to provide company policy. Ask the applicant for project facts they own, not for the company's approval threshold or approval principles. If the selected Skill cannot be read, report that source-reading problem separately from an applicant material gap.
+
 Project-governance documents (`跨部门协同服务标准` v0.2 / v0.3, strategy and operating-model notes) may be read as evidence of what was agreed for a specific project — scope, gates, owners, commitments. They are not a source of numeric approval thresholds, and their examples are not limits.
 
 ## Review checklist
@@ -18,8 +20,8 @@ Project-governance documents (`跨部门协同服务标准` v0.2 / v0.3, strateg
 Read the complete application, comments, attachments and linked project material. Record evidence for:
 
 - customer/problem and strategic fit;
-- project classification, including whether it is explicitly marked first-curve or special approval;
-- gross margin calculation and its inputs, scope and period;
+- project classification from the current application, including whether this project is explicitly first-curve, POC or special approval; a historical trial or POC row does not by itself classify the project now under review;
+- a financial basis ledger before the margin decision: record the current decision unit and period, revenue, the source field designated as comprehensive/total cost, each component's inclusion in that total, and any historical trial or alternative scenario separately. Check the source field definitions and notes; do not obtain a project cost by summing every visible cost row. When a confirmed total already covers the current project, use that total directly and show component amounts (including “other costs”) only as its breakdown, never as an extra subtraction. Sum non-overlapping components only when no total is supplied and the component set is confirmed complete for the same scope and period. If the total's meaning, component inclusion or row identity is unclear, seek the source owner's specific explanation and calculation basis instead of choosing a convenient sum. A blank POC-demand field does not establish either a POC requirement or its absence;
 - BRD or equivalent scope, effort estimate, staffing/resources and opportunity cost;
 - customer confirmation, contract/budget status, delivery boundary, acceptance criteria and measurable outcome;
 - cost ceiling, owner, milestones, dependencies, risks and mitigations;
@@ -30,7 +32,7 @@ Keep applicant assertions separate from independently verified records. An item 
 ## Project rules
 
 1. **Strategic fit.** A project must fit the company strategy or bring a product, algorithm or delivery-efficiency upgrade. Check this first; it is the reason a project exists.
-2. **First-curve margin floor: 25%.** A project explicitly classified as first-curve needs a comprehensive gross margin of at least 25%. Reaching 25% does not by itself make the case approvable; the rest of the checklist still applies.
+2. **First-curve margin floor: 25%.** A project explicitly classified as first-curve needs a comprehensive gross margin of at least 25%. Apply the floor only after the financial basis ledger establishes the current-project scope and period: `(current-project revenue − current-project comprehensive total cost) / current-project revenue`. Show the chosen source fields, subtraction and percentage before selecting the rule branch; check the arithmetic with an available read-only calculation tool when one exists. A component included in the reported comprehensive total is not subtracted again, and a separate historical trial's margin does not establish that the current application is below the floor. If the current-project scope, total-cost meaning, included costs or first-curve classification is unresolved, do not infer a special-approval or earn-back obligation from the trial row; resolve those facts first. Reaching 25% does not by itself make the case approvable; the rest of the checklist still applies.
 3. **Below 25% requires the form's special-approval path and proactive business-value review** (Derek, 2026-09-23):
    - The applicant must check the form's **"特批"** option when a first-curve project's comprehensive gross margin is below 25%. If the box is not checked, **return the application** for the applicant to select it; do not reject it for the margin shortfall and do not select the box on the applicant's behalf.
    - A checked request must include either a business-value assessment or a plan for how the project will earn back the margin shortfall. If neither is supplied, return it for that applicant-provided material. Do not treat the checkbox or applicant's conclusion as proof that the exception is justified.
@@ -55,4 +57,4 @@ Actions follow the generic Skill's decision table. A project type not having its
 
 ## Required review output
 
-Include live process identity; classification; each material read; margin calculation; for a below-25% first-curve project, whether the form's special-approval box is checked and whether the applicant supplied a business-value assessment or earn-back plan; the rule branch applied (rules 1–4 above); facts versus assertions; the reviewer's independent business-value assessment; `information_completeness`, `rule_coverage`, risk and confidence; recommendation; applicant question or return reason if any; and each undefined item above that the case depends on.
+Include live process identity; classification and its evidence; each material read; the financial basis ledger (decision unit, period, revenue, designated comprehensive/total cost, component inclusion and separate historical or scenario rows); the chosen current-project margin subtraction and percentage and any separately labelled trial margin; for a confirmed below-25% first-curve project, whether the form's special-approval box is checked and whether the applicant supplied a business-value assessment or earn-back plan; the rule branch applied (rules 1–4 above); facts versus assertions; the reviewer's independent business-value assessment; `information_completeness`, `rule_coverage`, risk and confidence; recommendation; applicant question or return reason if any; and each undefined item above that the case depends on.

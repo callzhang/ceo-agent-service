@@ -1,0 +1,400 @@
+{
+  "manifest": {
+    "version": "attempt-review-context.v2",
+    "baseline_ref": "c5a2e516",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "source_boundary": "Authentic failure-derived sanitized tool-free Audit comparison; not a live service or provider execution. Same subject, facts, role instructions and model; only context renderer changes.",
+    "cases": [
+      {
+        "id": "mutable_card_resolved",
+        "source_attempt": 15452,
+        "kind": "card",
+        "expected_outcomes": [
+          "approve"
+        ],
+        "criterion": "Original Derek node is agreed; current card points to another approver. Approve no_action without requiring Consumer to modify service-generated historical source_bindings."
+      },
+      {
+        "id": "reply_after_trigger",
+        "source_attempt": 15436,
+        "kind": "reply",
+        "expected_outcomes": [
+          "approve"
+        ],
+        "criterion": "Reply at +319 seconds resolves original request; follow-up at +401 seconds has its own completed read/reply task. Approve ending the old task; do not invent reversed chronology or demand a different reply target."
+      },
+      {
+        "id": "unanswered_original_control",
+        "source_attempt": 15436,
+        "kind": "unanswered",
+        "expected_outcomes": [
+          "return",
+          "reject"
+        ],
+        "criterion": "No later source answers original request. Reject or return unsupported no_action rather than infer completion from chronology alone."
+      },
+      {
+        "id": "changed_reply_target_control",
+        "source_attempt": 15436,
+        "kind": "wrong_target",
+        "expected_outcomes": [
+          "return",
+          "reject"
+        ],
+        "criterion": "Later source can inform content but cannot change fixed reply_to_message target; return actual wrong target."
+      }
+    ]
+  },
+  "baseline_source_sha256": "d20dbd65982650ad7ea4aa0099e120098e8ef9534d6ae46a23f3b935d9b90f6f",
+  "candidate_source_sha256": "5f7ca3bd569e7e013d4b527be6045a0f604337779f63f34ec6944adfeabf74b7",
+  "developer_sha256": "178cf9eecaefb9fedfcdd032977b2081a2da9c35b8aca5119dc8c524ed6c9f15",
+  "results": [
+    {
+      "id": "mutable_card_resolved",
+      "side": "baseline",
+      "prompt_sha256": "7e333b548a225efe165f4ff7eef7de2b15043163557f3d23356185a390409eb0",
+      "result": {
+        "outcome": "approve",
+        "summary": "批准当前 no_action 候选。权威原请求要求处理 original-node；已核实 Principal 已在 approval-notice 中同意 original-node，且当前卡片指向由另一位审批人处理的后续节点 next-node。因此原请求已有完整回应，无需再次向 Applicant 回复；候选未声称整个流程结束，也未将后续节点的处理归属于 Principal。",
+        "proposal_revision": 3,
+        "candidate_digest": "d531312b29c68427cef99a128c0f2fa0579d85ba58dbc4e6904594189d98d6cd",
+        "evidence_refs": [
+          "authoritative_message_id: original-card",
+          "message_id: approval-notice",
+          "candidate.source_bindings[0].value.messages[1]",
+          "candidate.summary"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"批准当前 no_action 候选。权威原请求要求处理 original-node；已核实 Principal 已在 approval-notice 中同意 original-node，且当前卡片指向由另一位审批人处理的后续节点 next-node。因此原请求已有完整回应，无需再次向 Applicant 回复；候选未声称整个流程结束，也未将后续节点的处理归属于 Principal。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":3,\"candidate_digest\":\"d531312b29c68427cef99a128c0f2fa0579d85ba58dbc4e6904594189d98d6cd\",\"evidence_refs\":[\"authoritative_message_id: original-card\",\"message_id: approval-notice\",\"candidate.source_bindings[0].value.messages[1]\",\"candidate.summary\"],\"feedback\":null}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "Original Derek node is agreed; current card points to another approver. Approve no_action without requiring Consumer to modify service-generated historical source_bindings."
+    },
+    {
+      "id": "mutable_card_resolved",
+      "side": "candidate",
+      "prompt_sha256": "e5f3b2327d7c09d62309ae1583358a0ddda291993a0e46e8c503da35a1fcce73",
+      "result": {
+        "outcome": "approve",
+        "summary": "批准当前候选。权威触发是原始消息 original-card，其冻结内容要求处理 original-node；当前消息中同 ID 卡片显示的 next-node 不替代已保存触发，也不应据此修改 source_bindings。Principal 已在 approval-notice 中明确表示 original-node 已同意，且 next-node 由另一位审批人处理，因此原请求已完成，不需要再向 Applicant 回复。候选未声称整个流程结束，也未采纳上一轮缺乏依据的“改为 next-node”意见。",
+        "proposal_revision": 3,
+        "candidate_digest": "d531312b29c68427cef99a128c0f2fa0579d85ba58dbc4e6904594189d98d6cd",
+        "evidence_refs": [
+          "task_trigger_authority.reply_target_message_id=original-card",
+          "task_input_provenance.snapshot_source=queued_task_input",
+          "candidate.source_bindings[0].value.trigger_text=请处理立项。taskId=original-node",
+          "recent_conversation.approval-notice=已同意 original-node，当前 next-node 由另一位审批人处理",
+          "current_candidate.outcome=no_action"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"批准当前候选。权威触发是原始消息 original-card，其冻结内容要求处理 original-node；当前消息中同 ID 卡片显示的 next-node 不替代已保存触发，也不应据此修改 source_bindings。Principal 已在 approval-notice 中明确表示 original-node 已同意，且 next-node 由另一位审批人处理，因此原请求已完成，不需要再向 Applicant 回复。候选未声称整个流程结束，也未采纳上一轮缺乏依据的“改为 next-node”意见。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":3,\"candidate_digest\":\"d531312b29c68427cef99a128c0f2fa0579d85ba58dbc4e6904594189d98d6cd\",\"evidence_refs\":[\"task_trigger_authority.reply_target_message_id=original-card\",\"task_input_provenance.snapshot_source=queued_task_input\",\"candidate.source_bindings[0].value.trigger_text=请处理立项。taskId=original-node\",\"recent_conversation.approval-notice=已同意 original-node，当前 next-node 由另一位审批人处理\",\"current_candidate.outcome=no_action\"],\"feedback\":null}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "Original Derek node is agreed; current card points to another approver. Approve no_action without requiring Consumer to modify service-generated historical source_bindings."
+    },
+    {
+      "id": "reply_after_trigger",
+      "side": "baseline",
+      "prompt_sha256": "cfc39aa0635a0ccc113d48ca1dc4b4ca346ac4156baf7f3e3951c6ca0f8929c1",
+      "result": {
+        "outcome": "approve",
+        "summary": "批准：原请求已有 Principal 的现有回复，后续“全部资料”请求也已有独立任务完成读取并回复；当前候选正确选择不重复发送，不产生新的外部动作。",
+        "proposal_revision": 3,
+        "candidate_digest": "6c71017466a4ced5fc774fc4083ec82407916ee423c7ff561d6366f4692ef88d",
+        "evidence_refs": [
+          "original-request",
+          "existing-reply",
+          "followup-request",
+          "followup-result"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"批准：原请求已有 Principal 的现有回复，后续“全部资料”请求也已有独立任务完成读取并回复；当前候选正确选择不重复发送，不产生新的外部动作。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.98,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":3,\"candidate_digest\":\"6c71017466a4ced5fc774fc4083ec82407916ee423c7ff561d6366f4692ef88d\",\"evidence_refs\":[\"original-request\",\"existing-reply\",\"followup-request\",\"followup-result\"],\"feedback\":null}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "Reply at +319 seconds resolves original request; follow-up at +401 seconds has its own completed read/reply task. Approve ending the old task; do not invent reversed chronology or demand a different reply target."
+    },
+    {
+      "id": "reply_after_trigger",
+      "side": "candidate",
+      "prompt_sha256": "4ee5ef227c9e8024fe7fcde1f282a51e35630bc1035a017041f0ecce87c1cf22",
+      "result": {
+        "outcome": "approve",
+        "summary": "批准：原请求已由 Principal 在 existing-reply 中完成回应；后续 followup-request 属于独立任务，且其结果已由另一任务完成并回复。当前候选不重复发送消息，符合原请求目标与当前对话状态。",
+        "proposal_revision": 3,
+        "candidate_digest": "6c71017466a4ced5fc774fc4083ec82407916ee423c7ff561d6366f4692ef88d",
+        "evidence_refs": [
+          "task_context:original-request",
+          "message:existing-reply",
+          "message:followup-request",
+          "message:followup-result"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"批准：原请求已由 Principal 在 existing-reply 中完成回应；后续 followup-request 属于独立任务，且其结果已由另一任务完成并回复。当前候选不重复发送消息，符合原请求目标与当前对话状态。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":3,\"candidate_digest\":\"6c71017466a4ced5fc774fc4083ec82407916ee423c7ff561d6366f4692ef88d\",\"evidence_refs\":[\"task_context:original-request\",\"message:existing-reply\",\"message:followup-request\",\"message:followup-result\"],\"feedback\":null}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "Reply at +319 seconds resolves original request; follow-up at +401 seconds has its own completed read/reply task. Approve ending the old task; do not invent reversed chronology or demand a different reply target."
+    },
+    {
+      "id": "unanswered_original_control",
+      "side": "baseline",
+      "prompt_sha256": "9f941a216ca2550f2b8330bcc9a6f9246544b6fd8098444950fe7c6e7edc1513",
+      "result": {
+        "outcome": "return",
+        "summary": "退回：当前候选以“已由另一任务处理”为由跳过原请求，但候选的来源绑定仅证明原请求内容为“请核对结算单和读取能力”，没有提供已完成核对、读取能力验证或后续回复的可核实事实。原请求仍需按其实际目标处理，不能用未绑定的后续结果替代。",
+        "proposal_revision": 3,
+        "candidate_digest": "ba500c96b6756d90f9c9dce052a97eb0c68f4b235a82ea2ba855098f447d1d2c",
+        "evidence_refs": [
+          "original-request",
+          "Candidate revision.candidate.source_bindings[0]"
+        ],
+        "feedback": {
+          "rule": "原触发是权威请求；必须根据原请求判断交付目标，并以来源事实证明结果已完成。不能以未提供的后续处理替代原业务目标。",
+          "observation": "候选将结果设为 no_action，并声称原请求已由另一任务处理，但当前来源绑定只有原消息“请核对结算单和读取能力。”，materials 为空，也没有已核对结算单、已读取能力或后续回复的来源证据。",
+          "requested_revision": "补充可核实的后续处理证据并证明其确实完成了原请求；如果不存在这样的结果，重新生成针对 original-request 的完整 reply_to_message 候选，包含当前单聊目标、准确回复正文及其来源依据。不得继续使用“另一任务已处理”的无来源 no_action 结论。",
+          "observation_basis": "business",
+          "candidate_field_assertions": []
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.75
+      },
+      "raw": "{\"summary\":\"退回：当前候选以“已由另一任务处理”为由跳过原请求，但候选的来源绑定仅证明原请求内容为“请核对结算单和读取能力”，没有提供已完成核对、读取能力验证或后续回复的可核实事实。原请求仍需按其实际目标处理，不能用未绑定的后续结果替代。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"medium\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":0.75,\"outcome\":\"return\",\"proposal_revision\":3,\"candidate_digest\":\"ba500c96b6756d90f9c9dce052a97eb0c68f4b235a82ea2ba855098f447d1d2c\",\"evidence_refs\":[\"original-request\",\"Candidate revision.candidate.source_bindings[0]\"],\"feedback\":{\"rule\":\"原触发是权威请求；必须根据原请求判断交付目标，并以来源事实证明结果已完成。不能以未提供的后续处理替代原业务目标。\",\"observation\":\"候选将结果设为 no_action，并声称原请求已由另一任务处理，但当前来源绑定只有原消息“请核对结算单和读取能力。”，materials 为空，也没有已核对结算单、已读取能力或后续回复的来源证据。\",\"requested_revision\":\"补充可核实的后续处理证据并证明其确实完成了原请求；如果不存在这样的结果，重新生成针对 original-request 的完整 reply_to_message 候选，包含当前单聊目标、准确回复正文及其来源依据。不得继续使用“另一任务已处理”的无来源 no_action 结论。\",\"observation_basis\":\"business\",\"candidate_field_assertions\":[]}}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "No later source answers original request. Reject or return unsupported no_action rather than infer completion from chronology alone."
+    },
+    {
+      "id": "unanswered_original_control",
+      "side": "candidate",
+      "prompt_sha256": "d105be85e8b1e7f4553bc9ef5e778e9cea1a87f8236c1b3b928c1c07f742052d",
+      "result": {
+        "outcome": "return",
+        "summary": "候选方案不适合批准：原请求仍处于未回答状态，当前没有已核实的后续回复或独立任务结果证明其已解决；候选却将其判定为已处理并跳过回复，未完成对“核对结算单和读取能力”这一原始请求的响应。",
+        "proposal_revision": 3,
+        "candidate_digest": "ba500c96b6756d90f9c9dce052a97eb0c68f4b235a82ea2ba855098f447d1d2c",
+        "evidence_refs": [
+          "original-request",
+          "candidate.source_bindings[0]"
+        ],
+        "feedback": {
+          "rule": "必须依据当前对话和已核实的结果判断原请求是否已解决；不得以未提供或未核实的后续处理替代原请求，也不得在原请求仍开放时无依据地跳过响应。",
+          "observation": "原请求明确为“请核对结算单和读取能力。”当前事实说明旧请求仅在未回答控制中保持开放，且没有提供已核实的后续回复或独立任务结果。候选却声称“原请求已经得到后续回应，新消息已由另一任务处理”，因此其无动作结论缺乏事实依据。",
+          "requested_revision": "将候选重新生成以处理原始请求：不要再使用 no_action 或声称已由另一任务解决；基于已核实材料明确说明能否完成结算单核对和读取能力核验，并准备针对 Applicant 的完整回复。若确实缺少完成核对所需材料，应准确指出缺失事实并请求具体材料，不得虚构已完成的后续处理。",
+          "observation_basis": "candidate_fields",
+          "candidate_field_assertions": [
+            {
+              "path": [
+                "summary"
+              ],
+              "value": "原请求已经得到后续回应，新消息已由另一任务处理，不重复发送。",
+              "json_type": "string"
+            },
+            {
+              "path": [
+                "outcome"
+              ],
+              "value": "no_action",
+              "json_type": "string"
+            }
+          ]
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"候选方案不适合批准：原请求仍处于未回答状态，当前没有已核实的后续回复或独立任务结果证明其已解决；候选却将其判定为已处理并跳过回复，未完成对“核对结算单和读取能力”这一原始请求的响应。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"return\",\"proposal_revision\":3,\"candidate_digest\":\"ba500c96b6756d90f9c9dce052a97eb0c68f4b235a82ea2ba855098f447d1d2c\",\"evidence_refs\":[\"original-request\",\"candidate.source_bindings[0]\"],\"feedback\":{\"rule\":\"必须依据当前对话和已核实的结果判断原请求是否已解决；不得以未提供或未核实的后续处理替代原请求，也不得在原请求仍开放时无依据地跳过响应。\",\"observation\":\"原请求明确为“请核对结算单和读取能力。”当前事实说明旧请求仅在未回答控制中保持开放，且没有提供已核实的后续回复或独立任务结果。候选却声称“原请求已经得到后续回应，新消息已由另一任务处理”，因此其无动作结论缺乏事实依据。\",\"requested_revision\":\"将候选重新生成以处理原始请求：不要再使用 no_action 或声称已由另一任务解决；基于已核实材料明确说明能否完成结算单核对和读取能力核验，并准备针对 Applicant 的完整回复。若确实缺少完成核对所需材料，应准确指出缺失事实并请求具体材料，不得虚构已完成的后续处理。\",\"observation_basis\":\"candidate_fields\",\"candidate_field_assertions\":[{\"path\":[\"summary\"],\"value\":\"原请求已经得到后续回应，新消息已由另一任务处理，不重复发送。\",\"json_type\":\"string\"},{\"path\":[\"outcome\"],\"value\":\"no_action\",\"json_type\":\"string\"}]}}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "No later source answers original request. Reject or return unsupported no_action rather than infer completion from chronology alone."
+    },
+    {
+      "id": "changed_reply_target_control",
+      "side": "baseline",
+      "prompt_sha256": "4d1f811227f48250a464a15fe89df89163dcb7003df0e256d1bc07139ae7f0d0",
+      "result": {
+        "outcome": "reject",
+        "summary": "拒绝：候选动作针对已由 Principal 在 followup-result 中完成读取并回复的 followup-request，属于重复触达；候选自身的 summary 也明确写明“不重复发送”，但仍保留外部 reply 动作，动作计划与已核实业务状态及候选判断不一致。",
+        "proposal_revision": 3,
+        "candidate_digest": "ee43e46f6afc570d46569369e8868d4e42b3c69d459d3cb034c22b13ef67509f",
+        "evidence_refs": [
+          "original-request",
+          "existing-reply",
+          "followup-request",
+          "followup-result"
+        ],
+        "feedback": {
+          "rule": "检查当前消息是否已处理、是否重复执行，并审查完整动作计划的一致性；已完成的外部响应不得再次发送。",
+          "observation": "已核实 followup-result 表明 Principal 已完成材料读取并回复；候选 summary 也说明“新消息已由另一任务处理，不重复发送”，但 proposal.actions[0] 仍以 reply_to_message 指向 followup-request，并准备发送“核对结果已完成，本次按原请求说明。”",
+          "requested_revision": "删除针对 followup-request 的 reply_to_message 外部动作，并将候选改为与已完成状态一致的非执行结果；不得通过修改正文继续保留该重复发送动作。",
+          "observation_basis": "business",
+          "candidate_field_assertions": []
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"拒绝：候选动作针对已由 Principal 在 followup-result 中完成读取并回复的 followup-request，属于重复触达；候选自身的 summary 也明确写明“不重复发送”，但仍保留外部 reply 动作，动作计划与已核实业务状态及候选判断不一致。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"reject\",\"proposal_revision\":3,\"candidate_digest\":\"ee43e46f6afc570d46569369e8868d4e42b3c69d459d3cb034c22b13ef67509f\",\"evidence_refs\":[\"original-request\",\"existing-reply\",\"followup-request\",\"followup-result\"],\"feedback\":{\"rule\":\"检查当前消息是否已处理、是否重复执行，并审查完整动作计划的一致性；已完成的外部响应不得再次发送。\",\"observation\":\"已核实 followup-result 表明 Principal 已完成材料读取并回复；候选 summary 也说明“新消息已由另一任务处理，不重复发送”，但 proposal.actions[0] 仍以 reply_to_message 指向 followup-request，并准备发送“核对结果已完成，本次按原请求说明。”\",\"requested_revision\":\"删除针对 followup-request 的 reply_to_message 外部动作，并将候选改为与已完成状态一致的非执行结果；不得通过修改正文继续保留该重复发送动作。\",\"observation_basis\":\"business\",\"candidate_field_assertions\":[]}}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "Later source can inform content but cannot change fixed reply_to_message target; return actual wrong target."
+    },
+    {
+      "id": "changed_reply_target_control",
+      "side": "candidate",
+      "prompt_sha256": "b2c37ad26c1af6a2022ba872b0e71d61cc6eef1482569137642207b9b5b4e97a",
+      "result": {
+        "outcome": "reject",
+        "summary": "Reject: the fixed candidate is not executable for the authoritative task. The task requires handling the original trigger, but the proposed reply targets the later follow-up message, which is a different task context. The verified existing reply and separate follow-up result also establish that the relevant material was already handled, so the proposed external reply would be an unnecessary duplicate.",
+        "proposal_revision": 3,
+        "candidate_digest": "ee43e46f6afc570d46569369e8868d4e42b3c69d459d3cb034c22b13ef67509f",
+        "evidence_refs": [
+          "task_context:original-request",
+          "canonical_time_facts",
+          "recent_conversation_context",
+          "trigger_authority"
+        ],
+        "feedback": {
+          "rule": "The authoritative trigger and reply target must control the reviewed action; a reply_to_message action must target that trigger, and a later follow-up must not replace or redirect the original task. Do not execute a duplicate after the original request has already been handled.",
+          "observation": "The candidate action targets message_id \"followup-request\", while the authoritative reply target is \"original-request\". The verified conversation also contains an existing principal reply to the original request and a separate verified follow-up result stating that the materials were read and replied to. Therefore the proposed external reply is both bound to the wrong message and unnecessary for the original task.",
+          "requested_revision": "Do not execute this action. If a new task is intended for the follow-up, create and review it separately with the follow-up as its authoritative trigger; otherwise replace this proposal with the appropriate non-executable skipped result for the already handled original request.",
+          "observation_basis": "candidate_fields",
+          "candidate_field_assertions": [
+            {
+              "path": [
+                "proposal",
+                "actions",
+                0,
+                "target",
+                "message_id"
+              ],
+              "value": "followup-request",
+              "json_type": "string"
+            },
+            {
+              "path": [
+                "proposal",
+                "actions",
+                0,
+                "operation"
+              ],
+              "value": "reply_to_message",
+              "json_type": "string"
+            }
+          ]
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "raw": "{\"summary\":\"Reject: the fixed candidate is not executable for the authoritative task. The task requires handling the original trigger, but the proposed reply targets the later follow-up message, which is a different task context. The verified existing reply and separate follow-up result also establish that the relevant material was already handled, so the proposed external reply would be an unnecessary duplicate.\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":0.99,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"reject\",\"proposal_revision\":3,\"candidate_digest\":\"ee43e46f6afc570d46569369e8868d4e42b3c69d459d3cb034c22b13ef67509f\",\"evidence_refs\":[\"task_context:original-request\",\"canonical_time_facts\",\"recent_conversation_context\",\"trigger_authority\"],\"feedback\":{\"rule\":\"The authoritative trigger and reply target must control the reviewed action; a reply_to_message action must target that trigger, and a later follow-up must not replace or redirect the original task. Do not execute a duplicate after the original request has already been handled.\",\"observation\":\"The candidate action targets message_id \\\"followup-request\\\", while the authoritative reply target is \\\"original-request\\\". The verified conversation also contains an existing principal reply to the original request and a separate verified follow-up result stating that the materials were read and replied to. Therefore the proposed external reply is both bound to the wrong message and unnecessary for the original task.\",\"requested_revision\":\"Do not execute this action. If a new task is intended for the follow-up, create and review it separately with the follow-up as its authoritative trigger; otherwise replace this proposal with the appropriate non-executable skipped result for the already handled original request.\",\"observation_basis\":\"candidate_fields\",\"candidate_field_assertions\":[{\"path\":[\"proposal\",\"actions\",0,\"target\",\"message_id\"],\"value\":\"followup-request\",\"json_type\":\"string\"},{\"path\":[\"proposal\",\"actions\",0,\"operation\"],\"value\":\"reply_to_message\",\"json_type\":\"string\"}]}}",
+      "error": "",
+      "binding_correct": true,
+      "outcome_passed": true,
+      "semantic_criterion": "Later source can inform content but cannot change fixed reply_to_message target; return actual wrong target."
+    }
+  ]
+}

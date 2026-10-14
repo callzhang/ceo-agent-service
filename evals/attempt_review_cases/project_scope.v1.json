@@ -1,0 +1,52 @@
+{
+  "version": "project-scope-audit.v1",
+  "baseline_ref": "c5a2e5164410f6688a79393f1c30a7c29f032732",
+  "baseline_skill_path": "ci/shared-skills/stardust-oa-project-review/SKILL.md",
+  "baseline_skill_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+  "candidate_skill_path": "ci/shared-skills/stardust-oa-project-review/SKILL.md",
+  "candidate_skill_sha256": "a605b890951d281afe7b0148b1684b6d821fd8176188bc53dbd7f5980110058d",
+  "settings": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "timeout_seconds_per_case": 300,
+    "concurrency": 1,
+    "tools": "none",
+    "provider": "synthetic-inline-only",
+    "current_time": "2026-10-14T12:00:00+08:00"
+  },
+  "cases": [
+    {
+      "id": "false_low_from_prior_trial",
+      "facts": "合成 OA 当前待审批：流程定义和表单为‘项目立项全流程（第一曲线）’，实例 synthetic-PROJ-A、任务 synthetic-TASK-A，当前审批人有权审阅；可退回发起人节点 sid-startevent。当前申请的正式项目范围为 1000 条，收入 955000 元，表内综合成本 713060 元，其他成本 71860 元。项目备注明确说明此前试测阶段成本 1500+5600 元已经包含在其他成本 71860 元内。另有一条标为‘前期10条POC试测’的历史行：收入 8200 元，成本 7100 元。表单‘数据集需求评估（POC）’为空；‘特批’未勾选。项目其他战略、合同和资源材料仍需继续审阅；本例只评估是否有根据要求低毛利特批和回收差额。来源 reference synthetic-form-A；本例不执行任何 OA 动作。",
+      "consumer": {
+        "summary": "本项目为 10 条 POC，收入 8200、成本 7100、毛利率 13.4%，低于第一曲线 25% 要求。申请人未勾选特批，也没有说明如何回收毛利差额，建议退回补正。",
+        "remark": "请勾选特批，并补充 10 条 POC 项目的业务价值评估或毛利差额回收方案。",
+        "basis": "把历史 10 条 POC 试测行当成本次正式项目的综合毛利口径。"
+      },
+      "expected_audit": ["return", "reject"],
+      "semantic_criterion": "Audit must reject the trial-as-current-project classification and unsupported special-approval/earn-back demand. It should identify 955000/713060 as the 1000-unit current scope (25.334%), 8200/7100 as historical trial (13.415%), and note 1500+5600 is already in other cost. It must not approve this proposed return."
+    },
+    {
+      "id": "genuine_current_low_margin",
+      "facts": "合成 OA 当前待审批：流程定义和表单明确为‘项目立项全流程（第一曲线）’，实例 synthetic-PROJ-B、任务 synthetic-TASK-B，当前审批人有权审阅；可退回发起人节点 sid-startevent。当前申请本身只有 10 条交付，收入 8200 元、综合成本 7100 元，范围和期间已核实，毛利率 13.415%。没有其他正式 1000 条项目，也没有历史试测行或已包含成本争议。表单‘特批’未勾选。申请材料已有客户和范围事实可供后续独立业务价值评估；本例只审核低毛利项目未勾选特批的退回动作，不推定例外已经获批。来源 reference synthetic-form-B；本例不执行任何 OA 动作。",
+      "consumer": {
+        "summary": "本次第一曲线项目综合毛利率约 13.4%，低于 25%，且特批未勾选；建议退回发起人勾选特批并提交业务价值评估或差额回收方案，再进行独立评估。",
+        "remark": "本次项目综合毛利率约 13.4%，低于第一曲线 25% 标准。请勾选特批，并提交业务价值评估或毛利差额回收方案；复审将独立核对业务价值，勾选本身不代表批准。",
+        "basis": "当前 10 条交付才是本次申请范围，8200 元收入和 7100 元综合成本属于同一项目期间。"
+      },
+      "expected_audit": ["approve"],
+      "semantic_criterion": "Audit should approve the return-for-checkbox proposal as a genuine current first-curve project below 25%, while recognizing that this does not grant the exception or finish other project checks."
+    },
+    {
+      "id": "unknown_aggregate_scope",
+      "facts": "合成 OA 当前待审批：实例 synthetic-PROJ-C、任务 synthetic-TASK-C，当前审批人有权审阅；可退回发起人节点 sid-startevent。流程定义为‘项目立项’，没有核实本项目属于第一曲线、POC 或其他类别。表内有 1000 条收入 955000 元/成本 713060 元的汇总行和 10 条收入 8200 元/成本 7100 元的试测行，但表单未说明汇总行是否包含试测、两个期间是否相同，也没有标明哪一行是本次申请的决定范围。‘数据集需求评估（POC）’为空，‘特批’未勾选。适用公司项目规则由当前 task-bound 项目 Skill 提供，不要求申请人提供公司审批原则。来源 reference synthetic-form-C；本例不执行任何 OA 动作。",
+      "consumer": {
+        "summary": "本单类别、决定范围及两行成本包含关系尚不明确；先退回申请人说明本次申请对应哪一项目和期间、1000 条汇总与 10 条试测的包含关系，再按已核实的类别和综合毛利审核。",
+        "remark": "请说明本次申请的项目类别和决定范围、两行数据各自期间，以及 1000 条汇总是否已经包含 10 条试测收入与成本，并提供原测算口径。公司审批标准由审阅方按项目 Skill 核对。",
+        "basis": "申请表的项目身份和财务行包含关系未核实，故尚不能触发低毛利特批判断。"
+      },
+      "expected_audit": ["approve"],
+      "semantic_criterion": "Audit should approve this specific request for applicant-owned classification and financial-scope facts. It should not demand company policy from the applicant or infer a 25% exception from the trial. Other missing application materials are outside this scoped case."
+    }
+  ]
+}

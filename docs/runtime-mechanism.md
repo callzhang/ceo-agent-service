@@ -174,8 +174,10 @@ report actual text/page truncation, and the complete serialized tool response
 must fit below the 1 MiB MCP text-block boundary using the same indented
 `pydantic_core.to_json` serialization as the pinned FastMCP SDK, including JSON
 escaping, structural whitespace and duplicated text. An oversized response fails rather than presenting partial
-business evidence as complete. Scanned PDF OCR paths and process-owned temporary
-directory cleanup remain unchanged; failed extraction/serialization removes the
+business evidence as complete. Textless PDF pages are read through the installed Stardust OCR client; page order,
+source hash and OCR confidence remain visible. OCR errors are technical read
+failures rather than evidence of missing applicant material. Process-owned
+temporary directory cleanup remains unchanged; failed extraction/serialization removes the
 new material file. These limits do not grant shell access to DWS credentials.
 
 `retry-source-verified-email-action --account ... --action-id ...` examines one
@@ -1238,7 +1240,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 参数、命令、工具输出和从原生记录提取的结果均按需读取。中断运行按原生 `task_started` / `task_complete`
 边界恢复证据，既有投递核对和恢复契约保持不变。
 
-Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点，返回受限正文和当前 MCP 进程临时目录路径；扫描 PDF 可交给选中的 OCR Skill，MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
+Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点，返回受限正文和当前 MCP 进程临时目录路径；扫描 PDF 的无文本页通过已配置的 Stardust OCR 客户端直接读取正文，保留原始页序、页数、下载文件摘要和 OCR 置信度；读取失败返回技术错误，不能解释为申请人未提供材料。MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`。任务工具直接向模型声明；已验证的成功读取使用具名直接调用，但 Agent 仍可能尝试 CodeMode 并在调用错误后恢复，声明方式不保证没有额外步骤。其他工具继续使用 CodeMode；既有角色工具选择、functions 排除、沙箱、会话和路线不变。超长直接调用结果仍可能被原生运行时截断，不能以完整原始回执替代模型实际可见内容的验证。
 
@@ -2917,3 +2919,10 @@ Recorded DingTalk delivery recovery (2026-10-14): startup reconciliation, explic
 Historical terminal Attempt or settlement projections cannot override a current external_action_uncertain/external_action_failed task error. A later verified provider result uses the normal execution completion writer. Original Attempt and settlement history remains unchanged.
 
 Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
+
+
+### 原始触发、当前来源和立项财务口径（2026-10-14）
+
+钉钉 Task 保存原始触发快照和固定回复目标，近期会话是另一次来源读取；同一 message_id 的审批卡片可更新，Task 标明两者来源及正文是否一致。近期已核实的处理结果可证明原请求已解决，后续新请求仍是独立任务。时间事实提供 UTC 及相对原触发的秒数；来源时间不可解析时不推断顺序。Audit 的 source_bindings 由服务在 Consumer 输出后捕获，反馈应修改 Consumer 自己的候选，不能要求 Consumer 重写原始来源快照。
+
+立项财务 Skill 按本次项目范围、期间和综合口径判断毛利；历史试做行不自动代表当前 POC 或第一曲线项目。先核对成本是否已包含，避免重复计入。实际适用的第一曲线项目综合毛利低于 25% 时，原有特批路径继续适用。修订通过新的托管 Skill revision 发布；历史任务冻结输入不被覆盖。
