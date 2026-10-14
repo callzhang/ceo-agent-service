@@ -144,6 +144,8 @@ Attempts/steps extend existing native AUTOINCREMENT sequence strategy with two s
 
 ## Task 2: Implement finite storage and native constraint parity
 
+**Task2A accepted locally at `7adf3ea8` (2026-10-14):** sequential independent SPEC and QUALITY passed the finite declarations,144-field mapping, source codec/native constraints and projections. Both generated-column ownership and unused physical-reference gaps were corrected with regressions. All six default-disabled manifests remain byte-identical. Task2B writers/allocators below, migration, constructors and publication remain pending. Later normal merge `f249e9dd` preserves E/main increments without changing this storage unit.
+
 **Files:** `app/action_storage.py`; new `tests/test_email_action_storage.py`; runtime storage documentation only when implemented.
 
 Execute this task in two reviewed units: **2A** finite declarations, native

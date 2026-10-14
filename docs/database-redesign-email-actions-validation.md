@@ -72,3 +72,25 @@ the external Email trigger and migration work is pending.
 After this correction, the focused and selected older storage/reply files
 passed with 354 tests and 6 existing skips. Scoped Ruff and diff checks passed;
 all six default-disabled action manifests remained byte-identical.
+
+## Task2A independent acceptance
+
+The finite declaration unit `b38c2458`, corrected by `cac51248` and
+`7adf3ea8`, passed sequential independent SPEC and QUALITY. SPEC checked the
+144-field map, six unchanged default-disabled manifests, native conflict/FK
+timing and 6,912 savepoint-isolated scalar mutations across the two source
+variants without acceptance/value/typeof differences. Generated Email columns
+now return NULL outside their exact owning kinds; a separate Email-only CHECK
+rejects every unrelated older physical reference, including the fresh-only
+Memory parent. Regression cases failed before each fix and passed afterward.
+Independent final SPEC passed all10focused cases and all-kind ownership probes;
+QUALITY passed265selected cases with6variant skips. These overlapping counts
+are not a single aggregate suite. All independent probes used in-memory data
+and left no disposable artifacts.
+
+Root normally merged E/main candidate `a0b60ba6` as `f249e9dd`, retaining both
+claim sets and concurrent receipt behavior. No Email storage code changed in
+that merge. This accepts Task2A definitions/projections only; it establishes
+no writer, allocator, constructor, migration, version, publication or provider
+behavior. Default Email opt-in remains disabled. The complete ten-core-table
+plus-ledger redesign remains incomplete.
