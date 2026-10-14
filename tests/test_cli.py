@@ -1707,11 +1707,13 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
         def __init__(self, **kwargs):
             calls.append(("dws", kwargs["transient_retry_attempts"]))
 
-        verify_message_send_result = DwsClient.verify_message_send_result
-
         @staticmethod
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
+
+        @staticmethod
+        def verify_message_send_result(send_result):
+            return DwsClient().verify_message_send_result(send_result)
 
         def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             calls.append(
@@ -1724,7 +1726,12 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
                     text,
                 )
             )
-            return {"result": {"processQueryKey": "okr-recall-1", "openMessageId": "msg-okr-reply-1"}}
+            return {
+                "result": {
+                    "processQueryKey": "okr-recall-1",
+                    "openMessageId": "sent-okr-1",
+                }
+            }
 
     def fake_process(*, store, runner, request, single_chat):
         calls.append(
@@ -2113,15 +2120,22 @@ def test_process_okr_reviews_command_requeues_stale_processing_request(
         def __init__(self, **kwargs):
             pass
 
-        verify_message_send_result = DwsClient.verify_message_send_result
-
         @staticmethod
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
+        @staticmethod
+        def verify_message_send_result(send_result):
+            return DwsClient().verify_message_send_result(send_result)
+
         def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             calls.append(("send", trigger.open_message_id, text))
-            return {"result": {"processQueryKey": "okr-recall-1", "openMessageId": "msg-okr-reply-1"}}
+            return {
+                "result": {
+                    "processQueryKey": "okr-recall-1",
+                    "openMessageId": "sent-okr-1",
+                }
+            }
 
     def fake_process(*, store, runner, request, single_chat):
         calls.append(("process", request.id, single_chat))
