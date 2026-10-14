@@ -79,7 +79,23 @@ the focused release proceeded; no full CI pass is claimed.
 
 ## Release boundary
 
-Implementation and the synthetic diagnostic are validated locally. Production
-deployment and operational readback must be recorded separately. Attempt15391
-remains historical failed work until a genuinely authorized new business run
-finishes; deploying this change does not mean its old reply was sent.
+PR81 merged as492259b5 and the formal deploy completed74851902→492259b5 on
+2026-10-13 America/Los_Angeles. Production HEAD matches the merge commit and
+its checkout is clean. Supervisor PID changed99385→34703. Healthz, Status,
+Attention, History and Attempt15391 returned HTTP200 at2026-10-14T01:25:22Z.
+In-flight count was0. All current failed queue counts were0; Email retained3
+pending actions from the pre-deploy snapshot. No new failed run was observed
+after the pre-deploy timestamp2026-10-14T01:24:07Z. The pre-existing source
+scanner unresolved-error quality warning remains degraded; HTTP health does
+not establish that it was repaired. Optional full Quality CI was still running.
+
+The service had already recovered Attempt15391 at2026-10-14 01:04:46 UTC,
+before this release, using Consumer354566/354579 and Audit354574/354584. The
+current Attempt row is completed and System execution162 marks its one
+reply_to_message action verified. The provider response itself reports
+success=true and an openTaskId, but deliveryStatus=unknown; its stored
+verification has state=sent with an empty open_task_id/status_result. This is
+service-recorded completion, not independent delivered-message readback. It
+must not be attributed to this patch or reported as a newly verified recipient
+delivery. This repair did not initiate a business replay, alter that receipt, or
+rewrite the original Agent run records.
