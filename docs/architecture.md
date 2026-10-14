@@ -79,6 +79,16 @@ native event/result projection. File I/O never extends these writer leases.
 
 ## 当前任务运行机制
 
+钉钉发送核验只从发送结果的 `result` 读取新消息/发送任务身份，不递归扫描引用消息、
+历史消息或 nextActions。存在 `result.openTaskId` 时必须查询该任务，即使同时返回了消息 ID；
+只有原生查询的 `result.sendStatus=SUCCESS` 才算该异步任务投递成功。unknown、pending、
+缺失任务或查询失败保持未知；processQueryKey、重复 UUID 接受及泛化的 finished 均不是投递证明。
+原生回复在投递未定时保存已接受的 provider 回执，冷恢复只重查同一任务，不再次发消息。
+已显式纠正为未知的历史回执仍保留已接受效果，System 只能核对它，不能复用为 verified 或重发。
+历史修正通过显式小批量维护完成，保留原始 provider 结果、之前的核验结论和状态；不改写 Agent
+运行或历史 Attempt。当前任务的失败状态优先于历史 completed 展示。未知投递使用技术失败／
+uncertain 执行状态，不生成管理者业务决策问题。
+
 Consumer 与 Audit 的实际只读工具目录提供 `read_dingtalk_group_members` 和
 `read_dingtalk_user_profiles`。群成员读取使用 DWS 原生有界自动分页，原样保留真人、
 机器人、完整性、桶、续页和失败信息；企业资料读取只接收已核实的组织 userId，

@@ -170,8 +170,8 @@ class ServiceMessageSender:
             message.delivery_key,
         )
         if persisted_receipt is not None:
-            return SendReceipt(message=message, provider_result=persisted_receipt)
-        if self.store.claim_native_reply_dispatch(message.channel, message.delivery_key):
+            provider_result = persisted_receipt
+        elif self.store.claim_native_reply_dispatch(message.channel, message.delivery_key):
             provider_result = self.dingtalk.send_reply_to_trigger(
                 conversation, trigger, message.final_body,
             )
@@ -181,37 +181,21 @@ class ServiceMessageSender:
             )
             if provider_result is None:
                 raise RuntimeError("dingtalk_reply_reconciliation_inconclusive")
+        # Preserve the accepted provider task even while its delivery is unknown.
+        # Recovery rechecks this exact receipt instead of dispatching again.
+        if isinstance(provider_result, dict) and provider_result.get("success") is not False:
+            provider_result = self.store.record_outbound_postfix_receipt(
+                message.channel, message.delivery_key, provider_result,
+            )
         verification = self._verify_native_reply_result(provider_result)
         if verification != "sent":
             raise RuntimeError(f"native DingTalk reply send is {verification}")
-        receipt = self.store.record_outbound_postfix_receipt(
-            message.channel,
-            message.delivery_key,
-            provider_result,
-        )
-        return SendReceipt(message=message, provider_result=receipt)
+        return SendReceipt(message=message, provider_result=provider_result)
 
     def _verify_native_reply_result(self, provider_result: Any) -> str:
-        if isinstance(provider_result, dict):
-            if provider_result.get("success") is False:
-                return "failed"
-            result = provider_result.get("result")
-            if isinstance(result, dict) and str(
-                result.get("processQueryKey") or ""
-            ).strip():
-                return "sent"
-        verifier = getattr(self.dingtalk, "verify_message_send_result", None)
-        if callable(verifier):
-            verification = verifier(provider_result)
-            if isinstance(verification, dict):
-                state = str(verification.get("state") or "").strip()
-                if state in {"sent", "failed", "ambiguous"}:
-                    return state
-            return "ambiguous"
         if not isinstance(provider_result, dict):
             return "ambiguous"
-        result_text = str(provider_result)
-        return "sent" if "processQueryKey" in result_text else "ambiguous"
+        return self.dingtalk.verify_message_send_result(provider_result)["state"]
 
     def send_wechat(
         self,

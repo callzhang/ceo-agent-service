@@ -1,5 +1,23 @@
 # Current Runtime Mechanism
 
+DingTalk delivery verification reads outgoing identifiers only from the native
+send `result`, never referencedMessage or nested action metadata. An openTaskId
+always requires a task query; only result.sendStatus=SUCCESS confirms asynchronous
+delivery. Accepted UUID duplicates, processQueryKey and generic finished statuses
+do not prove delivery. Unknown/pending/query failures retain ambiguity. Native
+reply preparation persists the accepted receipt before verification, including
+unknown outcomes, and rechecks it on recovery without another send.
+
+Explicit historical delivery re-verification preserves original provider output,
+the earlier verifier and prior execution/task state. Corrected unknown receipts
+remain accepted effects requiring read-only reconciliation; they are neither
+completed actions nor permission to resend. The maintenance tool never dispatches
+Agents or providers, leaves original run/Attempt rows unchanged, and withdraws
+only the same generation's closed task completion. Failed current tasks override
+historical completion in the Console. Unknown historical delivery is a technical
+verification failure, not a needs_human business choice. No maintenance runs in
+read paths or startup.
+
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
 revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override

@@ -690,7 +690,7 @@ def test_send_message_treats_dws_idempotency_duplicate_as_confirmed_delivery(mon
     }
 
 
-def test_verify_message_send_result_treats_confirmed_idempotency_duplicate_as_sent():
+def test_verify_message_send_result_keeps_duplicate_acceptance_ambiguous():
     result = DwsClient().verify_message_send_result(
         {
             "success": True,
@@ -702,7 +702,7 @@ def test_verify_message_send_result_treats_confirmed_idempotency_duplicate_as_se
     )
 
     assert result == {
-        "state": "sent",
+        "state": "ambiguous",
         "open_task_id": "",
         "status_result": {},
     }
@@ -4235,7 +4235,7 @@ def test_list_group_member_open_ids_rejects_repeated_cursor():
 
 def test_verify_message_send_result_extracts_task_and_queries_status():
     client = SequenceRecordingDwsClient(
-        [{"success": True, "result": {"status": "SUCCESS"}}]
+        [{"success": True, "result": {"sendStatus": "SUCCESS"}}]
     )
 
     verified = client.verify_message_send_result(
@@ -4245,7 +4245,7 @@ def test_verify_message_send_result_extracts_task_and_queries_status():
     assert verified == {
         "state": "sent",
         "open_task_id": "task-1",
-        "status_result": {"success": True, "result": {"status": "SUCCESS"}},
+        "status_result": {"success": True, "result": {"sendStatus": "SUCCESS"}},
     }
     assert client.commands == [
         [

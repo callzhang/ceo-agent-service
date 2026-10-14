@@ -3435,35 +3435,18 @@ class DwsClient:
                 "open_task_id": "",
                 "status_result": {},
             }
-        idempotency = send_result.get("idempotency")
-        if (
-            isinstance(idempotency, dict)
-            and idempotency.get("state") == "duplicate_confirmed"
-            and isinstance(idempotency.get("uuid"), str)
-            and idempotency["uuid"].strip()
-        ):
-            return {
-                "state": "sent",
-                "open_task_id": "",
-                "status_result": {},
-            }
-        message_id = self._find_nested_string(
-            send_result,
-            {"openMessageId", "messageId", "msgId"},
-        )
-        if message_id:
-            return {
-                "state": "sent",
-                "open_task_id": "",
-                "status_result": {},
-            }
-        open_task_id = self._find_nested_string(
-            send_result,
-            {"openTaskId"},
-        )
+        result = send_result.get("result")
+        result = result if isinstance(result, dict) else {}
+        # Only the send-result object owns outgoing identities. A reply's
+        # referencedMessage and nextActions describe existing messages.
+        open_task_id = result.get("openTaskId")
+        open_task_id = open_task_id.strip() if isinstance(open_task_id, str) else ""
         if not open_task_id:
+            message_id = next((result[key].strip() for key in ("openMessageId", "messageId", "msgId")
+                               if isinstance(result.get(key), str) and result[key].strip()), "")
             return {
-                "state": "ambiguous",
+                "state": ("sent" if message_id and send_result.get("deliveryStatusKnown") is not False
+                          and send_result.get("deliveryStatus") != "unknown" else "ambiguous"),
                 "open_task_id": "",
                 "status_result": {},
             }
@@ -3476,17 +3459,17 @@ class DwsClient:
                 "status_result": {},
                 "status_error": str(exc),
             }
-        status = self._find_nested_string(
-            status_result,
-            {"status", "sendStatus", "taskStatus"},
-        ).casefold()
+        status_body = status_result.get("result")
+        status_body = status_body if isinstance(status_body, dict) else {}
+        status = status_body.get("sendStatus")
+        status = status.casefold() if isinstance(status, str) else ""
         if status_result.get("success") is False or status in {
             "failed",
             "fail",
             "error",
         }:
             state = "failed"
-        elif status in {"success", "succeeded", "sent", "finished"}:
+        elif status == "success":
             state = "sent"
         else:
             state = "ambiguous"
