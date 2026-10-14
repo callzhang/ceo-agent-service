@@ -2119,8 +2119,14 @@ all Store/Email constructors and runtime callers. The finite Email writer
 helpers now accept source-shaped inserts, updates and deletes: nine families
 locate by signed source ROWID, two use independent AUTOINCREMENT aliases, and
 two use projected composite keys. They evaluate original source defaults under
-the writer lock and return source identities. External source-table triggers,
-migration and publication remain separate pending units; the focused validation boundary is recorded in
+the writer lock and return source identities. Isolated pure migration functions
+now move the exact frozen thirteen-table source into this opt-in declaration
+and reconstruct those tables from current typed facts. They preserve the nine
+source ROWID namespaces, two AUTOINCREMENT waters, existing sixteen action
+types and all thirteen external blockers. The caller owns the foreign-key-off
+transaction; no Store/Email constructor selects these functions. Actual
+published-predecessor binding, paired release and production acceptance remain
+pending. The focused validation boundary is recorded in
 `docs/database-redesign-email-actions-validation.md`.
 Each generated Email source column returns NULL for all older action types and
 for Email kinds that lack that original field; its finite CASE reads only the

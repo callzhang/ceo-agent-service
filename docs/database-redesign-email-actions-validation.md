@@ -1,5 +1,49 @@
 # Email action storage preparation: Tasks 2A and 2B
 
+## Task3A-2 local forward/current-fact inverse
+
+`app/action_email_storage.py` now has standalone forward and inverse functions
+for the two exact frozen synthetic sixteen-action/thirteen-Email pairs. Both
+require a caller-owned FK-off transaction and make no schema-version, Store,
+Email constructor, provider or runtime-route choice. The forward preflight
+validates the entire source declaration/dependency/allocator closure before
+mutation. It copies the existing sixteen action types with their physical IDs
+and stored SQLite types, then encodes all 144 Email fields through the accepted
+finite scalar codec. It retains signed source ROWIDs, two AUTOINCREMENT waters,
+two composite keys, and all existing logical action allocator aliases. During
+raw copy, row-dependent action triggers are deferred and then restored. The
+thirteen captured external blocker triggers are replaced by finite typed-action
+equivalents with their original changed-value predicates and abort text.
+
+The inverse validates the canonical metadata-only source state, exact
+twenty-nine-type target declaration, translated blocker bodies, dependencies
+and source-name availability before mutation. It rebuilds all thirteen source
+tables, indexes and five own triggers from current projected facts, including
+post-forward inserts, updates and deletes. No original source row backup is
+stored or replayed. Canonical SQLite object SQL is installed with an explicit
+MAIN schema qualifier on index and trigger names; SQLite stores the same exact
+canonical SQL while same-name TEMP tables, indexes and triggers remain intact.
+
+The API-missing RED failed at import. A meaningful RED then exposed unqualified
+factory index creation binding a TEMP `actions` shadow and failing after schema
+mutation; the local canonical-object installer fixed that without changing the
+shared factory or the six default-disabled manifests. Focused cases across
+both source variants cover all thirteen populated families, 144-field
+value/`typeof` and ROWID checks, NULL public-key duplicates, negative and zero
+ROWIDs, deleted-highest ordinary ROWID reuse, BLOB and NUL values, raw
+non-JSON text, old action-ID collision,
+post-forward current facts, absent/zero/high allocator waters, all thirteen
+external blockers before/after both transitions, MAIN/TEMP separation, source
+and target refusal, and caller savepoint rollback after late SQL failures in
+each direction. An existing source foreign-key finding remains visible in the
+target and returns unchanged after inverse; no clean-source assumption was
+added. The bounded source/definition/writer/old-reply/inverse set passed
+**360 tests with 6 existing skips** before the final two deleted-highest
+regressions, which passed separately; scoped Ruff and whitespace checks
+passed. These are synthetic tests only. Task3B still must bind the actual
+published E predecessor and validate current production-copy/old-code behavior
+before any release decision.
+
 ## Task 3A-1: unselected source capture
 
 `app/action_email_storage.py` now provides a read-only candidate source capture

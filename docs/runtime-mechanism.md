@@ -2921,9 +2921,13 @@ writes through `actions`; no Store/Email initializer selects this option.
 Finite source-shaped Email mutation helpers now preserve nine signed source
 ROWID locators, two independent AUTOINCREMENT sequences and two composite keys.
 The writer lock precedes source default evaluation and locator/payload reads;
-successful calls return the source identity. External Email trigger closure
-and source/current-fact migration remain to be implemented
-before an Email schema release. The candidate is local storage preparation,
+successful calls return the source identity. Separate pure forward and
+current-fact inverse functions reconstruct all thirteen source families inside
+a caller-owned foreign-key-off transaction, translating the thirteen external
+blockers and preserving the original locators and allocator waters. They are
+unselected candidate functions; published-source binding, paired release and
+production acceptance remain required before an Email schema release. This is
+local storage preparation,
 not a production Store/Email version.
 Generated Email columns are scoped to their exact source family membership;
 same-named payload members on an older action never appear as Email fields.
