@@ -7,7 +7,7 @@ from typing import Any
 from app.wechat.models import principal_reply_supersession
 
 
-_TERMINAL_TASK_STATES = {"done", "skipped", "needs_human"}
+_TERMINAL_TASK_STATES = {"done", "skipped", "needs_human", "failed"}
 
 
 def current_wechat_delivery_matches(attempt: Any, task: Any, delivery: Any) -> bool:

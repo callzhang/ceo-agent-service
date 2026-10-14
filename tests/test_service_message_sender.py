@@ -281,7 +281,7 @@ def test_native_reply_facade_reuses_durable_receipt_after_partial_delivery(
     assert adapter.calls == [("cid-1", "msg-1", message.final_body)]
 
 
-def test_native_reply_facade_confirms_actual_dws_process_query_key_shape(tmp_path) -> None:
+def test_native_reply_facade_keeps_process_query_key_unverified(tmp_path) -> None:
     store = AutoReplyStore(tmp_path / "service-message-sender.sqlite3")
     adapter = NativeProcessQueryDwsClient()
     sender = ServiceMessageSender(store=store, dingtalk=adapter)
@@ -292,15 +292,14 @@ def test_native_reply_facade_confirms_actual_dws_process_query_key_shape(tmp_pat
         original_text="请审核",
     )
 
-    receipt = sender.send_dingtalk_reply_to_trigger_prepared(
-        message,
-        conversation="cid-1",
-        trigger="msg-1",
-    )
-
-    assert receipt.provider_result == {"result": {"processQueryKey": "native-reply-1"}}
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        sender.send_dingtalk_reply_to_trigger_prepared(
+            message, conversation="cid-1", trigger="msg-1",
+        )
     assert adapter.calls == [("cid-1", "msg-1", message.final_body)]
-    assert store.get_outbound_postfix_receipt("dingtalk", message.delivery_key) == receipt.provider_result
+    assert store.get_outbound_postfix_receipt("dingtalk", message.delivery_key) == {
+        "result": {"processQueryKey": "native-reply-1"},
+    }
 
 
 @pytest.mark.parametrize(
@@ -310,7 +309,7 @@ def test_native_reply_facade_confirms_actual_dws_process_query_key_shape(tmp_pat
         ({"success": True, "result": {}}, {"state": "ambiguous"}, "ambiguous"),
     ],
 )
-def test_native_reply_facade_does_not_cache_failed_or_ambiguous_provider_results(
+def test_native_reply_facade_keeps_accepted_unknown_receipt_but_not_failure(
     tmp_path,
     result,
     verification,
@@ -333,7 +332,9 @@ def test_native_reply_facade_does_not_cache_failed_or_ambiguous_provider_results
             trigger="msg-1",
         )
 
-    assert store.get_outbound_postfix_receipt("dingtalk", prepared.delivery_key) is None
+    assert store.get_outbound_postfix_receipt("dingtalk", prepared.delivery_key) == (
+        None if result.get("success") is False else result
+    )
 
 
 def test_wechat_prepared_dispatch_rejects_unpersisted_and_tampered_messages(
