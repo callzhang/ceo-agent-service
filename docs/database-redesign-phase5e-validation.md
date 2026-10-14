@@ -120,6 +120,15 @@ never constants for migration. No private row was exported or production data
 changed. The deployed interpreter's in-memory SQLite BLOB `unhex` probe also
 passed; final publication CI and candidate deployment remain separate gates.
 
+After fixed-head storage acceptance, root merged published main `74851902`
+into E as `d895df19`, preserving its failed-reply recovery changes. The only
+merge conflict was the claim ledger; both ownership records and the newer
+completed Status claim were retained. The seven-file gate passed again at
+the integrated head: 436 passed, eight skips. Eighteen relevant failed-reply,
+OA completion and task-recovery tests also passed (902 unrelated cases were
+deselected). The source/storage files reviewed at `1f4f2858` were unchanged
+by that merge. This does not activate the E schema.
+
 ## Earlier source preparation details
 
 The work below was source preparation for the approved Attempt/Memory action
