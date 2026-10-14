@@ -699,7 +699,7 @@ def sync_schema_parts(existing_references, reply_variant):
         parts = [_encoded_value_check("payload_json", "$." + field) for field in stored]
         parts += [f"json_remove(payload_json,{paths})='{{}}'"]
         parts += [f"sync_{field} is not null" for field in SYNC_REQUIRED[kind]
-                  if field != "draft_id"]
+                  if not (kind == "business_task_follow_up_send_attempts" and field == "draft_id")]
         if kind == "business_task_follow_up_send_attempts":
             parts += ["sync_draft_action_id is not null"]
         for expression in SYNC_SOURCE_CHECKS[kind]:

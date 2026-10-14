@@ -188,3 +188,35 @@ def test_provider_id_uniqueness_is_legacy_only_and_raw_scalar_bytes_survive():
                    ("work_updates", "0", json.dumps(encoded)))
         raw = db.execute(sync_action_projection("work_updates") + " and a.legacy_key='0'").fetchone()
         assert raw[4] == b"\x00\xff" and raw[7] == float("inf")
+
+
+@pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+@pytest.mark.parametrize("draft_id", (None, float("nan"), 0, -7, 999))
+def test_legacy_send_attempt_draft_id_matches_native_scalar_not_null(variant, draft_id):
+    snapshot = SOURCE["actual"] if variant == "actual_no_memory_fk" else SOURCE["fresh_production_constructor"]["snapshot"]
+    kind = "follow_up_send_attempts"
+    values = {c["name"]: _value(c["name"], c["type"]) for c in snapshot["tables"][kind]["columns"] if c["name"] != "id"}
+    values["draft_id"] = draft_id
+    with sqlite3.connect(":memory:") as native, sqlite3.connect(":memory:") as target:
+        native.execute(snapshot["tables"][kind]["sql"])
+        target.execute("create table tasks(id integer primary key, record_type text)")
+        target.execute("create table runs(id integer primary key, record_type text)")
+        target.execute("create table email_classifications(id integer primary key)")
+        target.execute("create table business_tasks(id integer primary key)")
+        target.execute("create table business_task_signals(id integer primary key)")
+        create_action_schema(target, include_reply=True, reply_variant=variant,
+                             include_email=True, include_followup_sync=True)
+        source_sql = f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})"
+        payload = json.dumps({field: _encoded_sqlite_value(value) for field, value in values.items()})
+        if draft_id is None or draft_id != draft_id:
+            with pytest.raises(sqlite3.IntegrityError):
+                native.execute(source_sql, tuple(values.values()))
+            with pytest.raises(sqlite3.IntegrityError):
+                target.execute("insert into actions(record_type,legacy_key,payload_json) values(?,?,?)",
+                               (kind, "1", payload))
+        else:
+            native.execute(source_sql, tuple(values.values()))
+            target.execute("insert into actions(record_type,legacy_key,payload_json) values(?,?,?)",
+                           (kind, "1", payload))
+            assert native.execute(f"select draft_id from {kind}").fetchone() == (draft_id,)
+            assert target.execute(sync_action_projection(kind)).fetchone()[1] == draft_id
