@@ -2066,3 +2066,45 @@ gates remain open.
 ### Task5B11 independent acceptance, 2026-10-14
 
 Root accepts9ae63315fd5fe3620e646740fd0dbbe9a89fafdf over2a01e77dc7259d71b074bddbce5572496b757245. Fresh SPEC independently6pass1.89s/lint/diff/307otherfunctionsASTsame and protected459metadata rows verified; own temps absent. Subsequent fresh QUALITY independently checks199actual identifiers/190originalrequired intersection, all190appear in61selectedSQL, all191stringliteral tokens preserved, original265assignment/case/threequotestyles and protected459 rows intact. Currentpartialledger exact pairederrors and fullfuturepair refusal match constructor ordering/no mutations. It did not repeat sufficient6case execution; owned probe dirs absent and frozen cleanHEAD. No runtime changes. Currentthree-file residual diagnostic had318cases313pass5fail; this accepted unit fixes those5 plus fullfuturecase, but combined319current regression still needs rerun. Historical47genuine0441cases already proven in tmp, not yet integrated; copy/native/CI/publication/full10+1 remain open.
+
+### Task5B12 genuine historical test integration (unpublished)
+
+The old-source boundary is fixed to published main
+`0441cf15fafe800f9ca4d67f667e87062ca62109`. Forty original historical
+test functions are removed from current collection only after AST comparison
+proves each body and decorator identical to that source commit: 35 Store
+functions/40 parameter cases, three reference functions/six cases and two
+retry functions/two cases. The original assertions remain in the archived
+same-ref `tests` and run against the archived same-ref `app`, `pyproject.toml`
+and required phase4 inventory JSON. One module-scoped, task-owned `/tmp`
+archive serves three explicit pytest node groups. Each child must exit zero,
+produce a JUnit report with exactly 40/6/2 named cases, and report no failure,
+error or skip; a missing source commit, report or case fails visibly with the
+child stdout/stderr. No old code is kept in the repository and no current
+constructor is made to accept retired versions. Historical fixture helpers
+and imports remain for their other test-file callers.
+
+The first manifest accidentally omitted
+`test_startup_rejects_noncanonical_current_action_plan_snapshot`, whose
+unchanged body reconstructs a pre-v49 `action_plan_json` column and selects
+retired native `email_action_plans`. Its initial focused run correctly exposed
+`1 failed, 321 passed in 71.62s`, exit 1. The fixed source body was AST-identical
+and its genuine single node passed (`1 passed in 1.98s`, exit 0); it was added
+to the Store historical group without changing its assertion or helper. The
+corrected focused collection is 321 parent-visible cases: 318 current cases
+across the three existing files plus three historical group entrances.
+The corrected focused gate passed `321 passed in 69.65s`, exit 0. After adding
+independent group/function/case count guards, the three nested groups passed
+again (`3 passed in 12.04s`, exit 0), exercising all 48 source cases. AST
+comparison confirms exactly these 40 names were removed and all remaining
+top-level test functions are unchanged. CI's existing single checkout step now
+fetches full history so this bound source and existing genuine-old-source
+tests can resolve their commits; no CI job was triggered. All copied source,
+database and report files lived under owned temporary roots and were removed.
+Runtime cleanup, production, provider/native calls and broader publication
+gates remain separate.
+
+The archive additionally checks that the fixed source includes its original
+`tests/conftest.py` and `app/email_store.py`. The three wrappers passed again
+after that guard (`3 passed in 10.84s`, exit 0), with the same exact nested
+counts and task-owned temporary cleanup.

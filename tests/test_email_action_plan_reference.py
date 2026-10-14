@@ -4,7 +4,7 @@ from contextlib import contextmanager
 import pytest
 
 from app.email_classifier_contracts import EmailClassificationStatus
-from app.email_store import EMAIL_PLAN_SQL, EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore
+from app.email_store import EMAIL_PLAN_SQL, EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore  # noqa: F401 - historical fixture import retained
 from app.action_storage import email_action_projection, update_email_action
 from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 from tests.test_email_store import _classification, _persist_scan
@@ -58,56 +58,8 @@ def business_rows(path):
                               'email_actions', 'email_action_attempts', 'email_scan_cursors')}
 
 
-def test_v48_reference_migration_preserves_business_and_api(tmp_path):
-    path = tmp_path / 'reference.sqlite3'
-    store = seed(path)
-    before_api = [store.get_classification(index) for index in (1, 2)]
-    before_history = store.list_historical_classification_history()
-    before = business_rows(path)
-    rewind48(path)
-    migrated = EmailStore(path)
-    assert EMAIL_SCHEMA_VERSION == 51
-    with sqlite3.connect(path) as db:
-        assert 'action_plan_json' not in {row[1] for row in db.execute('pragma table_info(email_classifications)')}
-        assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == EMAIL_SCHEMA_VERSION
-        assert db.execute('select count(*) from email_direct_retry_requests').fetchone()[0] == 0
-        assert db.execute('pragma foreign_key_check').fetchall() == []
-    assert business_rows(path) == before
-    assert [migrated.get_classification(index) for index in (1, 2)] == before_api
-    assert migrated.list_historical_classification_history() == before_history
-    assert migrated.get_classification_by_stable_identity(before_api[0]['stable_message_identity']) == {
-        key: value for key, value in before_api[0].items()
-        if key not in {'attachment_metadata', 'message_text', 'cc', 'recipients'}}
-    versions = business_rows(path)
-    EmailStore(path)
-    EmailStore(path, validate_rows=False)
-    assert business_rows(path) == versions
 
 
-@pytest.mark.parametrize('corruption', ['whitespace', 'partial_authorization', 'missing', 'cross_classification'])
-def test_v48_reference_migration_rejects_corruption_and_rolls_back(tmp_path, corruption):
-    path = tmp_path / 'corrupt.sqlite3'
-    store = seed(path)
-    if corruption == 'cross_classification':
-        _persist_scan(store, _classification(status=EmailClassificationStatus.PROCESSED,
-                                            classification_id=3, message_id='cross-plan'))
-    rewind48(path)
-    with sqlite3.connect(path) as db:
-        if corruption == 'whitespace':
-            db.execute("update email_classifications set action_plan_json=' '||action_plan_json where id=1")
-        elif corruption == 'partial_authorization':
-            db.execute("update email_classifications set action_plan_json=json_remove(action_plan_json, '$.action_authorizations') where id=1")
-        elif corruption == 'missing':
-            db.execute("update email_classifications set current_action_plan_id='missing' where id=1")
-        else:
-            db.execute('update email_classifications set current_action_plan_id=(select current_action_plan_id from email_classifications where id=3) where id=1')
-    before = business_rows(path)
-    with pytest.raises(EmailPersistenceCorruption):
-        EmailStore(path)
-    assert business_rows(path) == before
-    with sqlite3.connect(path) as db:
-        assert 'action_plan_json' in {row[1] for row in db.execute('pragma table_info(email_classifications)')}
-        assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == 48
 
 
 def _assert_single_batch_plan_query(queries):
@@ -216,15 +168,3 @@ def test_current_read_and_full_validation_reject_invalid_reference(tmp_path, poi
         store.get_classification(target)
     with pytest.raises(EmailPersistenceCorruption):
         EmailStore(path)
-
-
-def test_v48_legacy_processed_without_plan_preserves_null_projection(tmp_path):
-    path = tmp_path / 'legacy-null.sqlite3'
-    store = seed(path)
-    with sqlite3.connect(path) as db:
-        db.execute("update email_classifications set status='processed', legacy_processed_without_plan=1 where id=2")
-    before = store.get_classification(2)
-    assert before['action_plan'] is None
-    rewind48(path)
-    migrated = EmailStore(path)
-    assert migrated.get_classification(2) == before
