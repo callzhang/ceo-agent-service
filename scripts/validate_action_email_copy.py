@@ -737,6 +737,7 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
                              retry_id)
         with closing(sqlite3.connect(donor_path)) as donor_db:
             donor_after_write = _source_facts(donor_db)
+            donor_after_write_waters = _source_waters(donor_db)
             assert _unrelated(donor_db, fixture_ids) == unrelated
         write = _old_process(oldroot, path, "write", classification_id, identity, retry_id)
         feedback_finished = datetime.now(timezone.utc)
@@ -760,6 +761,7 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
                                                     feedback_finished)
         after_old_fixture = _fixture_rows(db, fixture_ids)
         after_old_waters = _source_waters(db)
+        assert after_old_waters == donor_after_write_waters
         assert after_old_waters["email_action_attempts"] > current_waters["email_action_attempts"]
         assert after_old_waters["email_unsubscribe_steps"] == current_waters["email_unsubscribe_steps"]
         assert after_old_actions == actions

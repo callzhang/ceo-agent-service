@@ -225,6 +225,24 @@ def test_old_public_write_cannot_change_original_email_row(old_fresh, monkeypatc
         _case(path, old, fresh=True, null_plans=False)
 
 
+def test_old_public_write_cannot_raise_attempt_water_unexplained(old_fresh, monkeypatch):
+    old, path = old_fresh
+    original = proof._old_process
+
+    def corrupt_after_public_write(root, database, mode, *args):
+        result = original(root, database, mode, *args)
+        if mode == "write":
+            with closing(sqlite3.connect(database)) as db:
+                db.execute("update sqlite_sequence set seq=seq+999 "
+                           "where name='email_action_attempts'")
+                db.commit()
+        return result
+
+    monkeypatch.setattr(proof, "_old_process", corrupt_after_public_write)
+    with pytest.raises(AssertionError):
+        _case(path, old, fresh=True, null_plans=False)
+
+
 def test_public_seed_clock_normalization_is_bounded(old_fresh, monkeypatch):
     old, path = old_fresh
     original = proof._old_process
