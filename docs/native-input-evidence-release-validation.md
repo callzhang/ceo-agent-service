@@ -28,3 +28,5 @@ Both native evidence sets were produced on the Task draft's anonymous readonly/M
 ## Current-main integration verification
 
 The seven-file group test_task_citation_feedback, test_task_agent, test_task_prompt_schema_delivery, test_inline_output_schema, test_routed_codex_execution, test_native_prompt_preview and test_routed_result_privacy passes326 tests in22.30s. Ruff and diff checks pass. The new compact-schema regressions were RED2 and citation feedback RED1 before their respective integrations. Existing read-only reviewer finds no source-code blocker; its evidence-origin wording correction is applied: the317-test count inside the original native evidence is explicitly draft-origin, not this current-main gate. No full suite ran beside the live service. This remains locally accepted, not published or deployed.
+
+Normal merge of origin/main2773d6f4 preserves the independently published startup reconciliation change. The same seven-file affected group passes326 tests again in21.92s on the merged head. No unrelated dirty changes in the primary checkout are included.
