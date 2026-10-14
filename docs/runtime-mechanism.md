@@ -2848,3 +2848,14 @@ provider 返回的完整组织者对象。日历事件读取、窗口读取及�
 因此可看到原始 userId、openDingTalkId、邮箱及其他来源字段，字符串标识和嵌套值
 不被改写。来源只有字符串时 details 为空，不根据显示名猜测稳定身份。新增对象是
 来源证据，不能冒充接收人核验或授权结果；既有动作、Audit、通知和运行路线不变。
+
+### DingTalk message-list response contract
+
+DingTalk message-list readers require a structured object response. JSON `null`,
+a non-object legacy result envelope, or a missing `messages` array in the
+canonical `im.message-list.v1` contract is a typed provider-contract failure,
+never an empty-message success. Unread reads do not
+retry an invalid `null` response through the recent-message fallback; valid but
+unrecognized object envelopes retain the existing fallback behavior. Read-only
+message commands make only the configured bounded retry for JSON `null`; if it
+persists, the typed failure remains visible to normal recovery and Attention.

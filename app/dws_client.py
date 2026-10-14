@@ -2077,6 +2077,7 @@ class DwsClient:
             return []
         conversation = self._with_single_chat_direct_target(conversation)
         payload = self.run_json(self.build_read_unread_messages_command(conversation))
+        self._require_message_list_object(payload)
         raw_unread_messages = self._extract_message_rows(payload)
         if raw_unread_messages is None:
             recent_messages = self.read_recent_messages(
@@ -2135,6 +2136,15 @@ class DwsClient:
             if rows:
                 return rows
         return None
+
+    @staticmethod
+    def _require_message_list_object(payload: object) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise DwsError(
+                "DWS message list response must be an object",
+                code="dws_message_list_invalid_response",
+            )
+        return payload
 
     def list_messages_by_ids(self, message_ids: list[str]) -> list[DingTalkMessage]:
         if not message_ids:
@@ -3896,6 +3906,18 @@ class DwsClient:
                 raise error from exc
             if result.returncode == 0:
                 payload = self._json_from_mixed_stdout(result.stdout)
+                if payload is None and self._command_path_matches(
+                    tuple(command[1:]), self.MESSAGE_RETRYABLE_READ_COMMANDS
+                ):
+                    if automatic_retry_allowed and remaining_retries > 0:
+                        self._sleep_before_retry(attempt_index)
+                        attempt_index += 1
+                        remaining_retries -= 1
+                        continue
+                    raise DwsError(
+                        "DWS message-list command returned JSON null",
+                        code="dws_message_list_invalid_response",
+                    )
                 if not self._is_structured_error_payload(payload):
                     return payload
                 code = self._error_code(result.stdout) or "1"
@@ -4752,11 +4774,18 @@ class DwsClient:
 
     @staticmethod
     def parse_messages(
-        payload: dict[str, Any], conversation_title: str, single_chat: bool
+        payload: object, conversation_title: str, single_chat: bool
     ) -> list[DingTalkMessage]:
+        payload = DwsClient._require_message_list_object(payload)
         if payload.get("contractVersion") == "im.message-list.v1":
+            messages = payload.get("messages")
+            if not isinstance(messages, list):
+                raise DwsError(
+                    "DWS message list response is missing its messages array",
+                    code="dws_message_list_invalid_response",
+                )
             parsed = []
-            for row in payload["messages"]:
+            for row in messages:
                 if not isinstance(row, dict) or any(key not in row for key in (
                     "conversationId", "messageId", "sender", "createTime", "text",
                 )):
@@ -4774,7 +4803,17 @@ class DwsClient:
                 ))
             return parsed
         result = payload.get("result", {})
+        if not isinstance(result, dict):
+            raise DwsError(
+                "DWS message list result must be an object",
+                code="dws_message_list_invalid_response",
+            )
         messages = result.get("messages", [])
+        if not isinstance(messages, list):
+            raise DwsError(
+                "DWS message list result messages must be an array",
+                code="dws_message_list_invalid_response",
+            )
         if not messages and isinstance(result.get("conversationMessagesList"), list):
             parsed_messages = []
             for conversation_payload in result["conversationMessagesList"]:

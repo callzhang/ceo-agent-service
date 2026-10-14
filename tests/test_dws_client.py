@@ -4018,6 +4018,56 @@ def test_read_recent_messages_high_level_method_uses_group_command(monkeypatch):
     ]
 
 
+def test_parse_messages_rejects_null_provider_response():
+    with pytest.raises(DwsError, match="message list response must be an object") as exc:
+        DwsClient.parse_messages(
+            None,
+            conversation_title="Friday",
+            single_chat=False,
+        )
+
+    assert exc.value.code == "dws_message_list_invalid_response"
+
+
+def test_parse_messages_rejects_null_result_envelope():
+    with pytest.raises(DwsError, match="message list result must be an object") as exc:
+        DwsClient.parse_messages(
+            {"result": None},
+            conversation_title="Friday",
+            single_chat=False,
+        )
+
+    assert exc.value.code == "dws_message_list_invalid_response"
+
+
+def test_parse_messages_rejects_missing_canonical_messages_array():
+    with pytest.raises(DwsError, match="missing its messages array") as exc:
+        DwsClient.parse_messages(
+            {"contractVersion": "im.message-list.v1"},
+            conversation_title="Friday",
+            single_chat=False,
+        )
+
+    assert exc.value.code == "dws_message_list_invalid_response"
+
+
+def test_read_unread_messages_rejects_null_without_recent_fallback():
+    client = SequenceRecordingDwsClient([None])
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Friday",
+        single_chat=False,
+        unread_point=1,
+        last_message_create_at=1778666181403,
+    )
+
+    with pytest.raises(DwsError, match="message list response must be an object") as exc:
+        client.read_unread_messages(conversation)
+
+    assert exc.value.code == "dws_message_list_invalid_response"
+    assert len(client.commands) == 1
+
+
 def test_search_conversations_parses_group_results():
     payload = {
         "chats": [
@@ -5728,6 +5778,42 @@ def test_run_json_still_retries_read_timeout(monkeypatch):
 
     assert DwsClient(transient_retry_attempts=1).run_json(command) == {"ok": True}
     assert calls == [command, command]
+
+
+def test_run_json_retries_json_null_from_message_list_read(monkeypatch):
+    outputs = ["null", '{"result":{"messages":[]}}']
+    calls = []
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=outputs.pop(0), stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+    command = ["dws", "chat", "message", "list", "--group", "cid-1"]
+
+    assert DwsClient(transient_retry_attempts=1).run_json(command) == {
+        "result": {"messages": []}
+    }
+    assert calls == [command, command]
+
+
+def test_run_json_keeps_persistent_json_null_as_provider_failure(monkeypatch):
+    calls = []
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="null", stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    command = ["dws", "chat", "message", "list", "--group", "cid-1"]
+
+    with pytest.raises(DwsError, match="returned JSON null") as exc:
+        DwsClient(transient_retry_attempts=0).run_json(command)
+
+    assert exc.value.code == "dws_message_list_invalid_response"
+    assert not exc.value.retryable_external_dependency
+    assert calls == [command]
 
 
 def test_run_json_retries_chat_message_list_system_error(monkeypatch):
