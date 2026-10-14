@@ -1879,3 +1879,34 @@ deferred; this is not full Task5 or publication acceptance.
 ### Task5B5 independent acceptance, 2026-10-14
 
 Root accepts2eb474032f4d878427685fae58da010c2b257a6d over492be677d320e3547f2d975b553915721e8bd662. Fresh SPEC independently ran8 cases:8 passed3.89s, lint/diff exit0, unchanged assertions/raises and nonselected AST verified, six helper callers exactly selected current tests; owned temp absent. Subsequent fresh QUALITY checked native identity/all matchingrows, attempt gap[1,3], exact two count-trigger capture/drop/restore, SQL-legal business-corruption values, valid processing retry, feedback mislink and acyclic rejection. It did not repeat sufficient tests or create temps. Both PASS and frozen cleanHEAD confirmed. Remaining dynamic/transaction/query-view, metadata/shared/history/composite fixtures, broader copy/native/CI/publication and full10+1 remain open.
+
+### Task5B6: seven current count, fault, reference and read-view tests
+
+The seven unchanged selected tests ran RED: `7 failed in 7.14s`, pytest
+exit 1, at old physical Email action SQL or a retired trace substring. The
+two cursor tests keep their four original logical table keys and compare all
+four counts before and after stale writes; only plan and direct-action value
+sources now use `EMAIL_PLAN_SQL` and `EMAIL_DIRECT_ACTION_SQL`. Their cursor,
+stale classification and rollback assertions remain intact. Fault-injection
+triggers now attach to `actions` only when `new.record_type` is respectively
+`email_actions` or `email_action_attempts`, so the original exception text and
+message/classification/plan/action/cursor rollback and claimed-action state
+checks cover the same failure point without intercepting other action kinds.
+
+The reference corruption fixture updates all plan source ROWIDs matching its
+original classification predicate with the same version increment. The list
+trace identifies the actual finite `EMAIL_PLAN_SQL` plus its current-plan
+`IN (select value from json_each(...))` query, preserving one connection,
+one plan query, twenty rows and their plan IDs. The nested read-view writer
+updates every unsubscribe-step public AUTOINCREMENT ID matching the original
+action identity via `update_action`; the first snapshot still sees its
+consistent prior state and the following read still rejects the changed
+effect digest.
+
+The selected GREEN run reported `7 passed in 3.47s`, pytest exit 0. Both
+test files have identical nonselected ASTs to their parent after excluding
+imports and the seven selected functions. Scoped Ruff and diff-check pass;
+RED and GREEN each removed and verified absence of their own
+`/tmp/email13-task5b6-*` roots. Historical H, shared metadata rebuild S,
+composite effect/retry and remaining current T tests are still deferred;
+this is not full Task5 or publication acceptance.

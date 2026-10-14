@@ -6599,8 +6599,14 @@ def test_same_generation_update_rejects_stale_uidvalidity_expectation_atomically
         cursor_last_seen_uid=2,
         expected_cursor_uidvalidity=42,
     )
+    source_tables = {
+        "email_messages": "email_messages",
+        "email_classifications": "email_classifications",
+        "email_action_plans": f"({EMAIL_PLAN_SQL})",
+        "email_actions": f"({EMAIL_DIRECT_ACTION_SQL})",
+    }
     counts_before = {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
+        table: _fetchall(database, f"select count(*) as count from {source_tables[table]}")[0]["count"]
         for table in (
             "email_messages",
             "email_classifications",
@@ -6629,7 +6635,7 @@ def test_same_generation_update_rejects_stale_uidvalidity_expectation_atomically
     assert cursor["uidvalidity"] == 84
     assert cursor["last_seen_uid"] == 2
     assert {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
+        table: _fetchall(database, f"select count(*) as count from {source_tables[table]}")[0]["count"]
         for table in counts_before
     } == counts_before
     assert not _fetchall(
@@ -6673,8 +6679,14 @@ def test_stale_cursor_generation_commit_rolls_back_all_scan_state(tmp_path: Path
         cursor_last_seen_uid=2,
         expected_cursor_uidvalidity=42,
     )
+    source_tables = {
+        "email_messages": "email_messages",
+        "email_classifications": "email_classifications",
+        "email_action_plans": f"({EMAIL_PLAN_SQL})",
+        "email_actions": f"({EMAIL_DIRECT_ACTION_SQL})",
+    }
     counts_before = {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
+        table: _fetchall(database, f"select count(*) as count from {source_tables[table]}")[0]["count"]
         for table in (
             "email_messages",
             "email_classifications",
@@ -6703,7 +6715,7 @@ def test_stale_cursor_generation_commit_rolls_back_all_scan_state(tmp_path: Path
     assert cursor["uidvalidity"] == 84
     assert cursor["last_seen_uid"] == 2
     assert {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
+        table: _fetchall(database, f"select count(*) as count from {source_tables[table]}")[0]["count"]
         for table in counts_before
     } == counts_before
     assert not _fetchall(
@@ -8201,7 +8213,8 @@ def test_direct_action_completion_rolls_back_attempt_and_current_state_together(
         db.execute(
             """
             create trigger reject_email_action_attempt
-            before insert on email_action_attempts
+            before insert on actions
+            when new.record_type='email_action_attempts'
             begin
                 select raise(abort, 'injected attempt failure');
             end
@@ -8222,7 +8235,7 @@ def test_direct_action_completion_rolls_back_attempt_and_current_state_together(
     assert store.list_action_attempts(claimed.action_id) == []
     current = _fetchall(
         database,
-        "select * from email_actions where action_id=?",
+        f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?",
         (claimed.action_id,),
     )[0]
     assert current["status"] == "processing"
@@ -8430,7 +8443,8 @@ def test_atomic_scan_persistence_rolls_back_message_plan_actions_and_cursor(
         db.execute(
             """
             create trigger reject_email_action_insert
-            before insert on email_actions
+            before insert on actions
+            when new.record_type='email_actions'
             begin
                 select raise(abort, 'injected action failure');
             end
@@ -8445,8 +8459,8 @@ def test_atomic_scan_persistence_rolls_back_message_plan_actions_and_cursor(
 
     assert len(_fetchall(database, "select * from email_messages")) == 0
     assert len(_fetchall(database, "select * from email_classifications")) == 0
-    assert len(_fetchall(database, "select * from email_action_plans")) == 0
-    assert len(_fetchall(database, "select * from email_actions")) == 0
+    assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 0
+    assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 0
     assert len(_fetchall(database, "select * from email_scan_cursors")) == 0
 
 
@@ -8992,11 +9006,14 @@ def test_unsubscribe_terminal_snapshot_uses_one_sqlite_read_view(
         if not raced:
             raced = True
             with sqlite3.connect(store.path) as writer:
-                writer.execute(
-                    "update email_unsubscribe_steps set effect_digest=? "
-                    "where action_identity=?",
-                    ("f" * 64, authorization["action_identity"]),
-                )
+                step_rows = writer.execute(
+                    f"select id from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) where action_identity=?",
+                    (authorization["action_identity"],),
+                ).fetchall()
+                for step_row in step_rows:
+                    update_action(writer, "email_unsubscribe_steps", step_row[0], {
+                        "effect_digest": "f" * 64,
+                    })
         return original_decode(row)
 
     monkeypatch.setattr(store, "_email_unsubscribe_claim_row", mutate_after_first_read)

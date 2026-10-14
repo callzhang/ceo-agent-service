@@ -5,6 +5,7 @@ import pytest
 
 from app.email_classifier_contracts import EmailClassificationStatus
 from app.email_store import EMAIL_PLAN_SQL, EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore
+from app.action_storage import email_action_projection, update_email_action
 from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 from tests.test_email_store import _classification, _persist_scan
 
@@ -31,10 +32,14 @@ def test_stable_classification_existence_does_not_hydrate_corrupt_plan(tmp_path)
     store = seed(path)
     identity = store.get_classification(1)["stable_message_identity"]
     with sqlite3.connect(path) as db:
-        db.execute(
-            "update email_action_plans set action_plan_version=action_plan_version+1 "
+        plan_rows = db.execute(
+            f"select rowid, action_plan_version from ({email_action_projection('email_action_plans', include_rowid=True)}) "
             "where classification_id=1"
-        )
+        ).fetchall()
+        for plan_row in plan_rows:
+            update_email_action(db, "email_action_plans", plan_row[0], {
+                "action_plan_version": plan_row[1] + 1,
+            })
     assert store.has_stable_classification_record(identity)
     assert not store.has_stable_classification_record("absent-message")
     with pytest.raises(EmailPersistenceCorruption):
@@ -126,7 +131,11 @@ def test_list_hydrates_canonical_plans_in_one_query_and_connection(tmp_path, mon
     items, total = store.list_classifications(status=None, limit=20, offset=0)
     assert total == len(items) == 20
     assert len(connections) == 1
-    plan_queries = [query for query in queries if 'from email_action_plans' in query.lower()]
+    plan_queries = [
+        query for query in queries
+        if query.lower().startswith(f"select * from ({EMAIL_PLAN_SQL})".lower())
+        and "where action_plan_id in (select value from json_each(" in query.lower()
+    ]
     assert len(plan_queries) == 1
     assert all(item['action_plan']['action_plan_id'] == item['current_action_plan_id'] for item in items)
 
