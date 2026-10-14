@@ -3072,3 +3072,29 @@ converted. Historical schema dispatch, startup validation, fresh constructors,
 real target markers and the paired coordinator remain E/F work. Store19/Email51
 is still selected by default. This branch therefore remains partial preparation,
 with no default-runtime, full Task4, native/provider or production acceptance.
+
+
+## Email13 group4D reply DAO WIP boundary
+
+Current EmailStore reply claims and receipts now use finite actions projections
+and source-shaped writers, with all seventeen claim and thirteen receipt fields
+preserved. Every original D writer already held BEGIN IMMEDIATE; the conversion
+adds no transaction or earlier authorization boundary. Locator selection keeps
+the original public identity, status, owner/generation/lease and receipt JSON-text
+predicates within that same writer transaction. Native uniqueness and typed
+parent FKs remain in force.
+
+Dispatch replay and immutable conflicts, retryable snapshot refresh, terminated
+owner recovery and uncertain no-replay behavior retain their original outcomes.
+Receipt replay can enrich a previously empty SMTP acceptance ID but cannot erase
+or replace a non-empty one. A failed claim completion rolls back receipt inserts
+and enrichment. SQL NULL public keys remain separate from the strict public
+method input rules; no source storage constraint has been tightened.
+
+Current thirteen-family DAO SQL is now converted inside EmailStore, superseding
+the historical B/C D deferrals. Default constructors, metadata/row validators,
+historical schema dispatch and real paired release activation are still pending
+E/F work. Cancellation preview depends on the deferred shape validator. External
+consumers and native/full-copy/production acceptance remain separate Task5/6
+work. This is partial unpublished preparation; dormant SMTP remains disabled and
+Store19/Email51 is still selected by default.

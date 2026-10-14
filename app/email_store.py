@@ -89,6 +89,12 @@ EMAIL_RETRY_SQL = EMAIL_ACTION_PROJECTIONS["email_direct_retry_requests"]
 EMAIL_FEEDBACK_SQL = EMAIL_ACTION_PROJECTIONS["email_feedback_requests"]
 EMAIL_REPLY_RECEIPT_SQL = EMAIL_ACTION_PROJECTIONS["email_reply_receipts"]
 EMAIL_REPLY_CLAIM_SQL = EMAIL_ACTION_PROJECTIONS["email_reply_dispatch_claims"]
+EMAIL_REPLY_CLAIM_LOCATOR_SQL = email_action_projection(
+    "email_reply_dispatch_claims", include_rowid=True
+)
+EMAIL_REPLY_RECEIPT_LOCATOR_SQL = email_action_projection(
+    "email_reply_receipts", include_rowid=True
+)
 EMAIL_UNSUBSCRIBE_RECEIPT_SQL = EMAIL_ACTION_PROJECTIONS["email_unsubscribe_receipts"]
 EMAIL_UNSUBSCRIBE_CLAIM_SQL = EMAIL_ACTION_PROJECTIONS["email_unsubscribe_claims"]
 EMAIL_UNSUBSCRIBE_EFFECT_SQL = EMAIL_ACTION_PROJECTIONS["email_unsubscribe_effects"]
@@ -9543,7 +9549,7 @@ class EmailStore:
     ) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_reply_receipts where action_identity=?",
+                f"select * from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
         return None if row is None else self._email_reply_receipt_row(row)
@@ -9648,13 +9654,13 @@ class EmailStore:
             account_snapshot = self._account_row(account)
             account_snapshot_json = _json_dump(account_snapshot)
             receipt = db.execute(
-                "select 1 from email_reply_receipts where action_identity=?",
+                f"select 1 from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if receipt is not None:
                 return {**immutable, "status": "done", "acquired": False}
             existing = db.execute(
-                "select * from email_reply_dispatch_claims where action_identity=?",
+                f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if existing is not None:
@@ -9665,71 +9671,69 @@ class EmailStore:
                     )
                 if claim["status"] != "retryable":
                     return {**claim, "acquired": False}
-                updated = db.execute(
-                    """
-                    update email_reply_dispatch_claims
-                    set owner_id=?, owner_generation=?, lease_token=?,
-                        account_updated_at=?, account_snapshot_json=?,
-                        status='dispatching', claimed_at=?, updated_at=?
-                    where action_identity=? and status='retryable'
-                      and owner_id=? and owner_generation=? and lease_token=?
-                    """,
+                mutation_values = {
+                    "owner_id": owner["owner_id"],
+                    "owner_generation": owner["generation"],
+                    "lease_token": owner["lease_token"],
+                    "account_updated_at": expected_account_updated_at,
+                    "account_snapshot_json": account_snapshot_json,
+                    "status": "dispatching",
+                    "claimed_at": claimed_at,
+                    "updated_at": claimed_at,
+                }
+                mutation_rows = db.execute(
+                    f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status='retryable' and owner_id=? and owner_generation=? and lease_token=?""",
                     (
-                        owner["owner_id"],
-                        owner["generation"],
-                        owner["lease_token"],
-                        expected_account_updated_at,
-                        account_snapshot_json,
-                        claimed_at,
-                        claimed_at,
                         action_identity,
                         claim["owner_id"],
                         claim["owner_generation"],
                         claim["lease_token"],
                     ),
-                ).rowcount
+                ).fetchall()
+                updated = sum(
+                    update_email_action(
+                        db,
+                        "email_reply_dispatch_claims",
+                        source_row["rowid"],
+                        mutation_values,
+                    ).rowcount
+                    for source_row in mutation_rows
+                )
                 if updated != 1:
                     raise EmailReplyDispatchConflict(
                         "email reply retryable claim changed concurrently"
                     )
                 row = db.execute(
-                    "select * from email_reply_dispatch_claims where action_identity=?",
+                    f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                     (action_identity,),
                 ).fetchone()
                 assert row is not None
                 return {**self._email_reply_dispatch_claim_row(row), "acquired": True}
-            db.execute(
-                """
-                insert into email_reply_dispatch_claims (
-                    action_identity, effect_digest, action_plan_id,
-                    classification_id, account_id, stable_message_identity,
-                    outgoing_message_id, owner_id, owner_generation, lease_token,
-                    sender, thread_identity, account_updated_at,
-                    account_snapshot_json, status, claimed_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                          'dispatching', ?, ?)
-                """,
-                (
-                    action_identity,
-                    effect_digest,
-                    action_plan_id,
-                    classification_id,
-                    account_id,
-                    stable_message_identity,
-                    outgoing_message_id,
-                    owner["owner_id"],
-                    owner["generation"],
-                    owner["lease_token"],
-                    sender,
-                    thread_identity,
-                    expected_account_updated_at,
-                    account_snapshot_json,
-                    claimed_at,
-                    claimed_at,
-                ),
+            insert_email_action(
+                db,
+                "email_reply_dispatch_claims",
+                {
+                    "action_identity": action_identity,
+                    "effect_digest": effect_digest,
+                    "action_plan_id": action_plan_id,
+                    "classification_id": classification_id,
+                    "account_id": account_id,
+                    "stable_message_identity": stable_message_identity,
+                    "outgoing_message_id": outgoing_message_id,
+                    "owner_id": owner["owner_id"],
+                    "owner_generation": owner["generation"],
+                    "lease_token": owner["lease_token"],
+                    "sender": sender,
+                    "thread_identity": thread_identity,
+                    "account_updated_at": expected_account_updated_at,
+                    "account_snapshot_json": account_snapshot_json,
+                    "status": "dispatching",
+                    "claimed_at": claimed_at,
+                    "updated_at": claimed_at,
+                },
             )
             row = db.execute(
-                "select * from email_reply_dispatch_claims where action_identity=?",
+                f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             assert row is not None
@@ -9741,7 +9745,7 @@ class EmailStore:
     ) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_reply_dispatch_claims where action_identity=?",
+                f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
         return None if row is None else self._email_reply_dispatch_claim_row(row)
@@ -9757,21 +9761,25 @@ class EmailStore:
         owner = _validate_email_reply_owner(owner)
         with self._connect() as db:
             db.execute("begin immediate")
-            updated = db.execute(
-                """
-                update email_reply_dispatch_claims
-                set status='uncertain', updated_at=?
-                where action_identity=? and status='dispatching'
-                  and owner_id=? and owner_generation=? and lease_token=?
-                """,
+            mutation_values = {"status": "uncertain", "updated_at": self._now()}
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
                 (
-                    self._now(),
                     action_identity,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).rowcount
+            ).fetchall()
+            updated = sum(
+                update_email_action(
+                    db,
+                    "email_reply_dispatch_claims",
+                    source_row["rowid"],
+                    mutation_values,
+                ).rowcount
+                for source_row in mutation_rows
+            )
             if updated != 1:
                 raise EmailReplyDispatchConflict(
                     "email reply dispatch owner fence changed"
@@ -9795,7 +9803,7 @@ class EmailStore:
                        plans.actions_json, accounts.enabled,
                        accounts.email_address, accounts.updated_at as live_account_updated_at,
                        messages.thread_identity as live_thread_identity
-                from email_reply_dispatch_claims as claims
+                from ({EMAIL_REPLY_CLAIM_SQL}) as claims
                 join email_classifications as classifications
                   on classifications.id=claims.classification_id
                 join ({EMAIL_PLAN_SQL}) as plans
@@ -9834,21 +9842,25 @@ class EmailStore:
                 raise EmailReplyDispatchConflict(
                     "email reply retry authorization changed"
                 )
-            updated = db.execute(
-                """
-                update email_reply_dispatch_claims
-                set status='retryable', updated_at=?
-                where action_identity=? and status='dispatching'
-                  and owner_id=? and owner_generation=? and lease_token=?
-                """,
+            mutation_values = {"status": "retryable", "updated_at": self._now()}
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
                 (
-                    self._now(),
                     action_identity,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).rowcount
+            ).fetchall()
+            updated = sum(
+                update_email_action(
+                    db,
+                    "email_reply_dispatch_claims",
+                    source_row["rowid"],
+                    mutation_values,
+                ).rowcount
+                for source_row in mutation_rows
+            )
             if updated != 1:
                 raise EmailReplyDispatchConflict(
                     "email reply dispatch owner fence changed"
@@ -9869,20 +9881,20 @@ class EmailStore:
         recovered_at = _required_utc_timestamp(recovered_at, field="recovered_at")
         with self._connect() as db:
             db.execute("begin immediate")
-            updated = db.execute(
-                """
-                update email_reply_dispatch_claims
-                set status='uncertain', updated_at=?
-                where status='dispatching' and owner_id=?
-                  and owner_generation=? and lease_token=?
-                """,
-                (
-                    recovered_at,
-                    owner["owner_id"],
-                    owner["generation"],
-                    owner["lease_token"],
-                ),
-            ).rowcount
+            mutation_values = {"status": "uncertain", "updated_at": recovered_at}
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
+                (owner["owner_id"], owner["generation"], owner["lease_token"]),
+            ).fetchall()
+            updated = sum(
+                update_email_action(
+                    db,
+                    "email_reply_dispatch_claims",
+                    source_row["rowid"],
+                    mutation_values,
+                ).rowcount
+                for source_row in mutation_rows
+            )
             return updated
 
     @staticmethod
@@ -9996,35 +10008,28 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_reply_receipts where action_identity=?",
+                f"select * from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if row is None:
-                db.execute(
-                    """
-                    insert into email_reply_receipts (
-                        action_identity, effect_digest, action_plan_id,
-                        classification_id, account_id, stable_message_identity,
-                        outgoing_message_id, provider_operation, provider_target,
-                        provider_result_id, provider_receipt_json, display_excerpt,
-                        created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        action_identity,
-                        effect_digest,
-                        action_plan_id,
-                        classification_id,
-                        account_id,
-                        stable_message_identity,
-                        outgoing_message_id,
-                        provider_operation,
-                        provider_target,
-                        provider_result_id,
-                        _json_dump(requested_provider_receipt),
-                        receipt_base["display_excerpt"],
-                        created_at,
-                    ),
+                insert_email_action(
+                    db,
+                    "email_reply_receipts",
+                    {
+                        "action_identity": action_identity,
+                        "effect_digest": effect_digest,
+                        "action_plan_id": action_plan_id,
+                        "classification_id": classification_id,
+                        "account_id": account_id,
+                        "stable_message_identity": stable_message_identity,
+                        "outgoing_message_id": outgoing_message_id,
+                        "provider_operation": provider_operation,
+                        "provider_target": provider_target,
+                        "provider_result_id": provider_result_id,
+                        "provider_receipt_json": _json_dump(requested_provider_receipt),
+                        "display_excerpt": receipt_base["display_excerpt"],
+                        "created_at": created_at,
+                    },
                 )
             else:
                 persisted = self._email_reply_receipt_row(row)
@@ -10063,23 +10068,28 @@ class EmailStore:
                         **persisted_receipt,
                         "smtp_acceptance_id": requested_smtp_id,
                     }
-                    updated = db.execute(
-                        """
-                        update email_reply_receipts set provider_receipt_json=?
-                        where action_identity=? and provider_receipt_json=?
-                        """,
-                        (
-                            _json_dump(enriched_receipt),
-                            action_identity,
-                            _json_dump(persisted_receipt),
-                        ),
-                    ).rowcount
+                    mutation_values = {
+                        "provider_receipt_json": _json_dump(enriched_receipt)
+                    }
+                    mutation_rows = db.execute(
+                        f"""select rowid from ({EMAIL_REPLY_RECEIPT_LOCATOR_SQL}) where action_identity=? and provider_receipt_json=?""",
+                        (action_identity, _json_dump(persisted_receipt)),
+                    ).fetchall()
+                    updated = sum(
+                        update_email_action(
+                            db,
+                            "email_reply_receipts",
+                            source_row["rowid"],
+                            mutation_values,
+                        ).rowcount
+                        for source_row in mutation_rows
+                    )
                     if updated != 1:
                         raise EmailReplyReceiptConflict(
                             "email reply receipt changed concurrently"
                         )
             claim = db.execute(
-                "select * from email_reply_dispatch_claims where action_identity=?",
+                f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if claim is not None:
@@ -10103,28 +10113,31 @@ class EmailStore:
                         raise EmailReplyDispatchConflict(
                             "email reply claim completion requires its owner fence"
                         )
-                    updated = db.execute(
-                        """
-                        update email_reply_dispatch_claims
-                        set status='done', updated_at=?
-                        where action_identity=?
-                          and status in ('dispatching', 'retryable', 'uncertain')
-                          and owner_id=? and owner_generation=? and lease_token=?
-                        """,
+                    mutation_values = {"status": "done", "updated_at": self._now()}
+                    mutation_rows = db.execute(
+                        f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status in ('dispatching', 'retryable', 'uncertain') and owner_id=? and owner_generation=? and lease_token=?""",
                         (
-                            self._now(),
                             action_identity,
                             validated_claim_owner["owner_id"],
                             validated_claim_owner["generation"],
                             validated_claim_owner["lease_token"],
                         ),
-                    ).rowcount
+                    ).fetchall()
+                    updated = sum(
+                        update_email_action(
+                            db,
+                            "email_reply_dispatch_claims",
+                            source_row["rowid"],
+                            mutation_values,
+                        ).rowcount
+                        for source_row in mutation_rows
+                    )
                     if updated != 1:
                         raise EmailReplyDispatchConflict(
                             "email reply dispatch owner fence changed"
                         )
             row = db.execute(
-                "select * from email_reply_receipts where action_identity=?",
+                f"select * from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             assert row is not None

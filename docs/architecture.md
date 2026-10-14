@@ -2286,3 +2286,29 @@ Store19/Email51 constructors, startup validators, migration selectors and action
 flags remain unchanged; their E/F conversion and final paired activation remain
 coupled. Group4C does not establish usable default runtime, Task5 external
 consumer integration, or Task6 native/provider/production acceptance.
+
+
+### Email13 group4D partial reply DAO integration
+
+The unpublished candidate now covers the remaining reply dispatch-claim and
+receipt DAO methods through the accepted finite projections and writers. All
+thirty source fields remain. The eight original mutations retain their existing
+writer transactions, owner/generation/lease predicates, current authorization,
+immutable dispatch binding, account snapshot behavior and native outgoing
+Message-ID uniqueness. A retryable claim may refresh its account snapshot and
+owner exactly as before; uncertain dispatches remain reconciliation-only.
+
+Receipt replay retains the original provider evidence comparison, original
+JSON-text CAS and one-way SMTP acceptance-ID enrichment. Receipt insertion or
+enrichment and claim completion remain one transaction, including rollback on
+owner mismatch or failure. Structural source ROWIDs remain distinct from public
+action identities and physical actions IDs. No helper interface, SMTP enablement,
+recovery, authorization or retry policy changes are included.
+
+This closes the D-specific deferrals in the preceding historical B/C sections
+for current EmailStore DAO SQL. It does not activate a default runtime: source
+metadata, historical/bootstrap dispatch, startup validators, fresh constructors,
+real target markers and coordinator/subprocess remain E/F work. The unsubscribe
+cancellation preview still invokes that deferred startup shape validation.
+External direct consumers remain Task5, and full-copy/native/provider/production
+acceptance remains Task6. Default Store19/Email51 and action flags are unchanged.

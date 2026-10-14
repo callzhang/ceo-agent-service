@@ -747,3 +747,116 @@ default bootstrap. Seven D methods, metadata/durable validation, seeds, paired
 constructors/coordinator/subprocess and integrated/native/publication remain
 open. The next implementation is the seven remaining reply claim/receipt DAO
 methods, with no dormant SMTP activation or policy change.
+
+
+### Task4D partial reply DAO preparation, 2026-10-14
+
+Candidate group4D builds on accepted832a2ee3. The exact seven converted methods
+are `get_email_reply_receipt`, `claim_email_reply_dispatch`,
+`get_email_reply_dispatch_claim`, `mark_email_reply_dispatch_uncertain`,
+`release_email_reply_dispatch_retryable`,
+`recover_terminated_email_reply_dispatch_claims` and
+`persist_email_reply_receipt`. Their eight original mutations (two inserts and
+six updates) and ten current read literals now use the accepted finite
+projections/source-shaped writers. All five writers already owned BEGIN
+IMMEDIATE. Each locator SELECT retains the original mutation predicates inside
+that transaction; no implicit-write boundary needed changing and no helper
+interface expansion was needed. The two source families retain their exact
+seventeen plus thirteen fields and public method signatures.
+
+The first source-oracle claim/owner case passed genuine archived2773 code and
+failed against the converted copy at the retired receipt-table read. It passed
+after conversion. The target uses real EmailStore methods on explicitly pure-
+converted owned copies; test-only object setup does not prove a target default
+constructor. Source constructors and implementations are unchanged. Existing
+account-clock hooks make the snapshot-refresh comparison deterministic without
+altering its monotonic update rule. No SMTP delivery/provider harness or native
+Agent CLI is involved.
+
+The ten primary D cases cover:
+
+- Claim acquisition, duplicate/same-owner/other-owner replay, immutable effect/
+  outgoing-ID conflicts and exact owner/generation/lease CAS, including actual
+  transition to uncertain and refusal to reacquire that state.
+- Retryable release/reclaim, unchanged original snapshot until a valid retry,
+  refreshed account snapshot/version and fresh owner, stale snapshot refusal,
+  and source structural ROWID -7 preservation.
+- Proved terminated-owner recovery of two exact-owner claims, mismatched owner
+  and repeated-recovery rowcounts, and no automatic replay. Source claim ROWIDs
+  -7 and0 survive conversion and recovery.
+- Receipt insertion/completion, replay, one-way SMTP-ID enrichment, retained
+  creation time, conflicting evidence/ID refusal, standalone receipt ROWID0
+  and absence of an invented dispatch claim. Native outgoing Message-ID unique
+  errors, typed-parent FK errors and existing in-flight parent blockers match
+  the source behavior.
+- The original JSON-text receipt CAS, including SQL-valid noncanonical JSON
+  that parses identically but does not equal the original canonical comparison
+  string. Enrichment refuses with the same rowcount/conflict outcome and keeps
+  the original text unchanged.
+- Receipt-insert failure after a claim-completion fault, and receipt-enrichment
+  rollback when a later owner CAS fails. The latter uses an explicitly labeled
+  synthetic SQL-valid uncertain-claim/existing-receipt state, independently
+  evaluated by the original public source method. A separate two-row recovery
+  fault preserves both original claims and all native values/types.
+- Positive reply receipts through the shared observation/context read APIs.
+  The actual existing-claim path with600 other reply claims plus3000 unrelated
+  rows remains4432 to4432 VM steps. EXPLAIN selects the existing typed reply
+  identity index with no actions scan; no speculative index is added.
+
+Complete seventeen/thirteen-field native facts, SQL types and source ROWIDs are
+compared after behavior scenarios. A separate eleventh confined case tests only
+the native SQL NULL-public-key boundary: after a genuine constructor has opened
+its valid source, source SQL and accepted target writers permit the original
+nullable text public keys. Equality getters find no row for NULL, and public
+claim/receipt input validators reject NULL exactly as the original methods do.
+This case does not claim that a source or target strict startup validator accepts
+those native SQL facts, and it is separate from the primary application proof.
+
+The complete primary targeted invocation, when the D file contained its ten
+primary cases and before the separate NULL probe was added, was:
+
+```text
+python -m pytest -q tests/test_email_action_reply_dao.py tests/test_email_action_plan_direct_dao.py::test_shared_reply_dispatch_read_guard_still_refuses_feedback tests/test_email_action_plan_direct_dao.py::test_plan_idempotence_feedback_null_prior_replay_and_cas_match_genuine_old tests/test_email_action_unsubscribe_dao.py::test_continuation_effect_chain_journal_terminal_and_readbacks_match_source tests/test_email_action_unsubscribe_dao.py::test_direct_retirement_receipt_promotion_exact_backfill_and_context_match_source --basetemp=/tmp/email13-dao-4d.Oj1bbj/focused-final -s
+```
+
+Captured stdout, joined across tool output chunks:
+
+```text
+.........reply claim VM steps 4432 -> 4432; 600 same-family plus 3000 unrelated rows
+.....
+14 passed in 108.05s (0:01:48)
+```
+
+The four accepted B/C cases specifically cover the reply-in-flight feedback
+guard, feedback/current-plan CAS and mixed observation/context closure. The
+separate NULL-boundary invocation passed1 case in11.14s. No full suite or repeat
+of the accepted storage/migration/protocol matrices was needed because this
+unit changes neither their interfaces nor declarations. Ruff and diff checks
+pass; all343 EmailStore signatures and protected source metadata/default
+selection remain unchanged. Only the seven named method bodies and two finite
+locator constants change in runtime code.
+
+A whole-module scan finds no current EmailStore physical thirteen-family DAO
+SQL left. Residual physical SQL is confined to source metadata, historical
+migration/bootstrap and startup validation, including `_initialize`, old reply/
+unsubscribe migration finishers, retry detach/restore, cached plan validation,
+legacy-plan marking, `_create_indexes_and_triggers`, `_validate_durable_state`
+and `_validate_durable_rows`. `preview_failed_email_unsubscribe_task` remains an
+explicit API dependency on deferred shape validation. These are E/F work along
+with seed factoring, fresh constructor order/locking, coordinator/subprocess,
+real target markers and final coupled activation. Whole-repository external
+consumers still include Store unsubscribe recovery/receipt paths, deploy
+maintenance's direct-action readiness query, and audit/History/web consumers;
+they remain Task5 and were not modified here. This branch has not absorbed the
+separately published History increment; root will preserve it at a clean gate.
+
+Store19/Email51 constructors, selectors and action flags remain unchanged. This
+is unpublished partial preparation, not default runtime, complete Task4 or
+Task5/6 acceptance. Dormant SMTP remains disabled. No new policy, alternate DAO,
+query router/parser, mixin, views/dual storage, provider, native Agent CLI,
+production mutation, push or deployment is included. Independent SPEC then
+QUALITY review is pending.
+
+Owned4D temporary archives, source/target databases, pytest roots and editing
+intermediate were inspected and removed from the exact task root; absence was
+verified. No historical test copy is retained.
