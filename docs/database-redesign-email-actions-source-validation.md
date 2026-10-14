@@ -53,3 +53,9 @@ The plan explicitly addresses the shared classification-parent constructor
 dependency and the existing refusal of independent simultaneous Store/Email
 schema changes. Those mechanisms remain implementation gates, not working
 code proven by this document. The full ten-core-table goal remains incomplete.
+
+## Actual published E predecessor, 2026-10-14
+
+The [published-source capture](superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json) and [source map](superpowers/specs/2026-10-14-database-redesign-email-actions-published-source-map.md) bind one production read transaction at checkout `eb797e6bd35de695c269054a2e697af8fde2baa5` before and after, Store `2026-10-13.5`, Email `51`. The `actions` object manifest is exactly the default sixteen-type `actual_no_memory_fk` declaration; all thirteen Email tables and 144 column definitions match the frozen actual variant. All thirteen external blockers, twelve inbound FKs, source indexes, own triggers, and native sequence entries were captured without recording business row values. The actual claim column order is the frozen appended-audit-column variant. The newer checkout and 122 `sqlite_schema` table entries, including internal `sqlite_sequence` (121 user tables), do not change this source match.
+
+The two scoped source-oracle files now cover each of the thirteen external blocker paths, both action attempt-count trigger directions, immediate FK failure, BLOB composite public keys, and `INSERT OR REPLACE` refusal for the immutable retry identity, in addition to their earlier rowid/public-key cases. `python -m pytest -q tests/test_email_action_source.py tests/test_email_action_children_source.py` with an owned `/tmp` `TemporaryDirectory` basetemp reported **68 passed**. This is source-only SQLite evidence. It does not establish target migration, inverse/copy acceptance, old-code compatibility, provider effects, or UI readiness.

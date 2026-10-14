@@ -206,6 +206,16 @@ def test_email_actions_ordinary_rowid_zero_negative_reuse_max_and_blob_id(db):
     assert storage_type == "blob"
 
 
+def test_composite_retry_identity_preserves_blob_public_key(db):
+    plan(db)
+    action(db, b"\xff")
+    insert(db, "email_direct_retry_requests", action_id=b"\xff", attempt_number=1,
+           source_readback_digest="a" * 64,
+           account_configuration_snapshot=json.dumps([None] * 9), requested_at="time")
+    assert db.execute("select typeof(action_id),hex(action_id),attempt_number "
+                      "from email_direct_retry_requests").fetchone() == ("blob", "FF", 1)
+
+
 def test_feedback_null_expected_plan_and_parent_fk_actions(db):
     plan(db)
     plan(db, "other", 2)
@@ -231,6 +241,12 @@ def test_retry_composite_identity_is_immutable(db):
     with pytest.raises(sqlite3.IntegrityError, match="email_direct_retry_request_immutable"):
         insert(db, "email_direct_retry_requests", **values)
     with pytest.raises(sqlite3.IntegrityError, match="email_direct_retry_request_immutable"):
+        db.execute(
+            "insert or replace into email_direct_retry_requests("
+            "action_id,attempt_number,source_readback_digest,account_configuration_snapshot,requested_at) "
+            "values(?,?,?,?,?)", tuple(values.values()),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="email_direct_retry_request_immutable"):
         db.execute("update email_direct_retry_requests set requested_at='later'")
     with pytest.raises(sqlite3.IntegrityError, match="email_direct_retry_request_immutable"):
         db.execute("delete from email_direct_retry_requests")
@@ -240,6 +256,45 @@ def test_retry_composite_identity_is_immutable(db):
         db.execute("update email_actions set action_id='renamed' where action_id='action'")
     with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
         db.execute("delete from email_actions where action_id='action'")
+
+
+@pytest.mark.parametrize(("family", "statement", "error"), (
+    ("direct", "delete from email_accounts where account_id='account'", "email_direct_action_in_flight"),
+    ("direct", "update email_accounts set account_id='changed' where account_id='account'", "email_direct_action_in_flight"),
+    ("direct", "update email_classifications set status='changed' where id=11", "email_direct_action_in_flight"),
+    ("unsubscribe", "delete from email_accounts where account_id='account'", "email_unsubscribe_write_in_flight"),
+    ("unsubscribe", "update email_accounts set account_id='changed' where account_id='account'", "email_unsubscribe_write_in_flight"),
+    ("unsubscribe", "delete from email_messages where account_id='account'", "email_unsubscribe_write_in_flight"),
+    ("unsubscribe", "update email_messages set thread_identity='changed' where account_id='account'", "email_unsubscribe_write_in_flight"),
+    ("unsubscribe", "update email_classifications set status='changed' where id=11", "email_unsubscribe_write_in_flight"),
+    ("reply", "delete from email_accounts where account_id='account'", "email_reply_dispatch_in_flight"),
+    ("reply", "update email_accounts set account_id='changed' where account_id='account'", "email_reply_dispatch_in_flight"),
+    ("reply", "delete from email_messages where account_id='account'", "email_reply_dispatch_in_flight"),
+    ("reply", "update email_classifications set current_action_plan_id='plan' where id=11", "email_reply_dispatch_in_flight"),
+    ("reply", "update email_messages set thread_identity='changed' where account_id='account'", "email_reply_dispatch_in_flight"),
+))
+def test_each_external_in_flight_trigger_blocks_source_mutation(db, family, statement, error):
+    plan(db)
+    if family == "direct":
+        action(db)
+        db.execute("update email_actions set status='processing' where action_id='action'")
+    elif family == "unsubscribe":
+        insert(db, "email_unsubscribe_claims", **claim_values())
+    else:
+        insert(db, "email_reply_dispatch_claims", **(
+            reply_values() | dict(owner_id="owner", owner_generation=1, lease_token="lease",
+                                  sender="sender", thread_identity="thread", account_updated_at="time",
+                                  account_snapshot_json="{}", status="dispatching",
+                                  claimed_at="time", updated_at="time")
+        ))
+    with pytest.raises(sqlite3.IntegrityError, match=error):
+        db.execute(statement)
+
+
+def test_source_foreign_keys_are_immediate(db):
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+        plan(db)
+        action(db, plan_id="absent")
 
 
 @pytest.mark.parametrize("table", ("email_reply_dispatch_claims", "email_reply_receipts"))
