@@ -3441,6 +3441,20 @@ class DwsClient:
         # referencedMessage and nextActions describe existing messages.
         open_task_id = result.get("openTaskId")
         open_task_id = open_task_id.strip() if isinstance(open_task_id, str) else ""
+        if send_result.get("ok") is True and result.get("success") is True:
+            native_result = result.get("result")
+            native_result = native_result if isinstance(native_result, dict) else {}
+            nested_task_id = native_result.get("openTaskId")
+            nested_task_id = nested_task_id.strip() if isinstance(nested_task_id, str) else ""
+            receipt = send_result.get("sendReceipt")
+            receipt = receipt if isinstance(receipt, dict) and receipt.get(
+                "contractVersion"
+            ) == "im.message-send-receipt.v1" else {}
+            receipt_task_id = receipt.get("openTaskId")
+            receipt_task_id = receipt_task_id.strip() if isinstance(receipt_task_id, str) else ""
+            if len({value for value in (open_task_id, nested_task_id, receipt_task_id) if value}) > 1:
+                return {"state": "ambiguous", "open_task_id": "", "status_result": {}}
+            open_task_id = open_task_id or nested_task_id or receipt_task_id
         if not open_task_id:
             message_id = next((result[key].strip() for key in ("openMessageId", "messageId", "msgId")
                                if isinstance(result.get(key), str) and result[key].strip()), "")
