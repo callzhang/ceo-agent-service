@@ -259,7 +259,7 @@ class OaRevertHandler(OaDecisionHandler):
     @staticmethod
     def _accepted(response: object) -> bool:
         return (isinstance(response, dict) and response.get("success") is True
-            and response.get("result") is True and response.get("errorCode") == 0)
+            and response.get("result") is True and response.get("dingOpenErrcode") == 0)
 
     @staticmethod
     def _utc_instant(value: object) -> datetime | None:
@@ -281,6 +281,13 @@ class OaRevertHandler(OaDecisionHandler):
 
     @staticmethod
     def _event_time(value: object) -> datetime | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(value / 1000, timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
         if not isinstance(value, str):
             return None
         try:

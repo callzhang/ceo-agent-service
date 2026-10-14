@@ -56,7 +56,7 @@ class Source:
         self.returned = True
         if self.clock:
             self.clock.current = datetime.fromisoformat("2026-10-13T10:06:29.001+00:00")
-        return {"success": True, "errorCode": 0, "result": True}
+        return {"success": True, "dingOpenErrcode": 0, "result": True}
 
     def read_oa_process_instance_openapi(self, process_id):
         assert process_id == "process"
@@ -71,7 +71,7 @@ def attempt(status="dispatched", result=None):
 
 
 def acceptance():
-    return {"provider_response": {"success": True, "errorCode": 0, "result": True},
+    return {"provider_response": {"success": True, "dingOpenErrcode": 0, "result": True},
         "accepted_at": "2026-10-13T10:06:29.001Z", "dispatch_started_at": "2026-10-13T10:06:25.641Z",
         "dispatch_principal_user_id": "principal",
         "accepted_action_digest": sha256(action().model_dump_json().encode()).hexdigest()}
@@ -108,7 +108,7 @@ def test_return_acceptance_survives_store_reopen_and_changed_source(tmp_path, mo
             self.destination["create_time"] = (event + timedelta(seconds=1)).astimezone(
                 DINGTALK_MESSAGE_TIME_ZONE).strftime("%Y-%m-%d %H:%M:%S")
             Clock.offset = timedelta(seconds=4)
-            return {"success": True, "errorCode": 0, "result": True}
+            return {"success": True, "dingOpenErrcode": 0, "result": True}
 
     store, task, context = setup(tmp_path)
     source = ReturningSource()
@@ -153,6 +153,39 @@ def test_return_acceptance_is_preserved_for_readonly_reconciliation(provider_rea
     assert verified.provider_result["destination_activity_id"] == "handover"
     assert verified.provider_result["destination_task_ids"] == ["destination"]
     assert len(source.calls) == 1
+
+
+def test_dingtalk_success_envelope_and_millisecond_dates_verify_without_replay(provider_read_clock):
+    source = Source()
+    source.returned = True
+    source.records[0]["date"] = 1791939988000  # 2026-10-13 18:06:28 America/Los_Angeles
+    source.destination["create_time"] = 1791939988000
+    proof = acceptance()
+    proof["provider_response"] = {"dingOpenErrcode": 0, "result": True, "success": True}
+    proof["dispatch_started_at"] = "2026-10-14T01:06:25.641Z"
+    proof["accepted_at"] = "2026-10-14T01:06:29.001Z"
+    provider_read_clock.current = datetime.fromisoformat("2026-10-14T01:07:00+00:00")
+    candidate = attempt("uncertain", proof)
+    candidate["action_attempt"]["created_at"] = "2026-10-14T01:06:25.641Z"
+    outcome = OaRevertHandler(source).reconcile(action(), action_key="key",
+        candidate=candidate)
+    assert outcome.status == "verified"
+    assert len(source.calls) == 0
+
+
+@pytest.mark.parametrize("response", [
+    {"success": True, "result": True, "errorCode": 0},
+    {"success": True, "result": True, "dingOpenErrcode": 1},
+    {"success": False, "result": True, "dingOpenErrcode": 0},
+])
+def test_only_dingtalk_success_envelope_is_accepted(response):
+    assert OaRevertHandler._accepted(response) is False
+
+
+def test_millisecond_event_time_is_utc_and_boolean_is_not_a_timestamp():
+    instant = OaRevertHandler._event_time(1791939988000)
+    assert instant == datetime.fromtimestamp(1791939988, timezone.utc)
+    assert OaRevertHandler._event_time(True) is None
 
 
 @pytest.mark.parametrize("change", [
