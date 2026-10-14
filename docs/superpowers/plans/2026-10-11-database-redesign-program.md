@@ -290,3 +290,13 @@ include the repaired ordinary-rowid ignored-MAX behavior. This does not accept
 Task3B, constructors, callers, activation or publication. Next: preserve that
 published main increment, then actual-copy/current-fact inverse and genuine
 archived-old-code cold read/write/re-forward proof.
+
+
+Readonly remaining-source preparation now accounts for all45 old action tables
+still physically present: Email13, Followup9, business/evidence11 and the other
+12 families in docs/database-redesign-remaining-actions-source-preparation.md.
+The last group has116 existing columns, all exactly covered by the approved
+original CSV, and current writer paths including its three zero-row families.
+Root independently verified native metadata and original-map column coverage.
+This is preparation only; it neither activates a migration nor establishes
+that all historical payload values must be retained. Full10+1 remains open.
