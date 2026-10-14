@@ -57,6 +57,26 @@ No production message or Attempt is replayed or edited by this repair.
   small diagnostic observations with model variability, not a measured general
   production error-rate reduction.
 
+Production configuration was checked separately before release: Developer
+template SHA74458f26 matches development, while Audit Rules and working Profile
+differ. native.production-rules.v1 uses the saved production Audit Rules;
+native.production-config.v1 also uses the saved production Profile and
+Developer/User templates through their existing read-only configuration paths.
+Both comparisons retain identical synthetic facts/model/settings and candidate
+source0ac8b890. Their candidate outcomes and bindings pass3/3 versus baseline2/3.
+The production-rules comparison explicitly attributes the unsupported request
+to prior feedback; the complete production-config comparison corrects the
+unsupported wording but does not explicitly attribute it. Therefore the latter
+does not fully meet the stronger attribution criterion; this repair guarantees
+input delivery, not consistent model acknowledgment of an earlier error. Only
+hashes and anonymous evaluation outputs are saved, never private Profile text.
+
+Before merge, current main5d1ca049 was merged normally, preserving the other
+session's DWS message-read repair. GitHub Quality is an optional full-suite
+check on this repository (main protection disabled, no required checks), with a
+recent successful run taking approximately38 minutes. It was still running when
+the focused release proceeded; no full CI pass is claimed.
+
 ## Release boundary
 
 Implementation and the synthetic diagnostic are validated locally. Production
