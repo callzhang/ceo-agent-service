@@ -1336,3 +1336,5 @@ reverts committed work they did not author.
 | codex-phase5e-ci-fixture-acceptance | Phase5E-resume: appended E validation and own claim row | Root records sequential independent SPEC then QUALITY acceptance of5a635f6f fixtures and a0 native evidence; normal main doc merge retained. No runtime/provider/production change. | accepted locally 2026-10-14; SPEC3+10checks/mutation probes, QUALITY12checks/verifier+evidence probes; new complete CI required |
 
 | codex-email13-pure-migration-acceptance | Email actions worktree: appended Email validation and own claim row | Root records sequential independent SPEC then QUALITY of disabled pure forward/current-fact inverse fedd8ee1. No published predecessor, constructor, release marker, target version, provider or production change. | accepted local Task3A 2026-10-14; Task3B remains mandatory before Task4 |
+
+| codex-db-program-current-status-20261014 | Email actions worktree: appended redesign program status and own claim row | Root records current readonly production count and precise E/Email preparation/publication boundaries. No schema, caller, policy or provider change. | documentation only 2026-10-14 |

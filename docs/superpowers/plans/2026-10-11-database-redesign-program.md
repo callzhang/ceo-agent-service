@@ -188,3 +188,46 @@ in phase5d validation and phase5d_production_release.v1.json. No real test send,
 recall or feedback action, no native copy or VACUUM. Actual file size remains
 471347200 bytes. E can now refresh against actual published18, rather than the
 old Store17/empty-candidate observation. The full10+1 redesign remains incomplete.
+
+
+### 2026-10-14 current continuation and physical completion boundary
+
+The approved target is still exactly ten core tables plus one migration ledger,
+not ten groups of permanently retained old tables. A fresh readonly production
+observation at07:36 UTC found code `d9d34093`, Store18/Email51,123 non-SQLite-
+internal tables (including FTS virtual/shadow tables), a471,347,200-byte main
+file and4,185,952-byte WAL. Checkout, DB snapshot and file-size observations are
+separate, not an atomic production capture. The subsequent page observation
+reported115,075 pages of4096 bytes,6,425 free pages. No space was reclaimed.
+
+- Phase5D delivery consolidation is published. Phase5E Attempt/Memory candidate
+  `de01dcfd` is pushed in PR82, not published: current main delivery-repair and
+  presentation increments are preserved. FullCI38529409719 is running. Earlier
+  CI38521548780 at2bf passed13,083 backend,729 frontend and2 browser checks,
+  but does not accept the newer merged head. Actual-copy/old-code/native proof
+  executed at74ac; supplemental unchanged-path binding remains separately
+  identified. On the measured source, E removes two old physical tables,123→121.
+- Email13 source/writers and disabled pure forward/current-fact inverse passed
+  sequential independent SPEC then QUALITY; root acceptance2b888442 records
+  Task3A only. No constructor, paired release marker or target version selects
+  this schema. Actual E publication binding and Task3B latest-copy/genuine-old-
+  code cold read/write/re-forward remain mandatory before activation.
+- Nine follow-up/Todo-sync families have accepted source inventory/native
+  oracle and a150-field implementation plan/map atad8852d0. Planning and its
+  independent review are not storage implementation or publication. One atomic
+  nine-family migration must include the retained legacy-link FK conversion.
+
+Even E, Email13 and those nine families together would remove only24 of the
+measured123 old/noninternal tables (if no intervening additions). They do not
+complete the goal. Remaining business/evidence, emails, config/provider/current
+state, leftover actions/tasks, FTS retirement and ledger consolidation still
+require their approved mappings, caller conversion and paired inverse proof.
+Final acceptance must enumerate physical remaining tables and retained source
+fields, not infer completion from a stage name or green test count.
+
+Provider configuration is small: two email_accounts rows occupied8192 bytes
+including indexes. The distinct email_provider_observations table held72,090
+current per-message facts,13,316,096 data bytes plus11,542,528 index bytes.
+The approved destinations are configs and provider_state respectively; these
+counts do not justify keeping either old table permanently or deleting current
+provider inventory by age. No new retention policy is introduced here.
