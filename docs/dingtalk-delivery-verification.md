@@ -85,3 +85,5 @@ available for the authorized release; clean them after actual deployment,
 bounded live correction and readback have completed.
 
 Restart regression: the recorded-delivery startup recovery previously completed even explicitly corrected ambiguous/failed receipts. Two regressions reproduced that promotion. The three recorded-delivery completion/projection readers now exclude explicit non-sent verification states, preserving legacy independently verified readback behavior. Live correction waits for this recovery fix to be deployed.
+
+Historical terminal Attempt or settlement projections cannot override a current external_action_uncertain/external_action_failed task error. A later verified provider result uses the normal execution completion writer. Original Attempt and settlement history remains unchanged.
