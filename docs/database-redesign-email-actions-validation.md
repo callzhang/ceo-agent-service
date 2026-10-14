@@ -276,3 +276,31 @@ read-only candidate source capture/refusal, not forward/inverse conversion,
 a published predecessor, a release version or production activation. Task3A-2
 may now implement pure forward/current-fact inverse; Task3B actual publication
 binding and copy/genuine-old-code acceptance remain mandatory before Task4.
+
+
+## Task3A-2 independent pure migration acceptance
+
+The pure forward/current-fact inverse at `090dc101`, including the TEMP
+dependency correction `fedd8ee1`, passed fresh sequential SPEC then QUALITY.
+SPEC independently passed96 selected checks,24 dependency/chronology cases,
+32 native value/allocator boundaries and populated both sixteen-type source
+variants through all thirteen Email families. Current post-forward updates
+to every older kind survived inverse with physical IDs, native types and
+logical watermarks intact. QUALITY independently passed86 focused checks,
+1,538 paired native source/target constraint comparisons and20 dependency/
+chronology scenarios. These are overlapping gates, not additive test totals.
+
+Capture and migration preserve unrelated MAIN/TEMP facts, caller transaction
+ownership and foreign-key settings. Dependent TEMP triggers attached to a
+replaced MAIN table are refused before mutation, including historical owner
+bindings hidden by a later TEMP shadow. Unrelated TEMP triggers remain usable.
+Current facts, not saved original rows, drive inverse; raw receipt values and
+all144 source fields retain their native SQLite types. Older disabled-Email
+manifests remain unchanged.
+
+This accepts only unselected synthetic/candidate-prepared Task3A. Task1 actual
+published predecessor binding and Task3B latest actual-copy plus genuine old
+code cold read/write/re-forward are still required. Full Task3, constructor/
+caller integration, paired release/version selection and production acceptance
+remain incomplete. No provider, native CLI or production mutation was used in
+these independent reviews, and task-owned temporary artifacts were cleaned.
