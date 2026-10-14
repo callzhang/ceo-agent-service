@@ -280,7 +280,15 @@ class AgentOrchestrator:
                         feedback=state.feedback,
                     )
                 else:
-                    self._validate_audit_parent(task, state)
+                    consumer_parent = self._validate_audit_parent(task, state)
+                    previous_review = (
+                        self.store.get_candidate_review_for_audit_run(consumer_parent.parent_agent_run_id)
+                        if consumer_parent.parent_agent_run_id else None
+                    )
+                    previous_result = (
+                        AuditAgentResult.model_validate_json(previous_review["result_json"])
+                        if previous_review else None
+                    )
                     self.audit.run(
                         task,
                         AuditTurnContext(
@@ -290,6 +298,11 @@ class AgentOrchestrator:
                             candidate=state.candidate,
                             candidate_digest=state.candidate_digest,
                             audit_rules="",
+                            previous_revision_review=(
+                                previous_result if previous_result is not None
+                                and previous_result.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT)
+                                else None
+                            ),
                         ),
                         turn_attempt=state.turn_attempt,
                         parent_agent_run_id=state.parent_run_id,
@@ -314,7 +327,7 @@ class AgentOrchestrator:
             _Deferred(None, "agent_turn_limit_reached", self._feedback_cycles(task))
         )
 
-    def _validate_audit_parent(self, task: ReplyTask, state: _NextAudit) -> None:
+    def _validate_audit_parent(self, task: ReplyTask, state: _NextAudit) -> AgentRun:
         parent = self.store.get_agent_run(state.parent_run_id, load_events=False)
         if (
             parent is None
@@ -325,6 +338,7 @@ class AgentOrchestrator:
             or parent.status != "completed"
         ):
             raise RuntimeError("audit_consumer_parent_invalid")
+        return parent
 
     def _consumer_result(self, run: AgentRun) -> ConsumerAgentResult:
         candidate = self.store.adopted_candidate_for_consumer_run(run.id)
