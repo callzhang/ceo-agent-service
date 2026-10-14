@@ -1,0 +1,158 @@
+{
+  "version": "mail-source-readers-release.v1",
+  "observed_at": "2026-10-14T02:27:27.206317+00:00",
+  "release_commit": "30cb7e7674b4115502ed8917d9c1845cfa7d92dc",
+  "prior_pid": 34703,
+  "deployment": {
+    "operation_id": "deploy-4c75e073-481f-4142-869c-39a465127230",
+    "status": "succeeded",
+    "phase": null,
+    "original_commit": "492259b5474571c216052f1b8db5aef8635ac233",
+    "target_commit": "30cb7e7674b4115502ed8917d9c1845cfa7d92dc",
+    "installed_commit": "30cb7e7674b4115502ed8917d9c1845cfa7d92dc",
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-13.sqlite3",
+    "error": ""
+  },
+  "backup_complete": true,
+  "production_runtime_sha256": {
+    "app/agent_cli.py": "dcfdec6e3e562cfc1ade528a84f9703cd00b5dd15e2a87ec9999cbfc44e06460",
+    "app/wechat/codex_safety.py": "9e1e2f6bb8b558dd6871dcecd48a68636b9d6d9ff0551a39a20a5bf067761e27"
+  },
+  "readbacks": {
+    "/healthz": {
+      "ok": true,
+      "status": "ok"
+    },
+    "/api/workers/status": {
+      "service": {
+        "ok": true,
+        "state": "running",
+        "pid": "74472"
+      },
+      "summary": {
+        "queue_count": 13,
+        "pending": 5,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0,
+        "attention": 1
+      },
+      "queues": [
+        {
+          "name": "Reply tasks",
+          "pending": 1,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Reply attempts",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Work items",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email classifications",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Follow-ups",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting jobs",
+          "pending": 1,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "OKR reviews",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Memory writes",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting Memory writes",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "DingTalk Todos",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "WeChat deliveries",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email provider actions",
+          "pending": 3,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        }
+      ]
+    },
+    "/api/attention/status": {
+      "count": 2,
+      "rows": 1,
+      "human_decisions": 1
+    },
+    "/api/console/history?page_size=5&include_chart=false": {
+      "items": 5,
+      "statuses": [
+        "pending",
+        "done",
+        "skipped",
+        "sent",
+        "recovered"
+      ],
+      "http_ok": true
+    }
+  },
+  "focused_tests": 109,
+  "independent_review": "no blocker; readonly; no mailbox query",
+  "limits": [
+    "Production interface/code and service readback, not a new live mailbox business run",
+    "PR31/78/Qwen/prompt drafts not released",
+    "No mail sent by this validation"
+  ]
+}
