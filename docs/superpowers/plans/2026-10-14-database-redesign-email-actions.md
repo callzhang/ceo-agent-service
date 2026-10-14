@@ -35,6 +35,7 @@ All repository paths below are relative to this plan's worktree root, `/Users/de
 | File | Responsibility during implementation |
 |---|---|
 | `app/action_storage.py` | Opt-in thirteen Email types, finite source-value codec reuse, explicit generated fields, native keys/FKs/checks/indexes, source-rowid/AUTOINCREMENT handling, Email projections and confined insert/update/delete helpers; older manifests remain fixed |
+| New `app/action_email_definitions.py` | Confined thirteen-kind metadata, generated SQL declarations and source projections for Task2A; the shared factory delegates only when Email opt-in is explicitly enabled |
 | New `app/action_email_storage.py` | Published-source capture, thirteen-family forward/current-fact inverse, original row locator and sequence restoration, external dependency translation; no caller or provider execution |
 | New `app/action_email_schema_release.py`; `app/store_schema_release.py`; `app/email_schema_release.py`; `app/deploy_maintenance.py`; exact existing publication selectors | Paired Store/Email source/target/inverse selection and atomic markers; bind actual E successor rather than guessed version numbers |
 | New `app/email_classification_schema.py` | Neutral single canonical current classification-parent DDL factory, with no Store/Email imports or constructor calls; used by both fresh constructors |
@@ -144,6 +145,14 @@ Attempts/steps extend existing native AUTOINCREMENT sequence strategy with two s
 ## Task 2: Implement finite storage and native constraint parity
 
 **Files:** `app/action_storage.py`; new `tests/test_email_action_storage.py`; runtime storage documentation only when implemented.
+
+Execute this task in two reviewed units: **2A** finite declarations, native
+constraints, codec/projections and source comparison; then **2B** the mutation
+helpers, ordinary-rowid and AUTOINCREMENT allocation/update semantics. The
+finite declarations live in `app/action_email_definitions.py` to keep the
+shared module focused. Accepting 2A does not establish writer, allocator,
+constructor, migration or publication correctness. Both units leave the
+default Email opt-in disabled and preserve prior manifests.
 
 - [ ] Write failing target tests using both frozen variants. Build native source tables directly from captured SQL, with minimal classification/account/message parent stubs for external trigger tests. The target fixture creates the same parent rows and an opt-in Email actions schema. Compare every field in CSV order, value and `typeof`, not selected business samples.
 - [ ] Use these complete source examples as mandatory comparisons:
