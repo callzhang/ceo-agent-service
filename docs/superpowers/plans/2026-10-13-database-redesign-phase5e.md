@@ -12,7 +12,7 @@
 
 ## Status and execution prerequisites
 
-This is an implementation plan only. No target DDL, migration, Store version, production action or retention deadline is implemented or reserved here. The approved destination is the full ten core tables plus the schema migration table, not completion of the redesign by this two-table unit.
+The source binding, finite storage, opt-in forward/current-fact inverse and paired release protocol have now passed their independent reviews. See `docs/database-redesign-phase5e-validation.md` for the exact commits and evidence limits. The candidate paired-release target is `2026-10-13.5`; the real Store initializer still declares `2026-10-13.4`, so Store19 is inactive. Caller conversion, actual constructor publication/rollback, native substitutes, final CI and normal deployment remain required. Source primary-key list access is being restored before Store conversion. The approved destination remains the full ten core tables plus the schema migration table, not completion of the redesign by this two-table unit. No retention deadline is added.
 
 The source preparation at commit `853abab3` and source-only oracle through `29ba1675` capture actual Store16 (`2026-10-13.2`) and an empty candidate17 constructor (`2026-10-13.3`). Actual capture: `2026-10-13T17:17:01.221303+00:00`, production commit `d7397203df678fd4137c237eb7eb84a671e084f3`. C PR77's final CI and normal publication, followed by D implementation/publication, remain prerequisites. Do not relabel the captured Store16 database as a published C or D source. E executes only after actual C/D publication and source refresh against the exact immediately preceding release. Source counts are observations, never constants in a migration.
 

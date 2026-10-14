@@ -1,6 +1,6 @@
 # Phase5E source refresh and execution boundary
 
-## Task 3B paired release unit checkpoint
+## Task 3B1 paired release unit acceptance
 
 Independent SPEC review found that rollback read its marker before taking the
 writer lock. A deterministic second-connection regression reproduced the
@@ -11,8 +11,11 @@ refuses the inverse and preserves the concurrent marker and target facts.
 Loaded readback now begins one read transaction so its marker, target objects,
 Email version and integrity observations share a snapshot. After this repair,
 the new release suite and six migration/preceding-release files passed together:
-132 tests, with Ruff and diff checks clean. Fresh independent SPEC and QUALITY
-reviews are still required before the unit is accepted.
+132 tests, with Ruff and diff checks clean. Independent SPEC and QUALITY then
+accepted `529a3479`. QUALITY ran 119 release/migration/preflight/prior-release
+tests and verified that unchanged-source rollback writes no rows. Its separate
+WAL interleaving probe confirmed coherent loaded readback and rejection of the
+changed database on the next read.
 
 The unpublished Store18→Store19 release unit captures the exact validated
 published Attempt/Memory source declarations and the original marker value and
@@ -23,7 +26,8 @@ rollback, the existing current-fact inverse recreates the original declarations
 and marker in one transaction; an unchanged original marker is accepted only
 after validating the original source declarations and integrity again. The
 future-version factory route is literal and inactive while `app/store.py` remains
-Store18. The release state contains only four inverse metadata fields; it has
+Store18. The candidate release target is `2026-10-13.5`, but the real Store
+initializer still declares `2026-10-13.4`. The release state contains only four inverse metadata fields; it has
 no historical row snapshot or stale backup restore path.
 
 Focused unit checks passed for both source variants and tuple/Row connections,
@@ -35,6 +39,17 @@ are injected-publisher tests. Actual Store19 constructor publication, converted
 writer/readers and their publication selectors, an old-code copy and final
 activation remain part of later integration. This checkpoint did not alter
 production or call a provider.
+
+## Source primary-key ordered access before Store conversion
+
+Root measured latest-public-ID access in isolated synthetic data. The source
+query used 27 VM steps for both 20 and 1,020 records; the target query grew
+from 309 to 13,301 steps and sorted the type's whole set. Adding only a
+cast-public-ID partial index did not change the chosen plan. A scoped
+`(record_type, cast(legacy_key as integer))` partial index selected a covering
+ordered plan and reduced the 1,020-row query to 83 steps. This source primary-key
+access regression requires a confined target-index correction and growth
+regression before activation. No production index was changed.
 
 ## Task 3A independent and online-copy acceptance
 
