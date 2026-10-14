@@ -10,6 +10,8 @@ from app.worker import MAX_REPLY_TASK_ATTEMPTS
 
 
 _READABLE_FAILURE_REASONS = {
+    "external_action_uncertain": "外部动作或投递结果仍未确认；已保存原始回执，尚不能认定外部动作完成。",
+    "external_action_failed": "外部动作执行或投递失败；原始回执和已完成动作的记录仍保留。",
     "consumer_retry_exhausted": (
         "Agent 生成回复连续重试后仍未得到可验证结果，已达到本轮重试上限。"
     ),
@@ -60,6 +62,8 @@ def reply_history_attention(
     status = attempt.send_status.strip().lower()
     reason = (attempt.audit_summary.strip() or attempt.send_error.strip()
               or attempt.codex_reason or "处理未完成").strip()
+    if task is not None and task.status == "failed" and task.error in {"external_action_uncertain", "external_action_failed"}:
+        reason = task.error
     reason = _readable_failure_reason(reason)
     external_effect = "外部动作是否完成由当前结果和业务系统状态决定"
     if (task is not None and task.status in {"pending", "processing"}

@@ -115,6 +115,25 @@ def test_old_completion_projections_cannot_override_current_delivery_error(tmp_p
     assert store.get_reply_task(task.id).status == "failed"
 
 
+@pytest.mark.parametrize("state,expected", [("ambiguous", "投递结果仍未确认"), ("failed", "投递失败")])
+def test_detail_current_delivery_error_overrides_old_sent_ledger_and_summary(tmp_path, state, expected):
+    from app.web_api.attempts import build_attempt_detail
+
+    store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)
+    assert store.get_sent_reply(task.conversation_id, task.trigger_message_id) is not None
+    attempt_id = store.record_reply_attempt(conversation_id=task.conversation_id, conversation_title="",
+        trigger_message_id=task.trigger_message_id, trigger_sender="", trigger_text="",
+        action="reply", sensitivity_kind="", send_status="completed", channel=task.channel,
+        audit_summary="All approved actions verified")
+    assert apply_delivery_reverification(store, proof(receipt, state))
+    code, item = build_attempt_detail(store, attempt_id)
+    assert code == 200
+    assert item["status"]["raw"] == "failed"
+    assert expected in item["status"]["message"]
+    assert expected in item["status"]["attention"]["reason"]
+    assert item["status"]["requires_decision"] is False
+
+
 @pytest.mark.parametrize("state", ["sent", "ambiguous"])
 def test_reverification_keeps_original_provider_and_previous_verifier(tmp_path, state):
     store, task, _context, _driver, _handler, receipt, execution = historical_receipt(tmp_path)
