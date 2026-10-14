@@ -97,6 +97,24 @@ def test_restart_recovery_keeps_confirmed_recorded_delivery(tmp_path):
     assert store.get_reply_task(task.id).status == "done"
 
 
+@pytest.mark.parametrize("state", ["ambiguous", "failed"])
+@pytest.mark.parametrize("source", ["terminal_attempt", "settlement"])
+def test_old_completion_projections_cannot_override_current_delivery_error(tmp_path, state, source):
+    store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)
+    store.record_reply_attempt(conversation_id=task.conversation_id, conversation_title="",
+        trigger_message_id=task.trigger_message_id, trigger_sender="", trigger_text="",
+        action="reply", sensitivity_kind="", send_status="completed", channel=task.channel)
+    with store._connect() as db:
+        db.execute("insert into errors(conversation_id,message_id,kind,detail,resolved_at,resolution) "
+                   "values (?,?,'reply_task_already_settled','','2026-10-13','old completion')",
+                   (task.conversation_id, task.trigger_message_id))
+    assert apply_delivery_reverification(store, proof(receipt, state))
+    recovery = (store.reconcile_unresolved_reply_tasks_with_terminal_attempts
+                if source == "terminal_attempt" else store.reconcile_unresolved_reply_tasks_with_settlement_evidence)
+    assert recovery() == 0
+    assert store.get_reply_task(task.id).status == "failed"
+
+
 @pytest.mark.parametrize("state", ["sent", "ambiguous"])
 def test_reverification_keeps_original_provider_and_previous_verifier(tmp_path, state):
     store, task, _context, _driver, _handler, receipt, execution = historical_receipt(tmp_path)

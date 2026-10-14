@@ -20615,6 +20615,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 set status='done', error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
                 where tasks.record_type='reply_tasks' and tasks.status in ('failed', 'needs_human')
+                  and tasks.error not in ('external_action_uncertain', 'external_action_failed')
                   and exists (
                       select 1
                       from errors as settled
@@ -24576,6 +24577,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     limit 1
                 )
                 where tasks.status in ('failed', 'needs_human')
+                  and tasks.error not in ('external_action_uncertain', 'external_action_failed')
                   and (
                       attempts.send_status in ({placeholders})
                       or (
