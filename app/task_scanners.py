@@ -508,20 +508,26 @@ def scan_pending_oa_approvals(
         except Exception:
             current_user_id = ""
     for process_instance_id, tasks_payload in tasks_cache.items():
+        process_tasks = _oa_task_records(
+            {"result": [detail_cache[process_instance_id], tasks_payload]}
+        )
+        current_user_tasks = {
+            _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
+            for task in process_tasks
+            if _oa_task_field(task, ("userId", "userid", "user_id"))
+            == current_user_id
+            and current_user_id
+            and _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
+            and _oa_task_is_open(task)
+        }
         if current_user_id:
             if any(
                 _oa_task_field(task, ("userId", "userid", "user_id")) == current_user_id
                 and not _oa_task_field(task, ("status", "taskStatus", "task_status"))
-                for task in _oa_task_records({"result": [detail_cache[process_instance_id], tasks_payload]})
+                for task in process_tasks
             ):
                 unverified_pending_process_ids.add(process_instance_id)
-            pending_task_ids_by_process[process_instance_id] = {
-                _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
-                for task in _oa_task_records({"result": [detail_cache[process_instance_id], tasks_payload]})
-                if _oa_task_field(task, ("userId", "userid", "user_id")) == current_user_id
-                and _oa_task_field(task, ("status", "taskStatus", "task_status")).upper() == "RUNNING"
-                and _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
-            }
+            pending_task_ids_by_process[process_instance_id] = current_user_tasks
 
     for attempt in store.list_open_oa_needs_human_attempts():
         process_instance_id = attempt.oa_process_instance_id.strip()
@@ -827,6 +833,8 @@ def scan_pending_oa_approvals(
             continue
         pending_business_object_keys.add(key)
 
+    reconciled_reply_task_ids = reconcile_failed_oa_reply_tasks(store, dws)
+
     # A partial scan or unreadable source cannot prove that a process is done.
     for key in previous_pending_keys:
         process_instance_id, task_id = _oa_business_object_parts(key)
@@ -888,6 +896,7 @@ def scan_pending_oa_approvals(
                 "reconciled_completed_attempt_ids": (
                     reconciled_completed_attempt_ids
                 ),
+                "reconciled_reply_task_ids": reconciled_reply_task_ids,
                 "reconciled_legacy_oa_attempt_ids": sorted(
                     reconciled_legacy_oa_attempt_ids
                 ),
@@ -900,6 +909,113 @@ def scan_pending_oa_approvals(
         last_error="",
     )
     return queued
+
+
+def reconcile_failed_oa_reply_tasks(store: AutoReplyStore, dws: Any) -> list[int]:
+    """Settle failed chat tasks only when their exact OA candidate is terminal."""
+    read_detail = getattr(dws, "read_oa_process_instance_openapi", None)
+    if read_detail is None:
+        return []
+    reconciled: list[int] = []
+    for task in store.list_reply_tasks(
+        statuses=("failed", "needs_human"), limit=500
+    ):
+        if (
+            task.channel != "dingtalk"
+            or task.error != "audit_revision_exhausted"
+            or not task.execution_generation
+        ):
+            continue
+        try:
+            runs = store.list_agent_runs_for_task_generation(
+                task.id, task.execution_generation, load_events=False
+            )
+        except Exception:
+            continue
+        candidates = [
+            run
+            for run in runs
+            if getattr(run, "role", None) is not None
+            and str(getattr(run.role, "value", run.role)) == "consumer"
+            and run.status == "completed"
+            and str(run.adopted_result_json or "").strip()
+        ]
+        if not candidates:
+            continue
+        latest = max(
+            candidates,
+            key=lambda run: (
+                run.proposal_revision,
+                run.turn_attempt,
+                run.id,
+            ),
+        )
+        try:
+            candidate = json.loads(latest.adopted_result_json)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(candidate, dict) or candidate.get("outcome") != "proposal":
+            continue
+        proposal = candidate.get("proposal")
+        actions = proposal.get("actions") if isinstance(proposal, dict) else None
+        if not isinstance(actions, list):
+            continue
+        oa_targets = []
+        for action in actions:
+            if not isinstance(action, dict) or action.get("capability") != "dingtalk-oa":
+                continue
+            if action.get("operation") not in {
+                "approve", "reject", "revert_task", "redirect_task", "comment"
+            }:
+                continue
+            target = action.get("target")
+            if not isinstance(target, dict):
+                continue
+            process_id = str(target.get("process_instance_id") or "").strip()
+            task_id = str(target.get("task_id") or "").strip()
+            if process_id and task_id:
+                oa_targets.append((process_id, task_id))
+        for process_id, oa_task_id in oa_targets:
+            try:
+                detail = read_detail(process_id)
+            except Exception:
+                continue
+            process_state = _oa_terminal_process_state(detail)
+            if process_state is None:
+                continue
+            exact_task = next(
+                (
+                    row
+                    for row in _oa_task_records(detail)
+                    if _oa_task_field(row, ("taskId", "taskid", "task_id", "id"))
+                    == oa_task_id
+                ),
+                None,
+            )
+            if exact_task is None:
+                continue
+            task_state = _oa_task_field(
+                exact_task, ("status", "taskStatus", "task_status")
+            ).upper()
+            if task_state not in {
+                "COMPLETED", "FINISHED", "CANCELED", "CANCELLED", "TERMINATED"
+            }:
+                continue
+            evidence = (
+                "Verified live DingTalk OA terminal state for exact reviewed candidate: "
+                f"process_instance_id={process_id}; task_id={oa_task_id}; "
+                f"process_status={process_state[0]}; process_result={process_state[1]}; "
+                f"task_status={task_state}; consumer_run_id={latest.id}; "
+                f"execution_generation={task.execution_generation}"
+            )
+            if store.close_unresolved_reply_task_already_settled(
+                task.id,
+                expected_execution_generation=task.execution_generation,
+                settled_evidence=evidence,
+            ):
+                reconciled.append(task.id)
+            break
+    return reconciled
 
 
 def _oa_terminal_process_state(value: Any) -> tuple[str, str] | None:
@@ -1030,27 +1146,28 @@ def _pending_oa_task_ids_for_current_user(
     tasks = _oa_task_records(payload)
     if not tasks:
         return []
+    if not current_user_id:
+        return []
     running_for_current_user: list[str] = []
-    running: list[str] = []
-    all_task_ids: list[str] = []
     for task in tasks:
         task_id = _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
         if not task_id:
             continue
-        all_task_ids.append(task_id)
-        status = _oa_task_field(task, ("status", "taskStatus", "task_status"))
         user_id = _oa_task_field(task, ("userId", "userid", "user_id"))
-        is_running = status.upper() == "RUNNING" if status else True
-        if is_running:
-            running.append(task_id)
-        if is_running and current_user_id and user_id == current_user_id:
+        is_open = _oa_task_is_open(task)
+        if is_open and user_id == current_user_id:
             running_for_current_user.append(task_id)
-    if current_user_id:
-        return list(dict.fromkeys(running_for_current_user))
-    for candidates in (running, all_task_ids):
-        if candidates:
-            return list(dict.fromkeys(candidates))
-    return []
+    return list(dict.fromkeys(running_for_current_user))
+
+
+def _oa_task_is_open(task: dict[str, Any]) -> bool:
+    status = _oa_task_field(task, ("status", "taskStatus", "task_status")).upper()
+    if not status:
+        return True
+    return status not in {
+        "COMPLETED", "FINISHED", "CANCELED", "CANCELLED", "CLOSED",
+        "REVOKED", "TERMINATED", "RETURNED", "REJECTED",
+    }
 
 
 def _oa_task_is_no_longer_current_user_action(

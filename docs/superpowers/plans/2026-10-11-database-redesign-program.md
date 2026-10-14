@@ -173,3 +173,18 @@ source; readonly Store17 declaration/full-integrity/FK readback and two69-case
 increment/release suites pass. Binding artifact distinguishes this evidence
 from the actual ba8b5931 constructor/native proof. No source snapshot or
 transcript is retained. Replacement full CI and live acceptance remain pending.
+
+### 2026-10-13 Phase5D actual publication accepted
+
+PR80/head5221062d final Quality38476785656 passed12764Python checks(112skip,44deselect),
+723frontend(2skip), browser2 and build. Normal deployment published1b6f55e5,
+Store18/Email51,126→124 physical tables;2341 sent and320 observer facts are in
+finite actions. Full current declaration, unchanged original FK diagnostic,
+verified latest backup and readonly History/Attention/expanded receipt checks
+passed. An existing Status frontend coverage-contract mismatch was separately
+reproduced, fixed, focused-tested and normally published as9e0570cb; the actual
+Status page now renders running/healthy with queue data. Details and limits are
+in phase5d validation and phase5d_production_release.v1.json. No real test send,
+recall or feedback action, no native copy or VACUUM. Actual file size remains
+471347200 bytes. E can now refresh against actual published18, rather than the
+old Store17/empty-candidate observation. The full10+1 redesign remains incomplete.

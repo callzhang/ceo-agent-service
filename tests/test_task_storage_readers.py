@@ -154,14 +154,18 @@ def test_pre_run_failure_retry_and_settlement_keep_generation_and_history(typed_
     claimed = store.claim_reply_task(task.id)
     assert _pre_run_failure(store, claimed) == attempt_id
     assert store.close_unresolved_reply_task_already_settled(
-        task.id, settled_evidence="source receipt confirms completion"
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        settled_evidence="source receipt confirms completion",
     )
     assert store.reply_task_is_done(task.id)
     settled = store.get_reply_task(task.id)
     assert settled.input_compacted == 1
     assert settled.trigger_text == ""
     assert not store.close_unresolved_reply_task_already_settled(
-        task.id, settled_evidence="same source receipt"
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        settled_evidence="same source receipt",
     )
     history = store.list_operation_logs(source_tables=("reply_attempts",))
     assert [item.source_id for item in history] == [attempt_id]
