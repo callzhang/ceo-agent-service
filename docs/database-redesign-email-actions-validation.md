@@ -1,5 +1,29 @@
 # Email action storage preparation: Tasks 2A and 2B
 
+## Task 3A-1: unselected source capture
+
+`app/action_email_storage.py` now provides a read-only candidate source capture
+for an already open caller transaction. It accepts only the reviewed E
+sixteen-type action declaration paired with the matching frozen actual or fresh
+thirteen-table Email declaration. The capture returns the literal action and
+Email table metadata (including columns, foreign keys, indexes and the five
+own triggers), the thirteen exact external blockers, row counts, locator modes,
+and each relevant allocator's absent-versus-zero sequence state. The two
+source pairs are explicit; crossed variants, changed declarations or trigger
+bodies, unexpected inbound FKs/views/triggers, target object-name collisions,
+mixed action types and allocator aliases refuse before any mutation. SQLite's
+rename parser checks external SQL dependencies on schema-only scratch data.
+
+The synthetic tests cover empty sources, colliding existing action IDs and
+original Email ROWIDs, deleted high ROWIDs, preserved sequence zero/high-water,
+and refusal without changing source schema or action rows. The first capture
+test was RED because the new module was absent. An unexpected sequence on a
+non-AUTOINCREMENT source table was separately observed RED and then refused.
+The focused suite passed 26 tests; scoped Ruff and whitespace checks passed.
+No forward/inverse DDL, source or target marker, Store/Email constructor route,
+provider call, production copy or release claim is in this unit. Actual
+published-source binding and current-fact inverse remain required later.
+
 The isolated opt-in storage declaration adds thirteen Email action types to the
 existing sixteen-type actions schema. The option defaults to off. No Store or
 Email constructor, migration selector, version marker, provider path, or
