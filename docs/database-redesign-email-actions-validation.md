@@ -2026,3 +2026,7 @@ all failures at retired native table/index access. Adapted tests: `10 passed`
 in 3.12s, exit 0. Owned `/tmp/email13-5b9-probe-*` SQLite prototypes were
 cleaned and verified absent. Historical source tests, unrelated current tests,
 latest-copy/native, CI and publication remain open.
+
+### Task5B9 independent acceptance, 2026-10-14
+
+Root accepts248d0d6bd5a31e14cfb2de05873140832930195a overe06af5b9d0a88bb101da9ba6544fc8cb5a751aaa. Fresh SPEC independently collected10cases and10pass2.70s/lint/diff/nonselectedASTsame/ownedtempabsent. Subsequent fresh QUALITY confirms exact fresh20emailtables/29kinds/retiredabsence, exactpartialindexes and no repair, complete sourceROWIDdeletions and originalpointer/forgedclaim fields, precisefamily/status/identityterminalfault and receipt-step atomicrollback/subsequentsuccess/bindingconflict. No repeated sufficient tests or temps. Both PASS and frozen cleanHEAD. Historical-source fixture closure and explicit CIoldref availability need resolution; remaining current/matrix/latest-copy/native/CI/publication/full10+1 acceptance remains open.
