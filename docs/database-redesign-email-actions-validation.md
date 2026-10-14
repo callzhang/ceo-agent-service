@@ -1000,3 +1000,107 @@ F must reject unsupported old sources before mutation under the approved exact
 Store19/Email51 source contract. E2/F, Task5 consumers and later current-copy/
 native/publication remain open. Fresh seeding must be selected only in F's new
 DB creation branch, never reopen/51 migration/read-path configuration repair.
+
+
+### Task4E2 current metadata and durable validators, 2026-10-14
+
+Parentd79ee9618a0a50511155928807bc56487b992468. Only the three current EmailStore
+validators and their imports change, plus a narrow finite external-blocker
+interface shared by pure conversion. All original `_REQUIRED_*` maps/keys,
+historical cached-plan helper, source DDL, source capture and current-fact
+inverse remain unchanged. The existing13 translated SQL declarations are
+AST-identical. The fresh seeder still has zero app callers. No constructors,
+defaults, selected flags, versions, coordinator or F activation changed.
+
+The current shape validator filters the original source maps to their existing
+16 retained business tables plus ledger, preserving each required column/type/
+default/declaration, key, CHECK, FK, index and native trigger check. It separately
+requires the exact29-kind action manifest for one of the two accepted reply
+variants. It selects19 retained native triggers plus13 exact translated external
+blockers (32 total). Existing source maps are not repurposed or deleted, so the
+neutral retained factory's dynamic trigger imports remain valid. Its49-object
+native metadata proof is separate from original startup coverage. Tests remove
+the optional historical traversal/operation/candidate tables and confirm both
+source and target shape acceptance, avoiding a silent new startup requirement.
+
+All17 active old-family query sites (one retry/direct join in durable-state and
+16 SELECTs in durable-rows) now use accepted finite projections. The policy AST
+of durable-state and durable-rows is identical to genuine2773 outside SQL
+arguments, including all loops, conditions, errors and helper calls. This does
+not add a new rule for receipts, account/message FKs, recovery, authorization,
+classification or row validation. Native typed storage and application behavior
+remain separate: original durable-row validation accepts a SQL NULL reply
+receipt identity, while public receipt writing refuses NULL; original durable
+validation refuses a nullable feedback ID. The original retry timestamp
+ValueError is preserved, distinct from the excessive-attempt count's
+EmailPersistenceCorruption. No blanket NULL-startup-refusal is inferred.
+
+New tests use real EmailStore methods on explicit pure-converted owned copies
+and genuine archived2773 validators in a separate process/module path. They
+compare acceptance and exact refusal type/message for plan JSON/direct states,
+feedback, reply owner/snapshot/receipt, unsubscribe effect/continuation/journal/
+terminal facts and retry bounds/timestamps. They execute genuine and target
+claim→continuation→next-effect→terminal lifecycles and direct/retry/feedback
+cycles, validating intermediate/final state. The retry fault corpus is explicitly
+native storage, not an assertion of public source-release authorization.
+
+Metadata cases cover required retained table/index/trigger/declaration refusal,
+missing/corrupt target action index/trigger/column/typed-parent declaration and
+translated blocker predicates. Both existing reply variants pass neutral shape
+checks; finite trigger installation is repeatable/caller-savepoint controlled and
+preserves a deliberately malformed existing blocker for strict refusal. Target
+validation preserves caller changes, native facts and savepoints without writes.
+The real public `preview_failed_email_unsubscribe_task` now closes its shape
+validation dependency, matches the genuine-source decision and leaves complete
+logical facts and database bytes unchanged, without constructing either store.
+
+RED: the archived validator accepted the source, then the target shape test
+failed on missing retired tables (1 failed in3.55s). After finite conversion all
+three current validator entry points passed (3 passed in7.95s). Expanded oracle
+setup exposed the original NULL-receipt acceptance, source continuation-prefix
+rules, source AUTO/composite writer namespaces and timestamp ValueError; tests
+were corrected to preserve those measured semantics, with no new runtime rules.
+Final complete run, exit0:
+
+```text
+python -m pytest -q tests/test_email_action_validation.py tests/test_email_current_schema.py::test_current_retained_objects_match_archived_native_metadata tests/test_email_action_storage.py::test_finite_metadata_matches_frozen_source_objects tests/test_email_action_storage.py::test_every_frozen_field_projects_with_native_value_and_storage_class tests/test_email_action_migration.py::test_all_thirteen_families_preserve_current_facts tests/test_email_action_migration.py::test_thirteen_external_blockers_survive_both_transitions tests/test_email_action_migration.py::test_main_rows_and_temp_shadows_stay_separate_through_inverse tests/test_email_action_migration.py::test_caller_can_rollback_forward_after_late_sqlite_failure tests/test_email_action_schema_release.py::test_inverse_uses_current_facts_receipt_backfill_native_ids_and_allocator_waters --basetemp=/tmp/email13-validation-e2.oa6ROt/final -s
+.............................
+29 passed in 43.02s
+```
+
+This is15 new validator cases plus14 justified regressions: retained native49,
+frozen metadata/all144 fields' native values/types, all13 current-fact inverse,
+13 blockers both transitions, main/temp separation, late conversion rollback
+and paired current-fact inverse for both variants. No full suite, environment
+mutation, provider/native Agent CLI, production, push or deploy was used.
+
+Remaining physical old-family SQL is confined to `_initialize`,
+`_prepare_v8_reply_claim_migration`, `_finish_v8_reply_claim_migration`,
+`_finish_v10_unsubscribe_migration`, `_finish_unsubscribe_schema_migration`,
+`_ensure_unsubscribe_receipt_columns`, `_migrate_v16_to_v17`,
+`_migrate_v18_to_v19`, `_detach_direct_retry_requests`,
+`_restore_direct_retry_requests`, `_migrate_v21_to_v22`, `_migrate_v24_to_v25`,
+`_migrate_v34_to_v35`, `_validate_cached_action_plan_snapshots`,
+`_migrate_v39_to_v40`, `_ensure_unsubscribe_claim_columns`,
+`_mark_legacy_processed_without_plan` and `_create_indexes_and_triggers`, plus
+historical module declarations. The cached-plan helper remains the native <=48
+migration contract. It is not converted or given a compatibility validator.
+Active current durable validators have no physical old13 SQL. All other existing
+EmailStore method ASTs/signatures and module assignments are unchanged.
+
+The partial branch now has a target-only current validator while default
+Store19/Email51 initialization is still historical. Existing default-constructor
+and historical-upgrade testfiles therefore are not a passing target-runtime gate;
+their expectations were not bypassed or rewritten. F must explicitly refuse
+unsupported older source pairs before mutation and select the supported pair,
+fresh constructors/locking, coordinator/subprocess and real markers in one
+coupled activation. No F work is included. External direct consumers remain
+Task5; latest actual-copy binding, native/full-copy and publication acceptance
+remain Task6. This archived2773 test is not a current production-copy proof.
+E2 stops for sequential independent SPEC then QUALITY review.
+
+Ruff (both changed runtime modules and new tests), test formatting and diff
+checks passed. The exact owned `/tmp/email13-validation-e2.oa6ROt` root was
+inspected, removed and verified absent. All temporary archived code, owned
+source/target databases, pytest runs and the editing intermediate were removed;
+no historical test archive is retained.

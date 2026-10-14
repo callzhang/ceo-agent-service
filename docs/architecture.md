@@ -2344,3 +2344,42 @@ intact at this helper boundary. E1 tests compare its new-database seed facts
 with genuine archived2773 default initialization through Email51. E2 validators
 and F constructors/locking/markers/coordinator remain pending; defaults are
 still Store19/Email51 and this partial candidate is not runtime-ready.
+
+
+### Email29 current validation preparation, Task4E2 (unpublished)
+
+The Email candidate's single current shape and durable validators now inspect
+29-kind actions and read all thirteen Email families through the accepted finite
+projections. Shape validation accepts either existing reply declaration variant
+by exact action-manifest comparison. Retained validation keeps the original16
+business-table requirements plus the ledger; the three optional historical
+traversal/operation/candidate tables have not become new startup requirements.
+The neutral factory's49 objects remain a separate structural contract/proof.
+Historical `_REQUIRED_*` maps and retained trigger keys remain intact for their
+existing factory/source consumers.
+
+Current shape checks retain19 native nonaction triggers and the exact13 translated
+account/message/classification blockers, preserving changed-value predicates,
+processing/dispatching status, owner names and errors. A finite missing-only
+installer shares the existing declarations with pure conversion and leaves the
+caller in charge of transactions. It never repairs or replaces an existing
+malformed object; the current shape validator refuses it. No blanket receipt
+immutability or account/message foreign key has been added.
+
+Durable policy outside the finite SELECT arguments is unchanged. Native SQL
+NULL allowances and application rules are checked per method: the original
+receipt row validator accepts a nullable receipt identity while the public
+receipt writer rejects NULL input; nullable feedback IDs are rejected by the
+original durable validator. Read validation does not write or commit. The public
+read-only unsubscribe cancellation preview now validates the explicit target
+shape and preserves its existing decision/no-replay checks.
+
+This remains a partial unpublished branch. Current validators target Email29;
+historical cached-plan/source DDL remain native, so the <=48 historical chain is
+not made compatible by an alternate validator. Default Store19/Email51 bootstrap
+and ordinary source constructors are not runnable target proofs. F must select
+the exact supported Store19/Email51 pair before ordinary initialization and
+explicitly refuse unsupported older sources before any mutation, then couple
+constructors/locking/markers/coordinator/default activation. E1 fresh seeds
+still have zero runtime callers. External Task5 and full-copy/native/publication
+acceptance remain separate gates.

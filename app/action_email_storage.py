@@ -285,6 +285,24 @@ def _target_external_sql():
             for name, event, owner, changed, kind, matching, error in specs}
 
 
+def finite_target_external_sql() -> dict[str, str]:
+    """Return the exact thirteen existing retained-table blockers for Email29."""
+    return _target_external_sql()
+
+
+def create_email_action_external_triggers(db: sqlite3.Connection) -> None:
+    """Install missing finite blockers; caller owns parents and transaction.
+
+    Existing objects are never repaired or overwritten. Shape validation owns
+    their declaration checks, separately from installation.
+    """
+    for name, sql in finite_target_external_sql().items():
+        if db.execute(
+            "select 1 from sqlite_schema where type='trigger' and name=?", (name,)
+        ).fetchone() is None:
+            db.execute(sql)
+
+
 def _projection(db, kind, variant):
     sql = email_action_projection(kind, include_rowid=kind in EMAIL_ROWID_TYPES,
                                   source_variant=variant).replace("from actions a", "from main.actions a")
@@ -395,8 +413,7 @@ def migrate_email_action_schema(db: sqlite3.Connection) -> dict:
     for kind in EMAIL_AUTOINCREMENT_TYPES:
         _set_sequence(db, f"actions:{kind}", old_sequences[kind])
     _restore_triggers(db, triggers)
-    for sql in _target_external_sql().values():
-        db.execute(sql)
+    create_email_action_external_triggers(db)
     if storage._objects(db, "actions") != storage._current_objects(
         include_reply=True, reply_variant=variant, include_email=True
     ):

@@ -68,13 +68,15 @@ from app.email_category_config import (
     legacy_config_row,
     validate_category_descriptions,
 )
+from app.action_email_storage import finite_target_external_sql
 from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import AGENT_RUN_SQL
 from app.action_storage import (
-    ActionWriteResult, EMAIL_ACTION_PROJECTIONS, email_action_projection,
+    ActionWriteResult, EMAIL_ACTION_PROJECTIONS, REPLY_VARIANTS,
+    action_schema_is_current, email_action_projection,
     insert_action, insert_email_action, update_email_action, update_action,
     delete_action, delete_email_action,
 )
@@ -7098,7 +7100,15 @@ class EmailStore:
                 )
             }
             table_names = set(table_rows)
-            missing_tables = set(_REQUIRED_TABLE_COLUMNS) - table_names
+            # Historical maps remain the source contract. Current validation
+            # retains the original nonaction coverage and validates actions
+            # against the exact accepted finite manifest separately.
+            required_tables = {
+                table: columns
+                for table, columns in _REQUIRED_TABLE_COLUMNS.items()
+                if table not in EMAIL_ACTION_PROJECTIONS
+            }
+            missing_tables = set(required_tables) - table_names
             if missing_tables:
                 missing = ", ".join(sorted(missing_tables))
                 raise EmailPersistenceCorruption(
@@ -7109,22 +7119,34 @@ class EmailStore:
                 for row in db.execute("pragma table_list")
                 if row["wr"]
             }
-            missing_without_rowid = _REQUIRED_WITHOUT_ROWID_TABLES - without_rowid_tables
+            missing_without_rowid = (
+                _REQUIRED_WITHOUT_ROWID_TABLES & required_tables.keys()
+            ) - without_rowid_tables
             if missing_without_rowid:
                 raise EmailPersistenceCorruption(
                     "required WITHOUT ROWID table contract is missing: "
                     + ", ".join(sorted(missing_without_rowid))
                 )
 
+            if not any(
+                action_schema_is_current(
+                    db, include_reply=True, reply_variant=variant, include_email=True
+                )
+                for variant in REPLY_VARIANTS
+            ):
+                raise EmailPersistenceCorruption(
+                    "required Email29 action schema is missing or malformed"
+                )
+
             indexes_by_table: dict[str, dict[str, sqlite3.Row]] = {}
             table_order = [
                 table
-                for table in _REQUIRED_TABLE_COLUMNS
+                for table in required_tables
                 if table != "email_category_folder_bindings"
             ]
             table_order.append("email_category_folder_bindings")
             for table in table_order:
-                required_columns = _REQUIRED_TABLE_COLUMNS[table]
+                required_columns = required_tables[table]
                 column_rows = list(
                     db.execute(f"pragma table_info({json.dumps(table)})")
                 )
@@ -7252,6 +7274,8 @@ class EmailStore:
                         )
 
             for index_name, (table, required_columns) in _REQUIRED_INDEXES.items():
+                if table not in required_tables:
+                    continue
                 index_row = indexes_by_table[table].get(index_name)
                 if (
                     index_row is None
@@ -7279,6 +7303,8 @@ class EmailStore:
                 required_columns,
                 required_predicate,
             ) in _REQUIRED_PARTIAL_UNIQUE_INDEXES.items():
+                if table not in required_tables:
+                    continue
                 index_row = indexes_by_table[table].get(index_name)
                 sql_row = db.execute(
                     "select sql from sqlite_master where type='index' and name=?",
@@ -7305,7 +7331,15 @@ class EmailStore:
                     "select name, tbl_name, sql from sqlite_master where type='trigger'"
                 )
             }
-            for trigger_name, expected_sql in _REQUIRED_TRIGGER_SQL.items():
+            translated_triggers = finite_target_external_sql()
+            required_triggers = {
+                name: sql
+                for name, sql in _REQUIRED_TRIGGER_SQL.items()
+                if _REQUIRED_TRIGGER_TABLES.get(name, "email_classifications")
+                in required_tables
+            }
+            required_triggers.update(translated_triggers)
+            for trigger_name, expected_sql in required_triggers.items():
                 trigger = trigger_rows.get(trigger_name)
                 if (
                     trigger is None
@@ -7334,8 +7368,8 @@ class EmailStore:
     def _validate_durable_state(self, db: sqlite3.Connection) -> None:
         self._validate_schema_shape(db)
         for row in db.execute(
-            "select r.*, a.attempt_count from email_direct_retry_requests r "
-            "join email_actions a on a.action_id=r.action_id"
+            f"select r.*, a.attempt_count from ({EMAIL_RETRY_SQL}) r "
+            f"join ({EMAIL_DIRECT_ACTION_SQL}) a on a.action_id=r.action_id"
         ):
             if row["attempt_number"] > row["attempt_count"] + 1:
                 raise EmailPersistenceCorruption("retry request exceeds the next action attempt")
@@ -7515,7 +7549,7 @@ class EmailStore:
 
         plans: dict[str, EmailActionPlan] = {}
         plans_by_classification: dict[int, list[EmailActionPlan]] = {}
-        for row in db.execute("select * from email_action_plans"):
+        for row in db.execute(f"select * from ({EMAIL_PLAN_SQL})"):
             plan = self._stored_action_plan(row)
             plans[plan.action_plan_id] = plan
             plans_by_classification.setdefault(plan.classification_id, []).append(plan)
@@ -7784,7 +7818,7 @@ class EmailStore:
                     f"ActionPlan {plan.action_plan_id} has no matching classification"
                 )
 
-        for row in db.execute("select * from email_feedback_requests"):
+        for row in db.execute(f"select * from ({EMAIL_FEEDBACK_SQL})"):
             try:
                 request_id = _validate_feedback_request_id(row["feedback_request_id"])
                 expected_plan_id = _validate_expected_action_plan_id(
@@ -7825,7 +7859,7 @@ class EmailStore:
                     f"feedback request {request_id} has an inconsistent plan version"
                 )
 
-        for row in db.execute("select * from email_reply_receipts"):
+        for row in db.execute(f"select * from ({EMAIL_REPLY_RECEIPT_SQL})"):
             receipt = self._email_reply_receipt_row(row)
             provider_receipt = receipt["provider_receipt"]
             if set(provider_receipt) != {
@@ -7886,7 +7920,7 @@ class EmailStore:
                     "email reply receipt does not match its immutable ActionPlan"
                 )
 
-        for row in db.execute("select * from email_reply_dispatch_claims"):
+        for row in db.execute(f"select * from ({EMAIL_REPLY_CLAIM_SQL})"):
             claim = self._email_reply_dispatch_claim_row(row)
             plan = plans.get(claim["action_plan_id"])
             classification = classifications.get(claim["classification_id"])
@@ -7922,7 +7956,7 @@ class EmailStore:
             if (
                 claim["status"] == "done"
                 and db.execute(
-                    "select 1 from email_reply_receipts where action_identity=?",
+                    f"select 1 from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                     (claim["action_identity"],),
                 ).fetchone()
                 is None
@@ -7950,9 +7984,9 @@ class EmailStore:
                     )
 
         unsubscribe_effects: dict[tuple[str, str], dict[str, Any]] = {}
-        for row in db.execute("select * from email_unsubscribe_effects"):
+        for row in db.execute(f"select * from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL})"):
             effect_claim = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (row["action_identity"],),
             ).fetchone()
             if effect_claim is None:
@@ -8007,7 +8041,7 @@ class EmailStore:
                 )
 
         unsubscribe_claims: dict[str, dict[str, Any]] = {}
-        for row in db.execute("select * from email_unsubscribe_claims"):
+        for row in db.execute(f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL})"):
             claim = self._email_unsubscribe_claim_row(row)
             unsubscribe_claims[claim["action_identity"]] = claim
             plan = plans.get(claim["action_plan_id"])
@@ -8059,7 +8093,7 @@ class EmailStore:
                     "unsubscribe claim does not match its immutable ActionPlan"
                 )
             receipt_exists = db.execute(
-                "select 1 from email_unsubscribe_receipts where action_identity=?",
+                f"select 1 from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
                 (claim["action_identity"],),
             ).fetchone()
             if claim["status"] == "done" and receipt_exists is None:
@@ -8084,7 +8118,7 @@ class EmailStore:
                     )
 
             continuation = db.execute(
-                "select * from email_unsubscribe_continuations where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL}) where action_identity=?",
                 (claim["action_identity"],),
             ).fetchone()
             if (claim["status"] == "awaiting_audit") != (continuation is not None):
@@ -8115,7 +8149,7 @@ class EmailStore:
 
         next_sequences: dict[str, int] = {}
         for row in db.execute(
-            "select * from email_unsubscribe_steps order by action_identity, sequence"
+            f"select * from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) order by action_identity, sequence"
         ):
             claim = unsubscribe_claims.get(row["action_identity"])
             expected_sequence = next_sequences.get(row["action_identity"], 1)
@@ -8153,7 +8187,7 @@ class EmailStore:
                     "unsubscribe continuation prefix is not fully journaled"
                 )
 
-        for row in db.execute("select * from email_unsubscribe_receipts"):
+        for row in db.execute(f"select * from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})"):
             receipt = self._email_unsubscribe_receipt_row(row)
             claim = unsubscribe_claims.get(receipt["action_identity"])
             try:
@@ -8243,7 +8277,7 @@ class EmailStore:
 
         self._validate_category_binding_completeness(db)
 
-        action_rows = list(db.execute("select * from email_actions"))
+        action_rows = list(db.execute(f"select * from ({EMAIL_DIRECT_ACTION_SQL})"))
         actions_by_plan: dict[str, list[sqlite3.Row]] = {}
         actions_by_id: dict[str, sqlite3.Row] = {}
         for row in action_rows:
@@ -8295,7 +8329,7 @@ class EmailStore:
 
         attempts_by_action: dict[str, list[sqlite3.Row]] = {}
         for row in db.execute(
-            "select * from email_action_attempts order by action_id, attempt_number"
+            f"select * from ({EMAIL_ATTEMPT_SQL}) order by action_id, attempt_number"
         ):
             if row["status"] not in _TERMINAL_ATTEMPT_STATUSES:
                 raise EmailPersistenceCorruption(

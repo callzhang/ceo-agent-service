@@ -3128,3 +3128,33 @@ promotion/revision facts are preserved. Tests use an explicit neutral factory
 and genuine archived2773 default fresh0→51 facts, not a current default-constructor
 proof. Metadata/durable validators and coupled default activation remain E2/F;
 Store19/Email51 selection, production and dormant SMTP behavior are unchanged.
+
+
+### Current Email29 validation, Task4E2 preparation
+
+The candidate's one current shape/durable validator now targets the finite29
+schema. Its active plan, retry, direct, feedback, claim, effect, continuation,
+journal and receipt reads use the accepted projections. Exact action manifests
+cover both existing reply variants. Original16 retained-business requirements
+plus ledger, required metadata and retained-row policy remain; optional three
+historical tables are not newly required by startup. The49-object neutral
+factory proof is separate from this original startup coverage.
+
+Shape validation selects19 retained native triggers and13 exact existing
+translated blockers. Their finite installer is caller-transactional and creates
+only missing triggers, without repair/overwrite. Blocker predicates, status
+checks and errors stay unchanged. Durable validation adds no filtering, writes,
+commits or receipt/authorization/recovery policy. The genuine-source comparison
+retains specific NULL behavior: native NULL receipt identity remains accepted
+by the row validator but refused by the public writer; NULL feedback ID remains
+a durable refusal. The original retry timestamp ValueError is also preserved.
+The existing public cancellation preview now works read-only on an explicit
+converted target and returns the original decision.
+
+F is still pending. The default Store19/Email51 bootstrap currently creates the
+old layout, while the current validator targets29; this unpublished intermediate
+state is not a runnable default release. Historical <=48 cached-plan/source
+migration code is preserved, not routed through an alternate validator. F must
+refuse unsupported older sources before mutation and switch the supported pair,
+constructors/locks, coordinator and real markers together. E1 fresh seeds remain
+unselected; external Task5 and copy/native/publication Task6 remain open.
