@@ -616,3 +616,106 @@ DB/pytest roots were cleaned. No provider/native CLI/production/publication
 action occurred. This accepts partial4B preparation only, not default bootstrap
 or full Task4. The documented38 residual C/D methods and E/F dependencies remain
 open; the next implementation unit is C's existing unsubscribe read/write chain.
+
+
+### Task4C partial unsubscribe DAO preparation, 2026-10-14
+
+This unit follows accepted5230a480 and converts the six unsubscribe families'
+current DAO SQL: claims19, effects6, continuations6, steps8, receipts20 and
+cancellations2 retain all61 source fields. All34 original mutations across14
+methods use the existing finite source-shaped writers. Scalar/multi-row updates
+and deletes resolve the original source ROWID, public step AUTO ID or original
+two-component effect key inside the original writer transaction, with the same
+predicates and rowcount outcomes. Backfill alone previously acquired its writer
+implicitly: it now begins the writer transaction after URL validation, exactly
+at the original conditional mutation point. No entry-reference predicate or
+other policy has been added to that update.
+
+Read conversion also covers current getters, snapshots, terminal validation,
+orphans, recovery, cancellation and mixed context/observation/task paths. The
+module `_AUDITED_UNSUBSCRIBE_LINEAGE_SQL`, `_audited_unsubscribe_lineage` and
+`_current_unsubscribe_task_lineage` are included; their plan, generation,
+identity and result predicates are unchanged. The demonstrated C state-display
+call path required the accepted reply-receipt projection in exactly
+`list_email_classification_observability` and `list_email_context_receipts`.
+Those are shared D reads only, matching the earlier B shared-read approach.
+
+The helper gap was reproduced as a missing-keyword RED before implementation.
+`insert_email_action(update_continuation_conflict=True)` is confined to
+`email_unsubscribe_continuations`, mutually exclusive with existing conflict
+options. Native `(record_type,email_public_key)` UPSERT changes exactly four
+payload values: effect_digest, observation_reference, controls_json and
+updated_at. It retains created_at, action_identity and source ROWID and returns
+that existing structural locator. SQLite JSON subtypes preserve the accepted
+scalar BLOB/NULL codec without Python decode/re-serialization. Existing broad
+OR IGNORE effect inserts and B's targeted plan/type DO NOTHING are unchanged.
+
+The first real claim/snapshot comparison passed the genuine archived source API
+and failed against the converted copy at the retired cancellation-table read.
+The thirteen cases in `tests/test_email_action_unsubscribe_dao.py` then exercise:
+
+- Native continuation UPSERT versus source SQL: negative/zero locators, chosen
+  public-key versus competing ROWID conflict, retained creation time, BLOB
+  scalar codec, nullable public key, native CHECK/NOT NULL/FK/other unique
+  errors and caller-owned rollback.
+- Genuine2773 public-method comparisons for claim acquisition and owner fences,
+  phase/status changes, refused release, successful failed-operation release,
+  proved-owner recovery, orphan release and explicit failed-Audit retry.
+- Continuation prefix acceptance, fresh owner/generation, effect chain,
+  contiguous journal and replay/refusal, terminal receipt/idempotence/conflict,
+  state/terminal snapshots, current observation and task recovery readbacks.
+- Audited receipt lineage, actual Consumer/Audit IDs, earned generation after a
+  later task generation, and stale caller refusal. The source claim uses ROWID
+  -7; the copied target retains it. Direct retirement, allowed receipt promotion,
+  healthy/undercovered journal repair, exact URL backfill and safe context
+  projections also match the archived public methods.
+- Principal cancellation preview/apply/replay, retained decision, absent provider
+  receipt and stopped claim/task recovery; terminal-write failure and two-row
+  owner-recovery failure roll back all earlier facts. Deterministic competing
+  fill occurs after URL validation and preserves the original false/no-overwrite
+  result, proving the mutation lock was not moved before validation.
+
+Every source scenario cold-opens genuine archived2773 constructors, with source
+code unchanged. Only the explicitly copied/converted target uses test-only
+object setup; this is not target default-constructor proof. Complete native
+six-family facts, source ROWIDs, steps' AUTO water and public readbacks are
+compared. The source's real deleted step700 makes subsequent public journal IDs
+continue at701. Journal repair's native CURRENT_TIMESTAMP is independently
+checked for its SQL format and current time bound; only that volatile claim
+field is excluded from exact source/target fact equality.
+
+The actual existing-claim public call is also measured with600 other claims and
+3000 unrelated cancellation rows. Its typed family unique index serves the
+public-identity lookup, with4542 VM steps before and4542 after the added volume;
+no full actions scan or speculative index is introduced. The independent small
+behavior oracle is the genuine old claim API.
+
+A finite AST SQL scan finds no remaining current physical six-family access.
+The seven remaining current D methods are `get_email_reply_receipt`,
+`claim_email_reply_dispatch`, `get_email_reply_dispatch_claim`,
+`mark_email_reply_dispatch_uncertain`, `release_email_reply_dispatch_retryable`,
+`recover_terminated_email_reply_dispatch_claims` and
+`persist_email_reply_receipt`. E/F still owns required metadata/manifests,
+`_validate_schema_shape`, `_validate_durable_state`, `_validate_durable_rows`,
+historical DDL/initialization and migration dispatch, seed factoring, both fresh
+constructor orders, coordinator/subprocess, real target version allocation and
+final coupled activation. `preview_failed_email_unsubscribe_task` still invokes
+that deferred startup shape validation. Task5 external direct consumers and
+Task6 full copy/native/CI/production acceptance remain separate gates.
+
+Store/Email default versions, constructors, selectors and action flags are
+unchanged. This is unpublished partial DAO work requiring explicit Email29
+conversion, not independently runnable default runtime or full Task4 completion.
+No alternate DAO, compatibility router, views/dual writes, new policy, provider,
+native Agent CLI, production mutation, push or deployment is included.
+
+Focused verification passed189 cases in106.27s: the new C file plus accepted B
+DAO, Email storage/writes, migration and paired-release protocol files. This
+regression selection checks the new confined conflict option and shared call
+paths without running default Email files whose constructors/validators remain
+unfinished. Ruff and diff-whitespace checks passed. All343 EmailStore function
+signatures and the historical/bootstrap/validator method bodies are unchanged.
+The source/default schema declarations remain preserved; Email remains51.
+Independent SPEC then QUALITY review of group4C is pending. Owned temporary
+archives, copied databases, pytest roots and editing intermediates were inspected
+and removed; no historical test archive is retained.

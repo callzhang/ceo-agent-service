@@ -2255,3 +2255,34 @@ Email51 constructors, validators and release selectors still select the old
 schema. Remaining unsubscribe/reply methods and mixed observability reads still
 require their planned conversion. Final constructor/validator/DAO/marker
 activation remains coupled, with Task5/6 acceptance separately open.
+
+
+### Email13 group4C partial unsubscribe DAO integration
+
+The unpublished candidate now also reads and writes the six unsubscribe
+families through their accepted finite actions projections and source-shaped
+writers. Claims retain the existing generation/lease and account snapshot
+checks; effects retain their original two-component public key; journal steps
+retain their independent source AUTOINCREMENT namespace. Continuation acceptance,
+failed-operation release, terminated-owner recovery, orphan release, explicit
+retry, journal repair, direct retirement, terminal receipt promotion and
+principal cancellation keep their original predicates, mutation order and
+transaction outcomes. The live lineage helpers and the two mixed observation/
+context reply-receipt reads use finite projections as required by these paths.
+Reply lifecycle writes remain group4D work.
+
+The confined `update_continuation_conflict` insert option expresses only the
+existing continuation public-key UPSERT. It changes effect digest, observation
+reference, controls and update time, preserving original creation time and
+structural source ROWID. Encoded SQLite scalar values are updated inside JSON
+without decode/re-serialization. Other native constraints still apply. Backfill
+validates the supplied URL before acquiring its writer transaction at the
+original conditional mutation point; a competing fill returns false and is
+preserved. No lifecycle, recovery, authorization or retention policy is added.
+
+This supersedes the C-specific deferrals in the historical group4B section.
+These methods still require an explicitly converted Email29 database. Default
+Store19/Email51 constructors, startup validators, migration selectors and action
+flags remain unchanged; their E/F conversion and final paired activation remain
+coupled. Group4C does not establish usable default runtime, Task5 external
+consumer integration, or Task6 native/provider/production acceptance.

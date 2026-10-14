@@ -928,7 +928,7 @@ def _email_identity(kind, identity):
 
 
 def _insert_email_action(db, kind, values, *, source_rowid=_EMAIL_ROWID_UNSET, ignore=False,
-                         ignore_plan_action_conflict=False):
+                         ignore_plan_action_conflict=False, update_continuation_conflict=False):
     payload = _email_payload(db, kind, values)
     if kind in EMAIL_ROWID_TYPES:
         identity = _email_rowid_next(db, kind) if source_rowid is _EMAIL_ROWID_UNSET or _source_bound_null(source_rowid) else _native_integer_primary_key(source_rowid)
@@ -942,27 +942,39 @@ def _insert_email_action(db, kind, values, *, source_rowid=_EMAIL_ROWID_UNSET, i
                  if kind in EMAIL_COMPOSITE_KEYS else "legacy_key")
     conflict = (" on conflict(email_action_plan_id,email_action_type) "
                 "where record_type='email_actions' do nothing" if ignore_plan_action_conflict else "")
+    if update_continuation_conflict:
+        conflict = (
+            " on conflict(record_type,email_public_key) do update set payload_json=json_set(payload_json,"
+            "'$.effect_digest',json_extract(excluded.payload_json,'$.effect_digest'),"
+            "'$.observation_reference',json_extract(excluded.payload_json,'$.observation_reference'),"
+            "'$.controls_json',json_extract(excluded.payload_json,'$.controls_json'),"
+            "'$.updated_at',json_extract(excluded.payload_json,'$.updated_at'))"
+        )
     cursor = db.execute(
         f"insert {'or ignore ' if ignore else ''}into actions(record_type,legacy_key,payload_json) values(?,?,?){conflict} returning {returning}",
         (kind, key, payload),
     )
     row = cursor.fetchone()
     cursor.fetchall()
-    return ActionWriteResult((tuple(row) if kind in EMAIL_COMPOSITE_KEYS else identity) if row else None,
+    result_identity = (int(row[0]) if update_continuation_conflict and row else identity)
+    return ActionWriteResult((tuple(row) if kind in EMAIL_COMPOSITE_KEYS else result_identity) if row else None,
                              cursor.rowcount)
 
 
 def insert_email_action(db: sqlite3.Connection, kind: str, values: dict, *, source_rowid=None, ignore=False,
-                        ignore_plan_action_conflict=False) -> ActionWriteResult:
+                        ignore_plan_action_conflict=False, update_continuation_conflict=False) -> ActionWriteResult:
     if kind not in EMAIL_ROWID_TYPES:
         raise ValueError("source ROWID is exposed only for the nine rowid families")
     if ignore_plan_action_conflict and (kind != "email_actions" or ignore):
         raise ValueError("plan/type conflict handling is only for an Email operation insert")
+    if update_continuation_conflict and (kind != "email_unsubscribe_continuations" or ignore or ignore_plan_action_conflict):
+        raise ValueError("continuation conflict handling is only for an Email continuation insert")
     _check_fields(kind, values)
     def operation():
         _email_lock(db, (*values.values(), source_rowid))
         return _insert_email_action(db, kind, values, source_rowid=source_rowid, ignore=ignore,
-                                    ignore_plan_action_conflict=ignore_plan_action_conflict)
+                                    ignore_plan_action_conflict=ignore_plan_action_conflict,
+                                    update_continuation_conflict=update_continuation_conflict)
     return _email_unit(db, "action_email_insert", operation)
 
 

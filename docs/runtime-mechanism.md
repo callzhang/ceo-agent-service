@@ -3042,3 +3042,33 @@ startup metadata/durable validation and constructor activation remain deferred.
 The default schema is still Store19/Email51, so this partial branch does not
 claim usable default business paths, paired publication readiness, or native/
 provider acceptance.
+
+
+## Email13 group4C unsubscribe DAO WIP boundary
+
+The partial unpublished DAO now covers all six unsubscribe families, including
+state/terminal snapshots, live lineage, observation/context reads, continuation
+and journal writes, claim release/recovery, journal repair, terminal evidence,
+exact URL backfill and cancellation. Each existing explicit writer transaction
+keeps the original predicates while resolving public source identities to the
+accepted writer locator. Multi-row mutations remain within that transaction;
+a failure rolls back earlier changes. Journal steps use their original AUTO
+allocator and effects use their original composite identity, independently of
+physical actions IDs. Source-valid SQL NULL public IDs remain a storage concern
+separate from strict application validation.
+
+Continuation UPSERT uses its original public-key conflict target and changes
+only effect digest, observation reference, controls and updated time. Creation
+time and structural source ROWID survive the update, including encoded scalar
+values. Existing broad OR IGNORE effect writes remain broad, and receipt
+promotion/backfill retain their original allowed updates. Backfill takes the
+writer lock only after URL validation, then applies its original empty-address
+condition; an intervening fill still returns false without overwrite.
+
+The C deferrals stated at group4B acceptance are now closed for current DAO SQL.
+Seven reply lifecycle methods remain group4D work; only their two required mixed
+reply-receipt reads and the previously accepted shared reply-claim guard are
+converted. Historical schema dispatch, startup validation, fresh constructors,
+real target markers and the paired coordinator remain E/F work. Store19/Email51
+is still selected by default. This branch therefore remains partial preparation,
+with no default-runtime, full Task4, native/provider or production acceptance.
