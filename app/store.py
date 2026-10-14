@@ -32,6 +32,8 @@ from app.reviewed_candidate_store import (
     ReviewedCandidateStoreMixin,
 )
 from app.sqlite_schema_lock import schema_initialize_lock
+from app.email_classification_schema import create_current_email_classifications
+from app.action_email_schema_release import require_current_email_pair, TARGET_EMAIL_VERSION
 from app.run_storage import (
     SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
     create_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
@@ -192,7 +194,6 @@ from app.action_storage import (
     delete_action,
     reply_action_projection,
     _reply_variant_for,
-    validated_reply_variant,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
     REVIEW_CANDIDATE_SQL,
@@ -300,7 +301,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-13.5"
+STORE_SCHEMA_VERSION = "2026-10-14.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -1927,6 +1928,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1934,24 +1936,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
+                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION)
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
+                self._require_supported_store_bootstrap_source()
                 self._ensure_wal_journal_mode()
                 if self._schema_is_current_after_lock_retry():
                     self._reconcile_feedback_processing_round_backfill()
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
-                if self._migrate_known_task_schema():
-                    _INITIALIZED_STORE_PATHS.add(path_key)
-                    return
-                self._require_supported_store_bootstrap_source()
                 self._initialize()
                 if not self._schema_manifest_is_current_after_lock_retry():
                     raise FeedbackProcessingSchemaIntegrityError(
                         FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR
                     )
                 self.backfill_oa_audit_metadata()
-                self.set_service_state(STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION)
                 _INITIALIZED_STORE_PATHS.add(path_key)
 
     def _cached_initialized_path_is_healthy(self, path_key: Path) -> bool:
@@ -1959,7 +1958,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return False
         try:
             with self._connect() as db:
-                healthy = self._feedback_processing_round_guard_state_is_valid(db)
+                healthy = self._feedback_processing_round_guard_state_is_valid(db) and any(
+                    action_schema_is_current(db, include_reply=True, reply_variant=variant, include_email=True)
+                    for variant in ("actual_no_memory_fk", "fresh_memory_fk")
+                )
         except BaseException:
             _INITIALIZED_STORE_PATHS.discard(path_key)
             raise
@@ -2555,7 +2557,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and run_schema_is_current(db, include_task_runs=True, include_workbench=True)
             and task_schema_is_current(db, include_workbench=True)
             and workbench_schema_is_current(db)
-            and any(action_schema_is_current(db, include_reply=True, reply_variant=variant)
+            and any(action_schema_is_current(db, include_reply=True, reply_variant=variant, include_email=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
             and not removed_columns_present
@@ -2776,7 +2778,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def _initialize(self) -> None:
         with self._connect() as db:
             reply_variant = (
-                validated_reply_variant(db, allow_missing_objects=True)
+                _reply_variant_for(db)
                 if db.execute("select 1 from sqlite_master where name='actions'").fetchone()
                 else "fresh_memory_fk"
             )
@@ -4246,7 +4248,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "where payload_json<>'{}'"
             )
             db.execute("create index if not exists idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'")
-            create_action_schema(db, include_reply=True, reply_variant=reply_variant)
             self._migrate_oa_notification_events(db)
             feedback_event_columns = {
                 row["name"]
@@ -4688,6 +4689,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "alter table errors add column resolution text not null default ''"
                 )
             self._migrate_removed_runtime(db)
+            # Earlier legacy bootstrap helpers deliberately commit. The new
+            # parent/actions and Store marker publish together only after them.
+            db.execute("begin immediate")
+            create_current_email_classifications(db)
+            create_action_schema(db, include_reply=True, reply_variant=reply_variant, include_email=True)
             runtime_session_columns = {
                 row["name"]
                 for row in db.execute(
@@ -4746,6 +4752,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             self._migrate_project_attention_evidence(db)
             install_run_child_guards(db)
             install_task_child_guards(db)
+            if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
+                raise FeedbackProcessingSchemaIntegrityError(FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR)
+            db.execute(
+                "insert into service_state(key,value,updated_at) values(?,?,current_timestamp) "
+                "on conflict(key) do update set value=excluded.value,updated_at=current_timestamp",
+                (STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION),
+            )
 
     @staticmethod
     def _migrate_project_attention_evidence(db: sqlite3.Connection) -> None:
@@ -9254,8 +9267,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if "service_state" in tables else None
             )
             store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
-                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk")),
-                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk")),
+                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)),
+                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True)),
                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
             current_core_with_known_repairs = (
                 marker is not None
@@ -9271,7 +9284,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 and any(
                     action_schema_is_current(
                         db, allow_missing_objects=True, include_reply=True,
-                        reply_variant=variant,
+                        reply_variant=variant, include_email=True,
                     )
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
@@ -9289,7 +9302,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "the exact 2026-10-13.4 source, or the current 2026-10-13.5 schema"
+                    "or the current 2026-10-14.1 schema"
                 )
         finally:
             db.close()

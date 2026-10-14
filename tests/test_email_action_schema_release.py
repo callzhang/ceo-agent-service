@@ -1,4 +1,4 @@
-"""Unselected paired Email13 protocol; no constructor or release selector activation."""
+"""Atomic paired primitive with sentinel markers; real callback tests live in callers."""
 
 from contextlib import closing
 from pathlib import Path
@@ -105,7 +105,7 @@ def test_publish_commits_both_markers_with_complete_target_then_inverse_is_repea
     before = _fingerprint(source)
     release.rollback()  # Unpublished source is already a valid inverse result.
     assert _fingerprint(source) == before
-    release.publish()
+    release.apply()
     release.verify_loaded()
     release.finalize()
     with closing(sqlite3.connect(source)) as db:
@@ -120,13 +120,13 @@ def test_publish_commits_both_markers_with_complete_target_then_inverse_is_repea
     release.rollback()
     assert _fingerprint(source) == before
     release.rollback()
-    release.publish()
+    release.apply()
     release.finalize()
 
 
 def test_inverse_uses_current_facts_receipt_backfill_native_ids_and_allocator_waters(source):
     release = _prepare(source)
-    release.publish()
+    release.apply()
     with closing(sqlite3.connect(source)) as db:
         db.execute("pragma foreign_keys=on")
         storage.update_email_action(db, "email_reply_receipts", 1,
@@ -156,7 +156,7 @@ def test_inverse_uses_current_facts_receipt_backfill_native_ids_and_allocator_wa
         assert db.execute("select attempt_count from email_actions").fetchone() == (1,)
         assert db.execute("select * from (" + storage.REPLY_ATTEMPT_COMMON_SQL + ") where id=73").fetchone() is not None
         assert db.execute("select seq from sqlite_sequence where name='actions:reply_attempts'").fetchone() == (73,)
-    release.publish()
+    release.apply()
     release.rollback()
     with closing(sqlite3.connect(source)) as db:
         assert db.execute("select seq from sqlite_sequence where name='email_action_attempts'").fetchone() == (81,)
@@ -180,7 +180,7 @@ def test_prepare_and_publish_refuse_changed_source_without_mutation(source, dama
         db.commit()
     before = _fingerprint(source)
     with pytest.raises(ValueError):
-        release.publish()
+        release.apply()
     assert _fingerprint(source) == before
     if damage in ("store", "email", "declaration"):
         with pytest.raises(ValueError):
@@ -232,14 +232,14 @@ def test_publication_failure_rolls_back_ddl_markers_and_all_source_facts(source,
 
         monkeypatch.setattr(release_module.sqlite3, "connect", interrupted_connect)
     with pytest.raises(RuntimeError, match="injected paired"):
-        release.publish()
+        release.apply()
     assert _fingerprint(source) == before
 
 
 @pytest.mark.parametrize("damage", ("store", "ledger", "action_declaration", "external_trigger", "alias"))
 def test_unsupported_current_inverse_preserves_entire_database(source, damage):
     release = _prepare(source)
-    release.publish()
+    release.apply()
     with closing(sqlite3.connect(source)) as db:
         if damage == "store":
             db.execute("update service_state set value='unverified' where key='store_schema_version'")
@@ -260,7 +260,7 @@ def test_unsupported_current_inverse_preserves_entire_database(source, damage):
 
 def test_inverse_exception_after_ddl_restores_target_transaction(source, monkeypatch):
     release = _prepare(source)
-    release.publish()
+    release.apply()
     before = _fingerprint(source)
     restore = release_module.restore_email_action_schema
 
@@ -274,7 +274,7 @@ def test_inverse_exception_after_ddl_restores_target_transaction(source, monkeyp
     assert _fingerprint(source) == before
 
 
-def test_active_versions_constructors_and_coordinator_remain_unselected(tmp_path):
+def test_active_versions_constructors_select_coupled_target_and_noop_reprepare(tmp_path):
     from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
     from app.email_store import EmailStore, EMAIL_SCHEMA_VERSION
     from app.store_schema_release import prepare_database_schema_release
@@ -282,11 +282,11 @@ def test_active_versions_constructors_and_coordinator_remain_unselected(tmp_path
     path = tmp_path / "active.sqlite3"
     AutoReplyStore(path)
     EmailStore(path)
-    assert (STORE_SCHEMA_VERSION, EMAIL_SCHEMA_VERSION) == ("2026-10-13.5", 51)
+    assert (STORE_SCHEMA_VERSION, EMAIL_SCHEMA_VERSION) == ("2026-10-14.1", 52)
     assert prepare_database_schema_release(ROOT, path) is None
     with closing(sqlite3.connect(path)) as db:
-        assert db.execute("select 1 from sqlite_schema where name='email_action_plans'").fetchone() == (1,)
-        assert not storage.action_schema_is_current(db, include_reply=True, include_email=True)
+        assert db.execute("select 1 from sqlite_schema where name='email_action_plans'").fetchone() is None
+        assert storage.action_schema_is_current(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
 
 
 def test_business_facts_after_prepare_are_converted_instead_of_restoring_capture(source):
@@ -296,7 +296,7 @@ def test_business_facts_after_prepare_are_converted_instead_of_restoring_capture
         db.execute("update sqlite_sequence set seq=103 where name='email_action_attempts'")
         db.commit()
     before = _fingerprint(source)
-    release.publish()
+    release.apply()
     release.rollback()
     assert _fingerprint(source) == before
 
@@ -315,7 +315,7 @@ def test_protocol_requires_explicit_different_target_pair_without_mutation(sourc
 
 def test_inverse_failure_after_first_source_marker_preserves_target(source, monkeypatch):
     release = _prepare(source)
-    release.publish()
+    release.apply()
     before = _fingerprint(source)
     connect = sqlite3.connect
 

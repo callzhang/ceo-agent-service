@@ -2383,3 +2383,48 @@ explicitly refuse unsupported older sources before any mutation, then couple
 constructors/locking/markers/coordinator/default activation. E1 fresh seeds
 still have zero runtime callers. External Task5 and full-copy/native/publication
 acceptance remain separate gates.
+
+
+### Coupled Email29 candidate defaults, Task4F (unpublished)
+
+This local candidate supersedes the E1/E2 staging boundaries above: default
+AutoReplyStore now selects Store `2026-10-14.1` (program Store20), and EmailStore
+selects Email52 with the single29-kind actions schema. This is local candidate
+selection, not publication or a claim that the whole service can be deployed.
+
+The supported predecessor is exactly Store `2026-10-13.5`/Email51. The real
+database release coordinator selects one paired release before either standalone
+preparer. Ordinary target constructors refuse that pair read-only, before cache,
+WAL or schema changes, and repeat source selection under the path lock. Other
+older/newer/missing/mixed markers and genuine old Email-only databases are refused;
+there is no alternate legacy validator or constructor upgrade route.
+
+Fresh Store preserves its existing early bootstrap commits. Its final transaction
+creates the canonical30-column classification parent,29-kind actions and Store20
+marker together, validates the existing Store manifest and commits. Earlier or
+suffix failure may leave the same unversioned core that existing bootstrap rules
+refuse on retry. A completed Store-first state is supported. Fresh Email invokes
+the genuine public AutoReplyStore once outside Email's non-reentrant path lock,
+then creates the retained current nonaction schema, ledger, existing fresh seeds,
+13 translated blockers and Email52 marker in one transaction. Email failure rolls
+back to Store-first and can retry. Store never constructs EmailStore. Current
+reopen and51 migration do not seed existing empty configs/revision histories;
+known coherent-current Store repairs retain their existing route. Email current
+reopen also retains its existing missing `important_signals_json` provider-
+observation column repair before shape validation; this is not a new repair rule.
+
+Paired publication uses a real child process carrying the prepared marker/full
+ledger/declarations/FK binding through stdin, applies the same atomic protocol,
+then cold opens both genuine current default classes. Legal native BLOB marker
+and ledger timestamps use the existing scalar encoding and survive inverse with
+their original values/types. The inverse reconstructs current action facts,
+source identities/ROWIDs/allocator waters and exact source markers/ledger; it does
+not restore an old database snapshot. The source SQL NULL/application policy
+remains method-specific and unchanged.
+
+Task5 external consumers still contain native old-table SQL, including Store
+unsubscribe recovery/receipt helpers, History/Attention and maintenance reads.
+Those consumers and the remaining old-default test fixtures are open. The whole
+branch is not deployable. Latest-source-copy binding, genuine native fake-provider
+acceptance, CI/publication/live readback remain Tasks6/7; none is established by
+this candidate's constructor and DAO tests.

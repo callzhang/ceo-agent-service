@@ -120,6 +120,24 @@ def prepare_store_schema_release(
 def prepare_database_schema_release(root: Path, path: Path):
     from app import email_schema_release
 
+    from app.action_email_schema_release import (
+        TARGET_STORE_VERSION, TARGET_EMAIL_VERSION, require_current_email_pair,
+        prepare_action_email_schema_release, _migrate_pair,
+    )
+    target = (_target_store_version(root), email_schema_release._target_schema_version(root) if (root / "app" / "email_store.py").exists() else None)
+    if target == (TARGET_STORE_VERSION, TARGET_EMAIL_VERSION) and path.exists():
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute("select value from main.service_state where key=?", (VERSION_KEY,)).fetchone() if "service_state" in tables else None
+            email = db.execute("select coalesce(max(version),0) from main.email_schema_migrations").fetchone()[0] if "email_schema_migrations" in tables else None
+        if marker == ("2026-10-13.5",) and email == 51:
+            paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])
+            paired.migrate = _migrate_pair
+            return paired
+        require_current_email_pair(path, store_version=target[0], email_version=target[1])
+        return None
+
     store = prepare_store_schema_release(root, path)
     email = email_schema_release.prepare_email_schema_release(root, path)
     if store is not None and email is not None:

@@ -7,7 +7,7 @@ provider and never creates Agent, Audit, reply-task, or run records.
 from __future__ import annotations
 from app.task_storage import REPLY_TASK_SQL
 
-from app.store import REPLY_TASK_CURRENT_SQL
+from app.store import REPLY_TASK_CURRENT_SQL, AutoReplyStore, STORE_SCHEMA_VERSION
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
@@ -68,7 +68,9 @@ from app.email_category_config import (
     legacy_config_row,
     validate_category_descriptions,
 )
-from app.action_email_storage import finite_target_external_sql
+from app.action_email_storage import finite_target_external_sql, create_email_action_external_triggers
+from app.action_email_schema_release import require_current_email_pair
+from app.email_current_schema import create_current_email_non_action_schema, create_current_email_migration_ledger
 from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
@@ -82,8 +84,7 @@ from app.action_storage import (
 )
 
 
-# Partial unpublished Email29 DAO integration. Default constructor selection is
-# coupled with the remaining DAO/validator paths in the final activation.
+# Finite Email29 source-shaped reads used by the current DAO and validators.
 EMAIL_PLAN_SQL = EMAIL_ACTION_PROJECTIONS["email_action_plans"]
 EMAIL_DIRECT_ACTION_SQL = EMAIL_ACTION_PROJECTIONS["email_actions"]
 EMAIL_ATTEMPT_SQL = EMAIL_ACTION_PROJECTIONS["email_action_attempts"]
@@ -120,7 +121,7 @@ EMAIL_DIRECT_ACTION_LOCATOR_SQL = email_action_projection(
     "email_actions", include_rowid=True
 )
 
-EMAIL_SCHEMA_VERSION = 51
+EMAIL_SCHEMA_VERSION = 52
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -3034,7 +3035,12 @@ class EmailStore:
         self.path = Path(path)
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION)
+        # The path flock is non-reentrant. Store must finish before Email locks;
+        # Store creates only the neutral classification parent, never EmailStore.
+        AutoReplyStore(self.path)
         with schema_initialize_lock(self.path):
+            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION)
             durable_rows_validated = self._initialize(validate_rows=False)
         if validate_rows and not durable_rows_validated:
             with self._connect() as db:
@@ -3178,199 +3184,15 @@ class EmailStore:
                     self._validate_schema_shape(db)
                     self._validate_account_configuration(db)
                 return validate_rows
-            if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
-                raise EmailPersistenceCorruption(
-                    f"database has newer schema version {latest_version}; "
-                    f"this runtime supports {EMAIL_SCHEMA_VERSION}"
-                )
+            if latest_version is not None:
+                raise EmailPersistenceCorruption("unsupported Email source; paired schema release required")
             db.rollback()
-            try:
-                db.execute("pragma journal_mode = wal")
-            except sqlite3.OperationalError as exc:
-                if "locked" not in str(exc).lower():
-                    raise
-            db.execute("pragma foreign_keys = off")
             db.execute("begin immediate")
-            self._create_migration_table(db)
-            latest_version = self._read_schema_version(db)
-            assert latest_version is not None
-            if latest_version > EMAIL_SCHEMA_VERSION:
-                raise EmailPersistenceCorruption(
-                    f"database has newer schema version {latest_version}; "
-                    f"this runtime supports {EMAIL_SCHEMA_VERSION}"
-                )
-            if latest_version == EMAIL_SCHEMA_VERSION:
-                self._ensure_provider_observation_signal_column(db)
-                if validate_rows:
-                    self._validate_durable_state(db)
-                else:
-                    self._validate_schema_shape(db)
-                    self._validate_account_configuration(db)
-                return validate_rows
-            legacy_reply_claims = False
-            if latest_version == 8:
-                legacy_reply_claims = self._prepare_v8_reply_claim_migration(db)
-            legacy_unsubscribe_claims = False
-            if latest_version == 10:
-                legacy_unsubscribe_claims = self._prepare_v10_unsubscribe_migration(db)
-            legacy_unsubscribe_schema = False
-            if latest_version < 14:
-                legacy_unsubscribe_schema = self._prepare_unsubscribe_schema_migration(
-                    db
-                )
-            self._create_base_tables(db)
-            self._create_durable_tables(db)
-            self._ensure_email_context_columns(db)
-            self._ensure_direct_action_retry_column(db)
-            self._ensure_action_authorization_snapshot_column(db)
-            self._ensure_legacy_action_plan_provenance_column(db)
-            self._ensure_unsubscribe_claim_columns(db)
-            self._ensure_unsubscribe_audit_columns(db)
-            self._ensure_unsubscribe_receipt_columns(db)
-            self._ensure_training_snapshot_frozen_column(db)
-            self._ensure_training_snapshot_watermark_columns(db)
-            self._ensure_email_account_move_mode_column(db)
-            self._ensure_provider_observation_signal_column(db)
-            if legacy_reply_claims:
-                self._finish_v8_reply_claim_migration(db)
-            if legacy_unsubscribe_claims:
-                self._finish_v10_unsubscribe_migration(db)
-            if legacy_unsubscribe_schema:
-                self._finish_unsubscribe_schema_migration(db)
-            self._create_indexes_and_triggers(db)
-            is_prototype = False
-            if latest_version < 16:
-                is_prototype = latest_version == 0
-                if latest_version < 2:
-                    self._migrate_prototype_schema(db)
-                self._ensure_legacy_processed_without_plan_column(db)
-                self._ensure_training_inclusion_column(db)
-                self._ensure_training_inclusion_trigger(db)
-                if is_prototype:
-                    self._backfill_prototype_rows(db)
-                if latest_version in {0, 2}:
-                    self._mark_legacy_processed_without_plan(db)
-                db.execute(
-                    "update email_action_plans set legacy_serialization_pre_v16=1"
-                )
-                if not is_prototype:
-                    db.execute(
-                        "insert into email_schema_migrations(version, applied_at) "
-                        "values (16, ?)",
-                        (self._now(),),
-                    )
-                latest_version = 16
-            if latest_version == 16:
-                if is_prototype:
-                    self._migrate_v16_to_v17(db, record_version=False)
-                    latest_version = 17
-                else:
-                    self._migrate_v16_to_v17(db)
-                    latest_version = 17
-            if latest_version == 17:
-                self._migrate_v17_to_v18(db)
-                latest_version = 18
-            if latest_version == 18:
-                self._migrate_v18_to_v19(db, replace_version=is_prototype)
-                latest_version = 19
-            if latest_version == 19:
-                self._migrate_v19_to_v20(db, replace_version=is_prototype)
-                latest_version = 20
-            if latest_version == 20:
-                self._migrate_v20_to_v21(db, replace_version=is_prototype)
-                latest_version = 21
-            if latest_version == 21:
-                self._migrate_v21_to_v22(db, replace_version=is_prototype)
-                latest_version = 22
-            if latest_version == 22:
-                self._migrate_v22_to_v23(db, replace_version=is_prototype)
-                latest_version = 23
-            if latest_version == 23:
-                self._migrate_v23_to_v24(db, replace_version=is_prototype)
-                latest_version = 24
-            if latest_version == 24:
-                self._migrate_v24_to_v25(db, replace_version=is_prototype)
-                latest_version = 25
-            if latest_version == 25:
-                self._migrate_v25_to_v26(db, replace_version=is_prototype)
-                latest_version = 26
-            if latest_version == 26:
-                self._migrate_v26_to_v27(db, replace_version=is_prototype)
-                latest_version = 27
-            if latest_version == 27:
-                self._migrate_v27_to_v28(db, replace_version=is_prototype)
-                latest_version = 28
-            if latest_version == 28:
-                self._migrate_v28_to_v29(db, replace_version=is_prototype)
-                latest_version = 29
-            if latest_version == 29:
-                self._migrate_v29_to_v30(db, replace_version=is_prototype)
-                latest_version = 30
-            if latest_version == 30:
-                self._migrate_v30_to_v31(db, replace_version=is_prototype)
-                latest_version = 31
-            if latest_version == 31:
-                self._migrate_v31_to_v32(db, replace_version=is_prototype)
-                latest_version = 32
-            if latest_version == 32:
-                self._migrate_v32_to_v33(db, replace_version=is_prototype)
-                latest_version = 33
-            if latest_version == 33:
-                self._migrate_v33_to_v34(db, replace_version=is_prototype)
-                latest_version = 34
-            if latest_version == 34:
-                self._migrate_v34_to_v35(db, replace_version=is_prototype)
-                latest_version = 35
-            if latest_version == 35:
-                self._migrate_v35_to_v36(db, replace_version=is_prototype)
-                latest_version = 36
-            if latest_version == 36:
-                self._migrate_v36_to_v37(db, replace_version=is_prototype)
-                latest_version = 37
-            if latest_version == 37:
-                self._migrate_v37_to_v38(db, replace_version=is_prototype)
-                latest_version = 38
-            if latest_version == 38:
-                self._migrate_v38_to_v39(db, replace_version=is_prototype)
-                latest_version = 39
-            if latest_version == 39:
-                self._migrate_v39_to_v40(db, replace_version=is_prototype)
-                latest_version = 40
-            if latest_version == 40:
-                self._migrate_v40_to_v41(db, replace_version=is_prototype)
-                latest_version = 41
-            if latest_version == 41:
-                self._migrate_v41_to_v42(db, replace_version=is_prototype)
-                latest_version = 42
-            if latest_version == 42:
-                self._migrate_v42_to_v43(db, replace_version=is_prototype)
-                latest_version = 43
-            if latest_version == 43:
-                self._migrate_v43_to_v44(db, replace_version=is_prototype)
-                latest_version = 44
-            if latest_version == 44:
-                self._migrate_v44_to_v45(db, replace_version=is_prototype)
-                latest_version = 45
-            if latest_version == 45:
-                self._migrate_v45_to_v46(db, replace_version=is_prototype)
-                latest_version = 46
-            if latest_version == 46:
-                self._migrate_v46_to_v47(db, replace_version=is_prototype)
-                latest_version = 47
-            if latest_version == 47:
-                self._migrate_v47_to_v48(db, replace_version=is_prototype)
-                latest_version = 48
-            if latest_version == 48:
-                self._migrate_v48_to_v49(db, replace_version=is_prototype)
-                latest_version = 49
-            if latest_version == 49:
-                self._migrate_v49_to_v50(db, replace_version=is_prototype)
-                latest_version = 50
-            if latest_version == 50:
-                if is_prototype:
-                    db.execute("update email_schema_migrations set version=51,applied_at=? where version=50", (self._now(),))
-                else:
-                    db.execute("insert into email_schema_migrations(version,applied_at) values (51,?)", (self._now(),))
+            create_current_email_non_action_schema(db)
+            create_current_email_migration_ledger(db)
+            self._seed_current_fresh_state(db)
+            create_email_action_external_triggers(db)
+            db.execute("insert into email_schema_migrations(version,applied_at) values(?,?)", (EMAIL_SCHEMA_VERSION, self._now()))
             self._validate_durable_state(db)
             return True
 
@@ -5026,7 +4848,7 @@ class EmailStore:
     def _seed_current_fresh_state(self, db: sqlite3.Connection) -> None:
         """Prepare only a new database; caller owns tables and transaction.
 
-        This is unselected until the coupled fresh constructor integration.
+        Only the fresh Email constructor invokes this inside its schema transaction.
         Current reopen and verified-source migration must not invoke it.
         """
         if db.execute("select 1 from email_category_configs limit 1").fetchone() is None:

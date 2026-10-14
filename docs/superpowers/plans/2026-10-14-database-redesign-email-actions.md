@@ -388,8 +388,9 @@ empty migration ledger has a separate factory. Both factories use the caller's
 connection and transaction and create no seed rows or markers. The exact
 declarations were checked against a fresh database constructed by archived
 `2773d6f4` code; that metadata-only oracle is in
-`tests/fixtures/email_current_schema_2773.json`. Neither current constructor
-calls these factories. The items below remain open as one paired integration.
+`tests/fixtures/email_current_schema_2773.json`. The coupled F candidate now calls these factories in its fresh constructor
+branches. The checklist below remains the acceptance contract; local F evidence
+and the remaining test/consumer gates are recorded in the validation document.
 
 **Files:** new `app/action_email_schema_release.py`; existing Store/Email release selectors; `app/store.py`; `app/email_store.py`; new `tests/test_email_action_schema_release.py`, `tests/test_email_action_callers.py`.
 
@@ -479,3 +480,32 @@ artifact, allocate release markers, activate constructors/callers, or replace
 Task3B actual-predecessor/current-fact inverse acceptance. No runtime changed.
 Task3A starts with a separately reviewed source-capture/refusal unit before
 forward/inverse implementation; full Task3 remains incomplete until Task3B.
+
+
+### Task4F local candidate handoff, 2026-10-14
+
+The coupled implementation now selects Store2026-10-14.1/Email52/29-kind actions
+locally, with exact19/51 coordinator-only migration, real paired child/cold opens,
+canonical parent/fresh seeds and both constructor orders. This is unpublished and
+stops for independent SPEC then QUALITY. No Task5 implementation or Tasks6/7
+acceptance/publication occurred. The whole branch remains non-deployable because
+external old-table consumers are still present.
+
+Local F validation is47 mandatory real-default cases plus the accepted DAO/E and
+known-repair regressions; the separate full pipeline/protocol/current-schema batch
+passed82. The initial120-case focused batch passed119 and exposed one E2 staging
+fixture still carrying51. That single fixture now uses a complete genuine-source
+copy through the real coordinator/child, preserving the genuine51 preview oracle
+and all readonly assertions; its independent rerun passed1. The full historical
+Email test files were not mass-adapted or claimed green. Exact old-SQL test
+navigation/classification and final command outcomes are in
+`docs/database-redesign-email-actions-validation.md` under Task4F. Those tests
+remain required follow-up before the broader Task4/Tasks5–7 gates can be closed.
+
+
+A final concrete known-current Email repair was also retained before freezing F:
+the original provider-observation important_signals_json helper remains in current
+reopen. Genuine51 versus52 reproduced its omission, then the added48th F test and
+two direct startup cases passed3 after restoring the single existing call. No
+new repair policy or broader matrix was added; exact RED/GREEN evidence is in the
+validation document.

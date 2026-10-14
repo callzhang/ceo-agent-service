@@ -3158,3 +3158,35 @@ migration code is preserved, not routed through an alternate validator. F must
 refuse unsupported older sources before mutation and switch the supported pair,
 constructors/locks, coordinator and real markers together. E1 fresh seeds remain
 unselected; external Task5 and copy/native/publication Task6 remain open.
+
+
+### Coupled Email29 bootstrap and release candidate, Task4F
+
+The unpublished candidate now selects Store `2026-10-14.1`/Email52 together with
+29-kind actions. Exact Store19 (`2026-10-13.5`)/Email51 must pass through one paired
+coordinator release before target constructors run. Direct old-pair construction
+refuses read-only before WAL/cache/schema mutation and repeats selection under
+the existing lock; unsupported/mixed/old Email-only sources are also refused.
+The real publication child receives the prepared full metadata binding on stdin,
+atomically applies both markers/schema, and cold opens both real default classes.
+BLOB timestamps retain native values/types. Failed deployment verification uses
+the existing current-fact inverse before the old restart; unsupported inverse
+leaves the replacement stopped under existing updater behavior.
+
+Fresh Store keeps its legacy early commits but publishes canonical classification,
+29 actions and its marker in one final transaction. A failed prefix/suffix can
+leave unversioned core and existing retry refusal; no new repair is introduced.
+A successful Store-first state is valid. Email-first invokes actual AutoReplyStore
+once before taking Email's non-reentrant path lock. Its fresh transaction creates
+current retained nonactions, ledger, original seeds, translated blockers and52;
+rollback returns to Store-first. No historical0→51/action_plan_json/old13 creation
+runs. Current reopen and source51 migration leave existing empty config/revision
+sets empty. Existing coherent-current Store repair behavior is retained. Email current
+reopen still invokes its original provider-observation `important_signals_json`
+column helper before validation, preserving the existing missing-column repair.
+
+Local tests cover real constructors, both orders/concurrency, child fault/crash,
+current-fact inverse and the actual RepositoryUpdater lifecycle using the newly
+loaded selector. They do not establish selector reload in an already-running old
+UI/updater process. Remaining Task5 old-table consumers mean the entire branch is
+not deployable; source-copy/native/provider/CI/publication gates remain open.

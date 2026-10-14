@@ -437,20 +437,29 @@ def _preview(store, classification):
 
 
 def test_public_readonly_cancellation_preview_closes_shape_dependency(
-    unsubscribe_pair, monkeypatch
+    unsubscribe_pair, monkeypatch, tmp_path
 ):
+    from pathlib import Path
+    from app.store_schema_release import prepare_database_schema_release
     from tests.test_email_action_unsubscribe_dao import _old_result
 
     expected = _old_result(unsubscribe_pair, _preview)
+    target = tmp_path / "published-candidate.sqlite3"
+    with closing(sqlite3.connect(unsubscribe_pair[3])) as source_db:
+        with closing(sqlite3.connect(target)) as target_db:
+            source_db.backup(target_db)
+    release = prepare_database_schema_release(Path(__file__).resolve().parents[1], target)
+    assert release is not None
+    release.publish()
+    store = EmailStore(target)
     monkeypatch.setattr(
         EmailStore, "_now", staticmethod(lambda: "2026-10-14T10:00:00+00:00")
     )
-    target = unsubscribe_pair[0].path
     before = target.read_bytes()
-    with unsubscribe_pair[0]._connect() as db:
+    with store._connect() as db:
         facts = tuple(db.iterdump())
-    assert _preview(*unsubscribe_pair[:2]) == expected
-    with unsubscribe_pair[0]._connect() as db:
+    assert _preview(store, unsubscribe_pair[1]) == expected
+    with store._connect() as db:
         assert tuple(db.iterdump()) == facts
     assert target.read_bytes() == before
 

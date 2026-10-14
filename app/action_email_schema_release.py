@@ -1,14 +1,15 @@
-"""Unselected Email13 paired transaction protocol, with no allocated target pair.
-
-The final constructor/DAO integration must select a real target pair and its
-paired subprocess. This module alone changes no active release or constructor.
-"""
+"""Paired Email29 publication and its current-fact inverse."""
 
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import json
+import os
 import sqlite3
+import subprocess
+import sys
+from collections.abc import Callable
 
 from app.action_email_storage import (
     EXTERNAL_TRIGGER_NAMES,
@@ -18,13 +19,42 @@ from app.action_email_storage import (
     migrate_email_action_schema,
     restore_email_action_schema,
 )
-from app.action_storage import action_schema_is_current
+from app.action_storage import action_schema_is_current, _encoded_sqlite_value
 from app.task_schema_release import _foreign_keys
 
 
 SOURCE_STORE_VERSION = "2026-10-13.5"
 SOURCE_EMAIL_VERSION = 51
+TARGET_STORE_VERSION = "2026-10-14.1"
+TARGET_EMAIL_VERSION = 52
 VERSION_KEY = "store_schema_version"
+
+
+def require_current_email_pair(path: Path, *, store_version: str, email_version: int) -> None:
+    """Read-only source selection before constructor caches or journal changes."""
+    path = Path(path).resolve()
+    if not path.exists():
+        return
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+        db.execute("begin")
+        tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+        marker = db.execute("select value from main.service_state where key=?", (VERSION_KEY,)).fetchone() if "service_state" in tables else None
+        store = marker[0] if marker is not None else None
+        email = db.execute("select coalesce(max(version),0) from main.email_schema_migrations").fetchone()[0] if "email_schema_migrations" in tables else None
+        if (store, email) == (SOURCE_STORE_VERSION, SOURCE_EMAIL_VERSION):
+            raise sqlite3.IntegrityError("Store19/Email51 requires the paired schema release before target constructors")
+        from app.email_current_schema import _CURRENT_TABLE_SQL
+        email_tables = {"email_classifications", "email_category_configs", "email_category_folder_bindings", *(name for name, _ in _CURRENT_TABLE_SQL), *SOURCE_TABLES}
+        if store is None and email is None and not email_tables.intersection(tables):
+            # The Store's existing bootstrap-source check separately owns core
+            # collisions and partial unversioned bootstrap refusal.
+            return
+        if store == store_version:
+            if email == email_version:
+                return
+            if email is None and not (email_tables - {"email_classifications"}).intersection(tables):
+                return  # Complete Store-first, before Email's fresh transaction.
+        raise sqlite3.IntegrityError("unsupported or mixed Store/Email source schema")
 
 
 def _markers(db):
@@ -43,16 +73,34 @@ def _inverse_metadata(source):
     )}
 
 
+def _migrate_pair(release: "ActionEmailSchemaRelease") -> None:
+    """Carry prepared metadata, never business rows, into the real cold opener."""
+    payload = {
+        "root": str(release.root), "database_path": str(release.database_path),
+        "original_version": [release.original_version[0], _encoded_sqlite_value(release.original_version[1])],
+        "versions": [[version, _encoded_sqlite_value(stamp)] for version, stamp in release.versions],
+        "source_schema": _inverse_metadata(release.source_schema), "source_fk": release.source_fk,
+        "target_store_version": release.target_store_version, "target_email_version": release.target_email_version,
+    }
+    subprocess.run(
+        [sys.executable, "-c", "from app.action_email_schema_release import _paired_initializer; _paired_initializer()"],
+        input=json.dumps(payload, ensure_ascii=False, allow_nan=False), text=True,
+        cwd=release.root, env={**os.environ, "PYTHONPATH": str(release.root)},
+        check=True, capture_output=True, timeout=300,
+    )
+
+
 @dataclass
 class ActionEmailSchemaRelease:
     root: Path
     database_path: Path
-    original_version: tuple[str, str]
-    versions: tuple[tuple[int, str], ...]
+    original_version: tuple[str, str | bytes]
+    versions: tuple[tuple[int, str | bytes], ...]
     source_schema: dict
     source_fk: tuple[tuple, ...]
     target_store_version: str
     target_email_version: int
+    migrate: Callable[["ActionEmailSchemaRelease"], None] = _migrate_pair
 
     def _verify_integrity(self, db):
         if _foreign_keys(db) != self.source_fk or db.execute("pragma quick_check").fetchone()[0] != "ok":
@@ -91,7 +139,11 @@ class ActionEmailSchemaRelease:
         self._verify_integrity(db)
 
     def publish(self):
-        """Exercise the unselected atomic protocol; no default constructor proof."""
+        self.migrate(self)
+        self.verify_loaded()
+
+    def apply(self):
+        """Apply the same captured atomic protocol, including both markers."""
         with closing(sqlite3.connect(self.database_path, isolation_level=None)) as db:
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
@@ -150,13 +202,35 @@ class ActionEmailSchemaRelease:
         self.verify_loaded()
 
 
+def _timestamp_from_pipe(value):
+    # TEXT affinity preserves ordinary scalars as text; native BLOB timestamps
+    # are legal and accepted by the predecessor constructors.
+    return bytes.fromhex(value["v"]) if isinstance(value, dict) and value.get("t") == "blob" else value
+
+
+def _paired_initializer() -> None:
+    payload = json.load(sys.stdin)
+    release = ActionEmailSchemaRelease(
+        Path(payload["root"]), Path(payload["database_path"]),
+        (payload["original_version"][0], _timestamp_from_pipe(payload["original_version"][1])),
+        tuple((version, _timestamp_from_pipe(stamp)) for version, stamp in payload["versions"]),
+        payload["source_schema"], tuple(tuple(row) for row in payload["source_fk"]),
+        payload["target_store_version"], payload["target_email_version"],
+    )
+    release.apply()
+    from app.store import AutoReplyStore
+    from app.email_store import EmailStore
+    AutoReplyStore(release.database_path)
+    EmailStore(release.database_path)
+
+
 def prepare_action_email_schema_release(
     root: Path, path: Path, *, target_store_version: str, target_email_version: int
 ) -> ActionEmailSchemaRelease:
     """Capture the exact Store19/Email51 pair; callers must supply a target pair.
 
-    No current selector calls this function. Sentinel target values exercise
-    the protocol in tests without allocating a future Store or Email release.
+    The coordinator selects the real pair and subprocess. Explicit sentinel
+    targets still exercise this same atomic protocol in confined tests.
     """
     root, path = root.resolve(), path.resolve()
     if type(target_store_version) is not str or not target_store_version.strip() or \

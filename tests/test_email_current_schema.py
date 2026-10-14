@@ -85,15 +85,15 @@ def test_real_opt_in_actions_use_current_parent_with_fk_enforcement() -> None:
             })
 
 
-def test_existing_constructors_remain_on_published_default(tmp_path: Path) -> None:
+def test_default_constructors_select_current_email_actions(tmp_path: Path) -> None:
     path = tmp_path / "default.sqlite"
     AutoReplyStore(path)
     EmailStore(path)
     with sqlite3.connect(path) as db:
         assert db.execute(
             "select value from service_state where key='store_schema_version'"
-        ).fetchone() == ("2026-10-13.5",)
-        assert db.execute("select max(version) from email_schema_migrations").fetchone() == (51,)
+        ).fetchone() == ("2026-10-14.1",)
+        assert db.execute("select max(version) from email_schema_migrations").fetchone() == (52,)
         assert db.execute(
             "select 1 from sqlite_schema where type='table' and name='email_action_plans'"
-        ).fetchone() == (1,)
+        ).fetchone() is None

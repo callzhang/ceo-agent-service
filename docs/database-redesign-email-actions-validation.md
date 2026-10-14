@@ -1138,3 +1138,359 @@ while validators now require Email29. F must couple constructors, locking,
 source-pair release/coordinator, real markers and default29 selection and prove
 unsupported-source refusal before mutation. Task5 consumers, fresh current-copy/
 genuine-old-code/native and publication remain separate unfinished gates.
+
+
+### Task4F coupled local candidate, 2026-10-14
+
+Parent: `5dd1af7f627198e5777aaf33498b254f8baf18e3`. The local candidate allocates
+Store `2026-10-14.1` (program20)/Email52 and selects29-kind actions together.
+Published main was checked as `4eb7abb8`; no main merge occurred during this unit.
+This is unpublished implementation evidence, pending independent sequential SPEC
+then QUALITY. It does not close Task4's full named legacy-test gate, Task5
+consumers, latest-source-copy/native acceptance or Tasks6/7 publication.
+**The entire branch is not deployable while external old-table callers remain.**
+
+Implementation closure:
+
+- `prepare_database_schema_release` intercepts exactly19/51→20/52 before either
+  standalone preparer, returns one paired release and preserves other-target
+  refusal behavior. There is no independent52 publisher or composite publication.
+- `require_current_email_pair` performs read-only selection before constructor
+  cache/WAL/DDL and is repeated under the original path lock. It permits fresh,
+  current20/52 and genuine complete Store-first states; exact19/51 requires the
+  coordinator, while unsupported older/newer/missing/mixed and old Email-only
+  sources refuse. Existing Store bootstrap collision/known-repair policy remains.
+- Store `_ensure_initialized`, cache/manifest checks, `_initialize` final suffix
+  and `_require_supported_store_bootstrap_source` select29. The earlier legacy
+  commits/executescript model stays; immediately after removed-runtime migration,
+  canonical30-column classification,29 actions and Store marker share the final
+  transaction. Dynamic SQL trace proves the prefix does not execute an actions
+  dependency before creation. Failure leaves the existing unversioned core/retry
+  refusal; completed Store-first remains valid, including after later OA backfill.
+- Email `__init__` invokes genuine public AutoReplyStore once outside Email's
+  non-reentrant flock. `_initialize` has one current validation/fresh current
+  factory path. Fresh retained19 tables/10 indexes/19 triggers, empty ledger,
+  existing seeds,13 translated blockers and52 share its transaction. No historical
+  chain/retired13/action_plan_json creation or retired-family ALTER repair runs
+  in this path. The original current provider-observation missing-column helper
+  remains before validation, preserving its already supported repair.
+  Existing empty configs/revision histories stay empty on reopen and migration.
+- `publish` always uses the real paired subprocess. `apply` exposes the same
+  accepted atomic primitive for child execution and confined sentinel/fault
+  tests. The JSON stdin binds prepared Store marker/value/timestamp, complete
+  Email ledger, source declarations and FK aggregate; it carries no business rows,
+  temporary config file or recaptured source. Legal BLOB timestamps were accepted
+  by both genuine2773 constructors and now round-trip through the actual child
+  and inverse with original `typeof`/bytes. No marker/ledger policy was tightened.
+- Both default classes cold open after atomic conversion. Existing inverse uses
+  post-publication current facts and exact original declarations, public IDs,
+  native ROWIDs/allocator waters and original marker/ledger values/types. No old
+  snapshot is restored. Source maps, historical cached helper and native source
+  DDL are unchanged; no new compatibility validator/router/view/dual writer or
+  ownership epoch was added.
+
+The47 new actual-default cases cover full-parent FK-on older-kind insertion,
+fresh Store-first/Email-first and strict/non-strict reopen, actual classification
+and direct writes, opposite-order concurrent processes, exact source coordinator
+interception before standalone preparers, full child metadata binding, source
+change refusal,10 DELETE-journal/cache refusal states, genuine old Email-only and
+unversioned Email collisions, dynamic bootstrap prefix, Store suffix and Email
+fresh rollback at parent/actions/seeds/marker/commit boundaries, known-current
+repair selection, and child failure before DDL/after capture/during conversion/
+after first marker/before commit/process exit43/after each real cold constructor.
+
+Current-fact tests perform real target direct completion→inverse→both genuine old
+constructors/public readback→republication with public attempt allocator701 after
+original700. Receipt enrichment survives inverse with native receipt ROWID0.
+The fingerprint compares sorted complete SQL/data, explicit source ROWIDs,
+SQLite `typeof`, every sequence name/value/type and journal mode. The earlier
+post-commit fault diagnostic showed identical sorted dump and source ROWIDs but
+different catalog emission order; only this test fingerprint was corrected. No
+row/fact/type difference was discarded.
+
+Actual RepositoryUpdater tests use an owned local Git remote, the newly loaded
+candidate selector and real paired child. They verify stop→prepare→publish→
+verification and failure at verification/restart/health/loaded verification;
+current receipt enrichment survives inverse before genuine old restart. An
+unsupported inverse preserves the target and leaves replacement stopped with
+needs_manual, using existing updater behavior. This does not prove selector
+reload in an already-running old UI/updater process. No updater/deploy runtime
+code changed.
+
+Test changes outside the new file are confined: two obsolete default staging
+assertions now expect local20/52/29; old4A sentinel/minimal/native fault tests call
+`apply` to state their true primitive boundary; six pipeline cases change12
+readonly SQL literals to existing finite source-shaped projections, keeping
+assertions/order/columns; one E2 preview fixture now copies the complete genuine
+source and uses actual coordinator+child before target public preview. Its
+source oracle still executes genuine51, and byte/fact readonly assertions remain.
+No production testmode, weakened version guard or manually altered target marker
+was used.
+
+Final captured test commands and results (all owned basetemps):
+
+```text
+python -m pytest -q tests/test_email_pipeline.py tests/test_email_action_schema_release.py tests/test_email_current_schema.py --basetemp=/tmp/email13-coupled-f.NUHCny/pipeline-protocol
+........................................................................ [ 87%]
+..........                                                               [100%]
+82 passed in 26.45s
+exit 0
+
+python -m pytest -q tests/test_email_action_callers.py tests/test_email_action_plan_direct_dao.py tests/test_email_action_unsubscribe_dao.py tests/test_email_action_reply_dao.py tests/test_email_action_validation.py tests/test_email_current_seeds.py tests/test_email_store_startup_validation.py tests/test_store_schema_release.py tests/test_store.py::test_current_schema_reopens_and_repairs_old_route_session_shape tests/test_store.py::test_store_repairs_missing_required_table_despite_current_schema_version tests/test_store.py::test_current_schema_reopens_and_adds_agent_run_recovery_index tests/test_store.py::test_store_restores_wal_for_current_schema_database tests/test_email_store.py::test_real_store_persists_and_reopens_custom_category tests/test_email_action_plan_reference.py::test_current_read_and_full_validation_reject_invalid_reference --basetemp=/tmp/email13-coupled-f.NUHCny/final-targeted
+........................................................................ [ 60%]
+........................F.......................                         [100%]
+FAILED tests/test_email_action_validation.py::test_public_readonly_cancellation_preview_closes_shape_dependency
+1 failed, 119 passed in 249.68s (0:04:09)
+exit 1
+
+python -m pytest -q tests/test_email_action_validation.py::test_public_readonly_cancellation_preview_closes_shape_dependency --basetemp=/tmp/email13-coupled-f.NUHCny/preview-real-pair
+.                                                                        [100%]
+1 passed in 5.53s
+exit 0
+```
+
+The initial focused failure was the obsolete staging fixture's Email51 marker:
+`EmailPersistenceCorruption: cancellation requires deployed email schema 52`.
+Root approved exactly this fixture closure. The real coordinator fixture rerun
+passed; the119 previously passing cases were not repeated, and the initial batch
+is not represented as a single120-pass run. All47 new F cases and the other72
+selected DAO/E/known-repair cases passed in that initial batch. The whole B/C/D
+matrix covers public identity versus physical ID, rowid/attempt highwater,
+plan/feedback CAS and NULL prior, receipt JSON/native scalar and conflict policy,
+whole-transaction faults, direct poll/dependencies, unsubscribe/reply lifecycle,
+no-replay, leases/retry/recovery, and existing typed-index/VM growth assertions.
+Earlier accepted measured probes remain direct5751→5752 with3000 unrelated,
+unsubscribe4542→4542 and reply4432→4432 with600 same-family+3000 unrelated; this
+unit reran their bounded-growth and EXPLAIN assertions without adding indexes.
+
+The complete final stdout/exit was captured and read before cleanup, including
+the original52-line failure trace. Initial constructor RED failed the Store-only
+expected target marker (old19 versus20); core GREEN passed5, expanded constructor/
+fault refusal passed25, binding/BLOB/no-reseed/concurrency passed4, and the final
+child/current-fact/old-only selected batch passed12 in61.97s. These earlier
+batches are diagnostic evidence, not additional unique-case counts.
+
+Remaining test and consumer navigation follows. No larger matrix, full suite,
+provider/native Agent CLI/send, production mutation, environment creation, push,
+deploy or VACUUM was performed.
+
+
+#### Deferred old-SQL test navigation (no bulk edits or skips)
+These are static literal-SQL navigation sites, not a claim that each test was
+executed or failed. H means historical-source/migration contract: preserve native
+SQL and bind genuine old code rather than route old versions through the new
+defaults. T means current API/shape/trace or fixture assertions needing a finite
+projection/writer adaptation while retaining their business meaning. S is a
+shared native table-rebuild helper whose historical callers must stay genuine
+and whose current corruption fixtures need separate target setup.
+The original Store inventory counts75 function symbols/123 literal attributions
+because the enclosing read-view test and nested `mutate_after_first_read` both
+attribute one SQL. Nearest-function attribution gives74 symbols/122 unique SQL
+literals. Both navigation names are retained below. Reference is5/5 and retry3/6.
+Dynamic `business_rows` in the reference file is also an historical native fixture
+helper outside this literal detector. Other old schema/PRAGMA assumptions can
+exist without a matched literal; this is not an exhaustive whole-suite readiness
+claim.
+
+`tests/test_email_store.py` — 75 symbols, 123 attributed SQL literals.
+
+| Source line | Symbol | Follow-up |
+| --- | --- | --- |
+| 751 | `test_real_store_human_confirmation_persists_plain_string_category` (1) | T |
+| 806 | `_replace_feedback_requests_with_v18_table` (2) | H |
+| 892 | `test_reopen_rehydrates_legacy_reserved_classification_plan_and_feedback` (2) | H |
+| 1806 | `test_backfill_fills_a_missing_entry_url_only_when_it_hashes_to_the_receipt` (2) | T |
+| 1976 | `_downgrade_email_database_to_v16` (1) | H |
+| 2084 | `_replace_email_action_attempts` (1) | S |
+| 2114 | `_replace_email_actions` (2) | S |
+| 2600 | `_create_action_with_attempts` (1) | T |
+| 3173 | `test_v10_unsubscribe_claim_migrates_to_v11_effect_prefix_chain` (3) | H |
+| 3208 | `test_exact_v14_unsubscribe_schema_migrates_with_nullable_positive_audit_run` (4) | H |
+| 3336 | `test_v11_unsubscribe_schema_migrates_missing_phase_and_receipt_evidence` (5) | H |
+| 3450 | `test_v9_store_atomically_adds_unsubscribe_durability_without_data_loss` (3) | H |
+| 3490 | `test_reopen_rejects_feedback_request_linked_to_another_classification` (1) | T |
+| 3787 | `test_email_store_migration_is_idempotent` (2) | T |
+| 4533 | `test_current_v17_schema_missing_result_integrity_column_fails_without_repair` (1) | T |
+| 4592 | `test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain` (1) | T |
+| 4671 | `test_current_schema_missing_required_foreign_key_is_domain_corruption` (1) | T |
+| 4824 | `test_v2_processed_without_plan_upgrades_to_explicit_legacy_once` (4) | H |
+| 4885 | `test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history` (3) | H |
+| 4978 | `test_upgraded_database_does_not_extend_legacy_permission_to_new_v16_plan` (4) | H |
+| 5095 | `test_current_v16_missing_authorization_column_fails_without_schema_repair` (1) | T |
+| 5131 | `test_current_v16_missing_legacy_provenance_column_fails_without_schema_repair` (2) | T |
+| 5176 | `test_v2_upgrade_does_not_reapply_prototype_classification_backfill` (2) | H |
+| 5232 | `test_prototype_plan_migration_backfills_plan_and_direct_actions` (3) | H |
+| 5274 | `test_migration_failure_rolls_back_and_can_recover` (2) | H |
+| 5375 | `test_versioned_task3_upgrade_does_not_run_prototype_backfill` (2) | H |
+| 5709 | `test_startup_rejects_normal_processed_classification_without_plan` (2) | T |
+| 5749 | `test_pending_feedback_persists_message_and_cursor_without_plan_or_actions` (2) | T |
+| 5771 | `test_processed_scan_persists_plan_and_only_direct_action_rows` (2) | T |
+| 5811 | `test_exact_scan_replay_is_idempotent` (2) | T |
+| 5827 | `test_processed_model_rescan_preserves_business_snapshot_plan_and_actions` (4) | T |
+| 5943 | `test_changed_plan_appends_next_version_and_preserves_history` (2) | T |
+| 6236 | `test_rescan_updates_locator_without_replacing_final_decision_or_plan` (2) | T |
+| 6282 | `test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot` (4) | T |
+| 6702 | `test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected` (3) | T |
+| 6782 | `test_direct_action_claim_does_not_materialize_settled_history` (1) | T |
+| 6832 | `test_direct_action_probe_does_not_load_retired_pending_plan_bodies` (1) | T |
+| 6870 | `test_idle_direct_action_poll_does_not_wait_for_writer` (2) | T |
+| 6908 | `test_direct_action_probe_is_not_a_reservation` (1) | T |
+| 6930 | `test_claim_direct_action_uses_current_immutable_plan_and_stable_locator` (1) | T |
+| 7142 | `test_concurrent_direct_action_claim_has_one_winner` (1) | T |
+| 7165 | `test_processing_action_blocks_concurrent_sibling_claims` (1) | T |
+| 7207 | `test_processing_action_blocks_only_its_own_classification` (2) | T |
+| 7462 | `test_explicit_historical_move_dependencies_gate_exact_and_global_claims` (1) | T |
+| 7559 | `test_explicit_historical_trash_dependency_gates_exact_and_global_claims` (1) | T |
+| 7711 | `test_claim_rejects_cycle_between_explicit_and_provider_safe_dependencies` (1) | T |
+| 7952 | `test_v21_schema_migrates_to_allow_flag_important_actions` (1) | H |
+| 7990 | `test_complete_direct_action_appends_attempt_and_updates_current_atomically` (1) | T |
+| 8160 | `test_direct_action_completion_rolls_back_attempt_and_current_state_together` (1) | T |
+| 8275 | `test_startup_rejects_pending_action_with_historical_terminal_attempt` (1) | T |
+| 8303 | `test_startup_rejects_action_attempt_count_mismatch` (1) | T |
+| 8325 | `test_startup_rejects_gap_in_action_attempt_numbers` (1) | T |
+| 8337 | `test_startup_rejects_latest_attempt_receipt_or_status_mismatch` (1) | T |
+| 8350 | `test_startup_rejects_terminal_action_without_attempt` (1) | T |
+| 8365 | `test_processing_action_may_follow_terminal_attempts_but_has_no_terminal_receipt` (1) | T |
+| 8385 | `test_atomic_scan_persistence_rolls_back_message_plan_actions_and_cursor` (2) | T |
+| 8428 | `test_corrupt_historical_action_plan_is_rejected_on_open` (1) | T |
+| 8530 | `test_startup_rejects_noncanonical_or_unsafe_unsubscribe_result_text` (1) | T |
+| 8557 | `test_startup_rejects_wrong_untruncated_unsubscribe_observation_digest` (1) | T |
+| 8586 | `test_startup_rejects_empty_nonempty_unsubscribe_digest_mismatch` (1) | T |
+| 8614 | `test_unsubscribe_result_read_fails_closed_after_durable_row_corruption` (1) | T |
+| 8672 | `test_exact_16kib_untruncated_result_requires_matching_observation_digest` (1) | T |
+| 8693 | `test_stored_bounded_result_digest_is_always_verified` (1) | T |
+| 8835 | `test_v16_migration_rejects_corrupt_untruncated_observation_digest` (1) | H |
+| 8906 | `test_unsubscribe_terminal_snapshot_rejects_step_effect_digest_tamper` (1) | T |
+| 8927 | `test_unsubscribe_terminal_snapshot_uses_one_sqlite_read_view` (1) | T |
+| 8938 | `mutate_after_first_read` (1) | T |
+| 9031 | `test_unsubscribe_state_snapshot_rejects_row_33_before_effect_decoding` (1) | T |
+| 9190 | `test_explicit_retry_releases_failed_unsubscribe_without_browser_state` (2) | T |
+| 9312 | `test_startup_rejects_forged_durable_unsubscribe_action_identity` (1) | T |
+| 9427 | `test_direct_action_parameters_must_match_immutable_plan` (1) | T |
+| 10912 | `test_a_skipped_attempt_is_terminal_and_schedules_no_retry` (1) | T |
+| 10963 | `test_exhausted_interrupted_claim_recovers_after_retry_ceiling` (1) | T |
+| 11158 | `test_a_training_label_correction_never_moves_or_trashes_the_message` (1) | T |
+| 11381 | `test_flagged_important_between_lists_only_done_flags_in_the_window` (1) | T |
+
+`tests/test_email_action_plan_reference.py` — 5 symbols, 5 attributed SQL literals.
+
+| Source line | Symbol | Follow-up |
+| --- | --- | --- |
+| 21 | `rewind48` (1) | H |
+| 29 | `test_stable_classification_existence_does_not_hydrate_corrupt_plan` (1) | T |
+| 56 | `test_v48_reference_migration_preserves_business_and_api` (1) | H |
+| 108 | `test_list_hydrates_canonical_plans_in_one_query_and_connection` (1) | T |
+| 134 | `test_current_reference_survives_correction_feedback_and_scan_retry` (1) | T |
+
+`tests/test_email_retry_schema_release.py` — 3 symbols, 6 attributed SQL literals.
+
+| Source line | Symbol | Follow-up |
+| --- | --- | --- |
+| 13 | `_schema50` (1) | H |
+| 45 | `test_schema51_inverse_refuses_to_discard_request` (2) | H |
+| 68 | `test_retry_request_cannot_be_replaced` (3) | T |
+
+
+No current business assertion was removed to obtain green results. Arbitrary
+<=48/50 historical constructor upgrades are deliberately unsupported by the
+new defaults; historical contracts remain native/genuine-old evidence. Current
+metadata corruption tests must target29 generated/typed constraints rather than
+pretend that a retired physical table still exists. This adaptation remains an
+open test gate; the82-pass pipeline batch does not imply those files are green.
+
+#### Task5 and later gates still open
+
+A fresh literal-query scan still finds native old-family consumers in:
+
+- Store `_compact_settled_reply_task_input`, `_runtime_operation_parent_exists`,
+  `begin_direct_email_unsubscribe_execution`,
+  `settle_direct_email_unsubscribe_execution`,
+  `retry_failed_effect_free_email_unsubscribe_tasks`,
+  `reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts`,
+  `reconcile_done_reply_tasks_with_failed_current_run` and
+  `_operation_logs_base_query`.
+- `app/deploy_maintenance.py::check_maintenance` and
+  `app/audit_web.py::_email_action_queue_snapshot`/`_queue_attention_rows`.
+
+Historical `app/email_schema_release.py` native contracts remain available but
+are bypassed by this exact paired coordinator transition. In EmailStore itself,
+remaining native13 SELECT/DML literals belong only to historical migrations,
+the historical cached-plan helper and source DDL/index/trigger construction;
+none belongs to the selected current initializer/DAO/validator. Module metadata
+maps retain source names intentionally. Task5 still must verify dynamic table
+presence/context/web/worker/deployment-readiness callers and the Console surfaces,
+including no-replay and truthful native-source availability. The old already-
+running updater selector reload boundary is not covered by the new-selector
+RepositoryUpdater tests. No compatibility fallback was added for these callers.
+
+Latest production-copy/source-ref binding, all144 original-field/typeof/native
+ID/sequence comparisons on that copy, genuine native Consumer/Audit fake-provider
+cases and CI/publication/live readback remain separate Tasks6/7. The genuine2773
+synthetic/source oracle here is not a claim of a current4eb production-copy proof.
+
+
+Final hygiene: scoped Ruff on the four changed runtime modules and five changed
+Python test files reported `All checks passed!`; `git diff --check` exited0.
+The resolved owned temporary root `/private/tmp/email13-coupled-f.NUHCny` (2.4GB,
+including test databases/archived old code/local remotes/stdout) was explicitly
+removed after readback. Both it and `/tmp/email13-coupled-f.NUHCny` were verified
+absent. No historical test backups or copied source archives were retained.
+The candidate commit stops for root's sequential independent SPEC then QUALITY;
+no Task5 work is started.
+
+
+#### Final existing Email current-repair correction
+
+Before freezing the commit, root identified that the new current initializer had
+omitted the predecessor's `_ensure_provider_observation_signal_column` call.
+A narrow genuine2773 counterexample legally drops the existing retained-table
+`important_signals_json` column. Genuine Email51 reopens and repairs it; the
+initial candidate52 refused with `email_provider_observations is missing required
+columns: important_signals_json`. This was a runtime regression, distinct from
+the E2 staging fixture failure above. The candidate now retains that exact one
+existing helper call before current shape/account/row validation, with no new
+repair or stricter gate.
+
+The added48th F test compares complete repaired PRAGMA column metadata to the
+actual old default constructor. It publishes the same source through the real
+coordinator/child, drops the column again and exercises both `validate_rows=False`
+and default strict target reopen, preserving all marker/ledger values and exact29
+shape. The initial47 F cases and119 passes were not rerun. Only this regression
+and the directly related two startup-validation cases ran after this correction:
+
+```text
+python -m pytest -q tests/test_email_action_callers.py::test_current_provider_observation_signal_repair_matches_genuine51 --basetemp=/tmp/email13-f-repair.CbfCsw/red
+FAILED tests/test_email_action_callers.py::test_current_provider_observation_signal_repair_matches_genuine51
+1 failed in 5.60s
+exit 1
+
+python -m pytest -q tests/test_email_action_callers.py::test_current_provider_observation_signal_repair_matches_genuine51 tests/test_email_store_startup_validation.py --basetemp=/tmp/email13-f-repair.CbfCsw/green
+...                                                                      [100%]
+3 passed in 6.09s
+exit 0
+```
+
+The final evidence is therefore82 passing pipeline/protocol/current-schema cases,
+119 passing focused cases with one obsolete staging fixture initially failing,
+that exact fixture's1-pass real-publish rerun, and3 passing final repair/startup
+cases. It is not a fictional all-pass monolithic rerun. The new current-repair
+case is the only additional implementation/test after the first cleanup receipt.
+
+
+Cached Store health now includes the selected29 action manifest as well as the
+existing feedback guard. The marker-only pair preflight cannot prove this shape,
+and a cache hit otherwise skips the Store manifest/initializer entirely. This
+implements F's current-reopen29 requirement; a missing allowed metadata object
+falls through to the existing known-repair path. It is stricter than the old
+feedback-only cache check and adds schema-only checks for up to the two existing
+reply variants on each hit. It adds no durable-row scan, but repeated-constructor
+latency has not been benchmarked; its exact scope/cost is a QUALITY review point.
+
+After the final narrow repair run, scoped Ruff again reported `All checks passed!`
+and diff check exited0. `/private/tmp/email13-f-repair.CbfCsw` and its `/tmp` alias
+were removed explicitly and verified absent; the earlier main F root also remains
+absent. No test processes, copied archives or historical backups remain owned by
+this unit. The frozen handoff contains48 F tests in total: the first47 passed in
+the initial focused batch, and the added single current-repair case passed in the
+final3-case batch. The two validation modes in that case are not counted as two
+parameterized tests.
