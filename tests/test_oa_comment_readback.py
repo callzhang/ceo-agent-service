@@ -296,8 +296,13 @@ def test_oa_comment_recovery_after_store_reopen_preserves_source_and_dispatch_fe
         assert result["operation_record"]["user_id"] == "principal"
         assert "comment_id" not in result and "readback" not in result
     else:
-        assert recovered.error.code == (
-            "reviewed_source_unavailable" if change == "missing_context" else "business_state_changed"
-        )
-        assert after["status"] == "uncertain"
-        assert receipt is None
+        # Once dispatch is uncertain, an exact native receipt is authoritative:
+        # source drift or unavailable context must not hide an effect that already
+        # happened, nor cause the irreversible comment to be dispatched again.
+        assert recovered.outcome == "executed"
+        assert after["status"] == "verified"
+        assert receipt is not None
+        result = json.loads(receipt["provider_result_json"])
+        assert result["operation_record"]["user_id"] == "principal"
+        assert result["content_sha256"]
+        assert "comment_id" not in result and "readback" not in result
