@@ -37,6 +37,11 @@ feedback-context release. Its storage files and the source declarations are
 unchanged from the earlier Store18 binding. The database copy was bound by exact
 schema fingerprints; it was not an atomic checkout-and-database capture. Latest
 main must be integrated before paired release and caller work.
+Root subsequently merged main `1dc841ed` as `549602eb`, retaining the audit
+revision context and null DWS response fixes. Only claim-ledger insertions
+conflicted; all rows were preserved. The migration/preflight and both newly
+changed feature suites passed together: 327 tests. The accepted E storage
+and migration implementation files were unchanged by this merge.
 
 ## Task 2 opt-in finite storage checkpoint
 
