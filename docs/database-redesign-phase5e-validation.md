@@ -49,16 +49,33 @@ passed. Independent SPEC/QUALITY re-review, migration,
 publication and production readback remain separate gates.
 
 The subsequent independent QUALITY review found two write-ordering differences.
-Source `UPDATE` binds all inputs and acquires a writer transaction before
+Source `UPDATE` acquires a writer transaction and binds all inputs before
 checking row constraints; a missing row or false predicate returns zero even
 for an invalid public ID or unknown fresh Memory parent. The E update path now
-binds inputs, locks and checks the exact predicate before row-specific key or
+locks, binds inputs and checks the exact predicate before row-specific key or
 parent resolution. Fresh Memory explicit insert likewise acquires its writer
 transaction before resolving a typed parent, retaining native failure state
 for deferred, autocommit, outer transaction and savepoint callers. Focused
 source-versus-target regressions cover those modes and unbindable inputs; the
 full local gate passed 397 tests with eight variant-specific skips, with Ruff
 and `git diff --check` passing. This remains opt-in foundation evidence only.
+
+A final QUALITY repair closed two update transaction gaps. On an ordinary
+deferred connection, native SQLite opens the write transaction before failing
+to bind an unbindable SET or WHERE value; the prior finite path bound first
+and left no transaction. In autocommit mode, its no-row writer lock ended
+before the predicate scan, allowing another writer to change the candidate.
+Source-versus-target bad-binding regressions and a two-connection lock probe
+failed before the repair. The finite update now acquires the writer lock before
+binding and keeps it through predicate scan and UPDATE, with a savepoint owned
+only for legacy/Python 3.12 autocommit connections. Ten new parameterized
+cases pass across deferred, legacy autocommit, caller transaction/savepoint and Python 3.12
+`autocommit=True`; the exact six-file reply source, reply target, action,
+receipt, postfix and sent-delivery storage gate passed 407 tests with eight
+variant-specific skips. The three corresponding schema-release files also
+passed in a separate 326-pass, eight-skip gate that included the reply/source
+and action storage files. Ruff and
+`git diff --check` passed. This remains an isolated, unpublished storage unit.
 
 ## Earlier source preparation
 

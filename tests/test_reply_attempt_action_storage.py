@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 import sqlite3
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -474,6 +475,97 @@ def test_absent_update_still_rejects_unbindable_input(pair):
         source.execute("update reply_attempts set id=? where id=999", (object(),))
     with pytest.raises(sqlite3.ProgrammingError):
         storage.update_action(target, "reply_attempts", 999, {"id": object()})
+
+
+@pytest.mark.parametrize("bad_argument", ["set", "where"])
+@pytest.mark.parametrize("connection_options, expected_transaction", [
+    ({}, True), ({"isolation_level": None}, False), ({"autocommit": True}, False),
+])
+def test_bad_update_binding_opens_native_deferred_transaction(bad_argument, connection_options,
+                                                               expected_transaction):
+    outcomes = []
+    for target in (False, True):
+        with closing(sqlite3.connect(":memory:", **connection_options)) as db:
+            if target:
+                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk")
+            else:
+                db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
+            db.commit()
+            with pytest.raises(sqlite3.ProgrammingError):
+                if target:
+                    storage.update_action(db, "reply_attempts", 999,
+                                          {"final_reply_text": object() if bad_argument == "set" else "ok"},
+                                          where_sql="id=?" if bad_argument == "where" else "",
+                                          parameters=(object(),) if bad_argument == "where" else ())
+                else:
+                    db.execute("update reply_attempts set final_reply_text=? where id=999" +
+                               (" and id=?" if bad_argument == "where" else ""),
+                               ("ok", object()) if bad_argument == "where" else (object(),))
+            outcomes.append(db.in_transaction)
+    assert outcomes == [expected_transaction] * 2
+
+
+@pytest.mark.parametrize("connection_options", [{"isolation_level": None}, {"autocommit": True}])
+def test_autocommit_update_holds_writer_lock_through_predicate_scan(connection_options):
+    with TemporaryDirectory(prefix="phase5e-update-", dir="/tmp") as temporary:
+        path = Path(temporary) / "reply.db"
+        with closing(sqlite3.connect(path, **connection_options)) as db, closing(
+            sqlite3.connect(path, isolation_level=None, timeout=0)
+        ) as other:
+            db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+            db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+            storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk")
+            identity = storage.insert_action(db, "reply_attempts", REQUIRED).lastrowid
+            observed = []
+
+            def probe(sql):
+                if sql.startswith("select 1 from actions where"):
+                    try:
+                        other.execute("begin immediate")
+                    except sqlite3.OperationalError as error:
+                        observed.append(error.sqlite_errorcode)
+                    else:
+                        observed.append(None)
+                        other.execute("rollback")
+
+            db.set_trace_callback(probe)
+            try:
+                result = storage.update_action(db, "reply_attempts", identity, {"final_reply_text": "done"})
+            finally:
+                db.set_trace_callback(None)
+            assert result.rowcount == 1
+            assert observed == [sqlite3.SQLITE_BUSY]
+            assert db.in_transaction is False
+
+
+@pytest.mark.parametrize("scope", ["transaction", "savepoint"])
+def test_failed_update_preserves_caller_transaction(scope):
+    outcomes = []
+    for target in (False, True):
+        with closing(sqlite3.connect(":memory:", isolation_level=None)) as db:
+            if target:
+                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
+                storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk")
+            else:
+                db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
+            db.execute("create table pending(value text)")
+            db.execute("begin")
+            if scope == "savepoint":
+                db.execute("savepoint caller")
+            db.execute("insert into pending values('caller')")
+            with pytest.raises(sqlite3.ProgrammingError):
+                if target:
+                    storage.update_action(db, "reply_attempts", 999, {"final_reply_text": object()})
+                else:
+                    db.execute("update reply_attempts set final_reply_text=? where id=999", (object(),))
+            outcomes.append((db.in_transaction, db.execute("select count(*) from pending").fetchone()[0]))
+            if scope == "savepoint":
+                db.execute("release caller")
+            db.execute("rollback")
+    assert outcomes == [(True, 1)] * 2
 
 
 @pytest.mark.parametrize("mode", ["deferred", "autocommit", "outer", "savepoint"])

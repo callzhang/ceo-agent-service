@@ -808,9 +808,6 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
     # row-level affinity and FK constraints only to selected rows.
     bound = (*values.values(), *identity_arguments)
     db.execute("select " + ",".join("?" for _ in bound), bound)
-    # Lock before checking existence so no concurrent writer can insert or
-    # change the candidate between the scan and the real UPDATE.
-    db.execute("update sqlite_sequence set seq=seq where 0")
     if db.execute(f"select 1 from actions where {predicate} limit 1", identity_arguments).fetchone() is None:
         return db.execute("update actions set legacy_key=legacy_key where 0")
     assignments, arguments, paths = [], [], []
@@ -926,7 +923,25 @@ def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIde
     """Update explicit source fields; an optional predicate uses the projection."""
     _check_fields(record_type, values)
     if record_type in REPLY_ACTION_TYPES:
-        return _update_reply_action(db, record_type, public_id, values, where_sql=where_sql, parameters=parameters)
+        owned = not db.in_transaction and (
+            db.isolation_level is None or getattr(db, "autocommit", None) is True
+        )
+        if owned:
+            db.execute("savepoint action_reply_update")
+        try:
+            # Keep native UPDATE's writer transaction from binding through the
+            # predicate scan and row write, including on autocommit connections.
+            db.execute("update sqlite_sequence set seq=seq where 0")
+            result = _update_reply_action(db, record_type, public_id, values,
+                                          where_sql=where_sql, parameters=parameters)
+        except BaseException:
+            if owned and db.in_transaction:
+                db.execute("rollback to action_reply_update")
+                db.execute("release action_reply_update")
+            raise
+        if owned:
+            db.execute("release action_reply_update")
+        return result
     assignments, args, paths = [], [], []
     identity_arguments = _identity_arguments(record_type, public_id)
     if record_type == "sent_reply_observers" and ("sent_reply_id" in values or "agent_run_id" in values):
