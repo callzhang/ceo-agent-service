@@ -603,6 +603,29 @@ failures were independently reproduced on pre-repair code, and an independent
 production-copy/old-code-fresh inverse/read/write/republish run passed. QUALITY,
 complete CI and publication readback remain separate gates.
 
+## Final local release-gate acceptance
+
+Fresh sequential SPEC and QUALITY accepted the offline copy harness and the
+two-index repair. SPEC independently ran 226 focused checks with six
+variant-dependent skips, reproduced all three pre-repair failures, compared
+the four frozen older manifests and reran the complete actual-copy plus
+genuine archived-old fresh-constructor proof. QUALITY inspected clean
+`995ff26a` (runtime exactly `c47e6f4a`), independently passed 204 checks with
+six skips, and compared pre/post duplicate inserts and updates, ignored
+duplicates, negative/zero IDs, overlapping public namespaces, deleted high
+waters and noncanonical-key rejection on both E variants. No new allocator,
+constraint or specification finding remained. Root then passed all 70 reviewed
+orchestration/worker/human-decision/candidate/source-revision and routed Memory
+completion checks on the final indexed candidate. Counts overlap; they are
+not a unique-test total. Ruff, whitespace checks and owned-temp cleanup passed.
+
+The final local candidate has now passed caller review, both source-variant
+copy/old-code read-write/inverse rehearsals, original-query access scaling,
+scripted lifecycle branches and actual native approval/recovery with outbound
+substitutes. Complete remote CI, merge, normal deployment and production
+readback remain open. Production is still Store18/Email51 and this E unit does
+not complete the full ten core tables plus one migration ledger redesign.
+
 ## Task 6 source index matrix and bounded-growth repair
 
 The captured actual and fresh source DDL supplied all seven Attempt and both
