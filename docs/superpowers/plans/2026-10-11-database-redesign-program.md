@@ -453,3 +453,33 @@ complete Task4/5, latest-copy/native/CI/deploy/live and the full10+1 goal are op
 Sequential fresh SPEC then QUALITY accepted4a9de752: SPEC39+10 cases; QUALITY8 cases plus independent each32 malformed-metadata/cache probes, MAIN/TEMP ownership and preserved repair paths. Exact commands, exits and cleanup are in Email validation. Parent-F auxiliary-repair defect is corrected locally. Next5B1 is only six existing current scan/plan/feedback tests with finite existing projections and unchanged business assertions. Historical native migrations/shared corruption helpers need separate scope. Remaining Task4/5 gates, latest-copy/native acceptance, CI/deploy and full10+1 consolidation remain open.
 
 2026-10-14 Task5B1 accepted8989d5d4 after fresh sequential SPEC (six cases6pass2.65s) and QUALITY (complete-file AST equivalence after reversing only imports/projections). Exactly six current scan/plan/reference tests are adapted with business assertions retained. Remaining current/history/shared fixtures and later copy/native/CI/publication gates remain open; no runtime or production change.
+
+### Latest Email integration boundary, 2026-10-14
+
+Task5's named final gate is accepted after sequential SPEC/QUALITY:1,369 parent
+cases passed, including eight genuine0441 wrappers enforcing105 original child
+cases. Task6A actual latest-source copy passed all four cases396.75s with paired
+publication, all144 Email fields/types/identities/waters, target public writes,
+current-fact inverse, genuine d06 cold public writes and reforward. Task6B real
+Codex CLI approval/revision passed with two/four invocations, durable business
+results and one verified in-memory provider receipt per case. Email direct
+context/attempt/History coverage is separately deterministic, not native Email
+browser approval.
+
+Read-only Console clicks are now accepted on the revision copy after the scoped
+generic History repair0c210a7d and fresh SPEC/QUALITY. Whole-copy public reads
+completed plain1.7845s, fixture search0.9163s and no-match search1.3001s; browser
+History/detail/native tool I/O, Attention, mock Email plan/receipt and existing
+unsubscribe/business links rendered. Post-UI103 ordinary original tables,
+integrity checks and one pre-existing FK finding remained unchanged. Owned
+temporary copies, UI server and tab were removed. Aggregate-only evidence and
+precise coverage limits are in the Email validation document and Task6 JSONs.
+
+Email Task7 is still open: migrate the additional current/historical test
+fixtures outside the named matrix, run CI, reconcile main and deploy normally
+with live readback. Production still reads d06/Store19/Email51/121 non-internal
+tables at20:58UTC; SQLite's internal sequence table makes the inclusive count122.
+The tested Email target retires13 tables to108 under the same non-internal
+counting rule. No production/provider mutation or proportional size claim is
+made. Remaining business/provenance/config/provider-state/schedule/state
+consolidation is still required for the complete ten-core-table plus ledger goal.

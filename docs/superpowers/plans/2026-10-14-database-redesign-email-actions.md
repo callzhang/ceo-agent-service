@@ -420,13 +420,13 @@ and the remaining test/consumer gates are recorded in the validation document.
 
 **Files:** new `scripts/validate_action_email_copy.py`; new `tests/test_email_action_copy_proof.py`; existing `scripts/validate_native_copy_lifecycle.py` only a confined Email case extension; new evidence JSON and validation document.
 
-- [ ] Keep SQL-boundary and strict application-valid cases explicitly separate as required by Task3B. Aggregate evidence must identify which case preserves NULL-PK plans and which executes genuine old default constructors/public writes. Preserve all actual rows; no deletion/filtering, archived-code patch or validation bypass is allowed to make either case pass.
-- [ ] Build the copy harness with the existing reply-copy pattern and these flags: `--source` (owned immutable SQLite backup), `--source-ref` (exact published predecessor), `--evidence` (aggregate-only report). It must inspect source markers/ref, compare all 144 fields and SQL storage classes/keys/sequence watermarks, unrelated-table fingerprints/counts, original sixteen actions, current queue/History/Attention counters and all 13 blocker states. Never emit row bodies/digests, credentials or trajectory content in the evidence artifact.
-- [ ] Use SQLite backup API for the latest production copy in a task-owned temporary directory; quick_check/integrity/FK first. Keep only the newest verified backup for this workflow. Run current default constructors on the copy; record actual marker transition and source/table-count change. A 13-table disappearance with actions still present is expected; it does not prove full ten-table completion or a proportional size gain.
-- [ ] Run exact old published code in a fresh process on inverse-derived current facts, including fresh source constructor and meaningful read/write: classification feedback replay, direct action attempt completion with a fake result, native receipt enrichment, sequence continuation, History source IDs and failed action visibility. Then current-code re-forward and compare current facts again. Merely importing old classes is insufficient.
-- [ ] Run `pytest -q tests/test_email_action_copy_proof.py`; expected all copied synthetic failure/current-fact/inverse/old-process cases pass. Then run the new copy harness against the owned backup and exact source ref selected in Task1. The evidence result must say `passed` only after each read/type/rowid/sequence comparison and cold old-process test succeeds.
-- [ ] Add confined native cases to the existing lifecycle harness: actual Consumer/Audit produce a persisted accepted action on the migrated copy, provider writes are replaced in memory, resulting business receipt/context/History readback is verified. Run both approval and revision cases; no live SMTP/IMAP/browser/DingTalk mutation is allowed. The ordinary deterministic Email source/claim/receipt chain is tested with its existing native provider substitutes; this does not activate auto reply.
-- [ ] Create the owned directory with `EMAIL_ACTION_NATIVE_ROOT=$(mktemp -d /tmp/ceo-email-native.XXXXXX)`. Run `python -m scripts.validate_native_copy_lifecycle --owned-temp-root "$EMAIL_ACTION_NATIVE_ROOT" --case approve` and the same command with `--case revision` after the harness's explicit Email setup is added. The named variable must resolve to the verified task-owned temporary directory. Expect actual native CLI completion, fake-provider receipts, unchanged original rows and no real external effects. Record scripted tests, actual native model evidence and untested live provider outcomes separately. Clean owned temporary copies/native outputs after concise accepted evidence is saved. Commit harness/evidence independently.
+- [x] Keep SQL-boundary and strict application-valid cases explicitly separate as required by Task3B. Aggregate evidence must identify which case preserves NULL-PK plans and which executes genuine old default constructors/public writes. Preserve all actual rows; no deletion/filtering, archived-code patch or validation bypass is allowed to make either case pass.
+- [x] Build the copy harness with the existing reply-copy pattern and these flags: `--source` (owned immutable SQLite backup), `--source-ref` (exact published predecessor), `--evidence` (aggregate-only report). It must inspect source markers/ref, compare all 144 fields and SQL storage classes/keys/sequence watermarks, unrelated-table fingerprints/counts, original sixteen actions, current queue/History/Attention counters and all 13 blocker states. Never emit row bodies/digests, credentials or trajectory content in the evidence artifact.
+- [x] Use SQLite backup API for the latest production copy in a task-owned temporary directory; quick_check/integrity/FK first. Keep only the newest verified backup for this workflow. Run current default constructors on the copy; record actual marker transition and source/table-count change. A 13-table disappearance with actions still present is expected; it does not prove full ten-table completion or a proportional size gain.
+- [x] Run exact old published code in a fresh process on inverse-derived current facts, including fresh source constructor and meaningful read/write: classification feedback replay, direct action attempt completion with a fake result, native receipt enrichment, sequence continuation, History source IDs and failed action visibility. Then current-code re-forward and compare current facts again. Merely importing old classes is insufficient.
+- [x] Run `pytest -q tests/test_email_action_copy_proof.py`; expected all copied synthetic failure/current-fact/inverse/old-process cases pass. Then run the new copy harness against the owned backup and exact source ref selected in Task1. The evidence result must say `passed` only after each read/type/rowid/sequence comparison and cold old-process test succeeds.
+- [x] Add confined native cases to the existing lifecycle harness: actual Consumer/Audit produce a persisted accepted action on the migrated copy, provider writes are replaced in memory, resulting business receipt/context/History readback is verified. Run both approval and revision cases; no live SMTP/IMAP/browser/DingTalk mutation is allowed. The ordinary deterministic Email source/claim/receipt chain is tested with its existing native provider substitutes; this does not activate auto reply.
+- [x] Create the owned directory with `EMAIL_ACTION_NATIVE_ROOT=$(mktemp -d /tmp/ceo-native-copy.XXXXXX)` and populate its source backup/metadata through the caller's verified SQLite backup step. This is the existing harness's required root prefix. Run `python -m scripts.validate_native_copy_lifecycle --owned-temp-root "$EMAIL_ACTION_NATIVE_ROOT" --case approve` and the same command with `--case revision` after the harness's explicit Email setup is added. The named variable must resolve to the verified task-owned temporary directory. Expect actual native CLI completion, fake-provider receipts, unchanged original rows and no real external effects. Record scripted tests, actual native model evidence and untested live provider outcomes separately. Clean owned temporary copies/native outputs after concise accepted evidence is saved. Commit harness/evidence independently.
 
 ## Task 7: CI, publication and live readback
 
@@ -546,3 +546,35 @@ authorization, schema field or retention feature is proposed.
 Sequential fresh SPEC then QUALITY accepted4a9de752: SPEC39+10 cases; QUALITY8 cases plus independent each32 malformed-metadata/cache probes, MAIN/TEMP ownership and preserved repair paths. Exact commands, exits and cleanup are in Email validation. Parent-F auxiliary-repair defect is corrected locally. Next5B1 is only six existing current scan/plan/feedback tests with finite existing projections and unchanged business assertions. Historical native migrations/shared corruption helpers need separate scope. Remaining Task4/5 gates, latest-copy/native acceptance, CI/deploy and full10+1 consolidation remain open.
 
 2026-10-14 Task5B1 accepted8989d5d4 after fresh sequential SPEC (six cases6pass2.65s) and QUALITY (complete-file AST equivalence after reversing only imports/projections). Exactly six current scan/plan/reference tests are adapted with business assertions retained. Remaining current/history/shared fixtures and later copy/native/CI/publication gates remain open; no runtime or production change.
+
+### Current acceptance boundary after Task6, 2026-10-14
+
+Task5's named combined gate passed1,369 parent cases, including eight fixed0441
+wrappers enforcing105 genuine old-source child cases. Task6A's four actual-copy
+cases passed396.75s, including current-fact inverse, genuine published-old cold
+public writes and reforward. Task6B's real native approval/revision passed with
+two/four CLI calls and only in-memory providers; the separately deterministic
+Email context/direct receipt proof also passed. Root invoked the same committed
+`run(root, case)` entry point under caller-owned verified backup contexts; native
+CLI commands were unchanged. The corrected root example above reflects that
+existing harness contract rather than the earlier unsupported prefix.
+
+The isolated UI gate found an existing generic History query cost. The scoped
+repair0c210a7d passed sequential fresh SPEC/QUALITY,14 focused cases and independent
+258-row full-result equivalence. Actual whole-copy public reads then completed
+plain1.7845s, matching search0.9163s and no-match search1.3001s. Read-only browser
+clicks verified History/detail/Consumer-Audit/native tool I/O, Attention, mock
+Email plan/direct receipt, and existing unsubscribe detail/business links. All
+103 original ordinary baseline tables still matched; integrity checks and the
+pre-existing one FK finding were preserved. Owned UI process/tab and all working
+copies were cleaned. Exact aggregate receipts are in the two Task6 evidence JSONs
+and `docs/database-redesign-email-actions-validation.md`.
+
+This closes the local Task6 evidence boundary, not Task7 publication. Further
+current tests outside the named Task5 matrix still contain retired-table fixture
+SQL, while historical migration tests need genuine old-source binding. These
+must be classified and migrated without weakening assertions or restoring old
+physical tables, before CI/main integration/normal deployment/live readback.
+Production remains d06/Store19/Email51/121 non-internal tables; this unit's target
+is108 on the tested copy, with all FTS/shadow tables counted in both numbers.
+Full ten core tables plus one ledger remains unfinished.

@@ -2290,3 +2290,65 @@ and whitespace checks passed. Two selected non-Email History-type checks
 passed; a third selected test reached its previously identified retired
 `email_action_plans` fixture INSERT and failed before the query assertion.
 That fixture conversion belongs to Task7 and is outside this query unit.
+
+### Task6 native/UI and History query acceptance, 2026-10-14
+
+Root accepts the read-only History repair `0c210a7d` after fresh sequential SPEC
+and QUALITY PASS. SPEC independently compared 258 full projected rows with the
+frozen base across all eight terminal statuses, four current statuses, public-ID
+ordering, channel/trigger isolation and signed IDs; its owned probe was cleaned.
+QUALITY found no actionable issue and explicitly retained the finite aggregate
+materialization cost as a boundary requiring whole-copy measurement. The
+implementer's 14-case pagination result and fault-sensitive body measurement
+remain separate evidence.
+
+On the held revision-case migrated production copy, root then ran the actual
+public `list_operation_logs_with_count`, with native connection pragmas and
+cache bypass, sequentially under an eight-second/60M-VM interrupt ceiling.
+Plain: 1.7845s, 8.541M VM, total35,254/page20. Fixture search: 0.9163s,
+12.917M VM, exactly one result. No-match search: 1.3001s, 23.943M VM,
+zero results including the existing fallback count. All completed; no timeout,
+cache, schema or frontend change was used. These are this copy's observations,
+not production latency guarantees.
+
+Actual native execution used committed `07e1d075` and separate then-current
+production SQLite backups bound to published d06. Approval completed in90.04s
+with two real CLI invocations. Revision completed in113.57s with four real CLI
+invocations and persisted review decisions `return`, then `approve`. Each
+finished the task with one in-memory provider call, one verification, one
+execution receipt, one sent-reply business result and one business attempt.
+Each also passed the separately labelled deterministic Email public context,
+direct-action attempt/receipt and signed-ROWID History proof. No real outbound
+provider was invoked. Original trajectories remain only in native Codex storage.
+
+Read-only browser clicks used `0c210a7d` against the revision copy with application
+lifespan off. Production assets were read-only and their frontend source matched
+d06. History displayed35,254 records and the fixture search displayed one; its
+detail showed four internal runs, one revision and one verified action. Consumer
+and Audit process links opened, native timelines rendered21 and13 entries,
+and an expanded tool card displayed its actual native input/output. The first
+audit's material mismatch and return reason were visible. Attention rendered27
+issues and expanded a detail. The mock Email search/detail displayed its current
+plan version1, completed mark-read action and in-memory Provider receipt. Existing
+unsubscribe list displayed1,087 records; its detail displayed two processing
+records and its existing business-detail link opened. That old attempt has no
+Agent-run link in either source or target; none was fabricated. One persisted
+retired-reply-table error also existed once in both source and target; this was
+not a new copy request failure. Browser error/warning observations were empty.
+Write/retry/withdraw/send controls were not clicked; this is not native Email
+browser approval or exhaustive write-control acceptance.
+
+After closing the owned browser tab and stopping the owned test server normally,
+all103 original ordinary target-baseline tables still passed row inclusion,
+quick_check/integrity_check were bothok, and the original one FK finding remained
+unchanged. Both native working roots were removed and absence verified. Aggregate
+evidence is `docs/superpowers/specs/2026-10-14-database-redesign-email-actions-native-copy.json`;
+it retains no row bodies, copied trajectories or credentials. The native harness
+itself is unchanged since actual execution. Production/provider mutations are0.
+
+At20:58UTC the production checkout still read d06/Store19/Email51:121 non-internal
+tables. Counting SQLite's own `sqlite_sequence` yields122; all earlier121→108
+comparisons exclude internal tables and include the existing FTS/shadow tables.
+This unit is not deployed. Task7 must finish the additional current-versus-old
+test-fixture migration, CI, main reconciliation and normal deployment/readback.
+The complete ten-core-table plus migration-ledger redesign remains open.
