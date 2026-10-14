@@ -1,0 +1,149 @@
+{
+  "status": "passed",
+  "scope": "offline Email13 SQL boundary and real paired copy/public APIs",
+  "observed_at_utc": "2026-10-14T20:04:46.188580+00:00",
+  "published_source_ref": "d06c148b90aaeee74c14bbabf0183ffd65f34048",
+  "schema_binding_ref": "eb797e6bd35de695c269054a2e697af8fde2baa5",
+  "executed_candidate_commit": "9fd4cc8ad3a5ba04098f85974b1f29afa5e8ff46",
+  "candidate_module_sha256": {
+    "app/store.py": "f7b36a87e9a133ef2f7823a9c49134745dd45f4598405a83ecdf5442031a2fca",
+    "app/email_store.py": "e3f72fb845104430514972038a936fcedd71f8c72695a1d82198bda76f625f37",
+    "app/action_storage.py": "0379a63fa768bbe105001b9a4adf993055c2b6b04498ade7982a397451305fee",
+    "app/action_email_storage.py": "12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c",
+    "app/action_email_definitions.py": "edde1bd647c5c04a515f6cf107390b3bc02dedbec1b0b02a32b00ef26469b4bf"
+  },
+  "published_old_module_sha256": {
+    "app/store.py": "bb1d5a90c5ee697e2b77f326031ec9b56341ed4053f5bbd947a3014fc26501f6",
+    "app/email_store.py": "262b41745c2afd5f535c2cd3043b147f14aaf60ffd6496ea0b6862299c893062",
+    "app/action_storage.py": "c43bed4e0962e27195cf466e060883fcc77ea8cb098e3e316ea2ccbe07952a0d"
+  },
+  "published_old_dependency_sha256": {
+    "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json": "bb1eed5fef2f5a4f1f5b1a02d0a0ce0ec88d3943d316b1619a5a9b049f977cf6"
+  },
+  "production_head_before": "d06c148b90aaeee74c14bbabf0183ffd65f34048",
+  "production_head_after": "d06c148b90aaeee74c14bbabf0183ffd65f34048",
+  "source_binding": "Non-atomic checkout HEAD and SQLite online backup observations",
+  "cases": {
+    "paired_actual_online_backup": {
+      "paired_default_constructors": true,
+      "target_public_writes": true,
+      "old_public_cold_writes": true,
+      "current_fact_inverse": true,
+      "reforward_current_facts": true,
+      "source_tables": 121,
+      "target_tables": 108,
+      "preserved_fk_findings": 1
+    },
+    "actual_online_backup_sql_boundary": {
+      "variant": "actual",
+      "initial_tables": 121,
+      "target_tables": 108,
+      "source_counts_after_fixture_seed": {
+        "email_action_plans": 9902,
+        "email_actions": 10295,
+        "email_action_attempts": 12288,
+        "email_unsubscribe_cancellations": 1,
+        "email_unsubscribe_claims": 1086,
+        "email_unsubscribe_continuations": 0,
+        "email_unsubscribe_effects": 1173,
+        "email_unsubscribe_receipts": 1086,
+        "email_unsubscribe_steps": 825,
+        "email_direct_retry_requests": 1,
+        "email_feedback_requests": 1413,
+        "email_reply_dispatch_claims": 0,
+        "email_reply_receipts": 1
+      },
+      "baseline_fk_findings": 1,
+      "current_fact_inverse": true,
+      "old_public_feedback_replay": true,
+      "old_public_receipt_write": true,
+      "old_public_direct_attempt_completion": true,
+      "old_public_failed_visibility": true,
+      "old_history_source_id": true,
+      "old_public_unsubscribe_skip": true,
+      "old_public_explicit_retry": true,
+      "sql_legal_null_plan_rows": 0,
+      "reforward_values_types_locators_waters_equal": true
+    },
+    "published_old_fresh_sql_legal": {
+      "variant": "fresh_candidate",
+      "initial_tables": 121,
+      "target_tables": 108,
+      "source_counts_after_fixture_seed": {
+        "email_action_plans": 2,
+        "email_actions": 4,
+        "email_action_attempts": 0,
+        "email_unsubscribe_cancellations": 0,
+        "email_unsubscribe_claims": 0,
+        "email_unsubscribe_continuations": 0,
+        "email_unsubscribe_effects": 0,
+        "email_unsubscribe_receipts": 0,
+        "email_unsubscribe_steps": 0,
+        "email_direct_retry_requests": 0,
+        "email_feedback_requests": 0,
+        "email_reply_dispatch_claims": 0,
+        "email_reply_receipts": 1
+      },
+      "baseline_fk_findings": 0,
+      "current_fact_inverse": true,
+      "old_public_feedback_replay": false,
+      "old_public_receipt_write": false,
+      "old_public_direct_attempt_completion": false,
+      "old_public_failed_visibility": false,
+      "old_history_source_id": false,
+      "old_public_unsubscribe_skip": false,
+      "old_public_explicit_retry": false,
+      "sql_legal_null_plan_rows": 2,
+      "reforward_values_types_locators_waters_equal": true
+    },
+    "published_old_fresh_application": {
+      "variant": "fresh_candidate",
+      "initial_tables": 121,
+      "target_tables": 108,
+      "source_counts_after_fixture_seed": {
+        "email_action_plans": 2,
+        "email_actions": 4,
+        "email_action_attempts": 0,
+        "email_unsubscribe_cancellations": 0,
+        "email_unsubscribe_claims": 0,
+        "email_unsubscribe_continuations": 0,
+        "email_unsubscribe_effects": 0,
+        "email_unsubscribe_receipts": 0,
+        "email_unsubscribe_steps": 0,
+        "email_direct_retry_requests": 0,
+        "email_feedback_requests": 0,
+        "email_reply_dispatch_claims": 0,
+        "email_reply_receipts": 1
+      },
+      "baseline_fk_findings": 0,
+      "current_fact_inverse": true,
+      "old_public_feedback_replay": true,
+      "old_public_receipt_write": true,
+      "old_public_direct_attempt_completion": true,
+      "old_public_failed_visibility": true,
+      "old_history_source_id": true,
+      "old_public_unsubscribe_skip": true,
+      "old_public_explicit_retry": true,
+      "sql_legal_null_plan_rows": 0,
+      "reforward_values_types_locators_waters_equal": true
+    }
+  },
+  "checks": {
+    "temporary_copies_cleaned": true,
+    "production_mutations": 0,
+    "provider_calls": 0,
+    "native_cli_calls": 0,
+    "outer_owned_backup_cleaned": true
+  },
+  "limit": "Offline owned copies only; paired target constructor/public-DAO proof is not native role, CI, production publication or live provider acceptance.",
+  "owned_source_backup": {
+    "observed_at_utc": "2026-10-14T19:58:20.229941+00:00",
+    "bytes": 477753344,
+    "fk_findings": 1,
+    "tables": 121,
+    "store": "2026-10-13.5",
+    "email": 51
+  },
+  "owned_source_unchanged": true,
+  "elapsed_seconds": 396.75
+}
