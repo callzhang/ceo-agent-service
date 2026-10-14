@@ -212,3 +212,15 @@ growth before activation with an evidence-required supporting index. Include
 native FK parent DELETE/public-key mutation, not only application SELECTs, in
 the performance matrix. This is a storage access requirement, not a new policy
 or permission to change source fields/constraints or unrelated Email behavior.
+
+
+### Task1B acceptance and Task2 sequencing
+
+Task1B9402291b passed sequential independent SPEC then QUALITY after the native
+IGNORE/default-coherence repairs; disabled Task1 storage is now accepted.
+Task2 executes as2A readonly source capture/refusal, then2B pure forward and
+current-fact inverse, with independent reviews between them. No constructor,
+release marker or target version selects this preparation. Both current index
+gates (native child-FK scans and physical-parent public-ID lookup) remain
+mandatory before activation; the source-shaped writer acceptance does not
+claim they are solved. Actual published predecessor binding remains Task3.

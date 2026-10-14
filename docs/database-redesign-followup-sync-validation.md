@@ -92,3 +92,46 @@ is 107 passed across source oracle, target declarations/writers and Email
 storage; Ruff and diff checks passed. Task 1B awaits fresh sequential SPEC
 then QUALITY acceptance. No migration, activation, release or provider action
 was performed.
+
+
+## Task1B independent acceptance
+
+Writer8b49248f initially failed two native comparisons: BEFORE typed-parent
+guards aborted rows that source INSERT OR IGNORE skipped, and separate SQL
+default reads split one row's timestamps. Repair9402291b moves child guards
+after row constraints, distinguishes real SQL NULL from an unresolved non-NULL
+parent through an unmatchable BLOB physical endpoint, and evaluates omitted
+defaults in one SQLite SELECT under the writer lock. Under FK-on the invalid
+endpoint cannot commit; it is not a fabricated business identity. Native
+ignored NOT NULL/CHECK/UNIQUE rows keep their sequence advancement; genuine
+parent FK failures remain non-ignorable. Ten RED comparisons became green.
+
+Sequential independent SPEC then QUALITY accepted9402291b. SPEC passed107
+selected checks,8,700 literal-source scalar UPDATE comparisons across150
+fields/both variants,18 all-nine allocator-order probes and18 all-nine
+SQLITE_FULL whole-caller rollback probes. All8 earlier SQL manifests remain
+byte-identical. QUALITY passed34 selected checks,62 independent CAS/transaction/
+storage assertions and32 signed physical-parent/FK assertions, with no exposed
+API success/state/transaction counterexample. These are overlapping evidence
+sets, not additive test coverage. Owned review fixtures were in memory or
+cleaned temporary directories; no provider/native/production work was used.
+
+The representation preserves error classes and caller behavior; it does not
+claim identical extended SQLite error diagnostics for all mixed-invalid inputs.
+The parent public-key BEFORE guard may report FK before another failed CHECK/
+NOT NULL on a combined invalid UPDATE. Both sides fail with unchanged facts
+and transaction state; the API has no UPDATE IGNORE mode and no relevant
+current caller depends on that diagnostic priority. No new policy or field
+was introduced to imitate a diagnostic subclass.
+
+The known native child-FK scan remains a mandatory Task6 gate. A second measured
+plan item is the physical-parent resolver: it filters the kind's public-ID
+values after a record_type seek, whereas adding the existing numeric-scope
+predicate enables the covering public integer-ID expression seek. Resolve both
+with source/target growth evidence before activation. No query budget is
+claimed from these writer-semantic checks.
+
+Task1A/1B storage is accepted only as disabled preparation over the reviewed
+Email29 actual/fresh scaffold. Source capture/pure forward/current-fact inverse
+are next. Actual published predecessor binding, constructors/callers, paired
+release, copy/old-code/native acceptance, CI and production remain required.
