@@ -39,6 +39,36 @@ query exactly: 12,508 IDs; SHA-256 of the comma-separated ascending IDs was
 Candidate key projection took 0.168 s on this copy, and `EXPLAIN QUERY PLAN`
 showed one `MATERIALIZE latest_task_attempt` node.
 
+The first actual-copy run above was an interactive diagnostic whose code was
+present only in the tool history. The inspectable adaptation is
+`scripts/verify_history_latest_query.py`, committed at
+`f9f8d92f51fcc8185af2456a06446a07a3e61384` (Git blob
+`fbb37e5ba871e32e345a4133f0367ced9ca52ce4`, file SHA-256
+`0b41125b594f47a947abf009cfe86f8bb2dc7beb50b84b4b2ee51ae59b895252`).
+It was run from that clean commit with `python -m scripts.verify_history_latest_query`
+against a fresh owned online copy. It returned 14,886 source Attempts,
+12,508 matching visible IDs, the same ID digest, one materialization,
+0.153 s candidate key time, and 15 matching complete old/new History rows.
+This fresh result is the reproducible complete-set proof; it did not rerun the
+slow original full query.
+
+The helper extracts the original anti-join text from the exact published
+`2773d6f43518b64c85f1d4bed9d520bd5563df07:app/store.py`. It reads every
+Attempt through `REPLY_ATTEMPT_COMMON_SQL`, joins its Agent run through
+`AGENT_RUN_SQL`, and joins the current reply task through `REPLY_TASK_SQL`.
+Those three projection modules are unchanged between published 2773 and the
+proof commit. For each source row the oracle rejects a stale run only when
+both run and task exist and both generation values are non-NULL and unequal;
+this matches SQL's false/unknown handling of the original `NOT EXISTS`.
+For the original newer-attempt exclusion, it considers all joined Agent runs
+without a generation filter and rejects an outer Attempt only when the same
+non-NULL task ID has a strictly greater public Attempt ID. A missing run or
+NULL task ID cannot make the SQL equality true. The comparison sorts all
+candidate and oracle public IDs numerically; the digest serializes those
+ascending decimal IDs with a literal comma between IDs, encodes the resulting
+string as UTF-8, and applies SHA-256. The script prints only aggregate counts,
+timing and this digest, never source row bodies or private IDs.
+
 For 15 selected visible Attempt IDs spanning early, middle and latest records,
 the published SQL and candidate SQL returned identical complete History rows
 (all fields), taking 0.018 s and 0.044 s respectively. The candidate full
