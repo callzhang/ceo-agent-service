@@ -104,6 +104,15 @@ def capture_reply_source(db: sqlite3.Connection) -> dict:
             "actions": actions}
 
 
+def capture_action_reply_schema(db: sqlite3.Connection) -> dict:
+    """Capture only the exact inverse declarations from a validated source."""
+    source = capture_reply_source(db)
+    return {'source_variant': source['variant'],
+            'target_variant': _target_variant(source['variant']),
+            'source_tables': {table: _source_declaration(db, table) for table in SOURCE_TABLES},
+            'source_actions': source['actions']}
+
+
 def _quote(name):
     return '"' + name.replace('"', '""') + '"'
 

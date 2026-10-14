@@ -1,5 +1,29 @@
 # Phase5E source refresh and execution boundary
 
+## Task 3B paired release unit checkpoint
+
+The unpublished Store18→Store19 release unit captures the exact validated
+published Attempt/Memory source declarations and the original marker value and
+raw timestamp in a read transaction. Its injected publisher must produce the
+finite sixteen-type target. Loaded verification checks the selected actual or
+fresh target declaration, unchanged FK diagnostics and SQLite quick check. On
+rollback, the existing current-fact inverse recreates the original declarations
+and marker in one transaction; an unchanged original marker is accepted only
+after validating the original source declarations and integrity again. The
+future-version factory route is literal and inactive while `app/store.py` remains
+Store18. The release state contains only four inverse metadata fields; it has
+no historical row snapshot or stale backup restore path.
+
+Focused unit checks passed for both source variants and tuple/Row connections,
+prior FK diagnostics, raw marker timestamp restoration, current results and
+Memory receipts, rebind and delete, repeat inverse/reforward, changed source and
+target refusal, atomic inverse failure, a publisher failure after target commit,
+and dependency/verification/restart/health/loaded deploy failure stages. These
+are injected-publisher tests. Actual Store19 constructor publication, converted
+writer/readers and their publication selectors, an old-code copy and final
+activation remain part of later integration. This checkpoint did not alter
+production or call a provider.
+
 ## Task 3A independent and online-copy acceptance
 
 The opt-in forward/current-fact inverse at `4f98d82e` passed independent SPEC
