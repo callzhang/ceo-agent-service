@@ -66,3 +66,20 @@ it still rejects changed provider results. A real failed delivery remains failed
 and is not relabeled as unknown. The first deploy was stopped while still waiting
 for quiet, before any production checkout change, so this recovery correction
 ships with the delivery-verification change.
+
+## Deployment checkpoint
+
+Code is pushed as411a4f36 plus recovery correctiondec96517. The normal formal
+deployment waited30 minutes and exited with “service did not become idle;
+nothing was changed” at2026-10-14T05:35:08Z. Production remains9a2a23fc;
+historical correction has not been applied live. A decision to interrupt in-flight
+work via the existing --skip-quiet-wait deployment option is pending. No manual
+launchctl/kill, production edits, sends or historical-state writes were performed.
+
+One additional old-code receipt appeared during the quiet wait. Its original
+send task also reports SUCCESS. The prepared correction set is now75 receipts:
+63 confirmed and12 unverified, with0 task/conversation identity mismatches in
+the63 positive queries. The74-row copy proof remains separate from this later
+positive readback. Task-owned temporary backup, copy and captured queries remain
+available for the authorized release; clean them after actual deployment,
+bounded live correction and readback have completed.
