@@ -9,7 +9,8 @@ import pytest
 
 from app.action_storage import (
     ACTION_PROJECTIONS, EMAIL_ACTION_PROJECTIONS, create_action_schema,
-    insert_action, _action_definitions,
+    insert_action, ALL_ACTION_TYPES_WITH_REPLY, _action_definitions,
+    _references_for,
     _encoded_sqlite_value,
 )
 from app.action_email_definitions import (
@@ -112,6 +113,49 @@ def test_email_generated_fields_are_null_for_older_actions_and_absent_email_fiel
                           "from actions where record_type='email_unsubscribe_cancellations'").fetchone() == (
                               "cancel", "{}", None, None,
                           )
+
+
+@pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+def test_email_rows_reject_all_unrelated_physical_parent_references(variant):
+    references = tuple(_references_for(ALL_ACTION_TYPES_WITH_REPLY))
+    assert set(references) == {
+        "task_id", "consumer_run_id", "audit_run_id", "predecessor_review_id",
+        "candidate_id", "review_id", "selection_id", "execution_id",
+        "first_agent_run_id", "agent_run_id", "sent_reply_id", "reply_task_id",
+    }
+    if variant == "fresh_memory_fk":
+        references += ("memory_attempt_ref",)
+    with closing(sqlite3.connect(":memory:")) as db:
+        # Checks must reject these fields even when FK enforcement is disabled.
+        db.execute("create table tasks(id integer primary key, record_type text)")
+        db.execute("create table runs(id integer primary key, record_type text)")
+        db.execute("create table email_classifications(id integer primary key)")
+        create_action_schema(db, include_reply=True, reply_variant=variant, include_email=True)
+        payload = json.dumps({"action_identity": "cancel", "decision_json": "{}"})
+        db.execute("insert into actions(record_type,legacy_key,payload_json) values(?,?,?)",
+                   ("email_unsubscribe_cancellations", "1", payload))
+        assert db.execute(EMAIL_ACTION_PROJECTIONS["email_unsubscribe_cancellations"]).fetchone() == (
+            "cancel", "{}",
+        )
+        for field in references:
+            candidate = json.dumps({"action_identity": f"cancel-{field}", "decision_json": "{}"})
+            with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+                db.execute(
+                    f"insert into actions(record_type,legacy_key,payload_json,{field}) values(?,?,?,?)",
+                    ("email_unsubscribe_cancellations", "2", candidate, 123),
+                )
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            db.execute("update actions set task_id=123 where record_type='email_unsubscribe_cancellations'")
+        assert db.execute("select count(*) from actions where record_type='email_unsubscribe_cancellations'").fetchone() == (1,)
+        db.execute("insert into tasks(id,record_type) values(123,'reply_tasks')")
+        db.commit()
+        db.execute("pragma foreign_keys=on")
+        assert db.execute("pragma foreign_keys").fetchone() == (1,)
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            db.execute("insert into actions(record_type,legacy_key,payload_json,task_id) values(?,?,?,123)",
+                       ("email_unsubscribe_cancellations", "3",
+                        json.dumps({"action_identity": "another", "decision_json": "{}"})))
+        db.execute("delete from tasks where id=123")
 
 
 def _insert(db, kind, values):

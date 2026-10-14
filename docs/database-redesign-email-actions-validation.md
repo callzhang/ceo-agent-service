@@ -58,3 +58,17 @@ After this correction, the selected target and older storage/reply files passed
 with 352 tests and 6 existing skips; scoped Ruff and diff checks passed.
 The six default-disabled manifests remained byte-identical to the pre-fix
 commit.
+
+Independent quality review found a second opt-in declaration gap: Email rows
+could populate physical parent-reference columns reserved for the older action
+types, creating unintended foreign-key blockers. A new regression was observed
+RED for both reply variants, then GREEN after one Email-only CHECK derived from
+the factory's existing reference columns. It covers all twelve shared physical
+references and, for the fresh variant, `memory_attempt_ref`. It checks INSERT
+and UPDATE rejection with FK enforcement off, then verifies a real task parent
+is not held by an invalid Email row with FK enforcement on. The valid Email
+cancellation fact still projects unchanged. This remains a local schema test;
+the external Email trigger and migration work is pending.
+After this correction, the focused and selected older storage/reply files
+passed with 354 tests and 6 existing skips. Scoped Ruff and diff checks passed;
+all six default-disabled action manifests remained byte-identical.

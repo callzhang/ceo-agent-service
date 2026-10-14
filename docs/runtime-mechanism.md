@@ -2906,3 +2906,6 @@ before an Email schema release. The candidate is local storage preparation,
 not a production Store/Email version.
 Generated Email columns are scoped to their exact source family membership;
 same-named payload members on an older action never appear as Email fields.
+An Email-only CHECK keeps the older task/run/action physical reference slots
+NULL, including the fresh variant's memory attempt reference; native Email
+source-key foreign keys remain the only Email parent relationships.

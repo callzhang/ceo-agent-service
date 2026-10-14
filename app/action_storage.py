@@ -366,6 +366,11 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         table += ",check(record_type<>'memory_write_events' or (" + " and ".join([f"{memory_parent} is not null"] + [f"memory_{field} is not null" for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id"]) + "))"
     if include_email:
         table += "," + ",".join((*email_checks, *email_fks))
+        unused_refs = tuple(references) + (("memory_attempt_ref",) if reply_variant == "fresh_memory_fk" else ())
+        email_scope = ",".join(repr(kind) for kind in EMAIL_TYPES_ORDER)
+        table += ",check(record_type not in (" + email_scope + ") or (" + " and ".join(
+            f"{field} is null" for field in unused_refs
+        ) + "))"
     table += ")"
     numeric_scope = " where record_type<>'external_action_results'" if include_receipts else ""
     if include_postfix:

@@ -2113,3 +2113,7 @@ Each generated Email source column returns NULL for all older action types and
 for Email kinds that lack that original field; its finite CASE reads only the
 record types owning the field. The operation-parent discriminator uses the
 approved `email_operation_parent_type` name.
+Email records also require the shared physical task/run/action reference columns
+to remain NULL. The fresh reply variant includes `memory_attempt_ref` in that
+check. Original Email relationships use their separately declared source-key
+foreign keys.
