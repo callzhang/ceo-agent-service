@@ -885,3 +885,21 @@ and durable validators, current fresh seeds, F paired constructors/coordinator/
 subprocess and target allocation, external Task5 consumers and copy/native/
 publication gates remain open. Source Store19/Email51/defaults remain selected;
 the isolated partial branch is not default-runtime-ready.
+
+
+### Clean-gate published-main reconciliation after D
+
+After D acceptance, normal mergeee4a0075 preserves published main4eb7abb8
+(including startup receipt-index use834b8348, History666f4078 and its readback).
+Only appended architecture/runtime/claim documentation conflicted; both sides
+were retained. Incoming code does not change EmailStore, action storage/source/
+release declarations or either neutral current Email factory. D runtime and
+all accepted Email declaration evidence remain bound unchanged; this merge is
+not recast as a new actual-copy or native proof.
+
+Eight focused merged checks passed in1.71s, exit0: History pagination and the
+receipt-index, failed-current-run and bounded-batch reconciliation tests. The
+owned temporary root was cleaned and absence verified. No source/target markers,
+constructor/default activation, providers or production database changed.
+E target validators/current seeds is the next implementation; F and later gates
+remain open. Final publication still requires immediate-predecessor binding.
