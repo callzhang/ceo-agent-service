@@ -1995,3 +1995,7 @@ the added explicit public-key/error guard ran `1 passed in 1.72s`, exit 0.
 Owned `/tmp/email13-5b8-*` roots were deleted and verified absent after each
 run. Historical source tests, shared native-rebuild helpers and remaining
 current fixtures are still deferred; Task5 and publication are not complete.
+
+### Task5B8 independent acceptance, 2026-10-14
+
+Root accepts11aed8276ef3edb58ea6c5d1adf754364c866e89 over971f6dfd9b2d9555127876826b08243074304dfb. Fresh SPEC independently8pass5.39s/lint/diff/otherASTsame/ownedtempabsent, actuallineage EXPLAIN and160VM at both0and2000unrelated. Subsequent fresh QUALITY confirms complete publiccomposite versus sourceROWID paths, original33effects values/zero decode, explicitretry cleanup, actual query-only VM capture, genuineINSERTORREPLACE with beforeinsertimmutabletrigger/exacterror and unchangedprojected/physicalrow/id/count. It did not repeat sufficient execution or create temps. Both PASS and frozen cleanHEAD. Remaining oldsource/historical/bootstrap and any final current omissions must be inventoried before broad gates; latest-copy/native/CI/publication/full10+1 remain open.
