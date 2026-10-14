@@ -2384,3 +2384,23 @@ assertions. Their exact selectors first failed four times on removed physical
 tables, then passed four times against Store20/Email52. No runtime, schema,
 provider, production, or historical-test behavior changed. This is one bounded
 Task7 test-debt unit; remaining Task7/CI/publication gates are open.
+
+### Task7 current Email action fixture writes
+
+Seven existing functions (eight parametrized behavior cases) now create Email
+actions and attempt ledger rows through the finite writers. The queue fixtures
+retain every supplied source field, including stale plan references and retry
+timestamps. The account-change count retains its retriable predicate over the
+finite source projection. The read-only preview still attempts to update every
+source action and requires SQLite's `readonly` error. The drift case retains
+foreign keys off, its immediate transaction and orphan source keys; its second
+source-ROWID counter update still raises `attempt_count_drift` before rollback.
+
+The exact eight selectors first failed on removed tables (8 failed, 14.79s).
+After changing the writes, an intermediate run exposed that attempt ledger rows
+use `insert_action`, not the rowid-family `insert_email_action` (7 passed, 1
+failed). The corrected selectors passed 8/8 in 4.45s. Scoped Ruff and diff
+checks passed; an AST comparison found every nonselected function/class and all
+selected assertions unchanged. No runtime, schema, provider, production, CI,
+push or deployment was part of this unit. The rest of Task7 and full10+1
+redesign remain open.

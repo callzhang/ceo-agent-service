@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 
+from app.action_storage import email_action_projection, insert_action, insert_email_action, update_email_action
 from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 
 from app.email_store import (
@@ -722,25 +723,30 @@ def test_attempt_count_drift_is_refused_at_the_write(tmp_path):
     with sqlite3.connect(path) as db:
         db.execute("pragma foreign_keys=off")
         db.execute("begin immediate")
-        db.execute(
-            "insert into email_actions (action_id, action_plan_id,"
-            " classification_id, account_id, action_type, parameters_json,"
-            " config_version, status, attempt_count, created_at, updated_at)"
-            " values ('a:1', 'plan-1', 1, 'account', 'move', '{}', 'c',"
-            " 'processing', 0, 'now', 'now')"
-        )
-        db.execute(
-            "insert into email_action_attempts (action_id, attempt_number, status,"
-            " provider_operation, provider_target, provider_result_id, error,"
-            " started_at, finished_at)"
-            " values ('a:1', 1, 'failed', 'move', 't', '', 'boom', 'now', 'now')"
-        )
-        db.execute(
-            "update email_actions set attempt_count=1, updated_at='later'"
-            " where action_id='a:1'"
-        )
+        insert_email_action(db, "email_actions", {
+            "action_id": "a:1", "action_plan_id": "plan-1",
+            "classification_id": 1, "account_id": "account",
+            "action_type": "move", "parameters_json": "{}",
+            "config_version": "c", "status": "processing",
+            "attempt_count": 0, "created_at": "now", "updated_at": "now",
+        })
+        insert_action(db, "email_action_attempts", {
+            "action_id": "a:1", "attempt_number": 1,
+            "status": "failed", "provider_operation": "move",
+            "provider_target": "t", "provider_result_id": "",
+            "error": "boom", "started_at": "now", "finished_at": "now",
+        })
+        action_rows = db.execute(
+            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
+            "where action_id='a:1'"
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row[0], {
+                "attempt_count": 1, "updated_at": "later",
+            })
         with pytest.raises(sqlite3.IntegrityError, match="attempt_count_drift"):
-            db.execute(
-                "update email_actions set attempt_count=0 where action_id='a:1'"
-            )
+            for action_row in action_rows:
+                update_email_action(db, "email_actions", action_row[0], {
+                    "attempt_count": 0,
+                })
         db.execute("rollback")

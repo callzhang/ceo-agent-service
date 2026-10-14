@@ -107,7 +107,7 @@ def test_account_changed_after_release_cannot_claim(tmp_path, claim_exact):
     from app.email_store import _failed_action_retriable_sql
     with store._connect() as db:
         count = db.execute(
-            "select count(*) from email_actions a where a.action_id=? and "
+            f"select count(*) from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) a where a.action_id=? and "
             + _failed_action_retriable_sql("a"), (action_id,),
         ).fetchone()[0]
     assert count == 0
@@ -274,7 +274,13 @@ def test_read_only_preview_never_initializes_or_writes(tmp_path: Path, monkeypat
     )
     with pytest.raises(sqlite3.OperationalError, match="readonly"):
         with preview._connect() as db:
-            db.execute("update email_actions set next_attempt_at='changed'")
+            action_rows = db.execute(
+                f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})"
+            ).fetchall()
+            for action_row in action_rows:
+                update_email_action(db, "email_actions", action_row["rowid"], {
+                    "next_attempt_at": "changed",
+                })
 
 
 @pytest.mark.parametrize("change", [{"action_plan_id": "changed-plan"}, {"config_version": "changed-config"}, {"parameters": {"target_folder": "Other"}}])

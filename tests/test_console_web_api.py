@@ -1,4 +1,4 @@
-from app.action_storage import update_action
+from app.action_storage import insert_email_action, update_action
 import sqlite3
 import json
 import os
@@ -1541,29 +1541,20 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
         ),
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_actions (
-                action_id, action_plan_id, classification_id, account_id,
-                action_type, parameters_json, config_version, status,
-                attempt_count, error, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "email-action:test-label",
-                "email-plan:test",
-                1,
-                "account-a",
-                "label",
-                "{}",
-                "email-config:test",
-                "pending",
-                0,
-                "",
-                "2026-09-05T00:00:00+00:00",
-                "2026-09-05T00:00:00+00:00",
-            ),
-        )
+        insert_email_action(db, "email_actions", {
+            "action_id": "email-action:test-label",
+            "action_plan_id": "email-plan:test",
+            "classification_id": 1,
+            "account_id": "account-a",
+            "action_type": "label",
+            "parameters_json": "{}",
+            "config_version": "email-config:test",
+            "status": "pending",
+            "attempt_count": 0,
+            "error": "",
+            "created_at": "2026-09-05T00:00:00+00:00",
+            "updated_at": "2026-09-05T00:00:00+00:00",
+        })
     store.ensure_reply_task(
         channel="email",
         conversation_id="email:account-a:thread-a",
@@ -1689,20 +1680,21 @@ def test_worker_status_counts_retryable_email_action_separately_from_failed(
     )
     store = AutoReplyStore(database)
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_actions (
-                action_id, action_plan_id, classification_id, account_id,
-                action_type, parameters_json, config_version, status,
-                attempt_count, next_attempt_at, error, created_at, updated_at
-            ) values (
-                'email-action:retryable', 'email-plan:current', 1, 'account-a',
-                'mark_read', '{}', 'config-a', 'failed', 1,
-                '2026-09-05T01:00:00+00:00', 'imap_timeout',
-                '2026-09-05T00:00:00+00:00', '2026-09-05T00:30:00+00:00'
-            )
-            """
-        )
+        insert_email_action(db, "email_actions", {
+            "action_id": "email-action:retryable",
+            "action_plan_id": "email-plan:current",
+            "classification_id": 1,
+            "account_id": "account-a",
+            "action_type": "mark_read",
+            "parameters_json": "{}",
+            "config_version": "config-a",
+            "status": "failed",
+            "attempt_count": 1,
+            "next_attempt_at": "2026-09-05T01:00:00+00:00",
+            "error": "imap_timeout",
+            "created_at": "2026-09-05T00:00:00+00:00",
+            "updated_at": "2026-09-05T00:30:00+00:00",
+        })
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
@@ -1736,48 +1728,36 @@ def test_worker_status_excludes_actions_from_superseded_email_action_plan(
     )
     store = AutoReplyStore(database)
     with sqlite3.connect(database) as db:
-        db.executemany(
-            """
-            insert into email_actions (
-                action_id, action_plan_id, classification_id, account_id,
-                action_type, parameters_json, config_version, status,
-                attempt_count, next_attempt_at, error, created_at, updated_at
-            ) values (?, ?, 1, 'account-a', ?, '{}', 'config-a', ?, ?, ?, ?,
-                      '2026-09-05T00:00:00+00:00', ?)
-            """,
+        for action_id, action_plan_id, action_type, status, attempt_count, next_attempt_at, error, updated_at in (
             (
-                (
-                    "email-action:current",
-                    "email-plan:current",
-                    "mark_read",
-                    "pending",
-                    0,
-                    "",
-                    "",
-                    "2026-09-05T00:30:00+00:00",
-                ),
-                (
-                    "email-action:stale-pending",
-                    "email-plan:stale",
-                    "label",
-                    "pending",
-                    0,
-                    "",
-                    "",
-                    "2026-09-05T00:20:00+00:00",
-                ),
-                (
-                    "email-action:stale-failed",
-                    "email-plan:stale",
-                    "trash",
-                    "failed",
-                    1,
-                    "2026-09-05T01:00:00+00:00",
-                    "imap_timeout",
-                    "2026-09-05T00:25:00+00:00",
-                ),
+                "email-action:current", "email-plan:current", "mark_read",
+                "pending", 0, "", "", "2026-09-05T00:30:00+00:00",
             ),
-        )
+            (
+                "email-action:stale-pending", "email-plan:stale", "label",
+                "pending", 0, "", "", "2026-09-05T00:20:00+00:00",
+            ),
+            (
+                "email-action:stale-failed", "email-plan:stale", "trash",
+                "failed", 1, "2026-09-05T01:00:00+00:00", "imap_timeout",
+                "2026-09-05T00:25:00+00:00",
+            ),
+        ):
+            insert_email_action(db, "email_actions", {
+                "action_id": action_id,
+                "action_plan_id": action_plan_id,
+                "classification_id": 1,
+                "account_id": "account-a",
+                "action_type": action_type,
+                "parameters_json": "{}",
+                "config_version": "config-a",
+                "status": status,
+                "attempt_count": attempt_count,
+                "next_attempt_at": next_attempt_at,
+                "error": error,
+                "created_at": "2026-09-05T00:00:00+00:00",
+                "updated_at": updated_at,
+            })
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
@@ -1812,19 +1792,21 @@ def test_worker_status_excludes_current_plan_until_classification_is_processed(
     )
     store = AutoReplyStore(database)
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_actions (
-                action_id, action_plan_id, classification_id, account_id,
-                action_type, parameters_json, config_version, status,
-                attempt_count, next_attempt_at, error, created_at, updated_at
-            ) values (
-                'email-action:not-ready', 'email-plan:current', 1, 'account-a',
-                'mark_read', '{}', 'config-a', 'pending', 0, '', '',
-                '2026-09-05T00:00:00+00:00', '2026-09-05T00:30:00+00:00'
-            )
-            """
-        )
+        insert_email_action(db, "email_actions", {
+            "action_id": "email-action:not-ready",
+            "action_plan_id": "email-plan:current",
+            "classification_id": 1,
+            "account_id": "account-a",
+            "action_type": "mark_read",
+            "parameters_json": "{}",
+            "config_version": "config-a",
+            "status": "pending",
+            "attempt_count": 0,
+            "next_attempt_at": "",
+            "error": "",
+            "created_at": "2026-09-05T00:00:00+00:00",
+            "updated_at": "2026-09-05T00:30:00+00:00",
+        })
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
