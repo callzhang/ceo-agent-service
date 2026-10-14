@@ -3234,3 +3234,15 @@ separate-table metadata path used `EmailPersistenceCorruption` and
 `email_persistence_corruption`; this diagnostic difference follows the physical
 owner of the schema. Neither path repairs the malformed structure or adds a
 retry, recovery or authorization rule.
+
+The Store20/Email52 pair selector runs before the Email retained-schema
+validator. Partial malformed/future Email ledger values and a complete current
+pair with a future Email ledger are rejected as
+`sqlite3.IntegrityError("unsupported or mixed Store/Email source schema")`;
+a ledger lacking `version` raises `sqlite3.OperationalError("no such column:
+version")`. These source-selection reads do not change schema, ledger or
+Store marker facts, schema cookie or database bytes and do not open a repair
+or automatic retry path. Current retained Email business-table identifiers
+remain case-insensitive under the existing validator; their quoted forms use
+SQLite's normal double-quote, backtick and bracket syntax. Shared `actions`
+metadata and the pair markers are outside that retained Email owner scope.

@@ -2022,7 +2022,8 @@ def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) ->
         required_identifiers.update(columns)
     required_identifiers.update(email_store_module._REQUIRED_INDEXES)
     required_identifiers.update(email_store_module._REQUIRED_TRIGGER_SQL)
-    replacements = {
+    assert len(required_identifiers) == 265
+    all_replacements = {
         identifier: (
             identifier.upper()
             if index % 2 == 0
@@ -2031,29 +2032,81 @@ def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) ->
         for index, identifier in enumerate(sorted(required_identifiers))
     }
     quote_styles = (('"', '"'), ("`", "`"), ("[", "]"))
-    sql_replacements = {
+    all_sql_replacements = {
         identifier: (
             f"{quote_styles[index % len(quote_styles)][0]}{replacement}"
             f"{quote_styles[index % len(quote_styles)][1]}"
             if quote
             else replacement
         )
-        for index, (identifier, replacement) in enumerate(replacements.items())
+        for index, (identifier, replacement) in enumerate(all_replacements.items())
     }
-
-    def rewrite_sql(value: str) -> str:
-        return " ".join(
-            sql_replacements.get(token, token)
-            for token in email_store_module._schema_sql_tokens(value)
-        )
 
     with sqlite3.connect(database) as db:
         schema_version = db.execute("pragma schema_version").fetchone()[0]
         rows = db.execute(
-            "select rowid, name, tbl_name, sql from sqlite_master"
+            "select rowid, type, name, tbl_name, sql from sqlite_master"
         ).fetchall()
+        retained_tables = {
+            name
+            for _, object_type, name, _, _ in rows
+            if object_type == "table"
+            and name.startswith("email_")
+            and name != "email_schema_migrations"
+            and name not in SOURCE_TABLES
+        }
+        assert len(retained_tables) == 19
+        selected = [row for row in rows if row[3] in retained_tables]
+        assert {
+            kind: sum(row[1] == kind for row in selected)
+            for kind in ("table", "index", "trigger")
+        } == {
+            "table": 19,
+            "index": 28,
+            "trigger": 32,
+        }
+        assert sum(row[4] is not None for row in selected) == 61
+        owner_identifiers = set(retained_tables)
+        for table in retained_tables:
+            owner_identifiers.update(
+                row[1] for row in db.execute(f"pragma table_xinfo({json.dumps(table)})")
+            )
+        owner_identifiers.update(
+            name
+            for _, object_type, name, _, sql in selected
+            if object_type in {"index", "trigger"} and sql is not None
+        )
+        replacements = {
+            name: value
+            for name, value in all_replacements.items()
+            if name in owner_identifiers
+        }
+        sql_replacements = {
+            name: value
+            for name, value in all_sql_replacements.items()
+            if name in owner_identifiers
+        }
+        assert len(replacements) == 190
+        assert {
+            kind: sum(row[1] == kind and row[2] in replacements for row in selected)
+            for kind in ("table", "index", "trigger")
+        } == {"table": 16, "index": 9, "trigger": 32}
+        if quote:
+            assert all(
+                any(value.startswith(opening) for value in sql_replacements.values())
+                for opening, _ in quote_styles
+            )
+
+        def rewrite_sql(value: str) -> str:
+            return " ".join(
+                sql_replacements.get(token, token)
+                for token in email_store_module._schema_sql_tokens(value)
+            )
+
+        selected_rowids = {row[0] for row in selected}
+        protected_before = [row for row in rows if row[0] not in selected_rowids]
         db.execute("pragma writable_schema = on")
-        for rowid, name, table_name, sql in rows:
+        for rowid, _, name, table_name, sql in selected:
             db.execute(
                 "update sqlite_master set name=?, tbl_name=?, sql=? where rowid=?",
                 (
@@ -2066,6 +2119,13 @@ def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) ->
         db.execute(f"pragma schema_version = {schema_version + 1}")
         db.commit()
         db.execute("pragma writable_schema = off")
+
+    with sqlite3.connect(database) as db:
+        after = db.execute(
+            "select rowid, type, name, tbl_name, sql from sqlite_master"
+        ).fetchall()
+        assert [row for row in after if row[0] not in selected_rowids] == protected_before
+        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
 
 
 def _corrupt_schema_object_name(
@@ -4138,6 +4198,7 @@ def test_current_schema_accepts_case_insensitive_required_bare_identifiers(
     _rewrite_required_identifier_case(database)
     with sqlite3.connect(database) as db:
         schema_version_before = db.execute("pragma schema_version").fetchone()[0]
+    bytes_before = sha256(database.read_bytes()).hexdigest()
 
     statements: list[str] = []
     original_open_connection = EmailStore._open_connection
@@ -4171,15 +4232,22 @@ def test_current_schema_accepts_case_insensitive_required_bare_identifiers(
         )
         for statement in normalized
     )
+    assert sha256(database.read_bytes()).hexdigest() == bytes_before
+    assert not Path(f"{database}-wal").exists()
 
 
 def test_current_schema_accepts_quoted_required_identifiers(tmp_path: Path):
     database = tmp_path / "quoted-required-identifiers.sqlite3"
     EmailStore(database)
     gc.collect()
+    with sqlite3.connect(database) as db:
+        assert db.execute("pragma journal_mode = delete").fetchone()[0] == "delete"
     _rewrite_required_identifier_case(database, quote=True)
+    bytes_before = sha256(database.read_bytes()).hexdigest()
 
     EmailStore(database)
+    assert sha256(database.read_bytes()).hexdigest() == bytes_before
+    assert not Path(f"{database}-wal").exists()
 
 
 def test_schema_tokenizer_canonicalizes_quoted_identifiers_not_string_literals():
@@ -4949,8 +5017,29 @@ def test_malformed_schema_version_is_domain_corruption(tmp_path: Path):
             """
         )
 
-    with pytest.raises(EmailPersistenceCorruption, match="schema version"):
+    with sqlite3.connect(database) as db:
+        schema_before = db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall()
+        facts_before = db.execute("select * from email_schema_migrations").fetchall()
+        cookie_before = db.execute("pragma schema_version").fetchone()[0]
+    bytes_before = sha256(database.read_bytes()).hexdigest()
+
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="unsupported or mixed Store/Email source schema",
+    ):
         EmailStore(database)
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall() == schema_before
+        assert db.execute(
+            "select * from email_schema_migrations"
+        ).fetchall() == facts_before
+        assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
+    assert sha256(database.read_bytes()).hexdigest() == bytes_before
+    assert not Path(f"{database}-wal").exists()
 
 
 def test_schema_version_table_missing_version_column_is_domain_corruption(
@@ -4971,11 +5060,26 @@ def test_schema_version_table_missing_version_column_is_domain_corruption(
             """
         )
 
-    with pytest.raises(
-        EmailPersistenceCorruption,
-        match="email_schema_migrations.*version",
-    ):
+    with sqlite3.connect(database) as db:
+        schema_before = db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall()
+        facts_before = db.execute("select * from email_schema_migrations").fetchall()
+        cookie_before = db.execute("pragma schema_version").fetchone()[0]
+    bytes_before = sha256(database.read_bytes()).hexdigest()
+
+    with pytest.raises(sqlite3.OperationalError, match="no such column: version"):
         EmailStore(database)
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall() == schema_before
+        assert db.execute(
+            "select * from email_schema_migrations"
+        ).fetchall() == facts_before
+        assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
+    assert sha256(database.read_bytes()).hexdigest() == bytes_before
+    assert not Path(f"{database}-wal").exists()
 
 
 def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
@@ -5303,32 +5407,76 @@ def test_v2_upgrade_does_not_reapply_prototype_classification_backfill(
     assert _fetchall(database, "select * from email_actions") == []
 
 
+@pytest.mark.parametrize("full_pair", (False, True))
 def test_future_email_schema_version_fails_closed_before_schema_changes(
     tmp_path: Path,
+    full_pair: bool,
 ):
     database = tmp_path / "future.sqlite3"
     future_version = email_store_module.EMAIL_SCHEMA_VERSION + 1
+    if full_pair:
+        EmailStore(database)
+        gc.collect()
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            create table email_schema_migrations (
-                version integer primary key,
-                applied_at text not null
+        assert db.execute("pragma journal_mode = delete").fetchone()[0] == "delete"
+        if full_pair:
+            db.execute(
+                "update email_schema_migrations set version=? where version=?",
+                (future_version, email_store_module.EMAIL_SCHEMA_VERSION),
             )
-            """
+        else:
+            db.execute(
+                """
+                create table email_schema_migrations (
+                    version integer primary key,
+                    applied_at text not null
+                )
+                """
+            )
+            db.execute(
+                "insert into email_schema_migrations values (?, ?)",
+                (future_version, "2026-08-29T16:00:00+00:00"),
+            )
+    with sqlite3.connect(database) as db:
+        schema_before = db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall()
+        facts_before = db.execute("select * from email_schema_migrations").fetchall()
+        marker_before = (
+            db.execute(
+                "select value, updated_at from service_state where key='store_schema_version'"
+            ).fetchone()
+            if full_pair else None
         )
-        db.execute(
-            "insert into email_schema_migrations values (?, ?)",
-            (future_version, "2026-08-29T16:00:00+00:00"),
-        )
+        cookie_before = db.execute("pragma schema_version").fetchone()[0]
+    bytes_before = sha256(database.read_bytes()).hexdigest()
 
-    with pytest.raises(EmailPersistenceCorruption, match="newer schema version"):
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="unsupported or mixed Store/Email source schema",
+    ):
         EmailStore(database)
 
-    assert not _fetchall(
-        database,
-        "select name from sqlite_master where type='table' and name='email_classifications'",
-    )
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall() == schema_before
+        assert db.execute(
+            "select * from email_schema_migrations"
+        ).fetchall() == facts_before
+        if full_pair:
+            assert db.execute(
+                "select value, updated_at from service_state where key='store_schema_version'"
+            ).fetchone() == marker_before
+        assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
+    assert sha256(database.read_bytes()).hexdigest() == bytes_before
+    assert not Path(f"{database}-wal").exists()
+
+    if not full_pair:
+        assert not _fetchall(
+            database,
+            "select name from sqlite_master where type='table' and name='email_classifications'",
+        )
 
 
 def test_prototype_plan_migration_backfills_plan_and_direct_actions(tmp_path: Path):

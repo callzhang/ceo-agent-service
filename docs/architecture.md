@@ -2468,3 +2468,13 @@ Email Web availability mapping reports `sqlite_integrity_error`; the old Email51
 constructor checked its separate native tables and reported
 `email_persistence_corruption`. Both remain unavailable, with no schema repair,
 automatic retry or change to audit, recovery or authorization policy.
+
+The current Store20/Email52 constructor selects the paired schema before
+Email's retained-table validation. A partial database with a malformed or
+future Email ledger therefore raises SQLite `IntegrityError` for an unsupported
+or mixed Store/Email source; a ledger missing its `version` column raises
+SQLite `OperationalError` for that column. The same paired refusal applies to
+an otherwise complete current pair whose Email ledger is advanced beyond52.
+These read-only refusals preserve schema, marker and business facts, schema
+cookie and database bytes. This diagnostic ordering follows the existing
+paired selector; it adds no repair or recovery path.

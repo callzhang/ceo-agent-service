@@ -2030,3 +2030,35 @@ latest-copy/native, CI and publication remain open.
 ### Task5B9 independent acceptance, 2026-10-14
 
 Root accepts248d0d6bd5a31e14cfb2de05873140832930195a overe06af5b9d0a88bb101da9ba6544fc8cb5a751aaa. Fresh SPEC independently collected10cases and10pass2.70s/lint/diff/nonselectedASTsame/ownedtempabsent. Subsequent fresh QUALITY confirms exact fresh20emailtables/29kinds/retiredabsence, exactpartialindexes and no repair, complete sourceROWIDdeletions and originalpointer/forgedclaim fields, precisefamily/status/identityterminalfault and receipt-step atomicrollback/subsequentsuccess/bindingconflict. No repeated sufficient tests or temps. Both PASS and frozen cleanHEAD. Historical-source fixture closure and explicit CIoldref availability need resolution; remaining current/matrix/latest-copy/native/CI/publication/full10+1 acceptance remains open.
+
+### Task5B11 current identifier and paired-ledger tests (unpublished)
+
+Five current `test_email_store.py` symbols collect six cases after adding a
+complete Store20/Email52 pair with a future Email ledger. The original five
+cases ran RED `5 failed` (exit 1): two rewrote shared `actions` SQL and broke
+its `1e999` numeric literal; the three ledger tests expected the retired
+Email-only constructor diagnostics. The added full-pair future case also ran
+against its old assertion in owned temporary code and failed with the actual
+paired `sqlite3.IntegrityError` (exit 1). The adapted six cases ran GREEN
+`6 passed in 2.18s` (exit 0); scoped Ruff/diff checks passed.
+
+The identifier fixture keeps the original 265-name required set, its sorted
+case alternation and all three quote assignments, but applies its 190-name
+intersection only to the actual 19 retained Email business table owners,
+28 indexes and 32 triggers. It checks the 79 selected schema objects (61 SQL
+definitions), exact required object-name coverage, SQLite reload/integrity,
+and every unselected schema row unchanged. Read-only `EmailStore` reopen leaves
+database bytes unchanged and creates no WAL. The genuine `0441cf15` source
+ran both original positive tests (`2 passed`, exit 0); its partial unique
+index name was outside the original required set and remained unchanged.
+An earlier prototype that changed all 199 actual owner identifiers instead
+of the original required set exposed an existing case-sensitive lookup for
+that index; the bounded test adaptation does not expand that coverage or
+change runtime validation.
+
+The malformed, missing-column and partial/full future-ledger cases assert
+their exact present SQLite error classes and messages, plus unchanged schema,
+ledger and Store marker facts, schema cookie, database bytes and no WAL. No
+runtime, source/H wrapper, CI, provider, native CLI or production change is
+part of this test unit. Historical-source integration and remaining program
+gates remain open.
