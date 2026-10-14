@@ -2450,3 +2450,21 @@ plus the selected Store retry case passed 27/27. Scoped Ruff, diff and AST
 checks passed: unselected functions/classes and selected assertions did not
 change. This is local fixture coverage only; no runtime, provider, CI,
 production, push or deployment work is claimed.
+
+### Task7 shared current fixtures: independent acceptance, 2026-10-14
+
+Root accepts f6046bf2 after fresh sequential SPEC and QUALITY PASS. Review
+confirmed identical original assertions in all three files, unchanged unselected
+functions, exact History values/defaults and source ROWID allocation inside the
+original transaction. The minimal snapshot exposes the actual 18 fields, keeps
+all seven original rows and its one-query assertion, and remains deliberately
+permissive query coverage. Store retries use the current finite projections
+without artificial legacy tables or extra Email initialization.
+
+The existing baseline4fail/5pass, focused9pass and combined27pass evidence was
+sufficient; neither reviewer identified a concrete gap warranting a repeat.
+Scoped diff checks passed and the reviewed tree was clean. Root also corrected
+stale History evidence sentences in architecture/runtime documentation to reflect
+the already completed Task6 whole-copy and isolated UI acceptance. No runtime,
+schema, provider or production change occurred. Historical owners, other shared
+fixtures, CI/publication and full10+1 remain open.

@@ -3135,8 +3135,11 @@ the selected page is hydrated through the original full projection in the same
 read snapshot. Two later/superseding reply-attempt status checks share one
 per-trigger maximum terminal public Attempt ID, preserving the same eight
 terminal statuses and strict newer-ID comparison. The failed-only candidate path is unchanged. This candidate has
-focused local tests only; broad History text search still has an unbounded
-projection cost and has not passed whole-copy or live UI acceptance.
+focused local tests and Task6 whole-copy acceptance. Plain, matching and
+no-match public reads completed in1.7845s,0.9163s and1.3001s respectively;
+isolated read-only UI clicks also passed. Search still evaluates its original
+text predicates; this evidence does not promise a general latency bound or
+production acceptance. See the Email-actions native-copy acceptance JSON.
 
 
 ### Unselected current Email fresh seeds (Task4E1)

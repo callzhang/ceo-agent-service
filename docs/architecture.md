@@ -5,7 +5,9 @@ each selected source before the combined page sort, applies existing filters
 within those source branches, and hydrates only the selected page in one read
 snapshot. Reply Attempt recovery and supersession checks share the maximum
 terminal public Attempt ID per trigger with their original status rules. This is a read-path
-change only; its broad search and live UI performance remain unverified.
+change only. Task6 verified whole-copy plain, matching and no-match public
+History reads and isolated read-only UI clicks; this candidate is not deployed.
+The aggregate evidence is in the Email-actions native-copy acceptance JSON.
 
 Follow-up/Todo-sync action storage Tasks 1A/1B are an unselected candidate. With
 the explicit disabled-by-default `include_followup_sync` flag on the reviewed
