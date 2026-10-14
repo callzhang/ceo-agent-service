@@ -96,3 +96,15 @@ process: the performance regression failed at479,000 VM steps against100,000,
 while the candidate passed. No reviewer repeated the actual-copy proof or
 accessed production. This accepts the scoped query and evidence; exact-head CI,
 merge/deploy and actual browser/operational acceptance remain pending.
+
+
+## Current-main reconciliation
+
+Before publication, preserved current main04510bfc (including native-input
+release3a2dc414 and its later readback documents) by normal merge. Only the
+append area of agent claims conflicted; both ownership blocks were retained.
+The incoming change modifies runtime routing, task citation feedback and
+lossless inline schema formatting, not Store/Email/action/run/task projection
+modules or this query/proof helper. Earlier exact SQL/copy evidence retains
+its original binding; it is not recast as a new actual-copy run. Replacement
+Quality CI must pass the combined head before merge/deploy.

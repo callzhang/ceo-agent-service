@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "scope": "Actual configured Claude OAuth Task cold/risk; owned anonymous data and Read-only/MCP-free diagnostic. New original native ranges, no historic range rewrite. Earlier cold evidence failure retained.",
+  "turns": [
+    {
+      "phase": "cold",
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "session_id": "34ad18af-7c03-41bd-b510-c62dd3e5c35a",
+      "range": [
+        0,
+        28
+      ],
+      "native_sha256_at_capture": "f1597ab42c5a3c6d92a24889ac19bae0ed3cae9888215b7c9c0d468e6f3e7667",
+      "native_lines_at_capture": 28,
+      "native_input_matches_submission": true,
+      "service_input_chars": 61614,
+      "tool_calls": [
+        {
+          "line": 15,
+          "name": "Read"
+        },
+        {
+          "line": 23,
+          "name": "Read"
+        }
+      ],
+      "source_projections": [
+        {
+          "line": 16,
+          "chars": 26273,
+          "matches_full_source": true
+        },
+        {
+          "line": 24,
+          "chars": 3,
+          "matches_full_source": false
+        }
+      ],
+      "input_status": "done",
+      "business_counts": {
+        "projects": 1,
+        "tasks": 0,
+        "attention": 0,
+        "quick_check": "ok"
+      }
+    },
+    {
+      "phase": "risk",
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "session_id": "34ad18af-7c03-41bd-b510-c62dd3e5c35a",
+      "range": [
+        28,
+        45
+      ],
+      "native_sha256_at_capture": "d7cc2e758b379bee10ddbd4bca2119128e8390cb51102190907c09c08fba20ac",
+      "native_lines_at_capture": 45,
+      "native_input_matches_submission": true,
+      "service_input_chars": 59578,
+      "tool_calls": [
+        {
+          "line": 37,
+          "name": "Read"
+        }
+      ],
+      "source_projections": [
+        {
+          "line": 38,
+          "chars": 2272,
+          "matches_full_source": false
+        }
+      ],
+      "input_status": "done",
+      "business_counts": {
+        "projects": 1,
+        "tasks": 1,
+        "attention": 1,
+        "quick_check": "ok"
+      }
+    }
+  ],
+  "same_session": true,
+  "earlier_failure": {
+    "session_id": "c57dbf3f-a567-480a-a773-08eb1c77f31a",
+    "actual_native_user_lines": [
+      2,
+      27,
+      49
+    ],
+    "recorded_ranges": [
+      [
+        0,
+        33
+      ],
+      [
+        0,
+        30
+      ],
+      [
+        0,
+        34
+      ]
+    ],
+    "business_failure": "Source document_id used as source_ref; full Skill delivered. Citation root cause unconfirmed; do not infer range correction fixed model judgment."
+  }
+}
