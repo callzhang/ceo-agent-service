@@ -341,3 +341,32 @@ reconstructed and checked. Actual constructor orders, fresh default seeds,
 paired markers/inverse, DAO/callers and publication remain pending. History
 query repairPR86 has separate completed scoped reviews and external CI in
 progress; neither preparation nor CI progress changes the production table count.
+
+
+### 2026-10-14 Email13 Task4A/4B preparation acceptance
+
+Unselected paired protocol2fead6ee (rootf404192c) and unpublished partial
+five-family DAO1e54ce25 now passed sequential independent SPEC then QUALITY.
+The protocol preserves exact source markers/ledger and current-fact inverse.
+The DAO retains public methods/identities, transactions/CAS, original conflict
+semantics, retries and receipts; genuine2773 comparisons and bounded unrelated
+action growth passed. Neither unit selects target constructors/markers. The
+partial DAO branch requires explicit Email29 conversion and is not a runnable
+default release. Remaining unsubscribe/reply writes, validators, seeds, paired
+constructor/coordinator/subprocess and integrated/native/publication gates remain
+open. Full ten-core-plus-ledger completion is still outstanding.
+
+A separate2026-10-14 readonly measurement found Store19/Email51 and121 physical
+noninternal tables, DB475762688bytes/WAL4181832bytes. Accounts/category config
+including indexes were8192/16384bytes; provider current inventory was72095rows/
+24866816bytes and its folder-generation table55rows/8192bytes. Configuration
+and per-message current provider facts are distinct approved destinations.
+These are observation values, not retention or future size promises.
+
+The separate History query PR86 remains unpublished. Its first replacement
+Quality38562385604 ended with13135passed and2 stale existing-effect OA test
+expectations. Test-only538bf7ee passed independent SPEC/QUALITY; normal merge
+ec4ddf18 incorporates main834b8348 and preserves its stronger receipt assertion,
+with110 focused merged checks passed. Replacement Quality38568763727 is running;
+normal deployment and live readback remain required. No Email schema/table-count
+transition is implied by the History performance fix.

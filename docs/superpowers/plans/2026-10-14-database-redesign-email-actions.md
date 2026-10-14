@@ -278,6 +278,17 @@ object across a distinct later publication can inverse that later same-version
 pair; this has no introduced4A call path and is recorded as a bounded lifecycle
 limitation, not a new ownership policy or guard. Full Task4 remains open.
 
+**Task4B accepted as unpublished partial integration (2026-10-14):**
+`1e54ce25` passed sequential independent SPEC then QUALITY. Each independently
+ran all13 new DAO cases against genuine2773 public methods and converted copies;
+SPEC also checked moved provider locators and the authorized receipt dependency.
+QUALITY added7 source-ROWID/CAS/rollback/conflict probes. Existing EmailStore
+public signatures remain unchanged. This accepts only the five-family DAO and
+its two authorized shared reads. The branch still requires explicitly converted
+Email29 and is not independently runnable with default Store19/Email51. C/D
+writes, E validators/seeds, F paired default activation and later gates remain
+open. No target release was allocated or production transition performed.
+
 **Implementation scheduling clarification (2026-10-14):** the selected
 constructor/DAO/validator/marker transition remains one paired activation and
 publication. Source inspection found hundreds of old-family references and about90 active

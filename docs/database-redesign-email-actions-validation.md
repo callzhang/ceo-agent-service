@@ -598,3 +598,21 @@ open. Independent SPEC then QUALITY review of group4B remains pending.
 
 Owned task temporary roots, genuine old-code copies and copied test databases
 were inspected and removed after checks; no historical test archive is retained.
+
+
+### Independent Task4B acceptance, 2026-10-14
+
+Candidate1e54ce2540b8f1f14d383980bc4cdba336bc2ee6 passed sequential independent
+SPEC then QUALITY againstf404192c. SPEC independently passed13 new cases
+in106.50s plus genuine-old comparisons for moved provider locator completion/
+readback and unsubscribe receipt absence/match/wrong-classification outcomes.
+It verified unchanged public signatures and no current physical five-family SQL
+references. QUALITY independently passed13 cases in122.21s plus7 probes for
+moved source ROWID, each CAS guard, caller-owned rollback and unrelated source
+ROWID uniqueness errors under targeted conflict handling. The archived2773
+EmailStore oracle is byte-identical to the parent implementation. Ruff/diff
+checks passed, reviewed HEAD stayed clean and all review-owned temporary code/
+DB/pytest roots were cleaned. No provider/native CLI/production/publication
+action occurred. This accepts partial4B preparation only, not default bootstrap
+or full Task4. The documented38 residual C/D methods and E/F dependencies remain
+open; the next implementation unit is C's existing unsubscribe read/write chain.
