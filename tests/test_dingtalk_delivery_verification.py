@@ -27,6 +27,74 @@ def test_reply_reference_does_not_bypass_send_task_query(status, state):
     assert len(client.commands) == 1
 
 
+def native_send_receipt(*, nested_task_id="send-task-1", receipt_task_id="send-task-1"):
+    return {
+        "ok": True,
+        "tool": "send_personal_message",
+        "result": {"success": True, "result": {"openTaskId": nested_task_id}},
+        "sendReceipt": {"contractVersion": "im.message-send-receipt.v1",
+                        "openTaskId": receipt_task_id},
+    }
+
+
+def test_native_send_envelope_queries_accepted_task_instead_of_staying_uncertain():
+    client = SequenceRecordingDwsClient([{"success": True, "result": {
+        "sendStatus": "SUCCESS", "openMessageId": "outgoing-1"}}])
+
+    verified = client.verify_message_send_result(native_send_receipt())
+
+    assert verified["state"] == "sent"
+    assert verified["open_task_id"] == "send-task-1"
+    assert len(client.commands) == 1
+
+
+def test_system_handler_verifies_persisted_native_send_receipt():
+    client = SequenceRecordingDwsClient([{"success": True, "result": {
+        "sendStatus": "SUCCESS", "openMessageId": "outgoing-1"}}])
+
+    outcome = DingTalkMessageHandler(None, client)._verified(native_send_receipt())
+
+    assert outcome.status == "verified"
+    assert outcome.provider_result["verification"]["open_task_id"] == "send-task-1"
+    assert len(client.commands) == 1
+
+
+def test_native_direct_and_nested_task_identity_conflict_stays_uncertain():
+    client = SequenceRecordingDwsClient([])
+    receipt = native_send_receipt()
+    receipt["result"]["openTaskId"] = "other-task"
+    assert client.verify_message_send_result(receipt)["state"] == "ambiguous"
+    assert client.commands == []
+
+
+def test_native_receipt_task_identity_can_be_queried_without_nested_result():
+    client = SequenceRecordingDwsClient([{"success": True, "result": {
+        "sendStatus": "PENDING"}}])
+    receipt = native_send_receipt(nested_task_id="")
+
+    verified = client.verify_message_send_result(receipt)
+
+    assert verified["state"] == "ambiguous"
+    assert verified["open_task_id"] == "send-task-1"
+    assert len(client.commands) == 1
+
+
+@pytest.mark.parametrize("receipt", [
+    native_send_receipt(nested_task_id="send-task-1", receipt_task_id="other-task"),
+    {"ok": True, "result": {"success": False, "result": {"openTaskId": "send-task-1"}},
+     "sendReceipt": {"contractVersion": "im.message-send-receipt.v1",
+                     "openTaskId": "send-task-1"}},
+    {"ok": True, "result": {"success": True, "result": {}},
+     "sendReceipt": {"contractVersion": "unrelated-contract",
+                     "openTaskId": "send-task-1"}},
+])
+def test_native_untrusted_task_id_does_not_start_status_query(receipt):
+    client = SequenceRecordingDwsClient([])
+
+    assert client.verify_message_send_result(receipt)["state"] == "ambiguous"
+    assert client.commands == []
+
+
 @pytest.mark.parametrize("noise", [{"referencedMessage": {"messageId": "old"}},
     {"nextActions": [{"arguments": {"messageId": "old"}}]},
     {"result": {"processQueryKey": "bot-recall-key"}}])

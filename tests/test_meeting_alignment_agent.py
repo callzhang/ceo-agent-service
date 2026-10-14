@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -1042,6 +1043,46 @@ def test_runner_accepts_configured_profile_as_unqueried_history(tmp_path: Path):
         ),
     )
     assert runner.decide(prompt="decide", run_id=1).action == "send"
+
+
+def test_meeting_profile_source_is_traceable_without_persisting_local_path(monkeypatch):
+    monkeypatch.setenv("CEO_FORBIDDEN_PATH_PREFIXES", "/Users/derek/")
+    configured = "/Users/derek/Services/ceo-agent-service/data/work-profile/work_profile.md"
+    profile = "服务端注入的工作人格正文"
+    reference = "work_profile:sha256:" + hashlib.sha256(profile.encode()).hexdigest()
+    monkeypatch.setattr("app.meeting_alignment_agent.work_profile_instruction", lambda: profile)
+
+    class CapturingCodex(FakeMeetingCodex):
+        prompt = ""
+
+        def decide(self, *, prompt):
+            self.prompt = prompt
+            return super().decide(prompt=prompt)
+
+    payload = derek_view_payload(historical_sources=[reference])
+    codex = CapturingCodex(payload)
+    MeetingAlignmentAgent(codex).decide(source())
+    assert reference in codex.prompt
+    assert profile in codex.prompt
+    assert configured not in codex.prompt
+
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=FakeRoutedMeetingExecution(
+            json.dumps(payload, ensure_ascii=False)
+        ),
+    )
+    assert runner.decide(prompt="decide", run_id=1).derek_viewpoint.historical_sources == [
+        reference
+    ]
+
+    payload["final_message"] = f"原始文件：{configured}"
+    leaking_runner = MeetingAlignmentCodexRunner(
+        routed_execution=FakeRoutedMeetingExecution(
+            json.dumps(payload, ensure_ascii=False)
+        ),
+    )
+    with pytest.raises(ValueError, match="result envelope contains sensitive runtime data"):
+        leaking_runner.decide(prompt="decide", run_id=2)
 
 
 def test_runner_does_not_require_tool_receipt_for_historical_sources(tmp_path: Path):

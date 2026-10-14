@@ -816,6 +816,7 @@ def test_default_stop_waits_until_launchd_finishes_removing_service(monkeypatch)
 
     calls: list[list[str]] = []
     states = iter((
+        SimpleNamespace(returncode=0, stdout="state = running", stderr=""),
         SimpleNamespace(returncode=0, stdout="state = inactive (removing)", stderr=""),
         SimpleNamespace(returncode=113, stdout="", stderr='Could not find service "x"'),
     ))
@@ -832,5 +833,46 @@ def test_default_stop_waits_until_launchd_finishes_removing_service(monkeypatch)
 
     updater_module._default_stop()
 
-    assert [call[1] for call in calls] == ["bootout", "print", "print"]
+    assert [call[1] for call in calls] == ["print", "bootout", "print", "print"]
     assert sleeps == [0.1]
+
+
+def test_default_stop_waits_for_known_service_child_after_label_disappears(monkeypatch):
+    from types import SimpleNamespace
+
+    import app.repository_updater as updater_module
+
+    events: list[str] = []
+    child_running = True
+
+    def run(args, **kwargs):
+        if args[:2] == ["launchctl", "print"]:
+            if "bootout" not in events:
+                return SimpleNamespace(returncode=0, stdout="state = running\n\tpid = 24680\n", stderr="")
+            return SimpleNamespace(returncode=113, stdout="", stderr='Could not find service "x"')
+        if args[:2] == ["launchctl", "bootout"]:
+            events.append("bootout")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if args[:2] == ["ps", "-axo"]:
+            return SimpleNamespace(returncode=0, stdout="24680 1\n24681 24680\n", stderr="")
+        if args[0] == "ps" and args[1] == "-p":
+            return SimpleNamespace(
+                returncode=0 if child_running else 1,
+                stdout="24681\n" if child_running else "",
+                stderr="",
+            )
+        raise AssertionError(args)
+
+    def sleep(_seconds):
+        nonlocal child_running
+        events.append("waited_for_child")
+        child_running = False
+        events.append("child_exited")
+
+    monkeypatch.setattr(updater_module.subprocess, "run", run)
+    monkeypatch.setattr(updater_module.time, "sleep", sleep)
+
+    updater_module._default_stop()
+    events.append("schema_publication")
+
+    assert events.index("child_exited") < events.index("schema_publication")
