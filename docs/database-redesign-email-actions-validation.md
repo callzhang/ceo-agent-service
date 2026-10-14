@@ -2353,6 +2353,26 @@ This unit is not deployed. Task7 must finish the additional current-versus-old
 test-fixture migration, CI, main reconciliation and normal deployment/readback.
 The complete ten-core-table plus migration-ledger redesign remains open.
 
+### Task7 first four current tests: independent acceptance, 2026-10-14
+
+Root accepts1be8f7cd over3191e17e after fresh sequential SPEC then QUALITY PASS.
+Both inspected the real finite projection, source-ROWID locator, writer and
+retry-release implementations: plan history remains unfiltered within its
+family, original columns/order/predicates remain, the training check still
+counts the entire direct-action family and requires zero, and the changed-error
+fixture updates every original matching source ROWID without using physical
+Action IDs. SPEC independently confirmed all nonselected function/class and
+non-import module ASTs unchanged; all business assertions remain except the
+necessary SQL source normalization in the zero-count assertion. QUALITY found
+no new risk warranting a repeated four-case run. Both left clean frozen HEAD.
+
+Accepted implementation evidence is RED4 removed-table failures2.89s then
+GREEN4pass2.72s, scoped Ruff/diff and verified owned-temp cleanup. This closes
+only the four named current functions. Other direct fixtures, shared snapshots,
+genuine historical-owner bindings, browser/e2e reads, current marker expectations
+and the source13 caller fixture's declaration-pair setup remain required before
+CI and publication. No runtime, production or provider state changed.
+
 ### Task7 four current Email test storage reads
 
 Four existing current tests now read plan history and zero mailbox actions through
