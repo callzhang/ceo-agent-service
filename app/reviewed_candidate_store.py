@@ -507,8 +507,21 @@ class ReviewedCandidateStoreMixin:
             }, ignore=True)
             saved = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
             if (saved["business_object_key"] != candidate["business_object_key"] or saved["action_identity"] != action["action_identity"]
-                or saved["operation"] != operation or saved["target_identifiers_json"] != target_json or saved["provider_result_json"] != provider_json):
+                or saved["operation"] != operation or saved["target_identifiers_json"] != target_json):
                 raise ValueError("conflicting external action result")
+            if saved["provider_result_json"] != provider_json:
+                previous = json.loads(saved["provider_result_json"])
+                if (previous.get("verification", {}).get("state") != "ambiguous"
+                    or provider_result.get("verification", {}).get("state") != "sent"
+                    or previous.get("provider_result") != provider_result.get("provider_result")):
+                    raise ValueError("conflicting external action result")
+                updated = {**previous, **provider_result}
+                provider_json = _json(updated)
+                update_action(db, "external_action_results", external_action_key, {
+                    "provider_result_json": provider_json,
+                    "result_digest": hashlib.sha256(provider_json.encode()).hexdigest(),
+                })
+                saved = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
             update_action(db, "candidate_action_attempts", attempt["id"], {
                 "status": "verified", "result_json": provider_json, "updated_at": _db_timestamp(db),
             })

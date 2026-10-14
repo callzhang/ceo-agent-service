@@ -30,6 +30,7 @@ def historical_receipt(tmp_path):
     class Handler:
         sends = 0
         reads = 0
+        confirmed = False
 
         def dispatch(self, action, **kwargs):
             self.sends += 1
@@ -37,6 +38,11 @@ def historical_receipt(tmp_path):
 
         def reconcile(self, action, **kwargs):
             self.reads += 1
+            if self.confirmed:
+                return ActionOutcome("verified", {"provider_result": reply_receipt(), "verification": {
+                    "state": "sent", "open_task_id": "send-task-1",
+                    "status_result": {"success": True, "result": {"sendStatus": "SUCCESS"}},
+                }})
             return ActionOutcome("uncertain", {"reason": "task_not_exists"})
 
     handler = Handler()
@@ -95,3 +101,22 @@ def test_reverification_rejects_other_task_without_mutation(tmp_path):
     with pytest.raises(ValueError, match="identity mismatch"):
         apply_delivery_reverification(store, evidence)
     assert store.get_candidate_external_action(receipt["external_action_key"])["provider_result_json"] == receipt["provider_result_json"]
+
+
+def test_corrected_uncertain_receipt_can_later_complete_from_readback(tmp_path):
+    store, task, context, driver, handler, receipt, _execution = historical_receipt(tmp_path)
+    apply_delivery_reverification(store, proof(receipt, "ambiguous"))
+    handler.confirmed = True
+    result = driver.process(task, context, refresh_context=lambda: context)
+    assert result.status == "executed"
+    assert (handler.sends, handler.reads) == (1, 1)
+    saved = json.loads(store.get_candidate_external_action(receipt["external_action_key"])["provider_result_json"])
+    assert saved["verification"]["state"] == "sent"
+    assert saved["verification_repair"]["previous_verification"]["state"] == "sent"
+
+
+def test_actual_delivery_failure_is_not_reclassified_as_unknown(tmp_path):
+    store, task, _context, _driver, _handler, receipt, execution = historical_receipt(tmp_path)
+    apply_delivery_reverification(store, proof(receipt, "failed"))
+    assert store.get_candidate_execution(execution["id"])["status"] == "failed"
+    assert store.get_reply_task(task.id).error == "external_action_failed"

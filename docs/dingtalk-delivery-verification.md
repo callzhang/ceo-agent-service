@@ -46,7 +46,7 @@ or a read API. Existing newer task generations and active tasks are not overwrit
 
 Regression tests reproduced the original premature success, task-query bypass,
 metadata/status confusion, native process-key shortcut, duplicate-acceptance
-shortcut, stale completed display and historical receipt reuse. 452 focused tests
+shortcut, stale completed display and historical receipt reuse. 454 focused tests
 pass, including cold recovery from pending to successful without redispatch and
 end-to-end uncertain System execution. Changed files pass Ruff.
 
@@ -57,3 +57,12 @@ Attempt rows hash-identically to the original backup, foreign-key findings are
 unchanged, integrity_check is ok, the normal Store reopens successfully and a
 second application changes0 rows. This is copy evidence; production deployment
 and small-batch receipt correction are recorded below after actual readback.
+
+The final recovery regression also reproduces the old immutable-result conflict
+when a corrected unknown receipt later gets positive readback. The existing
+execution writer now promotes only an ambiguous receipt to sent for the same
+action/target and identical raw provider receipt, retaining correction history;
+it still rejects changed provider results. A real failed delivery remains failed,
+and is not relabeled as unknown. The first deploy was stopped while still waiting
+for quiet, before any production checkout change, so this recovery correction
+ships with the delivery-verification change.

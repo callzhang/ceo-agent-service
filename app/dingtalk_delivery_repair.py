@@ -22,6 +22,8 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
         raise ValueError("delivery query task identity mismatch")
     if verification["state"] not in ("sent", "ambiguous", "failed"):
         raise ValueError("invalid delivery verification state")
+    action_status = {"sent": "verified", "ambiguous": "uncertain", "failed": "failed"}[verification["state"]]
+    error_code = "external_action_uncertain" if action_status == "uncertain" else "external_action_failed"
     with store._immediate_write_transaction() as db:
         row = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (key,)).fetchone()
         if row is None:
@@ -52,11 +54,11 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
                 })
                 pending = SystemExecutionResult(
                     outcome="failed", summary="Historical delivery is not verified by provider readback",
-                    error={"code": "external_action_uncertain", "retryable": False,
+                    error={"code": error_code, "retryable": False,
                            "stage": "system_execution", "authorization_required": False},
                 )
                 update_action(db, "candidate_executions", execution["id"], {
-                    "status": "uncertain", "result_json": pending.model_dump_json(),
+                    "status": action_status, "result_json": pending.model_dump_json(),
                     "lease_owner": "", "lease_expires_at": "", "updated_at": proof["queried_at"],
                 })
         if verification["state"] != "sent":
@@ -73,15 +75,15 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
                             "id": run["reply_task_id"], "execution_generation": task["execution_generation"],
                             "status": task["status"], "error": task["error"],
                         }
-                        db.execute("update tasks set status='failed',error='external_action_uncertain',updated_at=? where id=?",
-                                   (proof["queried_at"], task["id"]))
+                        db.execute("update tasks set status='failed',error=?,updated_at=? where id=?",
+                                   (error_code, proof["queried_at"], task["id"]))
         body = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         update_action(db, "external_action_results", key, {
             "provider_result_json": body, "result_digest": hashlib.sha256(body.encode()).hexdigest(),
         })
         for attempt in attempts:
             update_action(db, "candidate_action_attempts", attempt["id"], {
-                "result_json": body, "status": "verified" if verification["state"] == "sent" else "uncertain",
+                "result_json": body, "status": action_status,
                 "updated_at": proof["queried_at"],
             })
         for sent in db.execute(f"select id from ({SENT_REPLY_SQL}) where external_action_key=?", (key,)).fetchall():
