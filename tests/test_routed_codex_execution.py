@@ -2293,7 +2293,8 @@ def test_friday_receives_the_instructions_and_schema_codex_gets_out_of_band(
     sent_text = friday.calls[0][0]
     assert "# Agent spec" in sent_text
     assert "SKILL: business rules" in sent_text
-    assert '"required": ["outcome"]' in sent_text
+    delivered_schema = sent_text.split("```json\n", 1)[1].split("\n```", 1)[0]
+    assert json.loads(delivered_schema) == json.loads(schema_path.read_text())
     assert sent_text.rstrip().endswith("return 7")
 
 

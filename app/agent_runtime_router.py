@@ -253,7 +253,8 @@ def _out_of_band_instructions(command_factory: CodexCommandFactory) -> str:
     """
     parts = [command_factory.developer_instructions.strip()]
     if command_factory.use_output_schema and command_factory.output_schema_path is not None:
-        schema = command_factory.output_schema_path.read_text(encoding="utf-8").strip()
+        schema = json.dumps(json.loads(command_factory.output_schema_path.read_text(encoding="utf-8")),
+                            ensure_ascii=False, separators=(",", ":"))
         parts.append(
             "# Output JSON Schema\n\n"
             "Return exactly one JSON object that validates against this schema.\n\n"
