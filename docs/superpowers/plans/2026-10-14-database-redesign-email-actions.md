@@ -289,6 +289,18 @@ Email29 and is not independently runnable with default Store19/Email51. C/D
 writes, E validators/seeds, F paired default activation and later gates remain
 open. No target release was allocated or production transition performed.
 
+**Task4C accepted as unpublished partial integration (2026-10-14):**
+`9ecf1c25` passed sequential independent SPEC then QUALITY. All34 current
+mutations and six-family reads, including actual lineage helper closure and
+two approved shared D receipt reads, are converted. SPEC observed2 critical
+constraint/rollback cases and3 invalid-option probes; its separate13-case
+run lacks retained final stdout and is not counted as an observed pass receipt.
+QUALITY independently passed6 distinct old-code/converted-copy scenarios with
+retained output. The actor's189-case scoped run remains separate evidence.
+No default activation is accepted; the startup-shape-dependent public preview,
+seven remaining D methods, E validators/seeds and F paired construction/release
+remain open. No real target version or production transition was selected.
+
 **Implementation scheduling clarification (2026-10-14):** the selected
 constructor/DAO/validator/marker transition remains one paired activation and
 publication. Source inspection found hundreds of old-family references and about90 active

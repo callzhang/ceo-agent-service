@@ -370,3 +370,22 @@ ec4ddf18 incorporates main834b8348 and preserves its stronger receipt assertion,
 with110 focused merged checks passed. Replacement Quality38568763727 is running;
 normal deployment and live readback remain required. No Email schema/table-count
 transition is implied by the History performance fix.
+
+
+### 2026-10-14 Email13 Task4C preparation acceptance
+
+Unpublished partial unsubscribe DAO9ecf1c25 passed sequential independent SPEC
+and QUALITY. All six families/61 fields and34 mutations retain public identities,
+lease/generation predicates, transaction rollback, effect/step chains, native
+continuation UPSERT and exact receipt backfill. Observed independent checks
+include2 critical SPEC cases plus3 option probes, and6 distinct QUALITY cases;
+no unretained full-run stdout is promoted to an observed pass receipt. The actor
+scoped189-case evidence remains separately recorded. Seven reply DAO methods
+and E/F bootstrap/validators/paired activation remain open; full10+1 is not done.
+
+HistoryPR86 Quality38568763727 passed13138 Python,729 frontend and2 browser
+cases plus build; all PR checks passed. Squash666f4078 has the exact tested
+ec4ddf18 file tree. Normal deployment started after merge; its existing readiness
+check still sees in-flight work, production was last observed834b8348/PID65400,
+and deployment/live readback have no completion receipt yet. This is no Email
+schema/table-count transition.

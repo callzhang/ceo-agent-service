@@ -719,3 +719,31 @@ The source/default schema declarations remain preserved; Email remains51.
 Independent SPEC then QUALITY review of group4C is pending. Owned temporary
 archives, copied databases, pytest roots and editing intermediates were inspected
 and removed; no historical test archive is retained.
+
+
+### Independent Task4C acceptance, 2026-10-14
+
+Candidate9ecf1c2542e29ffdd66a3f73a8848215f60cba14 passed sequential independent
+SPEC then QUALITY against5230a480. SPEC inspected all34 writes, ordering and
+transaction boundaries,61 source fields,343 unchanged signatures, protected
+declarations and remaining historical/startup-only physical references. Its
+observed2 critical cases passed16.75s, plus3 option-rejection probes. A separate
+full13 run finished but its final stdout was not retained, so no13-pass receipt
+is claimed from that run.
+
+QUALITY independently captured6 passed/7 deselected in31.08s, exit0: continuation/
+effect chain/terminal, cancellation and no-replay decision, journal repair,
+direct retirement/receipt promotion/context, competing URL fill, and audited
+earned-generation lineage. Both reviewers confirmed12 original writer bodies
+match genuine2773 by AST and the remaining2 differ only through accepted B
+plan projections. Diff checks passed; HEAD stayed clean and all owned review
+roots/code archives/DBs were cleaned. No live database/provider/native CLI or
+publication action occurred.
+
+This accepts only scoped partial4C preparation. In particular, the public
+preview_failed_email_unsubscribe_task startup shape dependency remains E/F;
+underlying cancellation decision/replay comparisons do not establish target
+default bootstrap. Seven D methods, metadata/durable validation, seeds, paired
+constructors/coordinator/subprocess and integrated/native/publication remain
+open. The next implementation is the seven remaining reply claim/receipt DAO
+methods, with no dormant SMTP activation or policy change.
