@@ -144,7 +144,7 @@ Attempts/steps extend existing native AUTOINCREMENT sequence strategy with two s
 
 ## Task 2: Implement finite storage and native constraint parity
 
-**Task2A accepted locally at `7adf3ea8` (2026-10-14):** sequential independent SPEC and QUALITY passed the finite declarations,144-field mapping, source codec/native constraints and projections. Both generated-column ownership and unused physical-reference gaps were corrected with regressions. All six default-disabled manifests remain byte-identical. Task2B writers/allocators below, migration, constructors and publication remain pending. Later normal merge `f249e9dd` preserves E/main increments without changing this storage unit.
+**Task2A accepted locally at `7adf3ea8` (2026-10-14):** sequential independent SPEC and QUALITY passed the finite declarations,144-field mapping, source codec/native constraints and projections. Both generated-column ownership and unused physical-reference gaps were corrected with regressions. All six default-disabled manifests remain byte-identical. Task2B writers/allocators were separately accepted at `0f1a0b5a` after sequential independent SPEC and QUALITY. Migration, constructors and publication remain pending. Later normal merge `f249e9dd` preserves E/main increments without changing this storage unit.
 
 **Files:** `app/action_storage.py`; new `tests/test_email_action_storage.py`; runtime storage documentation only when implemented.
 
@@ -156,8 +156,8 @@ shared module focused. Accepting 2A does not establish writer, allocator,
 constructor, migration or publication correctness. Both units leave the
 default Email opt-in disabled and preserve prior manifests.
 
-- [ ] Write failing target tests using both frozen variants. Build native source tables directly from captured SQL, with minimal classification/account/message parent stubs for external trigger tests. The target fixture creates the same parent rows and an opt-in Email actions schema. Compare every field in CSV order, value and `typeof`, not selected business samples.
-- [ ] Use these complete source examples as mandatory comparisons:
+- [x] Write failing target tests using both frozen variants. Build native source tables directly from captured SQL, with minimal classification/account/message parent stubs for external trigger tests. The target fixture creates the same parent rows and an opt-in Email actions schema. Compare every field in CSV order, value and `typeof`, not selected business samples.
+- [x] Use these complete source examples as mandatory comparisons:
 
 ```python
 def insert_plan(db, public_key, version):
@@ -185,9 +185,9 @@ def test_source_rowid_and_public_key_are_independent(source_db):
 
 Target counterparts call the interfaces defined above with the same values and assert projected rowid/public key pairs. Run RED `pytest -q tests/test_email_action_storage.py`; expected missing Email opt-in/helper failure, not changed source oracle output.
 
-- [ ] Implement the finite schema/projections/helpers exactly described above. Encode and decode all 144 source columns through the CSV; preserve original NOT NULL/default/CHECK/UNIQUE behavior. For composite fields test BLOB/text distinctions and source affinity before indexing. Keep six/nine/twelve/fourteen/sixteen schema SQL/manifests byte-identical when Email opt-in is false.
-- [ ] Exercise public key NULL→value/value→NULL, duplicate non-NULL keys, NULL equality/IS NULL, signed explicit rowid and rowid UPDATE, referenced public-key UPDATE/DELETE failures, unreferenced rename success, OR IGNORE invalid CHECK versus missing parent, OR REPLACE referenced parent restriction, native immediate transaction boundaries and unrelated records with colliding numeric IDs.
-- [ ] Run `pytest -q tests/test_email_action_storage.py tests/test_action_storage.py tests/test_action_receipt_storage.py tests/test_action_postfix_storage.py tests/test_reply_attempt_action_storage.py`; expected all selected cases pass and prior manifests match unchanged. Commit storage and its focused tests/docs only.
+- [x] Implement the finite schema/projections/helpers exactly described above. Encode and decode all 144 source columns through the CSV; preserve original NOT NULL/default/CHECK/UNIQUE behavior. For composite fields test BLOB/text distinctions and source affinity before indexing. Keep six/nine/twelve/fourteen/sixteen schema SQL/manifests byte-identical when Email opt-in is false.
+- [x] Exercise public key NULL→value/value→NULL, duplicate non-NULL keys, NULL equality/IS NULL, signed explicit rowid and rowid UPDATE, referenced public-key UPDATE/DELETE failures, unreferenced rename success, OR IGNORE invalid CHECK versus missing parent, OR REPLACE referenced parent restriction, native immediate transaction boundaries and unrelated records with colliding numeric IDs.
+- [x] Run `pytest -q tests/test_email_action_storage.py tests/test_action_storage.py tests/test_action_receipt_storage.py tests/test_action_postfix_storage.py tests/test_reply_attempt_action_storage.py`; expected all selected cases pass and prior manifests match unchanged. Commit storage and its focused tests/docs only.
 
 ## Task 3: Forward/current-fact inverse and exact dependency closure
 

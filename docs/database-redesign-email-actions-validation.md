@@ -1,4 +1,4 @@
-# Email action storage preparation: Task 2A
+# Email action storage preparation: Tasks 2A and 2B
 
 The isolated opt-in storage declaration adds thirteen Email action types to the
 existing sixteen-type actions schema. The option defaults to off. No Store or
@@ -26,8 +26,8 @@ nullable/BLOB public keys, native parent rename and delete restrictions,
 CHECK/UNIQUE failures, direct-action attempt-count triggers, and retry
 immutability. These tests do not use the full EmailStore constructor.
 
-Task 2B still needs finite writer and allocator helpers, including ordinary
-signed ROWID and two AUTOINCREMENT namespaces. The thirteen external source
+Task 2B now supplies the finite writer and allocator helpers, including ordinary
+signed ROWID and two AUTOINCREMENT namespaces; its separate acceptance is below. The thirteen external source
 triggers will be translated with their actual owning tables during integration;
 they are outside this actions-table declaration. Migration, current-fact
 inverse, exact published-predecessor binding, caller routing and release
@@ -116,6 +116,29 @@ tests also passed: 431 focused tests and six existing variant skips. Ruff and
 diff checks passed; all six default-disabled table/index/trigger manifests
 remained byte-identical to the pre-writer commit. A bounded work regression
 checks that the indexed Email MAX lookup does not grow with 1,000 additional
-lower IDs. This local writer result is pending independent SPEC and
-QUALITY review; migration, constructor activation, version assignment,
+lower IDs. This local writer result passed independent SPEC and QUALITY as detailed below;
+migration, constructor activation, version assignment,
 publication and provider effects are outside this unit.
+
+## Task2B independent acceptance
+
+Commit `0f1a0b5a` passed fresh sequential SPEC and QUALITY. SPEC independently
+ran60writer/declaration/source cases plus344older storage cases with6skips,
+and106paired assertions using both captured source variants: all13insert
+value/type projections plus all9NULL/BLOB/TEXT public-key transitions at signed
+ROWID. Its independent exhaustion probes matched native SQLITE_FULL ordering
+and whole-caller-transaction rollback. Six older complete manifests remained
+byte-identical. QUALITY independently ran395storage/writer cases with6skips
+and36source-oracle cases; four additional paired duplicate-insert/conflicting-
+update scenarios matched rows and transaction ownership in deferred and
+autocommit modes. These are overlapping gates, not additive test totals.
+
+The established declaration boundary remains native TEXT-primary-key1555
+versus the finite unique-index2067 extended code; both raise IntegrityError
+with the same facts and transaction state, and no current Email caller uses
+that distinction. Native FK timing/codes remain separately preserved. No
+columns or triggers were invented merely to imitate a diagnostic subclass.
+All probes used closed in-memory databases or cleaned task-owned temporary
+directories. This accepts disabled Task2A/2B storage only; actual published E
+source binding, forward/current-fact inverse, constructors, caller conversion,
+paired publication and production acceptance remain required.
