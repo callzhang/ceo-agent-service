@@ -1518,3 +1518,5 @@ reverts committed work they did not author.
 | codex-email13-5b12-acceptance | Email integration: own validation acceptance paragraph and this claim only | Record sequential SPEC/QUALITY of626ca557 source-bound historical integration, root eight context/producer checks. | root documentation 2026-10-14; broader Task5 and publication gates open |
 
 | codex-email13-5c1-acceptance | Email integration: own validation acceptance paragraph and this claim only | Record sequential SPEC/QUALITY of9887c076 API fixtures and explicit local-route versus shared-whole-app boundary. | root documentation 2026-10-14; broader Task5/publication open |
+
+| codex-email13-5c2-acceptance | Email integration: own validation acceptance paragraph and this claim only | Record sequential SPEC/QUALITY ofc40a7efd additional11H funcs/56sourcecases and precise68assert statistic. | root documentation 2026-10-14; current408 not yet run |
