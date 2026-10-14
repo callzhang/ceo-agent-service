@@ -70,7 +70,7 @@ def _sequence(db, name):
     return rows[0][0] if rows else None
 
 
-def _external_dependencies(db, targets=REPLACED_TABLES):
+def _external_dependencies(db, targets=REPLACED_TABLES, allowed_trigger_names=EXTERNAL_TRIGGER_NAMES):
     """Probe MAIN and TEMP references with SQLite's own schema rewrite rules."""
     objects = [tuple(row) for row in db.execute(
         "select type,name,tbl_name,sql from main.sqlite_schema "
@@ -83,9 +83,10 @@ def _external_dependencies(db, targets=REPLACED_TABLES):
         "where type in ('table','view','index','trigger') and sql is not null "
         "and name not glob 'sqlite_*' order by rowid"
     )]
-    virtual = {(row[0], storage.sqlite_schema_name(row[1])) for row in db.execute(
-        "pragma table_list") if row[2] == "virtual"}
-    allowed = {storage.sqlite_schema_name(name) for name in EXTERNAL_TRIGGER_NAMES}
+    virtual = {(row[0], storage.sqlite_schema_name(row[1]))
+               for schema in ("main", "temp")
+               for row in db.execute(f"pragma {schema}.table_list") if row[2] == "virtual"}
+    allowed = {storage.sqlite_schema_name(name) for name in allowed_trigger_names}
     target_names = {storage.sqlite_schema_name(name) for name in targets}
     with closing(sqlite3.connect(":memory:")) as parser:
         for kind, name, owner, sql in objects:

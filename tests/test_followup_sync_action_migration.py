@@ -137,3 +137,17 @@ def test_unknown_action_type_and_allocator_alias_refuse(source):
     with closing(_read(path)) as db:
         with pytest.raises(ValueError, match="unsupported source allocator alias"):
             capture_followup_sync_source(db)
+
+
+@pytest.mark.parametrize("referenced", ("actions", "business_legacy_links", "work_updates"))
+def test_email_trigger_name_cannot_hide_followup_dependency(source, referenced):
+    path, _ = source
+    with closing(sqlite3.connect(path)) as writer:
+        writer.execute("create trigger trg_email_direct_action_blocks_account_delete "
+                       f"after insert on work_todos begin select id from {referenced}; end")
+        writer.commit()
+    with closing(_read(path)) as db:
+        before = db.execute("select sql from main.sqlite_schema where type='trigger'").fetchall()
+        with pytest.raises(ValueError, match="unsupported"):
+            capture_followup_sync_source(db)
+        assert db.execute("select sql from main.sqlite_schema where type='trigger'").fetchall() == before

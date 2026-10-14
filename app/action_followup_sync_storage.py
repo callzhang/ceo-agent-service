@@ -120,7 +120,7 @@ def capture_followup_sync_source(db: sqlite3.Connection) -> dict:
             continue
         if any(storage.sqlite_schema_name(fk[2]) in target_names for fk in db.execute(f"pragma main.foreign_key_list({_quote(name)})")):
             raise ValueError("unsupported inbound source foreign key")
-    _external_dependencies(db, targets=targets)
+    _external_dependencies(db, targets=targets, allowed_trigger_names=())
     candidate_objects = storage._current_objects(include_reply=True, reply_variant=action_variant,
                                                  include_email=True, include_followup_sync=True)
     source_names = {storage.sqlite_schema_name(obj["name"]) for obj in actions}

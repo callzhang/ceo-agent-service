@@ -161,3 +161,17 @@ schema refusal and TEMP binding cases. Ruff and diff checks passed. This is
 Task2A metadata capture only: it does not implement forward/inverse migration,
 bind a published predecessor, select a version, alter a constructor, or make a
 production change. Independent SPEC then QUALITY review remains pending.
+
+### Task2A SPEC dependency repair
+
+SPEC reproduced a falsely accepted external trigger: an unrelated trigger
+using a reserved Email trigger name could read `actions`,
+`business_legacy_links` or `work_updates`, while the shared Email parser probe
+unconditionally exempted that name. The helper now takes its exemption list
+from its caller. Email retains its existing finite list; follow-up capture
+passes an empty list so SQLite's rename probe sees the dependency. The helper
+also enumerates virtual tables through explicit `main.table_list` and
+`temp.table_list` PRAGMAs. Six actual/fresh trigger-reference cases were RED
+before this change and GREEN afterward. The focused follow-up source and Email
+migration selection passed 132 tests. This remains an unselected, read-only
+candidate pending fresh SPEC then QUALITY review.
