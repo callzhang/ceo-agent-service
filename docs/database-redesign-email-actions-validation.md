@@ -1815,3 +1815,7 @@ passed. Each run removed and verified absence of its own
 `/tmp/email13-task5b3-*` temporary root. Historical H, shared rebuild S,
 other current T and the two dynamic four-table cursor-count tests remain
 deferred; this is not full Task5 or publication acceptance.
+
+### Task5B3 independent acceptance, 2026-10-14
+
+Root accepts53e75043468070ebb374425de44847a56424258b overd369932df7835ad006ad2497320451f43901493f. Fresh SPEC independently ran9 cases:9 passed3.94s, scoped lint/diff exit0; exact six tests/assertions and sourceROWID identity checked, own temp removed. Subsequent fresh QUALITY inspected complete matching row sets, sourceROWID versus public/physical identity, unchanged predicate/value/transaction behavior and existing generated plan-column authorizer; independent AST verifies assertions/decorators and all surrounding nonimport code unchanged. It did not repeat sufficient tests or create temps. Both PASS and frozen cleanHEAD verified. Synthetic poll/report states remain scoped fixtures, not strict cold-valid histories. Remaining corruption/metadata/history/dynamic SQL tests and broader copy/native/CI/publication/full10+1 gates are open.
