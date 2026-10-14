@@ -1456,3 +1456,5 @@ reverts committed work they did not author.
 | codex-email13-validation-e2-acceptance | Email integration: E2 acceptance in scoped Email plan/validation/program and own claim only | Record sequential independent SPEC/QUALITY of current validators and finite installer, maintaining exact partial/source boundaries. No runtime/default change. | active 2026-10-14 |
 
 | codex-email13-coupled-f-acceptance | Email integration: appended F acceptance in Email validation/plan/program and own claim only | Record sequential independent SPEC then QUALITY of20bebe37, existing repair preservation, measured cache cost and exact pending gates. No runtime/provider/publication change. | root documentation only 2026-10-14; Task5 next, branch not deployable |
+
+| codex-email13-task5-main-refresh | Email integration: normal merge origin/main0441cf15 into accepted F, preserving Store History/runtime/History tests; own merge verification paragraph and claim | Preserve PR87 failed-History candidate hydration/WeChat fixes before Task5 edits; no conflicts or new behavior/provider action. | 7 focused History/fresh-FK checks passed4.19s; owned temp absent, 2026-10-14 |

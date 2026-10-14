@@ -2149,6 +2149,14 @@ attempts in the requested time window, avoiding a full-history status scan.
 Health readiness is not evidence that History requests or business actions
 have completed; their APIs and provider receipts must still be read back.
 
+The failed History filter first selects source rows that can still project to
+failed under the existing recovery and terminal-state rules. Reply-attempt
+candidates include current-generation task and delivery state, while standalone
+attempts retain the legacy fallback. The total and page order are computed from
+compact source keys; display projections and attempt details are loaded only
+for the requested page. This keeps the failed view responsive without
+replaying work or changing its status semantics.
+
 DingTalk meeting group searches explicitly request 100 candidates per page,
 the provider's supported maximum, while retaining the complete-source check.
 The CLI's default 20-item pages exhausted its 50-page budget for large

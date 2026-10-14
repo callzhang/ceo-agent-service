@@ -35,6 +35,16 @@ actual production copy and immediate published-source binding, then prove native
 fake-provider behavior; Task7 CI, normal deployment and live readback remain open.
 No production migration, provider call, push or deploy follows from this review.
 
+Before Task5 edits, root normally merged main0441cf15 (PR87) at a clean gate.
+The incoming310 Store lines preserve failed-History source-candidate hydration
+and unlinked WeChat failure behavior; there were no merge conflicts. All six
+History pagination cases plus the real Store-only canonical-parent/29-kind/FK
+case passed together (7 passed,4.19s,exit0). The owned temporary test root was
+removed and verified absent. Source/inverse/factory/DAO files were not changed
+by this increment. Task5 must also translate the newly arrived
+`_list_failed_operation_logs_with_count` Email candidate branch while preserving
+the PR87 query and status semantics; the new native SQL is not already migrated.
+
 ## Task4 current-schema factory preparation (unselected)
 
 The neutral classification factory creates the exact post-Email51 30-column
