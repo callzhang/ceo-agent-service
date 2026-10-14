@@ -206,6 +206,22 @@ def test_email_actions_ordinary_rowid_zero_negative_reuse_max_and_blob_id(db):
     assert storage_type == "blob"
 
 
+def test_ignored_high_ordinary_rowid_does_not_advance_allocator(db):
+    plan(db)
+    action(db)
+    assert db.execute("select rowid from email_actions where action_id='action'").fetchone() == (1,)
+    ignored = db.execute(
+        "insert or ignore into email_actions(rowid,action_id,action_plan_id,classification_id,"
+        "account_id,action_type,parameters_json,config_version,status,created_at,updated_at) "
+        "select ?,action_id,action_plan_id,classification_id,account_id,action_type,"
+        "parameters_json,config_version,status,created_at,updated_at "
+        "from email_actions where action_id='action'", (2**63 - 1,),
+    )
+    assert ignored.rowcount == 0
+    action(db, "next", kind="label")
+    assert db.execute("select rowid from email_actions where action_id='next'").fetchone() == (2,)
+
+
 def test_composite_retry_identity_preserves_blob_public_key(db):
     plan(db)
     action(db, b"\xff")
