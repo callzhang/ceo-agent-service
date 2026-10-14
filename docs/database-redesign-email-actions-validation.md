@@ -1930,3 +1930,7 @@ new regression and original one-query/connection test ran GREEN:
 all run-owned `/tmp/email13-task5b6-p2-*` roots were removed and
 verified absent. This repairs the review finding; independent re-review is
 still pending and the broader Task5/publication gates remain open.
+
+### Task5B6 independent acceptance including P2 correction, 2026-10-14
+
+Root accepts b2a8e762 plusf9674b957a3e1c25c9883425e0253b56931a2e1f. Initial SPEC independently7pass2.98s/lint/diff/cleanup. Initial QUALITY found a P2: batch-only trace filtering ignored additional point reads; the batch was not accepted then. Same actor corrected the count to all finite plan projection reads regardless selected columns/predicate, then separately checks sole batch shape. New real SQLite batch plus SELECT action_plan_id point-read regression fails under old batch-only and intermediate SELECT-star-prefix guards; final two tests2pass1.94s. SPEC follow-up independently2pass2.00s/lint/diff/cleanup. QUALITY follow-up PASS: exact-helper independent probe accepts batch/case variant and rejects batch+point/point-only/no-read/two-batches. Original one-connection/20row/current-ID and other six test semantics unchanged. All frozen cleanHEADs verified; no runtime/provider/production changes. Remaining metadata/shared/history/composite fixtures and broader copy/native/CI/publication/full10+1 remain open.
