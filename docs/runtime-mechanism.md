@@ -2950,3 +2950,10 @@ same-named payload members on an older action never appear as Email fields.
 An Email-only CHECK keeps the older task/run/action physical reference slots
 NULL, including the fresh variant's memory attempt reference; native Email
 source-key foreign keys remain the only Email parent relationships.
+
+The unselected follow-up/Todo-sync migration requires the caller's existing
+foreign-key-off transaction. It recaptures the reviewed source before writing,
+copies nine action families and retargets the retained legacy-link FK. Its
+inverse reads current typed rows and current sequence waters before restoring
+the literal actual or fresh source tables, indexes and original legacy-link
+FK. Neither pure function updates Store/Email markers or invokes a provider.

@@ -6,7 +6,12 @@ import sqlite3
 import pytest
 
 from app.action_storage import create_action_schema
-from app.action_followup_sync_storage import capture_followup_sync_source
+from app import action_storage as action_storage
+from app.action_email_definitions import EMAIL_AUTOINCREMENT_TYPES
+from test_followup_sync_source import values
+from app.action_followup_sync_storage import (
+    capture_followup_sync_source, migrate_followup_sync_schema, restore_followup_sync_schema,
+)
 from test_followup_sync_source import CAPTURE, NAMES
 
 
@@ -67,6 +72,158 @@ def test_capture_both_variants_and_native_watermarks(source):
             assert captured["counts"]["work_updates"] == 0
             assert len(captured["external"]["business_legacy_links"]["columns"]) == 12
             assert (db.in_transaction, db.execute("pragma foreign_keys").fetchone()[0], db.execute("pragma query_only").fetchone()[0]) == before
+
+
+@pytest.mark.parametrize("factory", (None, sqlite3.Row))
+def test_forward_inverse_roundtrip_both_frozen_sources(source, factory):
+    path, _ = source
+    with closing(sqlite3.connect(path)) as db:
+        db.row_factory = factory
+        db.execute("pragma foreign_keys=off")
+        db.execute("insert into work_updates(project_id,source_type,source_ref,summary) "
+                   "values(1,'source','ref',?)", (b"raw\x00value",))
+        db.commit()
+        db.execute("begin")
+        captured = capture_followup_sync_source(db)
+        state = migrate_followup_sync_schema(db, captured)
+        assert db.execute("select count(*) from actions where record_type='work_updates'").fetchone()[0] == 1
+        assert db.execute("select 1 from sqlite_schema where name='work_updates'").fetchone() is None
+        restore_followup_sync_schema(db, state)
+        assert db.execute("select summary from work_updates").fetchone()[0] == b"raw\x00value"
+        assert capture_followup_sync_source(db)["source_variant"] == captured["source_variant"]
+        db.rollback()
+
+
+def test_main_binding_survives_temp_shadows(source):
+    path, _ = source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("create temp table actions(id integer)")
+        db.execute("create temp table work_updates(id integer)")
+        db.execute("create temp table business_legacy_links(id integer)")
+        db.execute("insert into temp.actions values(99)")
+        db.execute("insert into temp.work_updates values(98)")
+        db.execute("insert into temp.business_legacy_links values(97)")
+        db.commit()
+        db.execute("begin")
+        state = migrate_followup_sync_schema(db, capture_followup_sync_source(db))
+        restore_followup_sync_schema(db, state)
+        assert db.execute("select id from temp.actions").fetchone() == (99,)
+        assert db.execute("select id from temp.work_updates").fetchone() == (98,)
+        assert db.execute("select id from temp.business_legacy_links").fetchone() == (97,)
+        db.rollback()
+
+
+def test_predecessor_allocator_absent_zero_high_and_deleted_max(source):
+    path, _ = source
+    names = ("actions", *action_storage.ACTION_SEQUENCE_NAMES.values(),
+             action_storage.DELIVERY_SEQUENCE_NAME, *action_storage.REPLY_SEQUENCE_NAMES.values(),
+             *("actions:" + kind for kind in EMAIL_AUTOINCREMENT_TYPES))
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        for name in names:
+            db.execute("delete from main.sqlite_sequence where name=?", (name,))
+        db.execute("insert into main.sqlite_sequence(name,seq) values(?,0)", (names[1],))
+        db.execute("insert into main.sqlite_sequence(name,seq) values(?,900)", (names[2],))
+        db.commit()
+        before = {name: db.execute("select seq from main.sqlite_sequence where name=?", (name,)).fetchone()
+                  for name in names}
+        db.execute("begin")
+        state = migrate_followup_sync_schema(db, capture_followup_sync_source(db))
+        after = {name: db.execute("select seq from main.sqlite_sequence where name=?", (name,)).fetchone()
+                 for name in names}
+        assert after == before
+        restore_followup_sync_schema(db, state)
+        after = {name: db.execute("select seq from main.sqlite_sequence where name=?", (name,)).fetchone()
+                 for name in names}
+        assert after == before
+        db.rollback()
+
+
+def test_inverse_refuses_reserved_name_dependency_on_unrelated_owner(source):
+    path, _ = source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin")
+        state = migrate_followup_sync_schema(db, capture_followup_sync_source(db))
+        db.execute("create trigger trg_email_direct_action_blocks_account_delete "
+                   "after insert on work_todos begin select id from actions; end")
+        before = db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall()
+        with pytest.raises(ValueError, match="unsupported"):
+            restore_followup_sync_schema(db, state)
+        assert db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall() == before
+        db.rollback()
+
+
+def test_legacy_link_ignore_check_precedes_parent_validation(source):
+    path, _ = source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=on")
+        source_cursor = db.execute("insert or ignore into main.business_legacy_links "
+                                   "(signal_id,task_id,work_update_id) values(11,12,999)")
+        assert source_cursor.rowcount == 0
+        db.commit()
+        with closing(sqlite3.connect(":memory:")) as native:
+            db.backup(native)
+            native.execute("pragma foreign_keys=on")
+            assert native.execute("insert or ignore into main.business_legacy_links "
+                                  "(signal_id,task_id,work_update_id) values(11,12,999)").rowcount == 0
+            source_water = native.execute("select seq from main.sqlite_sequence where name='business_legacy_links'").fetchone()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin")
+        migrate_followup_sync_schema(db, capture_followup_sync_source(db))
+        db.commit()
+        db.execute("pragma foreign_keys=on")
+        target_cursor = db.execute("insert or ignore into main.business_legacy_links "
+                                   "(signal_id,task_id,work_update_id) values(11,12,999)")
+        assert target_cursor.rowcount == 0
+        assert db.execute("select seq from main.sqlite_sequence where name='business_legacy_links'").fetchone() == source_water
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("insert into main.business_legacy_links(task_id,work_update_id) values(11,999)")
+        other = action_storage.insert_sync_action(db, "work_todo_dingtalk_links",
+                                                  values("work_todo_dingtalk_links"))
+        wrong_kind_id = db.execute("select id from main.actions where record_type='work_todo_dingtalk_links' "
+                                   "and legacy_key=?", (str(other.lastrowid),)).fetchone()[0]
+        with pytest.raises(sqlite3.IntegrityError, match="work update parent type mismatch"):
+            db.execute("insert into main.business_legacy_links(task_id,work_update_id) values(11,?)",
+                       (wrong_kind_id,))
+
+
+@pytest.mark.parametrize("stage", ("copy", "rebuild", "drop"))
+def test_forward_failure_rolls_back_in_caller_transaction(source, stage):
+    path, _ = source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("insert into main.work_updates(project_id,source_type,source_ref,summary) "
+                   "values(1,'s','r','saved')")
+        db.commit()
+        before_schema = db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall()
+        before_rows = db.execute("select * from main.work_updates").fetchall()
+        before_water = db.execute("select name,seq from main.sqlite_sequence order by name").fetchall()
+        db.execute("begin")
+        captured = capture_followup_sync_source(db)
+        denied = False
+
+        def authorize(operation, name, _column, _database, _trigger):
+            nonlocal denied
+            if not denied and ((stage == "copy" and operation == sqlite3.SQLITE_INSERT and name == "actions") or
+                               (stage == "rebuild" and operation == sqlite3.SQLITE_CREATE_TABLE and name == "business_legacy_links") or
+                               (stage == "drop" and operation == sqlite3.SQLITE_DROP_TABLE and name == "work_updates")):
+                denied = True
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        db.set_authorizer(authorize)
+        try:
+            with pytest.raises(sqlite3.DatabaseError):
+                migrate_followup_sync_schema(db, captured)
+        finally:
+            db.set_authorizer(None)
+        assert denied and db.in_transaction
+        db.rollback()
+        assert db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall() == before_schema
+        assert db.execute("select * from main.work_updates").fetchall() == before_rows
+        assert db.execute("select name,seq from main.sqlite_sequence order by name").fetchall() == before_water
 
 
 @pytest.mark.parametrize("mutation", (

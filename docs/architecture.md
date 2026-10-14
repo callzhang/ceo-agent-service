@@ -2154,3 +2154,11 @@ Email records also require the shared physical task/run/action reference columns
 to remain NULL. The fresh reply variant includes `memory_attempt_ref` in that
 check. Original Email relationships use their separately declared source-key
 foreign keys.
+
+The disabled follow-up/Todo-sync candidate also has paired pure conversion
+functions for the nine captured source families. Forward copies all existing
+fields to typed actions, maps the business send-attempt draft to its physical
+parent and retargets `business_legacy_links.work_update_id` to the physical
+work-update action. Inverse rebuilds literal old declarations from current
+facts and allocator waters. No constructor or published version selects this
+conversion; it is synthetic local preparation only.

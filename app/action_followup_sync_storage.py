@@ -1,4 +1,4 @@
-"""Read-only binding for the disabled nine-family follow-up/Todo source.
+"""Frozen source binding and disabled follow-up/Todo action conversion.
 
 These hashes freeze the reviewed actual/fresh declarations. A published
 predecessor must be observed and rebound separately before any release.
@@ -7,10 +7,16 @@ predecessor must be observed and rebound separately before any release.
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 
 from app import action_storage as storage
-from app.action_email_storage import _external_dependencies
 from app.action_email_definitions import EMAIL_AUTOINCREMENT_TYPES
+from app.action_followup_sync_definitions import SYNC_TYPES_ORDER, sync_action_projection
+from app.action_email_storage import (
+    _columns, _rows, _types, _set_sequence, _insert_rows, _create_main_index,
+    _restore_triggers, _external_dependencies, _target_external_sql,
+    EXTERNAL_TRIGGER_NAMES,
+)
 
 
 SOURCE_HASHES = {
@@ -88,6 +94,17 @@ def _legacy_objects(db):
         "select type,name,tbl_name,sql from main.sqlite_schema where tbl_name='business_legacy_links' order by type,name")]
 
 
+def _exact_email_blockers(db):
+    rows = {name: sql for name, sql in db.execute(
+        "select name,sql from main.sqlite_schema where type='trigger' and name in (" +
+        ",".join("?" for _ in EXTERNAL_TRIGGER_NAMES) + ")", EXTERNAL_TRIGGER_NAMES)}
+    if not rows:
+        return ()
+    if rows != _target_external_sql():
+        raise ValueError("unsupported Email blocker declaration")
+    return EXTERNAL_TRIGGER_NAMES
+
+
 def capture_followup_sync_source(db: sqlite3.Connection) -> dict:
     """Return exact source metadata; caller owns the read transaction."""
     actions = [dict(zip(("type", "name", "sql"), tuple(row), strict=True)) for row in db.execute(
@@ -120,7 +137,7 @@ def capture_followup_sync_source(db: sqlite3.Connection) -> dict:
             continue
         if any(storage.sqlite_schema_name(fk[2]) in target_names for fk in db.execute(f"pragma main.foreign_key_list({_quote(name)})")):
             raise ValueError("unsupported inbound source foreign key")
-    _external_dependencies(db, targets=targets, allowed_trigger_names=())
+    _external_dependencies(db, targets=targets, allowed_trigger_names=_exact_email_blockers(db))
     candidate_objects = storage._current_objects(include_reply=True, reply_variant=action_variant,
                                                  include_email=True, include_followup_sync=True)
     source_names = {storage.sqlite_schema_name(obj["name"]) for obj in actions}
@@ -150,3 +167,250 @@ def capture_followup_sync_source(db: sqlite3.Connection) -> dict:
             "external": {"business_legacy_links": legacy}, "retained_parents": parent_declarations,
             "sequences": sequences, "counts": counts, "action_counts": action_counts,
             "locator_modes": {name: "integer_id" for name in SOURCE_TABLES}}
+
+
+def _action_rows(db, columns, *, sync):
+    excluded = SYNC_TYPES_ORDER if sync else ()
+    predicate = "record_type not in (" + ",".join("?" for _ in excluded) + ")" if excluded else "1"
+    names = ",".join(map(_quote, columns))
+    rows = [tuple(row) for row in db.execute(
+        f"select {names} from main.actions where {predicate} order by id", excluded)]
+    types = [tuple(row) for row in db.execute(
+        f"select {','.join('typeof(' + _quote(c) + ')' for c in columns)} "
+        f"from main.actions where {predicate} order by id", excluded)]
+    return rows, types
+
+
+def _create_actions(db, variant, *, sync):
+    objects = storage._current_objects(include_reply=True, reply_variant=variant,
+                                       include_email=True, include_followup_sync=sync)
+    db.execute(next(obj["sql"] for obj in objects if obj["type"] == "table"))
+    for obj in objects:
+        if obj["type"] == "index":
+            _create_main_index(db, obj["sql"])
+    return [obj for obj in objects if obj["type"] == "trigger"]
+
+
+def _projection(db, kind, variant):
+    sql = (sync_action_projection(kind, source_variant=variant)
+           .replace("from actions a", "from main.actions a")
+           .replace("join actions p", "join main.actions p"))
+    columns = tuple(item[0] for item in db.execute(f"select * from ({sql}) limit 0").description)
+    names = ",".join(map(_quote, columns))
+    rows = [tuple(row) for row in db.execute(f"select {names} from ({sql}) order by id")]
+    types = [tuple(row) for row in db.execute(
+        f"select {','.join('typeof(' + _quote(c) + ')' for c in columns)} from ({sql}) order by id")]
+    return columns, rows, types
+
+
+def _legacy_rows(db):
+    columns = _columns(db, "business_legacy_links")
+    return columns, _rows(db, "business_legacy_links", columns), _types(db, "business_legacy_links", columns)
+
+
+def _legacy_target_sql(source_sql):
+    old = "references work_updates(id)"
+    if source_sql.count(old) != 1:
+        raise ValueError("unsupported legacy link source FK")
+    return source_sql.replace(old, "references actions(id)")
+
+
+LINK_TRIGGER_SQL = (
+    "create trigger trg_sync_legacy_link_parent_insert after insert on business_legacy_links "
+    "when new.work_update_id is not null and not exists(select 1 from actions a where "
+    "a.id=new.work_update_id and a.record_type='work_updates') "
+    "begin select raise(abort,'work update parent type mismatch'); end",
+    "create trigger trg_sync_legacy_link_parent_update after update of work_update_id on business_legacy_links "
+    "when new.work_update_id is not null and not exists(select 1 from actions a where "
+    "a.id=new.work_update_id and a.record_type='work_updates') "
+    "begin select raise(abort,'work update parent type mismatch'); end",
+    "create trigger trg_sync_legacy_update_public_id before update of legacy_key on actions "
+    "when old.record_type='work_updates' and new.legacy_key<>old.legacy_key and "
+    "exists(select 1 from business_legacy_links l where l.work_update_id=old.id) "
+    "begin select raise(abort,'FOREIGN KEY constraint failed'); end",
+)
+
+
+def _main_trigger_sql(sql):
+    return sql.replace("create trigger ", "create trigger main.", 1)
+
+
+def _target_legacy_declaration(source):
+    with closing(sqlite3.connect(":memory:")) as scratch:
+        scratch.execute(_legacy_target_sql(source["sql"]))
+        for index in reversed(source["indexes"]):
+            if index["sql"]:
+                scratch.execute(index["sql"])
+        for sql in LINK_TRIGGER_SQL[:2]:
+            scratch.execute(_main_trigger_sql(sql))
+        return _declaration(scratch, "business_legacy_links")
+
+
+def _rebuild_legacy(db, declaration, rows, *, target):
+    db.execute(_legacy_target_sql(declaration["sql"]) if target else declaration["sql"])
+    for index in reversed(declaration["indexes"]):
+        if index["sql"]:
+            _create_main_index(db, index["sql"])
+    _insert_rows(db, "business_legacy_links", tuple(col["name"] for col in declaration["columns"]), rows)
+
+
+def _map_legacy_refs(db, columns, rows, *, forward):
+    slot = columns.index("work_update_id")
+    mapped = []
+    for row in rows:
+        row = list(row)
+        if row[slot] is not None:
+            if forward:
+                parent = db.execute("select id from main.actions where record_type='work_updates' "
+                                    "and cast(legacy_key as integer)=?", (row[slot],)).fetchone()
+            else:
+                parent = db.execute("select cast(legacy_key as integer) from main.actions "
+                                    "where id=? and record_type='work_updates'", (row[slot],)).fetchone()
+            if parent is None:
+                raise ValueError("unsupported legacy link parent")
+            row[slot] = parent[0]
+        mapped.append(tuple(row))
+    return mapped
+
+
+def _require_fk_off(db):
+    storage._require_transaction(db)
+    if db.execute("pragma foreign_keys").fetchone()[0]:
+        raise ValueError("follow-up migration requires caller FK-off transaction")
+
+
+def migrate_followup_sync_schema(db: sqlite3.Connection, source: dict) -> dict:
+    """Copy the reviewed nine families inside the caller's FK-off transaction."""
+    _require_fk_off(db)
+    current = capture_followup_sync_source(db)
+    if current != source:
+        raise ValueError("follow-up source changed after capture")
+    variant = source["action_variant"]
+    action_columns = _columns(db, "actions")
+    retained, retained_types = _action_rows(db, action_columns, sync=False)
+    family = {kind: (_columns(db, kind), _rows(db, kind, _columns(db, kind)),
+                     _types(db, kind, _columns(db, kind))) for kind in SOURCE_TABLES}
+    link_columns, link_rows, link_types = _legacy_rows(db)
+    db.execute("drop table main.business_legacy_links")
+    for kind in reversed(SOURCE_TABLES):
+        db.execute(f"drop table main.{_quote(kind)}")
+    db.execute("drop table main.actions")
+    triggers = _create_actions(db, variant, sync=True)
+    _insert_rows(db, "actions", action_columns, retained)
+    for name, water in source["sequences"].items():
+        if name not in SOURCE_TABLES and name != "business_legacy_links":
+            _set_sequence(db, name, water)
+    for kind in SOURCE_TABLES:
+        columns, rows, expected_types = family[kind]
+        for row in rows:
+            values = dict(zip(columns, row, strict=True))
+            public_id = values.pop("id")
+            parent_ref = None
+            if kind == "business_task_follow_up_send_attempts":
+                draft_id = values.pop("draft_id")
+                parent = db.execute("select id from main.actions where record_type='business_task_follow_ups' "
+                                    "and cast(legacy_key as integer)=?", (draft_id,)).fetchone()
+                if parent is None:
+                    raise ValueError("unsupported business follow-up parent")
+                parent_ref = parent[0]
+            db.execute("insert into main.actions(record_type,legacy_key,payload_json,sync_draft_action_id) "
+                       "values(?,?,?,?)", (kind, str(public_id), storage._reply_payload(values), parent_ref))
+        if _projection(db, kind, source["source_variant"]) != (columns, rows, expected_types):
+            raise ValueError(f"{kind} migrated facts differ")
+        _set_sequence(db, "actions:" + kind, source["sequences"][kind])
+    mapped_links = _map_legacy_refs(db, link_columns, link_rows, forward=True)
+    _rebuild_legacy(db, source["external"]["business_legacy_links"], mapped_links, target=True)
+    _set_sequence(db, "business_legacy_links", source["sequences"]["business_legacy_links"])
+    _restore_triggers(db, triggers)
+    for sql in LINK_TRIGGER_SQL:
+        db.execute(_main_trigger_sql(sql))
+    if _action_rows(db, action_columns, sync=True) != (retained, retained_types):
+        raise ValueError("retained actions changed")
+    if _legacy_rows(db)[2] != link_types:
+        raise ValueError("legacy link storage classes changed")
+    return {key: source[key] for key in ("action_variant", "source_variant", "source_actions",
+                                         "source_tables", "external")}
+
+
+def restore_followup_sync_schema(db: sqlite3.Connection, state: dict) -> dict:
+    """Restore literal source declarations using current target business facts."""
+    _require_fk_off(db)
+    if type(state) is not dict or set(state) != {"action_variant", "source_variant", "source_actions",
+                                                 "source_tables", "external"}:
+        raise ValueError("unsupported follow-up inverse metadata")
+    variant = state["action_variant"]
+    source_variant = state["source_variant"]
+    expected_actions = storage._current_objects(include_reply=True, reply_variant=variant,
+                                                include_email=True, include_followup_sync=True)
+    current_actions = [obj for obj in storage._objects(db, "actions")
+                       if obj["name"] != "trg_sync_legacy_update_public_id"]
+    if ((variant == "actual_no_memory_fk") != (source_variant == "actual") or
+            current_actions != expected_actions or
+            state["source_actions"] != storage._current_objects(include_reply=True,
+                reply_variant=variant, include_email=True) or
+            tuple(_hash(state["source_tables"][kind]) for kind in SOURCE_TABLES) != SOURCE_HASHES[source_variant]):
+        raise ValueError("unsupported follow-up target or inverse source")
+    legacy_decl = state["external"]["business_legacy_links"]
+    trigger_row = db.execute("select sql from main.sqlite_schema where name='trg_sync_legacy_update_public_id'").fetchone()
+    if (_declaration(db, "business_legacy_links") != _target_legacy_declaration(legacy_decl) or
+            (tuple(trigger_row) if trigger_row else None) !=
+            (LINK_TRIGGER_SQL[2].replace("create trigger ", "CREATE TRIGGER ", 1),)):
+        raise ValueError("unsupported target legacy links")
+    for kind in SOURCE_TABLES:
+        if db.execute("select 1 from main.sqlite_schema where name=? collate nocase", (kind,)).fetchone():
+            raise ValueError("unsupported inverse source name collision")
+    for (name,) in db.execute("select name from main.sqlite_schema where type='table' "
+                              "and name not glob 'sqlite_*'"):
+        if name in ("actions", "business_legacy_links"):
+            continue
+        if any(fk[2].casefold() in ("actions", "business_legacy_links")
+               for fk in db.execute(f"pragma main.foreign_key_list({_quote(name)})")):
+            raise ValueError("unsupported inverse inbound foreign key")
+    _external_dependencies(db, targets=("actions", "business_legacy_links"),
+                           allowed_trigger_names=_exact_email_blockers(db))
+    action_columns = _source_action_columns(state)
+    retained, retained_types = _action_rows(db, action_columns, sync=True)
+    family = {kind: _projection(db, kind, source_variant) for kind in SOURCE_TABLES}
+    waters = {kind: _sequence(db, "actions:" + kind) for kind in SOURCE_TABLES}
+    retained_waters = {name: _sequence(db, name) for name in
+                       ("actions", *storage.ACTION_SEQUENCE_NAMES.values(), storage.DELIVERY_SEQUENCE_NAME,
+                        *storage.REPLY_SEQUENCE_NAMES.values(),
+                        *("actions:" + kind for kind in EMAIL_AUTOINCREMENT_TYPES))}
+    link_columns, link_rows, _ = _legacy_rows(db)
+    link_water = _sequence(db, "business_legacy_links")
+    links = _map_legacy_refs(db, link_columns, link_rows, forward=False)
+    for sql in LINK_TRIGGER_SQL:
+        name = sql.split(" ")[2]
+        db.execute(f"drop trigger main.{_quote(name)}")
+    db.execute("drop table main.business_legacy_links")
+    db.execute("drop table main.actions")
+    triggers = _create_actions(db, variant, sync=False)
+    _insert_rows(db, "actions", action_columns, retained)
+    for name, water in retained_waters.items():
+        _set_sequence(db, name, water)
+    _restore_triggers(db, triggers)
+    for kind in SOURCE_TABLES:
+        definition = state["source_tables"][kind]
+        db.execute(definition["sql"])
+        for index in reversed(definition["indexes"]):
+            if index["sql"]:
+                _create_main_index(db, index["sql"])
+        columns, rows, types = family[kind]
+        _insert_rows(db, kind, columns, rows)
+        _set_sequence(db, kind, waters[kind])
+        if (_rows(db, kind, columns), _types(db, kind, columns)) != (rows, types):
+            raise ValueError(f"{kind} inverse facts differ")
+    _rebuild_legacy(db, legacy_decl, links, target=False)
+    _set_sequence(db, "business_legacy_links", link_water)
+    for kind in SOURCE_TABLES:
+        _set_sequence(db, "actions:" + kind, None)
+    if _action_rows(db, action_columns, sync=False) != (retained, retained_types):
+        raise ValueError("retained actions inverse differs")
+    return {"counts": {kind: len(family[kind][1]) for kind in SOURCE_TABLES}}
+
+
+def _source_action_columns(state):
+    table = next(item for item in state["source_actions"] if item["type"] == "table")
+    with closing(sqlite3.connect(":memory:")) as scratch:
+        scratch.execute(table["sql"])
+        return _columns(scratch, "actions")
