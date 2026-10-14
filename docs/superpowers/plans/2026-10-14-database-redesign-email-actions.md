@@ -310,6 +310,16 @@ JSON-text CAS and public signatures remain unchanged. This accepts only the
 seven-method DAO conversion. E/F validators, seeds and paired default activation,
 Task5 external callers and later copy/native/publication remain open.
 
+**Task4E1 accepted, unselected fresh seeds (2026-10-14):**
+`25852120` passed sequential independent SPEC (13 cases and separate genuine
+fresh51 constructor binding/complete seed parity) then QUALITY (23 cases,
+including15 parent/candidate trace/clock/transaction probes). Historical method
+AST expansion is exact; the fresh seeder has zero app callers. E2 target shape/
+durable validators remains next, with original required coverage retained and
+historical <=48 cached-plan/DDL contracts left intact. F alone selects fresh
+seeding and must reject unsupported source versions before mutation. No default
+constructor, marker or activation is accepted by this E1 preparation.
+
 **Implementation scheduling clarification (2026-10-14):** the selected
 constructor/DAO/validator/marker transition remains one paired activation and
 publication. Source inspection found hundreds of old-family references and about90 active

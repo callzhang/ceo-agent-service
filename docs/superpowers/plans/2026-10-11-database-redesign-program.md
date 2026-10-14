@@ -398,3 +398,11 @@ explicit converted copies. A/B/C/D are accepted preparation; E validators/seeds,
 F paired constructor/default activation, Task5 external callers and actual-copy/
 native/publication gates remain open. Production remains Store19/Email51 with121
 physical noninternal tables; the full10-core-table plus ledger goal is unfinished.
+
+
+2026-10-14: Email E1 unselected fresh seed factoring25852120 passed sequential
+independent SPEC13 and QUALITY23 cases, with exact genuine fresh51 final facts,
+historical AST/SQL/clock parity and zero app callers. E2 current validators is
+next; historical <=48 helpers stay source-specific, unsupported source rejection
+belongs to F before mutation. No new default/schema/production migration.
+A/B/C/D/E1 are preparation, not complete Task4 or full10+1 acceptance.

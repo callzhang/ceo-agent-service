@@ -966,3 +966,37 @@ signatures/module-level declarations and zero runtime calls of the new entry
 point. The exact owned `/tmp/email13-seeds-e1.XMngdA` root was inspected
 (1,683 files under red/green/final/final-green and the factoring intermediate),
 removed, and verified absent. No historical archive or test database is retained.
+
+
+### Independent Task4E1 acceptance, 2026-10-14
+
+Candidate25852120dac0bf328eecc38a0887c9efce4bc181 passed sequential
+independent SPEC then QUALITY against671de0c9. SPEC independently passed13
+scoped cases in3.63s, exit0, then bound both resolved constructor module paths
+to its exact genuine2773 archive and compared all9 category/1 promotion/9
+revision rows plus10 ordered UUID calls after default fresh0→51 initialization.
+Neutral19-table/10-index/19-trigger objects were empty before seeding and
+unchanged afterward. The retained native49-object checks remain separate.
+
+QUALITY independently passed23 cases in4.57s, exit0:8 committed cases plus15
+review probes comparing parent/candidate SQL traces, clock/UUID events,
+transaction state and database dumps. These cover enabled/disabled accounts,
+custom/blank descriptions, billing alias precedence, invalid legacy keys,
+replace/append ledger branches, empty/full/partial revision history and a
+backward clock behind a future-dated revision. Caller rollback after successful
+and partially failed migrations remained identical. Both reviewers independently
+expanded the two modified historical method ASTs exactly and found zero app
+callers of the fresh seeder, with protected declarations/methods unchanged.
+Ruff/diff checks passed, worktree stayed clean, and all owned temporary roots
+were cleaned with absence verified. No production/provider/native action occurred.
+
+Only unselected fresh seed factoring is accepted. E2 is the single current
+target shape/durable-validator conversion. Preserve the original required-table
+coverage (16 retained business tables plus ledger, not three additional optional
+historical tables); native49-object factory parity is separate from that policy.
+The <=48-only cached-plan helper and historical source DDL stay unchanged. The
+new target validator is not a compatibility path for those historical upgrades;
+F must reject unsupported old sources before mutation under the approved exact
+Store19/Email51 source contract. E2/F, Task5 consumers and later current-copy/
+native/publication remain open. Fresh seeding must be selected only in F's new
+DB creation branch, never reopen/51 migration/read-path configuration repair.
