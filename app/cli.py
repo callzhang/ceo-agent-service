@@ -4097,6 +4097,10 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
                 reader=reader,
                 account=account,
             )
+            store.resolve_unresolved_errors_by_kind(
+                "wechat_sender_loop_error",
+                resolution="recovered by later successful WeChat sender tick",
+            )
             consecutive_sqlite_lock_failures = 0
             consecutive_reader_failures = 0
             reader_failure_reported = False
