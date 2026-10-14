@@ -305,70 +305,63 @@ caller integration, paired release/version selection and production acceptance
 remain incomplete. No provider, native CLI or production mutation was used in
 these independent reviews, and task-owned temporary artifacts were cleaned.
 
-## Task3B offline copy proof (implementation review pending)
+## Task3B offline copy proof (independent review pending)
 
-The offline harness `scripts/validate_action_email_copy.py` is prepared for the
-actual published Store19/Email51 source. It reads the source through SQLite's
-read-only URI and online backup API into a task-owned temporary directory,
-archives an exact published Git ref there, and operates only on copied files.
-It compares original sixteen-action facts, all thirteen Email source
-projections including SQLite storage classes and signed ROWIDs, allocator
-waters, unrelated-table contents, source markers and existing FK findings
-across forward/current-fact inverse/re-forward. Its evidence output is
-aggregate-only and is written only after all assertions pass. No Store/Email
-constructor or release selector activates the candidate target.
+The proof at `scripts/validate_action_email_copy.py` reads the live SQLite
+source through a read-only URI and SQLite online backup into an owned temporary
+directory. Its exact published old application is archived from Git. The
+historical Task1 schema oracle remains `eb797e6bd35de695c269054a2e697af8fde2baa5`;
+the current old-code binding is `2773d6f43518b64c85f1d4bed9d520bd5563df07`.
+The intervening Store changes concern startup reply reconciliation batching,
+selective candidate rechecks and CAS, not Email/action DDL. The source Git HEAD
+and SQLite backup are separately observed, not an atomic pair. The candidate
+worktree normal-merged 2773 at `6b9a50a9` so that current Store behavior is
+retained. No constructor or release selector activates Email13.
 
-A genuine baseline contradiction was reproduced before any migration: the
-published old EmailStore cold constructor rejects two SQL-legal
-`email_action_plans.action_plan_id=NULL` rows with
-`EmailPersistenceCorruption: invalid immutable ActionPlan None`. The actual
-production source read-only aggregate had 9,857 action plans and zero NULL
-plan IDs at this observation. The accepted plan amendment separates a
-lossless SQL-legal NULL-row proof from two application-valid cold read/write
-proofs: actual backup and separately fresh old-created database. The SQL case
-preserved both distinct NULL rowids/versions; archived old constructors and
-public writes passed in both application-valid cases. These are source/fixture observations, not
-a migration failure or permission to erase NULL rows. Seven focused harness
-regressions passed, including corrupted value/ROWID/water and suppressed old
-public-write detection. No provider or production mutation occurred.
+The first offline run at `2b201a0e` was rejected in independent SPEC review:
+its blank SMTP receipt was seeded after first forward, required attempts,
+steps, unsubscribe outcome and retry were written only after inverse, and
+fixture/original-row exclusions could hide corruption. The later `6b9a50a9`
+run was also unaccepted because its last re-forward check omitted complete
+fixture rows. These are proof-harness gaps; no pure-migration corruption was
+demonstrated. Both runs are historical, not the current Task3B result.
 
-The historical Task1 source binding captured production checkout
-`eb797e6bd35de695c269054a2e697af8fde2baa5`. The checkout later moved to
-`9cd41bcf5ea43a275eeb1376817d37f7cef6bd21`; the latter is the archived
-old-code ref for this proof. Its Store diff concerns reply-reconciliation
-batching and CAS rechecks, with no Email or action schema declaration change.
-The Git HEAD and SQLite online backup are separately observed, not one atomic
-snapshot. The source-refresh result is recorded below; independent implementation
-review remains pending.
+The repaired, committed harness at
+`5099c2ab3366e3dfa861b73e50f6a49074856f50` passed all three cases:
+actual owned online backup (121 source user tables to 108 target), an archived
+old-created SQL-legal fresh case with two distinct NULL ActionPlan IDs, and a
+separate archived old-created application-valid fresh case. On an unmigrated
+old database, those legal SQL NULL rows cause the genuine old EmailStore cold
+constructor to reject `invalid immutable ActionPlan None`. Accordingly only
+the SQL case claims lossless row preservation; both application-valid cases
+strictly cold-open with genuine archived AutoReplyStore and EmailStore.
 
-### Latest published-source Task3B execution
+Before first forward, the fixture contains a valid blank-SMTP receipt. An
+independently seeded old-code donor checks the allowed synthetic rows and
+storage types; only old public clock fields are normalized, bounded by the
+observed seed interval plus two seconds. After first forward, both Email AUTO
+waters are raised and the target receives exact current-fact attempt, step,
+receipt-enrichment, unsubscribe-skip and explicit-retry deltas from a genuine
+old public API donor through the finite candidate helpers. Their complete
+projections, SQLite types, signed ROWIDs, composite keys and waters are checked
+before inverse. Inverse restores that current state; in application-valid
+cases strict archived constructors/public readers then verify it, and old
+public methods apply and replay feedback, replay the receipt and complete the
+second TRASH retry attempt using a fake DAO-only result. A separate donor
+checks the expected public-write delta. Re-forward again checks complete
+source projections, original sixteen-action facts, native allocators, unrelated
+original rows and fixture rows, schema markers and existing FK findings. The
+actual source had one pre-existing FK finding, preserved unchanged.
 
-The exact executed proof code was commit
-`2b201a0e5c593606401f62ecc4296e707de5a664`. The archived genuine old
-application was `9cd41bcf5ea43a275eeb1376817d37f7cef6bd21`, observed as
-the production checkout HEAD before and after the run. The Git observations
-and SQLite online backup are separate, non-atomic captures. Historical Task1
-artifact `eb797e6b...` remains the schema oracle: actual backup matched its
-Store `2026-10-13.5`, Email ledger through 51, 121 user-table count, thirteen
-Email and actions declarations, and source variants. Exact candidate and old
-module SHA-256 values are in
-`evals/database_redesign/email_actions_copy.v1.json`; the archived 9cd Store
-diff from eb contains reply-reconciliation batching and CAS rechecks, not Email
-or action DDL.
-
-The three bounded cases passed: actual online backup, SQL-legal fresh with two
-NULL ActionPlan IDs, and separately fresh application-valid source. Forward,
-current-fact inverse, genuine old public cold read/write in the two valid
-cases, and re-forward retained exact values, SQLite storage classes, original
-signed rowids and primary keys, Email and non-Email allocator waters, unrelated
-original rows, original sixteen-action facts, schema markers, and the actual
-backup's one pre-existing FK finding. The old public writes exercised feedback
-replay, blank-to-filled SMTP receipt enrichment, fake DAO-only direct-action
-completion, failed-action visibility and History source ID, unsubscribe
-`skipped_login_required` with a journal step, and an explicit TRASH retry record.
-The retry used a synthetic source revision; it proves the old DAO transition,
-not provider readback. Aggregate counts and assertions are in the JSON. The
-owned temporary database and archived code directory were cleaned. There was
-no provider call, production write, native CLI call, constructor selection,
-version allocation, publication or deployment. Task3B remains subject to
-independent SPEC and QUALITY review before downstream integration.
+The aggregate-only artifact is
+`evals/database_redesign/email_actions_copy.v1.json`; it binds exact executed
+commit, source ref, source and candidate module hashes, observed checkout HEAD
+before/after, per-case counts and assertions. `source_counts_after_fixture_seed`
+are explicitly fixture-inclusive. Twenty-two selected focused checks passed,
+including the independent SPEC false-pass regressions and absent/zero/high,
+deleted-highest ordinary ROWID and signed-max AUTO-water cases. Ruff and diff
+checks passed. Owned temporary databases, archived code and intermediate
+aggregate copy were cleaned. The proof uses no provider, native CLI,
+production write, target version allocation, constructor selection, push or
+deployment. Task3B implementation and evidence still require independent SPEC
+then QUALITY review before downstream integration.
