@@ -2148,3 +2148,7 @@ Its owned `/tmp/email13-task5c1-focused-*` root was removed and verified
 absent. No current runtime, provider, native CLI, production or CI operation
 was changed. Other named Task5 files and the additional 11 genuine-old-source
 functions remain open.
+
+### Task5C1 independent acceptance, 2026-10-14
+
+Root accepts9887c07662d882842cc21a7aed01bf889ea794b5 over552fa0551ae458e68c4b2f51e193279c9a5448c7. Fresh SPEC independently22pass12.63s/lint/diff/ownedtempabsent, original13businessassertions/decorators/helper2callers/18field6rowthroughput exact; typedidentities/ordereddelete and route/wholeapp split verified. Subsequent fresh QUALITY independently confirms assertionASTs, allmatchingrow identities, SQLNULL encoding, rawvalues/FK0 preservation, privacy/window/lineage7cases, exactnewsource1wrapper count and existingFpairedconstructor behavior. No repeated sufficient tests or temps; both PASS cleanfrozenHEAD. Accepted implementationAPI181+legacy4 parent185pass42.80 contains49nestedoldsourcecases. Formerwholeappindependentfutureisolation remains actual0441source assertion; currentwholepairedfutureunknownschema refusesunchangedDB, no runtimepolicy/catch. AdditionalH11func56cases sourceboundintegration and five remainingfixturefiles plus finalTask5/latest-copy/native/CI/publication/full10+1 remain open.
