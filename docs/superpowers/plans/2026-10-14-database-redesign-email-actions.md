@@ -202,6 +202,17 @@ Target counterparts call the interfaces defined above with the same values and a
 
 ## Task 3: Forward/current-fact inverse and exact dependency closure
 
+**Accepted offline, 2026-10-14:** Task3A pure migration/inverse was previously
+accepted separately. Task3B executed code `e9314a50` and evidence `b0a7e904`
+now passed sequential independent SPEC then QUALITY. The final actual source
+is published `2773d6f4`, with historical schema binding `eb797e6b`. Actual
+121-to-108-table conversion, both separate fresh cases, current-fact inverse,
+genuine strict old public read/write and re-forward are accepted at this
+bounded level. All earlier narrow runs remain unaccepted as final proof.
+Task4 constructors, paired markers/callers and production activation remain
+unimplemented; Task6 integrated/native/CI/live gates remain separate.
+
+
 Execute this in two reviewed units. **3A** implements only unselected pure
 capture/forward/current-fact inverse functions and finite dependency translation,
 with tests using synthetic source DDL or explicitly candidate-prepared copies.
@@ -221,7 +232,7 @@ that differs. Candidate-only old-code or candidate-prepared-copy results cannot
 satisfy that published-source gate. Task4 constructor/caller/release integration
 and any activation require both units and that real binding to pass. This is
 an implementation scheduling change, not an alternate migration or production
-publication path. Full Task3 remains incomplete until3B passes.
+publication path. Full Task3 requires both units and their independent acceptance.
 
 **Copy proof contract clarification (2026-10-14, accepted plan only):** run two
 separate cases. The SQL-boundary case preserves the two NULL-PK plans and all
@@ -244,13 +255,13 @@ not Task3B implementation or execution evidence.
 
 **Files:** new `app/action_email_storage.py`; new `tests/test_email_action_migration.py`.
 
-- [ ] Write RED tests for exact source capture, declaration mismatch, extra inbound table/view/trigger, variant mismatch, zero-row sources, colliding old/Email IDs and unsupported changed metadata. Follow `action_reply_storage.py` capture/manifest/current-fact pattern rather than a new mapper.
-- [ ] Implement forward conversion inside caller-owned FK-off transaction. Capture exact source declarations/sequence metadata and original sixteen action stored rows; read nine rowid kinds with explicit rowid, numeric kinds with explicit id, composite kinds with exact keys. Allocate new physical IDs without modifying old physical IDs. Insert finite facts, replace external triggers with exact generated-column predicates, remove only the thirteen old tables, then check integrity/FK and unchanged unrelated objects before commit.
-- [ ] Preserve the full external closure: 3 direct blockers on account update/delete and classification switch; 5 unsubscribe blockers on accounts, message identity/thread update/delete and classification switch; 5 reply blockers on the same endpoints. Preserve each trigger's existing changed-value predicate and processing/dispatching state. Keep the 2 direct count triggers and 3 retry immutable triggers. No new account/message FK or common receipt immutability rule.
-- [ ] Implement inverse from current typed records, not original row backups. Recreate exact source declarations/objects, explicitly insert nine original rowids, preserve integer IDs and sequence progress, reconstruct composite source key fields from their finite legacy array, restore source triggers and old sixteen actions. Include facts created or updated after forward conversion; do not resurrect the original state or replay an action.
-- [ ] Add a lossless SQL-boundary current-fact case with a valid synthetic empty-SMTP-ID reply receipt seeded before forward: forward, insert two NULL-PK plans on distinct rowids/versions, append an attempt/step after raising both sequence watermarks, enrich the existing receipt's empty SMTP ID, update an unsubscribe skip projection using its existing permitted behavior, add an explicit retry record, inverse and re-forward. Compare all source projections, values, storage classes, rowids and current receipts at each boundary; preserve old IDs and unrelated facts. Independently demonstrate that the unchanged genuine old constructor rejects the same NULL fixtures on an unmigrated source. That expected source rejection is not application compatibility acceptance.
-- [ ] In a separate complete actual-source and fresh-source application case, seed only genuine public-API-valid fixtures. Exercise the same application-permitted receipt enrichment, attempt/step sequence continuation, unsubscribe outcome and explicit retry changes, inverse, cold open both genuine old AutoReplyStore and strict default EmailStore, perform meaningful public read/write including feedback replay and fake-result attempt completion, then re-forward. Compare every original source row and exact declared fixture deltas, source types/keys/waters and unrelated facts. Do not omit or sanitize any original actual row to obtain a valid application case. Both cases are required for Task3B; SQL equality never substitutes for strict old application proof.
-- [ ] Run `pytest -q tests/test_email_action_migration.py tests/test_email_action_storage.py`; expected unsupported-source refusals before mutation and all current-fact inverse comparisons pass. Commit migration/inverse separately.
+- [x] Write RED tests for exact source capture, declaration mismatch, extra inbound table/view/trigger, variant mismatch, zero-row sources, colliding old/Email IDs and unsupported changed metadata. Follow `action_reply_storage.py` capture/manifest/current-fact pattern rather than a new mapper.
+- [x] Implement forward conversion inside caller-owned FK-off transaction. Capture exact source declarations/sequence metadata and original sixteen action stored rows; read nine rowid kinds with explicit rowid, numeric kinds with explicit id, composite kinds with exact keys. Allocate new physical IDs without modifying old physical IDs. Insert finite facts, replace external triggers with exact generated-column predicates, remove only the thirteen old tables, then check integrity/FK and unchanged unrelated objects before commit.
+- [x] Preserve the full external closure: 3 direct blockers on account update/delete and classification switch; 5 unsubscribe blockers on accounts, message identity/thread update/delete and classification switch; 5 reply blockers on the same endpoints. Preserve each trigger's existing changed-value predicate and processing/dispatching state. Keep the 2 direct count triggers and 3 retry immutable triggers. No new account/message FK or common receipt immutability rule.
+- [x] Implement inverse from current typed records, not original row backups. Recreate exact source declarations/objects, explicitly insert nine original rowids, preserve integer IDs and sequence progress, reconstruct composite source key fields from their finite legacy array, restore source triggers and old sixteen actions. Include facts created or updated after forward conversion; do not resurrect the original state or replay an action.
+- [x] Add a lossless SQL-boundary current-fact case with a valid synthetic empty-SMTP-ID reply receipt seeded before forward: forward, insert two NULL-PK plans on distinct rowids/versions, append an attempt/step after raising both sequence watermarks, enrich the existing receipt's empty SMTP ID, update an unsubscribe skip projection using its existing permitted behavior, add an explicit retry record, inverse and re-forward. Compare all source projections, values, storage classes, rowids and current receipts at each boundary; preserve old IDs and unrelated facts. Independently demonstrate that the unchanged genuine old constructor rejects the same NULL fixtures on an unmigrated source. That expected source rejection is not application compatibility acceptance.
+- [x] In a separate complete actual-source and fresh-source application case, seed only genuine public-API-valid fixtures. Exercise the same application-permitted receipt enrichment, attempt/step sequence continuation, unsubscribe outcome and explicit retry changes, inverse, cold open both genuine old AutoReplyStore and strict default EmailStore, perform meaningful public read/write including feedback replay and fake-result attempt completion, then re-forward. Compare every original source row and exact declared fixture deltas, source types/keys/waters and unrelated facts. Do not omit or sanitize any original actual row to obtain a valid application case. Both cases are required for Task3B; SQL equality never substitutes for strict old application proof.
+- [x] Run `pytest -q tests/test_email_action_migration.py tests/test_email_action_storage.py`; expected unsupported-source refusals before mutation and all current-fact inverse comparisons pass. Commit migration/inverse separately.
 
 ## Task 4: Paired release, constructors, DAO and external triggers
 

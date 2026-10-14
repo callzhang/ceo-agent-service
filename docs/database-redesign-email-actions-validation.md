@@ -369,3 +369,25 @@ aggregate copy were cleaned. The proof uses no provider, native CLI,
 production write, target version allocation, constructor selection, push or
 deployment. Task3B implementation and evidence still require independent SPEC
 then QUALITY review before downstream integration.
+
+
+## Task3B independent acceptance, 2026-10-14
+
+Root accepts the offline proof after sequential independent SPEC and QUALITY
+rechecks, both PASS. Exact executed code is e9314a50530c7615cdde1ad76e091bc2dd5b22fa;
+reviewed final evidence is b0a7e90411490495866d37de0118801afea2df65. The sole
+QUALITY finding (unexplained post-old-write sequence advancement) is fixed by
+exact entire donor/native Email-water equality before adopting the re-forward
+oracle. Its regression rejects a sequence-only +999 change. SPEC independently
+ran three water checks (11.56s); QUALITY independently verified22 provenance
+and evidence-boundary assertions. Earlier SPEC checks and author23 selected
+checks retain their recorded scope; neither reviewer repeated the costly
+actual-copy run. All8 reported module hashes and relevant executed/current
+file identities were independently checked.
+
+Acceptance covers actual published2773/current-fact inverse/strict genuine
+old public read-write/re-forward, plus separate SQL-NULL and application-valid
+fresh cases. Actual121→108 tables and the existing FK finding1 are preserved.
+No source row was filtered or sanitized. No production change, constructor
+activation, target marker, provider call, native CLI, CI or publication is
+claimed. The full ten-core-table plus one-ledger redesign remains incomplete.

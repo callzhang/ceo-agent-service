@@ -121,5 +121,14 @@
     "provider_calls": 0,
     "native_cli_calls": 0
   },
-  "limit": "Offline storage only; no constructor activation, native role, CI, publication or live provider acceptance."
+  "limit": "Offline storage only; no constructor activation, native role, CI, publication or live provider acceptance.",
+  "independent_review": {
+    "scope": "Task3B offline copy proof only",
+    "reviewed_evidence_commit": "b0a7e90411490495866d37de0118801afea2df65",
+    "spec": "passed",
+    "quality": "passed",
+    "spec_independent_water_checks": 3,
+    "quality_independent_binding_assertions": 22,
+    "activation_or_publication": false
+  }
 }

@@ -311,3 +311,23 @@ No NULL or original actual row can be deleted/sanitized, and source validation
 cannot be bypassed. Harness preparation894ac40e is not an actual-copy pass.
 Before the final run, preserve current published9cd41bcf recovery batching;
 its source DDL and Email implementation remain unchanged from the bound schema.
+
+
+### 2026-10-14 Email13 Task3B offline acceptance
+
+Repaired executed e9314a50 / evidence b0a7e904 passed sequential independent
+SPEC then QUALITY. Actual published2773 source (Store19/Email51) and separate
+genuine-old-created SQL-edge/application-valid fresh cases pass complete
+current-fact inverse, strict old public read/write and re-forward; actual
+121→108 tables, original FK finding1 unchanged. Historical eb remains the
+schema oracle, not a claim that the old runtime source is still eb. Original
+rows, exact fixture deltas, types/native identities and all allocator waters
+are checked, including exact independent donor waters after old public writes.
+The prior2b/6b/5099 runs retain their narrower, unaccepted final-proof status.
+
+Email13 constructors/callers/paired markers are not activated. Production
+remains121 tables until a later integrated release, not108 and not10+1. Before
+that integration, the known E History query bottleneck and incomplete live
+performance acceptance remain a separate bounded repair; the previous1.440s
+diagnostic was only count equivalence, not a published fix. Full10+1 remains
+active; Followup9 and the other prepared families remain disabled/preparatory.
