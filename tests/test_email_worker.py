@@ -16,6 +16,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.action_storage import (
+    delete_email_action,
+    email_action_projection,
+    insert_email_action,
+    update_email_action,
+)
 from app.run_storage import AGENT_RUN_SQL
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import ProposedAction
@@ -32,7 +38,12 @@ from app.email_imap_readonly import (
     ephemeral_body_html,
     parse_rfc822_message,
 )
-from app.email_store import email_action_identity
+from app.email_store import (
+    EMAIL_ATTEMPT_SQL,
+    EMAIL_DIRECT_ACTION_SQL,
+    EMAIL_PLAN_SQL,
+    email_action_identity,
+)
 from app.email_task_adapter import email_conversation_id
 from app.email_task_adapter import (
     EmailClassificationTaskAdapter,
@@ -279,8 +290,8 @@ def test_rejected_model_result_enters_pending_feedback_without_any_task(tmp_path
     assert persisted["probabilities"] == {"junk": 0.39, "work": 0.61}
     assert persisted["action_plan"] is None
     with sqlite3.connect(database) as db:
-        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 0
-        assert db.execute("select count(*) from email_actions").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({EMAIL_PLAN_SQL})").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({EMAIL_DIRECT_ACTION_SQL})").fetchone()[0] == 0
         assert db.execute(
             "select count(*) from email_agent_classification_tasks"
         ).fetchone()[0] == 0
@@ -376,8 +387,8 @@ def _model_accept_message():
 def _assert_no_model_accept_rows(database):
     with sqlite3.connect(database) as db:
         assert db.execute("select count(*) from email_classifications").fetchone()[0] == 0
-        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 0
-        assert db.execute("select count(*) from email_actions").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({EMAIL_PLAN_SQL})").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({EMAIL_DIRECT_ACTION_SQL})").fetchone()[0] == 0
 
 
 def test_model_accept_missing_folder_target_falls_back_before_commit_once(tmp_path):
@@ -473,7 +484,11 @@ def test_model_accept_partial_commit_repairs_action_and_task_without_agent(
         persist_calls += 1
         if persist_calls == 1:
             with sqlite3.connect(database) as db:
-                db.execute("delete from email_actions")
+                rows = db.execute(
+                    f"select rowid from ({email_action_projection('email_actions', include_rowid=True)})"
+                ).fetchall()
+                for (source_rowid,) in rows:
+                    delete_email_action(db, "email_actions", source_rowid)
             raise RuntimeError("crash after durable plan")
         return persisted
 
@@ -518,8 +533,8 @@ def test_model_accept_partial_commit_repairs_action_and_task_without_agent(
     assert agent_calls == []
     with sqlite3.connect(database) as db:
         assert db.execute("select count(*) from email_classifications").fetchone()[0] == 1
-        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 1
-        assert db.execute("select count(*) from email_actions").fetchone()[0] == 1
+        assert db.execute(f"select count(*) from ({EMAIL_PLAN_SQL})").fetchone()[0] == 1
+        assert db.execute(f"select count(*) from ({EMAIL_DIRECT_ACTION_SQL})").fetchone()[0] == 1
     assert len(task_store.list_reply_tasks(channel="email")) == 1
 
 
@@ -768,11 +783,15 @@ def test_model_action_reconciliation_skips_nonunsubscribe_and_reports_conflict(
             (classification_id,),
         )
         if corrupt_canonical:
-            db.execute(
-                "update email_action_plans set classification_source='agent' "
+            rows = db.execute(
+                f"select rowid from ({email_action_projection('email_action_plans', include_rowid=True)}) "
                 "where action_plan_id=?",
                 (action_plan_id,),
-            )
+            ).fetchall()
+            for (source_rowid,) in rows:
+                update_email_action(
+                    db, "email_action_plans", source_rowid, {"classification_source": "agent"}
+                )
     health = []
 
     if corrupt_canonical:
@@ -907,9 +926,13 @@ def test_model_accept_stable_readback_conflict_fails_closed_without_agent(
     )
     if conflict == "plan_version":
         with sqlite3.connect(database) as db:
-            db.execute(
-                "update email_action_plans set action_plan_version=2"
-            )
+            rows = db.execute(
+                f"select rowid from ({email_action_projection('email_action_plans', include_rowid=True)})"
+            ).fetchall()
+            for (source_rowid,) in rows:
+                update_email_action(
+                    db, "email_action_plans", source_rowid, {"action_plan_version": 2}
+                )
     prediction = _accepted_model_prediction(
         "legal" if conflict == "category" else "work",
         important=conflict != "important",
@@ -934,8 +957,8 @@ def test_model_accept_stable_readback_conflict_fails_closed_without_agent(
     assert agent_calls == []
     with sqlite3.connect(database) as db:
         assert db.execute("select count(*) from email_classifications").fetchone()[0] == 1
-        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 1
-        assert db.execute("select count(*) from email_actions").fetchone()[0] == 2
+        assert db.execute(f"select count(*) from ({EMAIL_PLAN_SQL})").fetchone()[0] == 1
+        assert db.execute(f"select count(*) from ({EMAIL_DIRECT_ACTION_SQL})").fetchone()[0] == 2
     assert task_store.list_reply_tasks(channel="email") == []
 
 
@@ -1619,10 +1642,17 @@ def test_failed_historical_mark_read_stays_processing_and_reconcile_finishes_onc
     assert len(store.list_processing_historical_operations()) == 1
     assert store.list_historical_classification_history() == []
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update email_actions set next_attempt_at='2020-01-01T00:00:00+00:00' "
+        rows = db.execute(
+            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
             "where action_type='mark_read'"
-        )
+        ).fetchall()
+        for (source_rowid,) in rows:
+            update_email_action(
+                db,
+                "email_actions",
+                source_rowid,
+                {"next_attempt_at": "2020-01-01T00:00:00+00:00"},
+            )
     assert _module().reconcile_historical_operations(
         store,
         lambda _account_id: Executor(),
@@ -3384,30 +3414,30 @@ def test_historical_unsubscribe_receipt_precedes_trash_and_mark_read(tmp_path):
         action_plan_version=plan["action_plan_version"],
     )
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            """
-            insert into email_unsubscribe_receipts (
-                action_identity, effect_digest, action_plan_id,
-                action_plan_version, classification_id, account_id,
-                stable_message_identity, thread_identity, entry_reference,
-                outcome, receipt_id, evidence, result_text,
-                observation_digest, started_at, completed_at,
-                result_text_truncated, result_text_digest, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'done', ?, 'done', '', '', '', '', 0, '', ?)
-            """,
-            (
-                action_identity,
-                "f" * 64,
-                plan["action_plan_id"],
-                plan["action_plan_version"],
-                classification["id"],
-                "account-1",
-                classification["stable_message_identity"],
-                classification["thread_id"],
-                entry.reference,
-                "receipt-unsubscribe",
-                "2026-09-08T00:01:00+00:00",
-            ),
+        insert_email_action(
+            db,
+            "email_unsubscribe_receipts",
+            {
+                "action_identity": action_identity,
+                "effect_digest": "f" * 64,
+                "action_plan_id": plan["action_plan_id"],
+                "action_plan_version": plan["action_plan_version"],
+                "classification_id": classification["id"],
+                "account_id": "account-1",
+                "stable_message_identity": classification["stable_message_identity"],
+                "thread_identity": classification["thread_id"],
+                "entry_reference": entry.reference,
+                "outcome": "done",
+                "receipt_id": "receipt-unsubscribe",
+                "evidence": "done",
+                "result_text": "",
+                "observation_digest": "",
+                "started_at": "",
+                "completed_at": "",
+                "result_text_truncated": 0,
+                "result_text_digest": "",
+                "created_at": "2026-09-08T00:01:00+00:00",
+            },
         )
 
     assert module.reconcile_historical_operations(
@@ -3485,10 +3515,17 @@ def test_historical_junk_mark_read_failure_recovers_without_repeating_trash(tmp_
     assert outcome.outcome == "provider_action_failed"
     assert len(store.list_processing_historical_operations()) == 1
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update email_actions set next_attempt_at='2020-01-01T00:00:00+00:00' "
+        rows = db.execute(
+            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
             "where action_type='mark_read'"
-        )
+        ).fetchall()
+        for (source_rowid,) in rows:
+            update_email_action(
+                db,
+                "email_actions",
+                source_rowid,
+                {"next_attempt_at": "2020-01-01T00:00:00+00:00"},
+            )
     reopened = EmailStore(store.path)
     assert module.reconcile_historical_operations(
         reopened,
@@ -3634,30 +3671,30 @@ def test_dependent_trash_waits_for_safe_unsubscribe_terminal_evidence(
             action_plan_version=1,
         )
         with sqlite3.connect(database) as db:
-            db.execute(
-                """
-                insert into email_unsubscribe_receipts (
-                    action_identity, effect_digest, action_plan_id,
-                    action_plan_version, classification_id, account_id,
-                    stable_message_identity, thread_identity, entry_reference,
-                    outcome, receipt_id, evidence, result_text,
-                    observation_digest, started_at, completed_at,
-                    result_text_truncated, result_text_digest, created_at
-                ) values (?, ?, ?, 1, 77, ?, ?, ?, ?, ?, ?, ?, '', '', '', '', 0, '', ?)
-                """,
-                (
-                    action_identity,
-                    "f" * 64,
-                    plan.action_plan_id,
-                    account_id,
-                    stable_identity,
-                    "thread-junk-77",
-                    entry.reference,
-                    outcome,
-                    f"receipt:{outcome}",
-                    "terminal evidence",
-                    "2026-09-08T00:01:00+00:00",
-                ),
+            insert_email_action(
+                db,
+                "email_unsubscribe_receipts",
+                {
+                    "action_identity": action_identity,
+                    "effect_digest": "f" * 64,
+                    "action_plan_id": plan.action_plan_id,
+                    "action_plan_version": 1,
+                    "classification_id": 77,
+                    "account_id": account_id,
+                    "stable_message_identity": stable_identity,
+                    "thread_identity": "thread-junk-77",
+                    "entry_reference": entry.reference,
+                    "outcome": outcome,
+                    "receipt_id": f"receipt:{outcome}",
+                    "evidence": "terminal evidence",
+                    "result_text": "",
+                    "observation_digest": "",
+                    "started_at": "",
+                    "completed_at": "",
+                    "result_text_truncated": 0,
+                    "result_text_digest": "",
+                    "created_at": "2026-09-08T00:01:00+00:00",
+                },
             )
 
     claimed = store.claim_next_direct_action(claimed_at="2026-09-08T00:02:00+00:00")
@@ -9178,7 +9215,7 @@ def test_direct_action_locator_completion_rolls_back_on_scanner_race(
             == expected_message
         )
         assert (
-            db.execute("select count(*) from email_action_attempts").fetchone()[0] == 0
+            db.execute(f"select count(*) from ({EMAIL_ATTEMPT_SQL})").fetchone()[0] == 0
         )
 
 
