@@ -82,3 +82,17 @@ oracle and bounded original SQL row comparison are the equivalence evidence.
 
 This branch has not been pushed or deployed. Live History page, chart and
 operational readback remain publication acceptance steps.
+
+
+## Independent acceptance
+
+Sequential independent SPEC then QUALITY both passed at clean
+`59f757a0d4646ffbf69f697da8b00d6b58f1809c`. SPEC independently checked the
+functional query and five pagination tests, then verified the captured helper,
+projection identities, exact source predicate extraction and evidence binding.
+QUALITY independently ran five pagination and31 adjacent History tests, Ruff
+and diff checks, and loaded the genuine published predicate in a separate
+process: the performance regression failed at479,000 VM steps against100,000,
+while the candidate passed. No reviewer repeated the actual-copy proof or
+accessed production. This accepts the scoped query and evidence; exact-head CI,
+merge/deploy and actual browser/operational acceptance remain pending.
