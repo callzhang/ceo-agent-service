@@ -265,6 +265,8 @@ not Task3B implementation or execution evidence.
 
 ## Task 4: Paired release, constructors, DAO and external triggers
 
+**Scheduling accepted:** docs-only7d239490 passed sequential independent SPEC then QUALITY; this accepts sequencing only, not4A implementation or activation.
+
 **Implementation scheduling clarification (2026-10-14):** the selected
 constructor/DAO/validator/marker transition remains one paired activation and
 publication. Source inspection found hundreds of old-family references and about90 active
