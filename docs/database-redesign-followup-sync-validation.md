@@ -135,3 +135,29 @@ Task1A/1B storage is accepted only as disabled preparation over the reviewed
 Email29 actual/fresh scaffold. Source capture/pure forward/current-fact inverse
 are next. Actual published predecessor binding, constructors/callers, paired
 release, copy/old-code/native acceptance, CI and production remain required.
+
+## Task2A read-only source capture candidate
+
+`capture_followup_sync_source(db)` binds the exact reviewed Email29 action
+declaration and the actual/fresh nine-family source pair. It reads MAIN-qualified
+table/index/FK metadata, counts, the nine native AUTOINCREMENT waters, retained
+`business_legacy_links` metadata and water, action allocator metadata, and
+the business Task/Signal parent declarations in the caller's transaction. Counts
+and public-ID locator modes are metadata; no business rows or payloads are
+copied into the result. Absent and zero sequence rows remain distinct.
+
+Preflight rejects altered declarations, unknown action records or allocator
+aliases, extra inbound FKs, target-name collisions and external MAIN/TEMP SQL
+dependencies through SQLite's parser on a disposable in-memory schema. TEMP
+shadow tables can remain while all actual reads still qualify MAIN. A TEMP
+trigger originally attached to MAIN is rejected even if a later TEMP table
+shadows its owner name. The parser performs no DDL on the caller connection.
+
+The focused initial test was RED because the capture module did not exist.
+After implementation, `tests/test_followup_sync_action_migration.py` plus the
+accepted source oracle passed 40 tests on both frozen variants, including
+mode=ro/query_only, tuple and Row results, absent/zero/high sequence state,
+schema refusal and TEMP binding cases. Ruff and diff checks passed. This is
+Task2A metadata capture only: it does not implement forward/inverse migration,
+bind a published predecessor, select a version, alter a constructor, or make a
+production change. Independent SPEC then QUALITY review remains pending.
