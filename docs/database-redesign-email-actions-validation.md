@@ -1999,3 +1999,30 @@ current fixtures are still deferred; Task5 and publication are not complete.
 ### Task5B8 independent acceptance, 2026-10-14
 
 Root accepts11aed8276ef3edb58ea6c5d1adf754364c866e89 over971f6dfd9b2d9555127876826b08243074304dfb. Fresh SPEC independently8pass5.39s/lint/diff/otherASTsame/ownedtempabsent, actuallineage EXPLAIN and160VM at both0and2000unrelated. Subsequent fresh QUALITY confirms complete publiccomposite versus sourceROWID paths, original33effects values/zero decode, explicitretry cleanup, actual query-only VM capture, genuineINSERTORREPLACE with beforeinsertimmutabletrigger/exacterror and unchangedprojected/physicalrow/id/count. It did not repeat sufficient execution or create temps. Both PASS and frozen cleanHEAD. Remaining oldsource/historical/bootstrap and any final current omissions must be inventoried before broad gates; latest-copy/native/CI/publication/full10+1 remain open.
+
+### Task5B9 current structure and durable-row tests (unpublished)
+
+Seven selected current `test_email_store.py` symbols collect ten cases. The fresh
+schema test now asserts the exact twenty retained `email_*` tables (nineteen
+business tables and the schema ledger), shared `actions`, all twenty-nine
+declared Store/Email record types, and absence of the thirteen retired native
+tables. It preserves the account, classification, feedback and reply-claim
+column assertions through retained tables or finite source projections. The
+two former native indexes map to the exact partial indexes
+`idx_actions_email_email_actions_1` and
+`idx_actions_email_email_unsubscribe_receipts_0`; each test checks its exact
+declaration and absence after damage, the existing target Email29 malformed
+schema error, and no repair. The other retained-table/trigger cases are intact.
+
+Missing direct-action and processed-without-plan fixtures locate signed source
+ROWIDs through finite projections before calling `delete_email_action`;
+SQLite's default foreign-key setting is unchanged. The forged unsubscribe
+claim uses the original identity and digest values through
+`update_email_action`. The atomic-failure trigger fires only for the selected
+unsubscribe claim's transition to `done` on shared `actions`, preserving the
+real rollback, empty receipt/step, subsequent successful terminal write and
+conflict assertions. Original tests: `7 failed, 3 passed` in 2.77s, exit 1,
+all failures at retired native table/index access. Adapted tests: `10 passed`
+in 3.12s, exit 0. Owned `/tmp/email13-5b9-probe-*` SQLite prototypes were
+cleaned and verified absent. Historical source tests, unrelated current tests,
+latest-copy/native, CI and publication remain open.

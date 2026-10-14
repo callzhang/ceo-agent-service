@@ -62,7 +62,16 @@ from app.email_task_adapter import email_action_identity
 from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
 from app.store import AgentRole, AutoReplyStore
-from app.action_storage import email_action_projection, insert_action, update_action, update_email_action
+from app.action_storage import (
+    ALL_ACTION_TYPES_WITH_REPLY,
+    delete_email_action,
+    email_action_projection,
+    insert_action,
+    update_action,
+    update_email_action,
+)
+from app.action_email_definitions import EMAIL_TYPES_ORDER
+from app.action_email_storage import SOURCE_TABLES
 
 
 def _frozen_training_observation(**overrides):
@@ -3230,25 +3239,40 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
             "select name from sqlite_master where type='table'",
         )
     }
-    assert {
+    retained_email_tables = {
         "email_schema_migrations",
         "email_accounts",
+        "email_agent_classification_tasks",
         "email_scan_cursors",
         "email_messages",
         "email_classifications",
         "email_category_configs",
-        "email_action_plans",
-        "email_actions",
-        "email_action_attempts",
-        "email_feedback_requests",
-        "email_reply_receipts",
-        "email_reply_dispatch_claims",
-        "email_unsubscribe_claims",
-        "email_unsubscribe_effects",
-        "email_unsubscribe_continuations",
-        "email_unsubscribe_steps",
-        "email_unsubscribe_receipts",
-    } <= table_names
+        "email_category_description_revisions",
+        "email_category_folder_bindings",
+        "email_classifier_runtime_samples",
+        "email_historical_candidates",
+        "email_historical_classification_history",
+        "email_historical_operations",
+        "email_historical_traversals",
+        "email_model_mode_transitions",
+        "email_model_promotion_configs",
+        "email_provider_folder_observation_generations",
+        "email_provider_observations",
+        "email_training_snapshot_observations",
+        "email_training_snapshots",
+    }
+    assert {name for name in table_names if name.startswith("email_")} == retained_email_tables
+    assert "actions" in table_names
+    assert not set(SOURCE_TABLES) & table_names
+    with sqlite3.connect(database) as db:
+        action_sql = db.execute(
+            "select sql from sqlite_schema where type='table' and name='actions'"
+        ).fetchone()[0]
+    assert len(ALL_ACTION_TYPES_WITH_REPLY + EMAIL_TYPES_ORDER) == 29
+    assert all(
+        f"'{kind}'" in action_sql
+        for kind in ALL_ACTION_TYPES_WITH_REPLY + EMAIL_TYPES_ORDER
+    )
     assert "reply_tasks" not in table_names
     assert "agent_runs" not in table_names
 
@@ -3271,10 +3295,13 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
         "current_action_plan_id",
     } <= classification_columns
 
-    feedback_columns = {
-        row["name"]
-        for row in _fetchall(database, "pragma table_info(email_feedback_requests)")
-    }
+    with sqlite3.connect(database) as db:
+        feedback_columns = {
+            column[0]
+            for column in db.execute(
+                f"select * from ({email_action_projection('email_feedback_requests')}) limit 0"
+            ).description
+        }
     assert feedback_columns == {
         "feedback_request_id",
         "classification_id",
@@ -3283,13 +3310,13 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
         "resulting_action_plan_id",
         "applied_at",
     }
-    reply_claim_columns = {
-        row["name"]
-        for row in _fetchall(
-            database,
-            "pragma table_info(email_reply_dispatch_claims)",
-        )
-    }
+    with sqlite3.connect(database) as db:
+        reply_claim_columns = {
+            column[0]
+            for column in db.execute(
+                f"select * from ({email_action_projection('email_reply_dispatch_claims')}) limit 0"
+            ).description
+        }
     assert {
         "owner_id",
         "owner_generation",
@@ -4600,7 +4627,10 @@ def test_durable_validation_boundary_normalizes_missing_row_field(
     ("damage_sql", "match"),
     (
         ("drop table email_scan_cursors", "email_scan_cursors"),
-        ("drop index idx_email_actions_status", "idx_email_actions_status"),
+        (
+            "drop index idx_actions_email_email_actions_1",
+            "required Email29 action schema is missing or malformed",
+        ),
         (
             "drop trigger trg_email_classification_status_insert",
             "trg_email_classification_status_insert",
@@ -4616,10 +4646,28 @@ def test_current_schema_missing_required_structure_is_domain_corruption(
     EmailStore(database)
     gc.collect()
     with sqlite3.connect(database) as db:
+        if damage_sql == "drop index idx_actions_email_email_actions_1":
+            assert db.execute(
+                "select sql from sqlite_schema where type='index' and name=?",
+                ("idx_actions_email_email_actions_1",),
+            ).fetchone()[0] == (
+                "CREATE INDEX idx_actions_email_email_actions_1 "
+                "on actions(email_status,email_updated_at,email_action_id) "
+                "where record_type='email_actions'"
+            )
         db.execute(damage_sql)
+        if damage_sql == "drop index idx_actions_email_email_actions_1":
+            assert db.execute(
+                "select 1 from sqlite_schema where name='idx_actions_email_email_actions_1'"
+            ).fetchone() is None
 
     with pytest.raises(EmailPersistenceCorruption, match=match):
         EmailStore(database)
+    if damage_sql == "drop index idx_actions_email_email_actions_1":
+        with sqlite3.connect(database) as db:
+            assert db.execute(
+                "select 1 from sqlite_schema where name='idx_actions_email_email_actions_1'"
+            ).fetchone() is None
 
 
 def test_current_schema_requires_unsubscribe_receipt_classification_index(
@@ -4627,21 +4675,32 @@ def test_current_schema_requires_unsubscribe_receipt_classification_index(
 ) -> None:
     database = tmp_path / "missing-unsubscribe-receipt-index.sqlite3"
     EmailStore(database)
-    index_name = "idx_email_unsubscribe_receipts_classification_action"
+    index_name = "idx_actions_email_email_unsubscribe_receipts_0"
     with sqlite3.connect(database) as db:
         indexes = {
             row[1]
-            for row in db.execute("pragma index_list(email_unsubscribe_receipts)")
+            for row in db.execute("pragma index_list(actions)")
         }
         assert index_name in indexes
+        assert db.execute(
+            "select sql from sqlite_schema where type='index' and name=?",
+            (index_name,),
+        ).fetchone()[0] == (
+            "CREATE INDEX idx_actions_email_email_unsubscribe_receipts_0 "
+            "on actions(email_classification_id,email_action_identity) "
+            "where record_type='email_unsubscribe_receipts'"
+        )
         db.execute(f"drop index {index_name}")
 
-    with pytest.raises(EmailPersistenceCorruption, match=index_name):
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="required Email29 action schema is missing or malformed",
+    ):
         EmailStore(database)
     with sqlite3.connect(database) as db:
         assert index_name not in {
             row[1]
-            for row in db.execute("pragma index_list(email_unsubscribe_receipts)")
+            for row in db.execute("pragma index_list(actions)")
         }
 
 
@@ -5407,12 +5466,25 @@ def test_normal_startup_does_not_repair_missing_durable_rows(
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
     with sqlite3.connect(database) as db:
-        db.execute(f"delete from {missing_table}")
+        if missing_table == "email_actions":
+            source_rows = db.execute(
+                f"select rowid from ({email_action_projection('email_actions', include_rowid=True)})"
+            ).fetchall()
+            assert len(source_rows) == 1
+            for (source_rowid,) in source_rows:
+                assert delete_email_action(db, "email_actions", source_rowid).rowcount == 1
+        else:
+            db.execute(f"delete from {missing_table}")
 
     with pytest.raises(EmailPersistenceCorruption):
         EmailStore(database)
 
-    assert len(_fetchall(database, f"select * from {missing_table}")) == 0
+    remaining_sql = (
+        f"select * from ({EMAIL_DIRECT_ACTION_SQL})"
+        if missing_table == "email_actions"
+        else f"select * from {missing_table}"
+    )
+    assert len(_fetchall(database, remaining_sql)) == 0
 
 
 def test_versioned_task3_upgrade_does_not_run_prototype_backfill(tmp_path: Path):
@@ -5759,8 +5831,13 @@ def test_startup_rejects_normal_processed_classification_without_plan(
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
     with sqlite3.connect(database) as db:
-        db.execute("delete from email_actions")
-        db.execute("delete from email_action_plans")
+        for kind in ("email_actions", "email_action_plans"):
+            source_rows = db.execute(
+                f"select rowid from ({email_action_projection(kind, include_rowid=True)})"
+            ).fetchall()
+            assert len(source_rows) == 1
+            for (source_rowid,) in source_rows:
+                assert delete_email_action(db, kind, source_rowid).rowcount == 1
         db.execute(
             """
             update email_classifications
@@ -5770,6 +5847,8 @@ def test_startup_rejects_normal_processed_classification_without_plan(
 
     with pytest.raises(EmailPersistenceCorruption, match="processed.*ActionPlan"):
         EmailStore(database)
+    assert _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})") == []
+    assert _fetchall(database, f"select * from ({EMAIL_PLAN_SQL})") == []
 
 
 def test_startup_rejects_noncanonical_current_action_plan_snapshot(tmp_path: Path):
@@ -9441,10 +9520,17 @@ def test_startup_rejects_forged_durable_unsubscribe_action_identity(
     )
     with sqlite3.connect(database) as db:
         db.execute("pragma foreign_keys=off")
-        db.execute(
-            "update email_unsubscribe_claims set action_identity=?, effect_digest=?",
-            (forged_identity, forged_digest),
-        )
+        [claim_row] = db.execute(
+            f"select rowid from ({email_action_projection('email_unsubscribe_claims', include_rowid=True)}) "
+            "where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchall()
+        assert update_email_action(
+            db,
+            "email_unsubscribe_claims",
+            claim_row[0],
+            {"action_identity": forged_identity, "effect_digest": forged_digest},
+        ).rowcount == 1
 
     with pytest.raises(EmailPersistenceCorruption, match="ActionPlan"):
         EmailStore(database)
@@ -9475,11 +9561,17 @@ def test_unsubscribe_receipt_is_exactly_bound_and_terminal_write_is_atomic(
         )
     }
     with sqlite3.connect(store.path) as db:
+        quoted_action_identity = db.execute(
+            "select quote(?)", (authorization["action_identity"],)
+        ).fetchone()[0]
         db.execute(
-            """
+            f"""
             create trigger test_abort_unsubscribe_claim_done
-            before update of status on email_unsubscribe_claims
-            when new.status='done'
+            before update on actions
+            when old.record_type='email_unsubscribe_claims'
+              and new.record_type='email_unsubscribe_claims'
+              and new.email_status='done'
+              and new.email_action_identity={quoted_action_identity}
             begin
                 select raise(abort, 'simulated_unsubscribe_terminal_crash');
             end
