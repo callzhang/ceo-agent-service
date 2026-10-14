@@ -26,6 +26,14 @@ evidence; it never reruns the full historical candidate scan under the writer
 lock. Settled-trigger reconciliation also rechecks exact task generations and
 current evidence inside each batch, preserving concurrent terminal updates.
 
+OA audit metadata backfill follows the same lock boundary: it discovers and
+parses missing process identities outside a write transaction, then updates at
+most 100 still-unidentified attempts per short `BEGIN IMMEDIATE` batch. It must
+not issue a no-op write before scanning the historical Attempt/Task join, since
+the implicit transaction would hold SQLite's single writer while that scan
+runs. Each update remains conditional on the Attempt's process identity still
+being empty, so concurrent recovery is not overwritten.
+
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
 revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override
