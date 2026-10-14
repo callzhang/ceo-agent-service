@@ -8,6 +8,7 @@ from app.email_schema_release import prepare_email_schema_release
 from tests.test_email_action_reconcile import ACCOUNT
 from tests.test_email_readback_retry import _seed_failed, _release
 from app.email_classifier_contracts import EmailAction
+from app.action_storage import email_action_projection
 
 
 def _schema50(path: Path):
@@ -76,8 +77,32 @@ def test_retry_request_cannot_be_replaced(tmp_path):
         requested_at="2026-10-12T06:00:00+00:00", apply=True,
     )
     with sqlite3.connect(store.path) as db:
-        original = db.execute("select * from email_direct_retry_requests").fetchone()
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            db.execute("insert or replace into email_direct_retry_requests values (?,?,?,?,?)",
-                       (original[0], original[1], "a" * 64, original[3], "2026-10-12T07:00:00+00:00"))
-        assert db.execute("select * from email_direct_retry_requests").fetchone() == original
+        retry_sql = email_action_projection("email_direct_retry_requests")
+        original = db.execute(f"select * from ({retry_sql})").fetchone()
+        physical = db.execute(
+            "select id,record_type,legacy_key,payload_json from actions "
+            "where record_type='email_direct_retry_requests'"
+        ).fetchone()
+        assert original is not None and physical is not None
+        assert db.execute(
+            "select json_extract(?,'$[0]'),json_extract(?,'$[1]')",
+            (physical[2], physical[2]),
+        ).fetchone() == original[:2]
+        with pytest.raises(
+            sqlite3.IntegrityError, match="email_direct_retry_request_immutable"
+        ):
+            db.execute(
+                "insert or replace into actions(record_type,legacy_key,payload_json) "
+                "values(?,?,json_set(?,'$.source_readback_digest',?,"
+                "'$.requested_at',?))",
+                (physical[1], physical[2], physical[3], "a" * 64,
+                 "2026-10-12T07:00:00+00:00"),
+            )
+        assert db.execute(f"select * from ({retry_sql})").fetchone() == original
+        assert db.execute(
+            "select id,record_type,legacy_key,payload_json from actions "
+            "where record_type='email_direct_retry_requests'"
+        ).fetchone() == physical
+        assert db.execute(
+            "select count(*) from actions where record_type='email_direct_retry_requests'"
+        ).fetchone()[0] == 1

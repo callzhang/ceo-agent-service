@@ -62,7 +62,7 @@ from app.email_task_adapter import email_action_identity
 from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
 from app.store import AgentRole, AutoReplyStore
-from app.action_storage import email_action_projection, update_action, update_email_action
+from app.action_storage import email_action_projection, insert_action, update_action, update_email_action
 
 
 def _frozen_training_observation(**overrides):
@@ -4724,8 +4724,9 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
         audit_id = insert_run(db, "agent_runs", {
             "task_id": task.id, "role": "audit", "execution_generation": task.execution_generation,
         }).lastrowid
-        db.execute("update email_unsubscribe_effects set audit_agent_run_id=? where action_identity=?",
-                   (audit_id, authorization["action_identity"]))
+        update_action(db, "email_unsubscribe_effects",
+                      (authorization["action_identity"], claim["effect_digest"]),
+                      {"audit_agent_run_id": audit_id})
         for index in range(unrelated_count):
             parent = insert_task(db, "reply_tasks", {
                 "conversation_id": f"unrelated-{index}", "trigger_message_id": str(index),
@@ -4753,7 +4754,8 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
         ]
 
     assert any(
-        "SEARCH effects USING INDEX sqlite_autoindex_email_unsubscribe_effects_1"
+        "SEARCH a USING INDEX idx_actions_email_email_unsubscribe_effects_0 "
+        "(email_action_identity=? AND email_effect_digest=?)"
         in detail
         for detail in details
     )
@@ -9080,10 +9082,22 @@ def test_unsubscribe_state_snapshot_reports_malformed_durable_json_as_corruption
     store = EmailStore(tmp_path / f"unsubscribe-corrupt-{table}-{column}.sqlite3")
     authorization = _persist_unsubscribe_continuation_fixture(store)
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            f"update {table} set {column}='{{}}' where action_identity=?",
-            (authorization["action_identity"],),
-        )
+        if table == "email_unsubscribe_effects":
+            row = db.execute(
+                f"select action_identity,effect_digest from ({email_action_projection(table)}) "
+                "where action_identity=?",
+                (authorization["action_identity"],),
+            ).fetchone()
+            assert row is not None
+            update_action(db, table, tuple(row), {column: "{}"})
+        else:
+            row = db.execute(
+                f"select rowid from ({email_action_projection(table, include_rowid=True)}) "
+                "where action_identity=?",
+                (authorization["action_identity"],),
+            ).fetchone()
+            assert row is not None
+            update_email_action(db, table, row[0], {column: "{}"})
 
     with pytest.raises(EmailPersistenceCorruption):
         store.get_email_unsubscribe_state_snapshot(
@@ -9132,22 +9146,19 @@ def test_unsubscribe_state_snapshot_rejects_row_33_before_effect_decoding(
     store = EmailStore(tmp_path / "unsubscribe-state-over-limit.sqlite3")
     authorization = _persist_unsubscribe_continuation_fixture(store)
     with sqlite3.connect(store.path) as db:
-        db.executemany(
-            """
-            insert into email_unsubscribe_effects (
-                action_identity, effect_digest, previous_effect_digest,
-                operations_json, audit_agent_run_id, created_at
-            ) values (?, ?, '', '{}', null, ?)
-            """,
-            (
-                (
-                    authorization["action_identity"],
-                    sha256(f"overflow-effect-{index}".encode()).hexdigest(),
-                    f"2026-09-03T00:00:{index:02d}+00:00",
-                )
-                for index in range(32)
-            ),
-        )
+        for index in range(32):
+            insert_action(db, "email_unsubscribe_effects", {
+                "action_identity": authorization["action_identity"],
+                "effect_digest": sha256(f"overflow-effect-{index}".encode()).hexdigest(),
+                "previous_effect_digest": "",
+                "operations_json": "{}",
+                "audit_agent_run_id": None,
+                "created_at": f"2026-09-03T00:00:{index:02d}+00:00",
+            })
+        assert db.execute(
+            f"select count(*) from ({email_action_projection('email_unsubscribe_effects')}) "
+            "where action_identity=?", (authorization["action_identity"],),
+        ).fetchone()[0] == 33
 
     decoded = 0
 
@@ -9342,17 +9353,17 @@ def test_explicit_retry_releases_failed_unsubscribe_without_browser_state(
         owner="audit-owner",
     )
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update email_unsubscribe_claims "
-            "set status='uncertain', phase='effect_uncertain', audit_agent_run_id=? "
-            "where action_identity=?",
-            (audit.id, authorization["action_identity"]),
-        )
-        db.execute(
-            "update email_unsubscribe_effects set audit_agent_run_id=? "
-            "where action_identity=?",
-            (audit.id, authorization["action_identity"]),
-        )
+        claim_row = db.execute(
+            f"select rowid from ({email_action_projection('email_unsubscribe_claims', include_rowid=True)}) "
+            "where action_identity=?", (authorization["action_identity"],),
+        ).fetchone()
+        assert claim_row is not None
+        update_email_action(db, "email_unsubscribe_claims", claim_row[0], {
+            "status": "uncertain", "phase": "effect_uncertain", "audit_agent_run_id": audit.id,
+        })
+        update_action(db, "email_unsubscribe_effects",
+                      (authorization["action_identity"], claim["effect_digest"]),
+                      {"audit_agent_run_id": audit.id})
 
     store.release_failed_email_unsubscribe_for_explicit_retry(
         authorization["action_identity"],

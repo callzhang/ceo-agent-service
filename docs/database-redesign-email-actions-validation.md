@@ -1968,3 +1968,30 @@ are still deferred; this is not full Task5 or publication acceptance.
 ### Task5B7 independent acceptance, 2026-10-14
 
 Root accepts966c23c215020cab86129d7067115ac06b41bcfb over135b4db33ae2a92060eb3f9d26920d9f92740cf2. Fresh SPEC independently13pass10.33s/lint/diff/otherASTunchanged/ownedtempsabsent. Subsequent fresh QUALITY confirms exact generated-column dependencies, sole attemptFK, finite family-specific CHECKs, real shared-column collation, exact target Store error/defaultFalse and no-repair facts. Independent exact-helper probe verifies only attempt CHECK changes while retry CHECK retains >0, schema-cookie reload on warmed and fresh connections, writable_schema off, integrityok and realmanifest rejection; exit0, own temp removed. It did not repeat sufficient13case execution. Both PASS and frozen cleanHEAD. Target diagnostic difference is explicitly accepted existing shared-ownership behavior, not an added catch or policy. Historical helpers remain unchanged. Remaining composites/history/source gates and broader latest-copy/native/CI/publication/full10+1 remain open.
+
+### Task5B8 current composite fixtures (unpublished)
+
+Five selected current tests, eight parameter cases, preserve the source
+unsubscribe snapshot corruption, cardinality gate, explicit retry, bounded
+audit lineage and immutable retry-request replacement assertions. Claim and
+continuation mutations locate the signed source ROWID through their finite
+projections and use `update_email_action`; effect mutations use the complete
+public `(action_identity, effect_digest)` tuple with `update_action`. The row-33
+fixture inserts the original 32 effect values through `insert_action` after the
+existing first effect, confirms 33 rows and preserves the zero-decode bound.
+The lineage test retains the 0/2000 unrelated task parameters, both task index
+searches, run/input primary-key lookups, all returned IDs and the original
+500-step VM ceiling. Its target effect search is the exact
+`idx_actions_email_email_unsubscribe_effects_0` two-key lookup.
+
+The retry test uses the existing encoded public composite key and payload in
+the physical action row for a genuine `INSERT OR REPLACE`, changing the same
+readback digest and request time as the source test. The before-insert immutable
+trigger rejects it before replacement; the projected source row, physical row
+and count are unchanged. It does not substitute a plain duplicate insertion or
+add a runtime writer option. Original tests ran RED `8 failed in 3.27s`, exit 1,
+on removed native tables. Adapted tests ran GREEN `8 passed in 3.44s`, exit 0;
+the added explicit public-key/error guard ran `1 passed in 1.72s`, exit 0.
+Owned `/tmp/email13-5b8-*` roots were deleted and verified absent after each
+run. Historical source tests, shared native-rebuild helpers and remaining
+current fixtures are still deferred; Task5 and publication are not complete.
