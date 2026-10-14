@@ -2544,3 +2544,55 @@ def test_a_claude_route_without_its_adapter_is_reported_not_run(tmp_path, monkey
             command_factory=CodexCommandFactory.standard(developer_instructions="rules"),
             parser=int, result_codec=INT_CODEC,
         )
+
+
+@pytest.mark.parametrize("resumed", [False, True])
+@pytest.mark.parametrize("termination", ["completed", "cancelled", "crashed"])
+def test_claude_attempt_range_uses_native_lines_not_codex_or_stdout(tmp_path, monkeypatch, resumed, termination):
+    store = AutoReplyStore(tmp_path / "claude-native-range.sqlite3")
+    key = seed_structured_parent(store, 301)
+    config = _friday_config(monkeypatch, "claude_oauth")
+    scope = "anonymous-claude-range"
+    sid = "claude-session"
+    if resumed:
+        store.upsert_conversation_runtime_session(scope, "claude_oauth", sid)
+    native = {"lines": 20}
+    monkeypatch.setattr("app.native_trajectory.count_claude_session_lines", lambda session_id: native["lines"])
+
+    stopped = False
+    cancelled = termination == "cancelled"
+
+    def executor(command, **kwargs):
+        nonlocal stopped
+        stopped = cancelled
+        events = [{"type": "system", "session_id": sid}] + [{"type": "assistant"}] * 50 + [{"type": "result", "result": '{"value": 42}'}]
+        native["lines"] = 22
+        for event in events:
+            kwargs["on_stdout_line"](json.dumps(event))
+        if termination == "crashed":
+            raise RuntimeError("Anonymous process interruption")
+        return ProcessRunResult(0, "\n".join(map(json.dumps, events)), "")
+
+    routed = RoutedCodexExecution(
+        store=store, config=config,
+        router=AgentRuntimeRouter(routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW),
+        adapter=FakeAdapter(), claude_adapter=FakeClaudeAdapter(), executor=executor,
+        session_line_counter=lambda sid: 0, now=lambda: NOW,
+    )
+    def execute():
+        return routed.execute(workload_kind="structured", workload_key=key, prompt="analyze",
+                              command_factory=CodexCommandFactory.standard(developer_instructions="rules"),
+                              parser=lambda raw: json.loads(parse_agent_text_result(raw))["value"], result_codec=INT_CODEC,
+                              conversation_id=scope, cancel_requested=lambda: stopped)
+
+    if termination == "crashed":
+        with pytest.raises(RoutedCodexExecutionError, match="runtime_executor_failed"):
+            execute()
+    elif cancelled:
+        with pytest.raises(RoutedCodexExecutionCancelled):
+            execute()
+    else:
+        execute()
+    attempt = store.list_runtime_operation_attempts("structured", key)[-1]
+    assert attempt.transcript_start == (20 if resumed else 0)
+    assert attempt.transcript_end == 22
