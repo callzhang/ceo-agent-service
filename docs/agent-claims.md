@@ -1348,3 +1348,5 @@ reverts committed work they did not author.
 | codex-business-source-preparation | Email actions worktree: new docs/database-redesign-business-source-preparation.md and own claim row | Root records bounded readonly business/provenance schema and unresolved exact-body source paths; no target fields, migration, policy or provider change. | source preparation only 2026-10-14 |
 
 | codex-followup-sync-definitions-acceptance | Email actions worktree: appended followup-sync validation/plan and own claim row | Root records sequential independent SPEC then QUALITY of1cfeb2fe, including native legacy-NOTNULL repair and explicit pre-activation FK performance gap. No writer, migration, version or production change. | accepted disabled Task1A only 2026-10-14; Task1B next |
+
+| codex-remaining-input-source-preparation | Email actions worktree: new docs/database-redesign-remaining-input-source-preparation.md and own claim row | Root records readonly meeting/OKR input retention dependencies and source-version gaps; no field/retention implementation or provider action. | preparation only 2026-10-14 |
