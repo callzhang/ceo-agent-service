@@ -1843,3 +1843,7 @@ shared `_create_action_with_attempts` helper, attempt-count trigger fixtures,
 metadata rebuild S, historical H, composite effect/retry fixtures, other
 current T and two dynamic cursor-count tests remain deferred. This is not a
 full Task5 or publication gate.
+
+### Task5B4 independent acceptance, 2026-10-14
+
+Root accepts0a41ea4b92dbcfcf225cfc21f1bf3fea3bed7037 over96b0faa21ec2933188fc6fd0c65ea17fc7547787. Fresh SPEC independently ran13 cases:13 passed4.58s, lint/diff exit0, exact original predicates/all matchingrows/sourceROWID or publicAUTOINCREMENT id and unchanged assertions/raises/params verified; owned temp absent. Subsequent fresh QUALITY confirmed each mutation reaches the intended source field without normalization/business validation, illegal discarded status still hits SQLite CHECK, and application errors retain their original corruption meanings including16KiB/digest/effect binding. Independent AST verifies only the ten tests/imports changed and all assertions/raises/decorators and surrounding tests preserved. It did not repeat sufficient execution or create temps. Both PASS and clean frozen HEAD. Trigger-count/remaining current/history/metadata/dynamic SQL, broad gate, latest-copy/native/CI/publication and full10+1 remain open.
