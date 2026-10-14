@@ -1,0 +1,47 @@
+{
+  "version": "native-base-loader-probe.v1",
+  "route": "codex_oauth",
+  "model": "gpt-5.6-luna",
+  "cli_version": "0.154.0",
+  "prompt": "Return exactly OK.",
+  "business_acceptance": false,
+  "production_changed": false,
+  "baseline": {
+    "session_id": "01a13872-437f-7030-8344-a9c174a7d583",
+    "native_reference": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T20-26-14-01a13872-437f-7030-8344-a9c174a7d583.jsonl",
+    "line_range": [0, 12],
+    "range_sha256": "69a1001a3c5d038bb87a1d12ccbaa6e4c468d29390d3e54456ead9f78bdf6ced",
+    "base_chars": 17730,
+    "base_sha256": "a91357a1cd2727a0be06d461248d6e3a7274746e38108f548a3adf2cc2430415",
+    "input_tokens": 8580,
+    "tool_calls": 0,
+    "final": "OK",
+    "exit_code": 0
+  },
+  "replacement": {
+    "session_id": "01a1386f-e3bf-7010-be01-f0615f49decc",
+    "native_reference": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T20-23-39-01a1386f-e3bf-7010-be01-f0615f49decc.jsonl",
+    "line_range": [0, 27],
+    "range_sha256": "f0856ded785616dac47098aecb810d42875de0fd37e422dbf0d4d63bf6d8e1db",
+    "base_chars": 117,
+    "base_sha256": "8884d6f3d98bd6b04b8162abb1932b00a4edaf0f2d4bacb23cbd8dc19f4fdd8c",
+    "base_matches_file": true,
+    "cold_input_tokens": 5254,
+    "resume_input_tokens": 5464,
+    "same_session": true,
+    "tool_calls": 0,
+    "cold_final": "OK",
+    "resume_final": "OK",
+    "cold_exit_code": 0,
+    "resume_exit_code": 0
+  },
+  "sandbox": "read-only",
+  "approval_policy": "never",
+  "clean_token_comparison": false,
+  "comparison_confounder": "Native host Skills instruction message present only in replacement cold invocation (924 chars).",
+  "no_model_debug": {
+    "existing_path_exit_code": 0,
+    "marker_in_prompt_input": false,
+    "missing_path_exit_code": 1
+  }
+}

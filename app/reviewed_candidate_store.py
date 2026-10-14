@@ -418,6 +418,13 @@ class ReviewedCandidateStoreMixin:
             if len(prior_actions) != action_index or any(row["status"] != "verified" for row in prior_actions):
                 raise ValueError("preceding action is not verified")
             existing_success = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
+            receipt_status = "verified"
+            if existing_success is not None:
+                verification = json.loads(existing_success["provider_result_json"]).get("verification", {})
+                if verification.get("state") in ("ambiguous", "failed"):
+                    # A corrected historical receipt still records an accepted
+                    # effect. Reconcile it; neither completion nor resend follows.
+                    receipt_status = "uncertain"
             if existing_success is None:
                 prior_key = db.execute(f"select execution_id,status from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=? and execution_id<>? order by id desc limit 1", (external_action_key,execution_id)).fetchone()
                 if prior_key is not None and prior_key["status"] != "confirmed_no_effect":
@@ -433,9 +440,9 @@ class ReviewedCandidateStoreMixin:
             if old is not None:
                 if old["external_action_key"] != external_action_key:
                     raise ValueError("action key conflict")
-                if existing_success is not None and old["status"] != "verified":
+                if existing_success is not None and old["status"] != receipt_status:
                     update_action(db, "candidate_action_attempts", old["id"], {
-                        "status": "verified", "updated_at": _db_timestamp(db),
+                        "status": receipt_status, "updated_at": _db_timestamp(db),
                     })
                 elif old["status"] == "dispatched":
                     update_action(db, "candidate_action_attempts", old["id"], {
@@ -449,7 +456,7 @@ class ReviewedCandidateStoreMixin:
             inserted = insert_action(db, "candidate_action_attempts", {
                 "execution_id": execution_id, "action_index": action_index,
                 "external_action_key": external_action_key,
-                "status": "verified" if existing_success else "dispatched",
+                "status": receipt_status if existing_success else "dispatched",
                 "created_at": db.execute("select strftime('%Y-%m-%dT%H:%M:%fZ','now')").fetchone()[0],
             })
             return dict(db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (inserted.lastrowid,)).fetchone())
@@ -500,8 +507,21 @@ class ReviewedCandidateStoreMixin:
             }, ignore=True)
             saved = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
             if (saved["business_object_key"] != candidate["business_object_key"] or saved["action_identity"] != action["action_identity"]
-                or saved["operation"] != operation or saved["target_identifiers_json"] != target_json or saved["provider_result_json"] != provider_json):
+                or saved["operation"] != operation or saved["target_identifiers_json"] != target_json):
                 raise ValueError("conflicting external action result")
+            if saved["provider_result_json"] != provider_json:
+                previous = json.loads(saved["provider_result_json"])
+                if (previous.get("verification", {}).get("state") != "ambiguous"
+                    or provider_result.get("verification", {}).get("state") != "sent"
+                    or previous.get("provider_result") != provider_result.get("provider_result")):
+                    raise ValueError("conflicting external action result")
+                updated = {**previous, **provider_result}
+                provider_json = _json(updated)
+                update_action(db, "external_action_results", external_action_key, {
+                    "provider_result_json": provider_json,
+                    "result_digest": hashlib.sha256(provider_json.encode()).hexdigest(),
+                })
+                saved = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
             update_action(db, "candidate_action_attempts", attempt["id"], {
                 "status": "verified", "result_json": provider_json, "updated_at": _db_timestamp(db),
             })
