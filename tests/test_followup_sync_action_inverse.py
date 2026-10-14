@@ -1,6 +1,7 @@
 """Current-fact inverse checks for the disabled nine-family migration."""
 
 from contextlib import closing
+from copy import deepcopy
 import sqlite3
 
 import pytest
@@ -83,6 +84,79 @@ def test_inverse_refuses_future_source_dependency_before_mutation(migration_sour
         assert db.in_transaction
         assert db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall() == before_schema
         assert db.execute("select name,seq from main.sqlite_sequence order by name").fetchall() == before_sequences
+        db.rollback()
+
+
+@pytest.mark.parametrize("parent_state", ("missing", "wrong_kind"))
+def test_inverse_refuses_orphaned_business_attempt_without_losing_receipt(migration_source, parent_state):
+    path, _ = migration_source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin")
+        state = migrate_followup_sync_schema(db, capture_followup_sync_source(db))
+        if parent_state == "wrong_kind":
+            insert_sync_action(db, "work_updates", values("work_updates"))
+        parent = insert_sync_action(db, "business_task_follow_ups", values("business_task_follow_ups"))
+        parent_physical = db.execute("select id from main.actions where record_type='business_task_follow_ups' "
+                                     "and legacy_key=?", (str(parent.lastrowid),)).fetchone()[0]
+        receipt = b"provider\x00receipt"
+        child = values("business_task_follow_up_send_attempts") | {"draft_id": parent.lastrowid,
+                                                                     "result_json": receipt}
+        insert_sync_action(db, "business_task_follow_up_send_attempts", child)
+        insert_sync_action(db, "business_task_todo_sync_outbox", values("business_task_todo_sync_outbox"))
+        assert delete_sync_action(db, "business_task_follow_ups", parent.lastrowid).rowcount == 1
+        if parent_state == "wrong_kind":
+            db.execute("insert into main.actions(id,record_type,legacy_key,payload_json) "
+                       "select ?,record_type,'2',payload_json from main.actions "
+                       "where record_type='work_updates'", (parent_physical,))
+        before_schema = db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall()
+        before_actions = db.execute("select id,record_type,legacy_key,payload_json,sync_draft_action_id "
+                                    "from main.actions order by id").fetchall()
+        before_sequences = db.execute("select name,seq from main.sqlite_sequence order by name").fetchall()
+        before_fk = db.execute("pragma foreign_key_check").fetchall()
+        assert before_fk
+        assert db.execute("select sync_result_json,typeof(sync_result_json) from main.actions "
+                          "where record_type='business_task_follow_up_send_attempts'").fetchone() == (receipt, "blob")
+        with pytest.raises(ValueError, match="unsupported business follow-up parent"):
+            restore_followup_sync_schema(db, state)
+        assert db.in_transaction and db.execute("pragma foreign_keys").fetchone() == (0,)
+        assert db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall() == before_schema
+        assert db.execute("select id,record_type,legacy_key,payload_json,sync_draft_action_id "
+                          "from main.actions order by id").fetchall() == before_actions
+        assert db.execute("select name,seq from main.sqlite_sequence order by name").fetchall() == before_sequences
+        assert db.execute("pragma foreign_key_check").fetchall() == before_fk
+        db.rollback()
+
+
+def test_inverse_refuses_swapped_legacy_link_column_metadata(migration_source):
+    path, _ = migration_source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("insert into main.business_tasks(id) values(11)")
+        db.execute("insert into main.business_task_signals(id) values(11)")
+        db.execute("insert into main.work_todos(id) values(22)")
+        db.execute("insert into main.business_legacy_links(task_id,work_todo_id) values(11,22)")
+        db.commit()
+        db.execute("begin")
+        state = migrate_followup_sync_schema(db, capture_followup_sync_source(db))
+        altered = deepcopy(state)
+        columns = altered["external"]["business_legacy_links"]["columns"]
+        columns[1], columns[2] = columns[2], columns[1]
+        before_schema = db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall()
+        before_links = db.execute("select * from main.business_legacy_links").fetchall()
+        before_actions = db.execute("select id,record_type,legacy_key,payload_json from main.actions order by id").fetchall()
+        before_sequences = db.execute("select name,seq from main.sqlite_sequence order by name").fetchall()
+        before_fk = db.execute("pragma foreign_key_check").fetchall()
+        assert before_links[0][1:3] == (None, 11)
+        assert before_fk == []
+        with pytest.raises(ValueError, match="unsupported inverse legacy link metadata"):
+            restore_followup_sync_schema(db, altered)
+        assert db.in_transaction and db.execute("pragma foreign_keys").fetchone() == (0,)
+        assert db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall() == before_schema
+        assert db.execute("select * from main.business_legacy_links").fetchall() == before_links
+        assert db.execute("select id,record_type,legacy_key,payload_json from main.actions order by id").fetchall() == before_actions
+        assert db.execute("select name,seq from main.sqlite_sequence order by name").fetchall() == before_sequences
+        assert db.execute("pragma foreign_key_check").fetchall() == before_fk
         db.rollback()
 
 

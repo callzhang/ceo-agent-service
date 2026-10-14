@@ -103,6 +103,23 @@ def _legacy_objects(db):
         "select type,name,tbl_name,sql from main.sqlite_schema where tbl_name='business_legacy_links' order by type,name")]
 
 
+def _valid_frozen_legacy_declaration(legacy):
+    objects = [{"type": "table", "name": "business_legacy_links",
+                "tbl_name": "business_legacy_links", "sql": legacy["sql"]}]
+    objects.extend({"type": "index", "name": index["name"],
+                    "tbl_name": "business_legacy_links", "sql": index["sql"]}
+                   for index in legacy["indexes"])
+    objects.extend({"type": "trigger", "name": trigger["name"],
+                    "tbl_name": "business_legacy_links", "sql": trigger["sql"]}
+                   for trigger in legacy["triggers"])
+    index_shapes = [{key: index[key] for key in ("seq", "name", "unique", "origin", "partial")} |
+                    {"xinfo": index["columns"]} for index in legacy["indexes"]]
+    return (_hash(sorted(objects, key=lambda obj: (obj["type"], obj["name"]))) == LEGACY_OBJECTS_HASH and
+            _hash(legacy["foreign_keys"]) == LEGACY_FKS_HASH and
+            _hash(legacy["columns"]) == LEGACY_COLUMNS_HASH and
+            _hash(index_shapes) == LEGACY_INDEXES_HASH)
+
+
 def _exact_email_blockers(db):
     rows = {name: sql for name, sql in db.execute(
         "select name,sql from main.sqlite_schema where type='trigger' and name in (" +
@@ -133,11 +150,7 @@ def capture_followup_sync_source(db: sqlite3.Connection) -> dict:
     if (action_variant == "actual_no_memory_fk") != (source_variant == "actual"):
         raise ValueError("unsupported action/source variant pair")
     legacy = _declaration(db, "business_legacy_links")
-    if (_hash(_legacy_objects(db)) != LEGACY_OBJECTS_HASH or
-            _hash(legacy["foreign_keys"]) != LEGACY_FKS_HASH or
-            _hash(legacy["columns"]) != LEGACY_COLUMNS_HASH or
-            _hash([{key: index[key] for key in ("seq", "name", "unique", "origin", "partial")} |
-                   {"xinfo": index["columns"]} for index in legacy["indexes"]]) != LEGACY_INDEXES_HASH):
+    if _hash(_legacy_objects(db)) != LEGACY_OBJECTS_HASH or not _valid_frozen_legacy_declaration(legacy):
         raise ValueError("unsupported business legacy links declaration")
     targets = ("actions", *SOURCE_TABLES, "business_legacy_links")
     target_names = {storage.sqlite_schema_name(name) for name in targets}
@@ -358,6 +371,8 @@ def restore_followup_sync_schema(db: sqlite3.Connection, state: dict) -> dict:
             tuple(_hash(state["source_tables"][kind]) for kind in SOURCE_TABLES) != SOURCE_HASHES[source_variant]):
         raise ValueError("unsupported follow-up target or inverse source")
     legacy_decl = state["external"]["business_legacy_links"]
+    if not _valid_frozen_legacy_declaration(legacy_decl):
+        raise ValueError("unsupported inverse legacy link metadata")
     trigger_row = db.execute("select sql from main.sqlite_schema where name='trg_sync_legacy_update_public_id'").fetchone()
     if (_declaration(db, "business_legacy_links") != _target_legacy_declaration(legacy_decl) or
             (tuple(trigger_row) if trigger_row else None) !=
@@ -385,6 +400,12 @@ def restore_followup_sync_schema(db: sqlite3.Connection, state: dict) -> dict:
             raise ValueError("unsupported inverse inbound foreign key")
     _external_dependencies(db, targets=("actions", "business_legacy_links"),
                            allowed_trigger_names=_exact_email_blockers(db))
+    if db.execute(
+        "select 1 from main.actions c left join main.actions p "
+        "on p.id=c.sync_draft_action_id and p.record_type='business_task_follow_ups' "
+        "where c.record_type='business_task_follow_up_send_attempts' and p.id is null limit 1"
+    ).fetchone():
+        raise ValueError("unsupported business follow-up parent")
     action_columns = _source_action_columns(state)
     retained, retained_types = _action_rows(db, action_columns, sync=True)
     family = {kind: _projection(db, kind, source_variant) for kind in SOURCE_TABLES}
