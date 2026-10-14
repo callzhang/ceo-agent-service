@@ -4,7 +4,7 @@ from contextlib import contextmanager
 import pytest
 
 from app.email_classifier_contracts import EmailClassificationStatus
-from app.email_store import EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore
+from app.email_store import EMAIL_PLAN_SQL, EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore
 from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 from tests.test_email_store import _classification, _persist_scan
 
@@ -165,7 +165,7 @@ def test_current_reference_survives_correction_feedback_and_scan_retry(tmp_path)
     with sqlite3.connect(path) as db:
         assert 'action_plan_json' not in {row[1] for row in db.execute('pragma table_info(email_classifications)')}
         db.row_factory = sqlite3.Row
-        plans = db.execute('select * from email_action_plans where classification_id=1 order by action_plan_version').fetchall()
+        plans = db.execute(f'select * from ({EMAIL_PLAN_SQL}) where classification_id=1 order by action_plan_version').fetchall()
     assert [EmailStore._stored_action_plan(row).model_dump(mode='json') for row in plans] == [
         original.action_plan.model_dump(mode='json'), correction.model_dump(mode='json')]
     EmailStore(path)

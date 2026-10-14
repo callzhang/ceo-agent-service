@@ -1740,3 +1740,24 @@ were removed and verified absent, including all archived code, DB copies and log
 No task-owned historical source copy or backup was retained. No other tree or
 publication worktree was modified. Commit is frozen for root's fresh SPEC then
 fresh QUALITY; no5B1 or broader fixture adaptation follows in this unit.
+
+### Task5B1: six current scan/plan test reads
+
+After accepted 5B0, six adjacent current-behavior tests were selected: five
+pending-feedback/processed-scan/replay/rescan/plan-version cases in
+`test_email_store.py`, and the current correction/feedback/scan-retry case in
+`test_email_action_plan_reference.py`. The original six ran RED with
+`6 failed in 3.27s`, exit 1: each reached `sqlite3.OperationalError: no such
+table: email_action_plans` after its business operation. Only their direct
+plan/action SELECTs now use the existing source-shaped `EMAIL_PLAN_SQL` and
+`EMAIL_DIRECT_ACTION_SQL` projections. The selected columns, ordering,
+`sqlite3.Row`/full-dictionary comparisons, zero/one-row checks, direct-only
+types and statuses, immutable rescan snapshot, plan versions and all public
+correction/feedback/replay assertions remain unchanged. `_fetchall` and runtime
+code are unchanged.
+
+The same six selected tests then reported `6 passed in 2.61s`, exit 0.
+Each test run owned and removed its `/tmp/email13-task5b1-*` root, verified
+absent afterward. Historical H, shared native-rebuild S and other current T
+fixtures remain deferred; this unit is not a full Email Task5 acceptance or
+publication gate.

@@ -36,6 +36,8 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
 )
 from app.email_store import (
+    EMAIL_DIRECT_ACTION_SQL,
+    EMAIL_PLAN_SQL,
     StoredEmailLocator,
     EmailActionAttemptConflict,
     EmailActionPlanConflict,
@@ -5760,8 +5762,8 @@ def test_pending_feedback_persists_message_and_cursor_without_plan_or_actions(
     assert persisted["status"] == "pending_feedback"
     assert persisted["current_action_plan_id"] is None
     assert len(_fetchall(database, "select * from email_messages")) == 1
-    assert len(_fetchall(database, "select * from email_action_plans")) == 0
-    assert len(_fetchall(database, "select * from email_actions")) == 0
+    assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 0
+    assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 0
     cursor = store.get_scan_cursor("dingtalk-account", "INBOX")
     assert cursor is not None
     assert cursor["uidvalidity"] == 42
@@ -5790,7 +5792,7 @@ def test_processed_scan_persists_plan_and_only_direct_action_rows(tmp_path: Path
     assert (
         persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
     )
-    plans = _fetchall(database, "select * from email_action_plans")
+    plans = _fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")
     assert len(plans) == 1
     assert json.loads(plans[0]["actions_json"]) == [
         "label",
@@ -5800,7 +5802,7 @@ def test_processed_scan_persists_plan_and_only_direct_action_rows(tmp_path: Path
     ]
     actions = _fetchall(
         database,
-        "select action_type, status from email_actions order by action_type",
+        f"select action_type, status from ({EMAIL_DIRECT_ACTION_SQL}) order by action_type",
     )
     assert [(row["action_type"], row["status"]) for row in actions] == [
         ("label", "pending"),
@@ -5819,8 +5821,8 @@ def test_exact_scan_replay_is_idempotent(tmp_path: Path):
     assert second["id"] == first["id"]
     assert len(_fetchall(database, "select * from email_messages")) == 1
     assert len(_fetchall(database, "select * from email_classifications")) == 1
-    assert len(_fetchall(database, "select * from email_action_plans")) == 1
-    assert len(_fetchall(database, "select * from email_actions")) == 1
+    assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 1
+    assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 1
     assert len(store.list_training_examples()) == 0
 
 
@@ -5849,12 +5851,12 @@ def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
         dict(row)
         for row in _fetchall(
             database,
-            "select * from email_action_plans order by action_plan_version",
+            f"select * from ({EMAIL_PLAN_SQL}) order by action_plan_version",
         )
     ]
     actions_before = [
         dict(row)
-        for row in _fetchall(database, "select * from email_actions order by action_id")
+        for row in _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by action_id")
     ]
     training_before = store.list_training_examples()
 
@@ -5928,12 +5930,12 @@ def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
         dict(row)
         for row in _fetchall(
             database,
-            "select * from email_action_plans order by action_plan_version",
+            f"select * from ({EMAIL_PLAN_SQL}) order by action_plan_version",
         )
     ] == plans_before
     assert [
         dict(row)
-        for row in _fetchall(database, "select * from email_actions order by action_id")
+        for row in _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by action_id")
     ] == actions_before
     assert store.list_training_examples() == training_before
     assert len(_fetchall(database, "select * from email_messages")) == 1
@@ -5970,13 +5972,13 @@ def test_changed_plan_appends_next_version_and_preserves_history(tmp_path: Path)
     assert corrected["confirmed_category"] == "notification"
     plans = _fetchall(
         database,
-        "select action_plan_id, action_plan_version from email_action_plans order by action_plan_version",
+        f"select action_plan_id, action_plan_version from ({EMAIL_PLAN_SQL}) order by action_plan_version",
     )
     assert [(row["action_plan_id"], row["action_plan_version"]) for row in plans] == [
         (classification.action_plan.action_plan_id, 1),
         (second_plan.action_plan_id, 2),
     ]
-    assert len(_fetchall(database, "select * from email_actions")) == 2
+    assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 2
 
 
 def test_agent_correction_persists_its_durable_agent_result(tmp_path: Path):
