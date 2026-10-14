@@ -1847,3 +1847,31 @@ full Task5 or publication gate.
 ### Task5B4 independent acceptance, 2026-10-14
 
 Root accepts0a41ea4b92dbcfcf225cfc21f1bf3fea3bed7037 over96b0faa21ec2933188fc6fd0c65ea17fc7547787. Fresh SPEC independently ran13 cases:13 passed4.58s, lint/diff exit0, exact original predicates/all matchingrows/sourceROWID or publicAUTOINCREMENT id and unchanged assertions/raises/params verified; owned temp absent. Subsequent fresh QUALITY confirmed each mutation reaches the intended source field without normalization/business validation, illegal discarded status still hits SQLite CHECK, and application errors retain their original corruption meanings including16KiB/digest/effect binding. Independent AST verifies only the ten tests/imports changed and all assertions/raises/decorators and surrounding tests preserved. It did not repeat sufficient execution or create temps. Both PASS and clean frozen HEAD. Trigger-count/remaining current/history/metadata/dynamic SQL, broad gate, latest-copy/native/CI/publication and full10+1 remain open.
+
+### Task5B5: eight current action lifecycle corruption tests
+
+The selected eight tests ran unchanged RED: `8 failed in 3.31s`, pytest exit
+1, all at direct access to retired Email action tables. The only shared
+helper changed here, `_create_action_with_attempts`, has exactly six callers,
+all selected current fresh-EmailStore tests; it now reads the same public
+action ID through `EMAIL_DIRECT_ACTION_SQL` before using the unchanged attempt
+API. Each selected native action or feedback update retains its exact original
+predicate and field values, resolving all matching source ROWIDs through a
+finite locator before `update_email_action`. Attempt number 2 is selected
+through `EMAIL_ATTEMPT_SQL` and updated by its native AUTOINCREMENT public
+`id` with `update_action`, never the physical `actions.id`.
+
+Only the two original attempt-count drift fixtures temporarily drop the exact
+target `trg_actions_email_attempt_count_update` trigger. Each reads the current
+trigger SQL from `sqlite_schema` before dropping it and recreates that same
+definition after injecting the original drift. All other target triggers
+remain enabled. The source statuses, receipts, retry-in-progress state,
+feedback mislink, valid dependency-cycle JSON, strict reopen acceptance or
+rejection, and original exception text assertions remain. The final selected
+run reported `8 passed in 3.39s`, pytest exit 0; nonselected module AST is
+unchanged, scoped Ruff and diff-check pass, and both run-owned
+`/tmp/email13-task5b5-*` roots were removed and verified absent.
+
+Transaction fault injection, dynamic cursor counts, historical H, shared
+native rebuild S, composite effect/retry and other current T tests remain
+deferred; this is not full Task5 or publication acceptance.

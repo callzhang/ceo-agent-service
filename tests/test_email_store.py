@@ -36,6 +36,7 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
 )
 from app.email_store import (
+    EMAIL_ATTEMPT_SQL,
     EMAIL_DIRECT_ACTION_LOCATOR_SQL,
     EMAIL_DIRECT_ACTION_SQL,
     EMAIL_PLAN_SQL,
@@ -2615,7 +2616,7 @@ def _create_action_with_attempts(
         store,
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
-    action_id = _fetchall(database, "select action_id from email_actions")[0][
+    action_id = _fetchall(database, f"select action_id from ({EMAIL_DIRECT_ACTION_SQL})")[0][
         "action_id"
     ]
     for attempt_number, status in enumerate(statuses, start=1):
@@ -3521,10 +3522,13 @@ def test_reopen_rejects_feedback_request_linked_to_another_classification(
     )
     assert applied is not None
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_feedback_requests set classification_id=?",
-            (second["id"],),
-        )
+        feedback_rows = db.execute(
+            f"select rowid from ({email_action_projection('email_feedback_requests', include_rowid=True)})"
+        ).fetchall()
+        for feedback_row in feedback_rows:
+            update_email_action(db, "email_feedback_requests", feedback_row[0], {
+                "classification_id": second["id"],
+            })
 
     with pytest.raises(EmailPersistenceCorruption, match="feedback request"):
         EmailStore(database)
@@ -7746,10 +7750,13 @@ def test_claim_rejects_cycle_between_explicit_and_provider_safe_dependencies(
         ),
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_actions set parameters_json=? where action_type='move'",
-            ('{"depends_on":["flag_important"],"target_folder":"Legal"}',),
-        )
+        action_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_type='move'"
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row[0], {
+                "parameters_json": '{"depends_on":["flag_important"],"target_folder":"Legal"}',
+            })
 
     with pytest.raises(
         EmailPersistenceCorruption,
@@ -8301,22 +8308,22 @@ def test_startup_rejects_pending_action_with_historical_terminal_attempt(
     _, action_id = _create_action_with_attempts(database, ("done",))
     with sqlite3.connect(database) as db:
         # Lift the write-time guard only to seed what a past write left behind.
-        db.execute("drop trigger trg_email_action_attempt_count_update")
-        db.execute(
-            """
-            update email_actions
-            set status='pending', attempt_count=0, started_at='', finished_at='',
-                provider_operation='', provider_target='', provider_result_id='',
-                error=''
-            where action_id=?
-            """,
+        trigger_sql = db.execute(
+            "select sql from sqlite_schema where type='trigger' and name=?",
+            ("trg_actions_email_attempt_count_update",),
+        ).fetchone()[0]
+        db.execute("drop trigger trg_actions_email_attempt_count_update")
+        action_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
             (action_id,),
-        )
-        db.execute(
-            email_store_module._REQUIRED_TRIGGER_SQL[
-                "trg_email_action_attempt_count_update"
-            ]
-        )
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row[0], {
+                "status": "pending", "attempt_count": 0, "started_at": "", "finished_at": "",
+                "provider_operation": "", "provider_target": "", "provider_result_id": "",
+                "error": "",
+            })
+        db.execute(trigger_sql)
 
     with pytest.raises(EmailPersistenceCorruption, match="pending action.*attempt"):
         EmailStore(database)
@@ -8329,16 +8336,18 @@ def test_startup_rejects_action_attempt_count_mismatch(tmp_path: Path):
         # The write-time guard exists to stop exactly this. Lift it only long
         # enough to seed the drift a past write left behind, then restore it, so
         # this still proves startup refuses a database that already drifted.
-        db.execute("drop trigger trg_email_action_attempt_count_update")
-        db.execute(
-            "update email_actions set attempt_count=2 where action_id=?",
+        trigger_sql = db.execute(
+            "select sql from sqlite_schema where type='trigger' and name=?",
+            ("trg_actions_email_attempt_count_update",),
+        ).fetchone()[0]
+        db.execute("drop trigger trg_actions_email_attempt_count_update")
+        action_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
             (action_id,),
-        )
-        db.execute(
-            email_store_module._REQUIRED_TRIGGER_SQL[
-                "trg_email_action_attempt_count_update"
-            ]
-        )
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row[0], {"attempt_count": 2})
+        db.execute(trigger_sql)
 
     with pytest.raises(EmailPersistenceCorruption, match="attempt count mismatch"):
         EmailStore(database)
@@ -8348,9 +8357,11 @@ def test_startup_rejects_gap_in_action_attempt_numbers(tmp_path: Path):
     database = tmp_path / "attempt-gap.sqlite3"
     _create_action_with_attempts(database, ("failed", "done"))
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_action_attempts set attempt_number=3 where attempt_number=2"
-        )
+        attempt_rows = db.execute(
+            f"select id from ({EMAIL_ATTEMPT_SQL}) where attempt_number=2"
+        ).fetchall()
+        for attempt_row in attempt_rows:
+            update_action(db, "email_action_attempts", attempt_row[0], {"attempt_number": 3})
 
     with pytest.raises(EmailPersistenceCorruption, match="non-contiguous attempt"):
         EmailStore(database)
@@ -8360,10 +8371,14 @@ def test_startup_rejects_latest_attempt_receipt_or_status_mismatch(tmp_path: Pat
     database = tmp_path / "attempt-latest-mismatch.sqlite3"
     _, action_id = _create_action_with_attempts(database, ("failed", "done"))
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_actions set provider_result_id='wrong-receipt' where action_id=?",
+        action_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
             (action_id,),
-        )
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row[0], {
+                "provider_result_id": "wrong-receipt",
+            })
 
     with pytest.raises(EmailPersistenceCorruption, match="latest attempt mismatch"):
         EmailStore(database)
@@ -8373,10 +8388,12 @@ def test_startup_rejects_terminal_action_without_attempt(tmp_path: Path):
     database = tmp_path / "terminal-without-attempt.sqlite3"
     _, action_id = _create_action_with_attempts(database, ())
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_actions set status='done' where action_id=?",
+        action_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
             (action_id,),
-        )
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row[0], {"status": "done"})
 
     with pytest.raises(
         EmailPersistenceCorruption, match="terminal action.*no.*attempt"
@@ -8390,16 +8407,16 @@ def test_processing_action_may_follow_terminal_attempts_but_has_no_terminal_rece
     database = tmp_path / "processing-retry.sqlite3"
     _, action_id = _create_action_with_attempts(database, ("failed",))
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            update email_actions
-            set status='processing', started_at='2026-08-29T16:02:00+00:00',
-                finished_at='', provider_operation='operation-2',
-                provider_target='target-2', provider_result_id='', error=''
-            where action_id=?
-            """,
+        action_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
             (action_id,),
-        )
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row[0], {
+                "status": "processing", "started_at": "2026-08-29T16:02:00+00:00",
+                "finished_at": "", "provider_operation": "operation-2",
+                "provider_target": "target-2", "provider_result_id": "", "error": "",
+            })
 
     EmailStore(database)
 
