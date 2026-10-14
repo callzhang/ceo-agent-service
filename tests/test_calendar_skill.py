@@ -30,6 +30,7 @@ def _skill_text() -> str:
         ("no_principal_input_needed", "decline", "no"),
         ("missing_attendance_value", "clarify_inviter", "yes"),
         ("missing_description_but_clear_title", "accept", "no"),
+        ("one_to_one_by_title", "accept", "no"),
         ("silent_meeting_with_material", "process_material_and_accept", "no"),
         ("silent_meeting_without_material", "clarify_exact_material", "yes"),
     ],
@@ -42,6 +43,14 @@ def test_calendar_skill_defines_behavior_case(
     row = f"| `{case}` | `{decision}` | `{clarification}` |"
 
     assert row in _skill_text()
+
+
+def test_one_to_one_acceptance_is_decided_by_title_not_attendee_count():
+    text = _skill_text()
+
+    assert "title itself says it is a one-to-one conversation" in text
+    assert "Judge by what the title says, not by the attendee count" in text
+    assert "names a topic, candidate, decision, deliverable, or review" in text
 
 
 def test_calendar_skill_defines_complete_read_and_decision_workflow():
