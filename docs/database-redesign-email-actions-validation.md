@@ -425,3 +425,50 @@ retained DDL are prepared only. The separate ledger is empty, and no seed
 rows or version values are assigned. Existing constructors, source tables,
 validators, DAO and releases remain selected exactly as before. This is not
 Task4 constructor integration or production acceptance; that work remains open.
+
+
+## Task4A unselected paired protocol preparation
+
+Following independently accepted sequencing e977fece, the new
+`app/action_email_schema_release.py` contains only the unselected pure paired
+transaction protocol. Source Store19/Email51 is mandatory. Preparation is
+read-only and captures the exact Store value/timestamp, every Email ledger
+row/timestamp, the supported actual/fresh declaration variant, source allocator
+aliases/waters and the existing FK baseline. Caller-required target pairs use
+obvious sentinel versions in tests; no real target version is allocated.
+
+Publication rechecks the source inside its writer transaction, applies the
+accepted pure thirteen-family conversion, and commits both supplied markers
+together with the twenty-nine-type schema and all thirteen existing translated
+external blockers. The inverse reconstructs current facts, receipt updates,
+original public IDs/ROWIDs and allocator waters before restoring the exact
+source Store timestamp and complete ledger. Source facts written after
+preparation remain inputs to conversion; captured metadata is never an old
+business-row backup. Existing missing-parent FK findings are compared exactly.
+
+The first test run was RED because the protocol module did not exist. The
+initial protocol run passed39 cases after canonicalizing dump statement order
+(the inverse recreates objects; sqlite_schema insertion order is not a source
+contract). The expanded new file passed53 cases in43.07s. Both frozen variants
+exercise failures before DDL, after capture, during conversion, after the first
+marker and before commit; the entire logical source fingerprint, sequences and
+observed source ROWIDs remain equal. Current-fact inverse tests preserve a
+later receipt backfill, new nullable-ID cancellation at a signed ROWID, new
+retained reply fact and separate deleted-high attempt/step allocator waters.
+Unsupported target metadata/aliases and failures after reconstruction or the
+first inverse marker preserve the complete target logical fingerprint.
+
+The active Store19/Email51 constructors and database coordinator are explicitly
+verified unchanged on a fresh database. There is no real target-default cold
+constructor proof, paired subprocess, active release selector, DAO conversion,
+new seed path, CI/native/provider/production action or publication in Task4A.
+The final complete constructor/DAO/validator/marker activation remains coupled;
+Task4 and the full10+1 redesign remain incomplete. Independent SPEC then QUALITY
+review of this preparation remains pending.
+
+Focused regression result:216 passed in73.23s using only the new protocol,
+Email migration, finite Email writes, current Email/classification factories,
+Store release, Email release and prior Attempt/Memory release test files.
+Ruff and `git diff --check` passed. Owned temporary test roots were inspected
+and removed after verification. This result is local protocol regression
+evidence, not integrated Task4/runtime publication acceptance.

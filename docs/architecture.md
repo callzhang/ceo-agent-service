@@ -2203,3 +2203,27 @@ Claude/Friday single-message bridges serialize the complete output schema as com
 ## Task citation mismatch diagnostics
 
 Existing current-Project citation validation reports both the expected immutable WorkItem source_ref and the received reference when they differ. The existing repair path receives those known values. Validation conditions, result contract, repair budget, routing and permissions remain unchanged; no additional prompt rule is added. Verification is documented in docs/native-input-evidence-release-validation.md.
+
+
+### Unselected Email13 paired transaction preparation
+
+`app/action_email_schema_release.py` now provides a pure, unselected paired
+transaction protocol for the exact Store19 (`2026-10-13.5`)/Email51 source.
+Preparation captures both the Store value/timestamp and the complete Email
+version/timestamp ledger, thirteen-family and old sixteen-action declarations,
+native allocator metadata, and the existing FK findings in one read snapshot.
+The caller must explicitly supply a target pair; no future version is allocated
+and no active selector or constructor calls this module.
+
+Its local `publish()` converts current source facts and writes both supplied
+markers in the same transaction. Readback checks the complete twenty-nine-type
+actions declaration, absence of the retired thirteen tables, all thirteen
+translated external triggers, both markers, ledger and unchanged FK baseline.
+Rollback reconstructs the original declarations from current target facts and
+allocator waters, restoring the exact original Store timestamp and complete
+Email ledger. It never restores an old database or a backup of business rows.
+Exceptions before commit roll back DDL, both markers and business writes as one
+transaction. This is Task4A preparation only: current constructors, validators,
+DAO, Store19/Email51 markers and default sixteen-action plus thirteen-table
+layout remain selected. Genuine target default constructors, the paired
+subprocess, final coupled activation and Task5/6 acceptance remain open.

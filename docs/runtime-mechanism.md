@@ -3004,3 +3004,21 @@ Claude/Friday single-message bridges serialize the complete output schema as com
 ## Task citation mismatch diagnostics
 
 Existing current-Project citation validation reports both the expected immutable WorkItem source_ref and the received reference when they differ. The existing repair path receives those known values. Validation conditions, result contract, repair budget, routing and permissions remain unchanged; no additional prompt rule is added. Verification is documented in docs/native-input-evidence-release-validation.md.
+
+
+## Unselected Email13 paired transaction protocol
+
+Task4A adds only an unselected transaction protocol in
+`app/action_email_schema_release.py`. An exact Store19/Email51 source capture
+retains the Store marker timestamp, every Email migration timestamp, original
+thirteen-family/old sixteen-action metadata and native aliases. Local tests
+explicitly pass sentinel target markers; no deployed or candidate default
+version is allocated. Publication performs the reviewed pure conversion and
+both marker writes within one FK-off writer transaction, then validates the
+complete target declaration, existing translated blockers and FK baseline.
+The inverse uses current facts and allocator waters and restores both original
+markers and the full source ledger. Unsupported current metadata or an
+exception leaves the transaction unchanged. No selector, constructor, DAO or
+default action flag invokes this preparation. The genuine paired initializer
+and complete constructor/DAO/validator/version switch remain one later coupled
+activation, with separate Task5/6 acceptance.
