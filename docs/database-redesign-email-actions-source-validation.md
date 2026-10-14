@@ -35,3 +35,21 @@ Focused verification: `python -m pytest -q tests/test_email_action_source.py
 tests/test_email_action_children_source.py --basetemp=/tmp/email13-source-oracle-pytest`
 reported **36 passed**. `ruff check tests/test_email_action_children_source.py`
 passed. The task-owned temporary pytest directory was cleaned after validation.
+
+## Independent acceptance
+
+Fresh sequential SPEC and QUALITY reviews accepted source-oracle commit
+`cf47ee0eb4852e84a9b8b6457448cad390216d2c`. Each independently passed the same
+36 focused cases, Ruff and whitespace checks; their owned temporary directories
+were removed. SPEC also checked the frozen parent capture digest against the
+child inventory and the receipt writer's actual enrichment boundary. These
+counts overlap and do not represent additional distinct scenarios.
+
+Fresh sequential SPEC and QUALITY then accepted docs-only implementation plan
+and field-map commit `6a273df766e900bd7792bfe204e2ec346c7f6cb8`. Independent
+metadata comparisons found exactly 144 unique source fields across thirteen
+families, with no missing/extra fields or source-type/nullability/key mismatch.
+The plan explicitly addresses the shared classification-parent constructor
+dependency and the existing refusal of independent simultaneous Store/Email
+schema changes. Those mechanisms remain implementation gates, not working
+code proven by this document. The full ten-core-table goal remains incomplete.

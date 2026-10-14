@@ -239,3 +239,15 @@ Success requires source-equivalent legal SQL values/NULLs/affinity/constraints, 
 Hard implementation risks are explicit: generated TEXT/BLOB/INTEGER affinity and BINARY uniqueness must match source; composite FK references require the unconditional parent unique index; original immediate/RESTRICT timing must survive FK-off migration and normal FK-on execution; MAX+1 must occur under the writer lock; source ROWID updates must not mutate original opaque PKs; OR IGNORE must not run Python parent validation ahead of native source constraints; old partial index scopes must not accidentally index Email composite keys; constructor/validator and all external triggers must switch together. None is verified by this plan or by the frozen production zero-NULL counts.
 
 The source snapshots contain 382 deliberately NULL feedback prior-plan associations; their NULL allowance and replay semantics are mandatory. The nine public PKs have normal creation validation/generated identities, but SQL-legal nullable states remain preserved by this storage plan. No incidental constraint cleanup is proposed.
+
+## Planning acceptance
+
+Independent sequential SPEC and QUALITY accepted the plan and complete field
+map at `6a273df766e900bd7792bfe204e2ec346c7f6cb8`. Both compared the 144 unique
+source fields against the frozen inventories and inspected the actual
+constructor and paired-publication dependencies. The independent source-only
+oracle at `cf47ee0e` also passed SPEC/QUALITY and 36 focused cases. This accepts
+the implementation direction within the already approved redesign; no target
+schema or migration has been implemented, no version allocated, and no
+production transition follows from planning acceptance. Task1 still requires
+the actually published Phase5E predecessor.
