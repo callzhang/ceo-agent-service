@@ -774,3 +774,18 @@ The same artifact retains the eleven scripted cases with their original
 `c47e6f4a` binding rather than implying a merged-head rerun. No true outbound
 send, trajectory copy or production database mutation occurred. Final CI,
 normal publication and production readback remain separate requirements.
+
+
+### Independent acceptance of the merged-main CI fixture correction
+
+Fresh SPEC accepted `5a635f6f`: three exact repaired cases and ten nearby
+checks passed. Independent mutation probes reproduced the meeting failure
+when the final DTO alignment was removed and confirmed that substituting the
+successor token violates the preserved stale-owner assertions. Fresh QUALITY
+then accepted clean `d51d9cdd`: twelve focused current-head checks passed, both
+fakes demonstrably bind the real verifier, and the native/scripted evidence
+bindings and false publication flags were checked. Ruff and diff checks passed
+in both reviews. The one-line CI count correction is `a50bd1ac`; main
+`df61056d` was normally merged with only its deployment checkpoint document.
+No runtime changes were added by these fixture corrections. Final complete CI
+and normal production publication are still required.
