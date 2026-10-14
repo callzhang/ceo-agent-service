@@ -1429,3 +1429,5 @@ reverts committed work they did not author.
 | codex-email13-task4-main-refresh | Email-actions worktree: normal merge origin/main04510bfc and own claim; claims conflict only, retain both sides | Preserve current native input/citation/schema-format behavior before next paired Email integration. No new runtime policy, schema activation, provider or production write. | merge verified metadata/code scope 2026-10-14 |
 
 | codex-email13-task4-scheduling | Email-actions worktree: Task4 scheduling paragraphs in Email plan and own claim only | Root documents exact unselected paired-release preparation before DAO groups and final atomic activation; source call-graph evidence confirms hundreds of source references and about90 methods and genuine old constructors reject29-kind schema. No field/schema/runtime policy or activation change. | active 2026-10-14 |
+
+| codex-email13-dao-4d-acceptance | Email integration: D acceptance in scoped plan/validation/program and own claim only | Record sequential independent SPEC/QUALITY and exact partial/default boundary; then preserve published main at clean gate. No runtime/provider change. | active 2026-10-14 |

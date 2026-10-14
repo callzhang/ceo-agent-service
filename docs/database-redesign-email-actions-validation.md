@@ -860,3 +860,28 @@ QUALITY review is pending.
 Owned4D temporary archives, source/target databases, pytest roots and editing
 intermediate were inspected and removed from the exact task root; absence was
 verified. No historical test copy is retained.
+
+
+### Independent Task4D acceptance, 2026-10-14
+
+Candidate2e38c20dca8eac510d91ab64e5a21e9e69dbf47c passed sequential
+independent SPEC then QUALITY against832a2ee3. SPEC independently captured
+11 passed in57.33s, exit0, all signatures/constants and source-oracle method
+AST parity with genuine2773 (allowing only accepted B plan SQL conversion).
+QUALITY independently captured11 passed in32.36s, exit0, inspected the full
+writer closure and retained caller-owned writer transactions. Both observed
+claim4432→4432 VM behavior without a scan or new index.
+
+QUALITY additionally verified SQL NULL identity recovery at source ROWIDs-7
+and0: a fault on the second recovery update rolled back both original claims
+and timestamps; wrong lease recovered0, correct owner2, replay0, with complete
+source/target native facts equal. This is explicitly a native SQL boundary
+following valid source construction, not strict startup acceptance of NULL
+facts. Both reviewers verified owned temporary roots were absent after cleanup;
+HEAD stayed clean. No production/provider/native CLI/publication action occurred.
+
+This accepts only D's seven-method unpublished DAO conversion. E startup shape
+and durable validators, current fresh seeds, F paired constructors/coordinator/
+subprocess and target allocation, external Task5 consumers and copy/native/
+publication gates remain open. Source Store19/Email51/defaults remain selected;
+the isolated partial branch is not default-runtime-ready.

@@ -389,3 +389,12 @@ ec4ddf18 file tree. Normal deployment started after merge; its existing readines
 check still sees in-flight work, production was last observed834b8348/PID65400,
 and deployment/live readback have no completion receipt yet. This is no Email
 schema/table-count transition.
+
+
+2026-10-14: Email Task4D candidate2e38c20d passed sequential independent SPEC
+then QUALITY. Both independently ran11 cases; QUALITY added NULL identity
+recovery/atomicity probes. This completes only the seven reply DAO methods on
+explicit converted copies. A/B/C/D are accepted preparation; E validators/seeds,
+F paired constructor/default activation, Task5 external callers and actual-copy/
+native/publication gates remain open. Production remains Store19/Email51 with121
+physical noninternal tables; the full10-core-table plus ledger goal is unfinished.

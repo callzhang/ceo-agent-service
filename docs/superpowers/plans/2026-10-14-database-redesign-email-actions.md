@@ -301,6 +301,15 @@ No default activation is accepted; the startup-shape-dependent public preview,
 seven remaining D methods, E validators/seeds and F paired construction/release
 remain open. No real target version or production transition was selected.
 
+**Task4D accepted as unpublished partial integration (2026-10-14):**
+`2e38c20d` passed sequential independent SPEC then QUALITY. Each independently
+ran all11 new cases (57.33s and32.36s); QUALITY added native NULL identity
+recovery/second-update rollback and wrong-owner/exact-owner/replay probes.
+All17 claim/13 receipt fields, source ROWIDs, original transactions/predicates,
+JSON-text CAS and public signatures remain unchanged. This accepts only the
+seven-method DAO conversion. E/F validators, seeds and paired default activation,
+Task5 external callers and later copy/native/publication remain open.
+
 **Implementation scheduling clarification (2026-10-14):** the selected
 constructor/DAO/validator/marker transition remains one paired activation and
 publication. Source inspection found hundreds of old-family references and about90 active
