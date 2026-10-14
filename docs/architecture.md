@@ -360,6 +360,11 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 错误表。候选扫描在只读连接完成，写入按固定大小分批；每批在短写事务内重新核验 task ID、执行代、
 最新失败 run、外部成功动作和已收口错误。并发变化的候选会跳过，不会被旧扫描结果覆盖；历史保留规则不变。
 
+`reconcile_unresolved_reply_tasks_with_settlement_evidence` 同样先只读扫描精确 trigger 的已收口
+settlement evidence，再按固定大小批次短写。每个批次重新核验 task ID、execution generation、未解决状态
+及 settlement evidence，并只压缩实际关闭的 task 输入。启动恢复不会为整个历史集合持有一个 SQLite
+写事务，也不会覆盖并发 writer 已写入的终态。
+
 旧版本曾在同一个 `reply_task` 的不同 generation 各写入一条 `reply_attempt` 投影。此类遗留行仍
 保留其 `agent_run` 作为执行事实，但 History（包括 Console API）只展示该 task 的最新 Attempt；它们
 不是多个独立业务事项，也不能重复计数或形成多张处理卡片。History 图表仍在每条原始 Attempt 的

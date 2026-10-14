@@ -209,6 +209,7 @@ SQLITE_MMAP_SIZE_BYTES = 0
 STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
 STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 DONE_FAILED_RUN_RECONCILE_BATCH_SIZE = 100
+SETTLED_REPLY_RECONCILE_BATCH_SIZE = 100
 AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
 AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
@@ -20606,29 +20607,68 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return cursor.rowcount == 1
 
     def reconcile_unresolved_reply_tasks_with_settlement_evidence(self) -> int:
-        """Close stale tasks whose exact trigger has resolved settlement evidence."""
-        with self._immediate_write_transaction() as db:
-            compact_ids = db.execute(
-                """
-                update tasks as tasks
-                set status='done', error='', available_at='', locked_at=null,
-                    updated_at=current_timestamp
-                where tasks.record_type='reply_tasks' and tasks.status in ('failed', 'needs_human')
-                  and exists (
-                      select 1
-                      from errors as settled
-                      where settled.conversation_id=tasks.conversation_id
-                        and settled.message_id=tasks.trigger_message_id
-                        and settled.kind='reply_task_already_settled'
-                        and trim(coalesce(settled.resolved_at, ''))<>''
-                        and trim(coalesce(settled.resolution, ''))<>''
-                  )
-                returning id
-                """
-            ).fetchall()
-            for row in compact_ids:
-                self._compact_settled_reply_task_input(db, int(row["id"]))
-            return len(compact_ids)
+        """Close stale tasks with exact settlement evidence in bounded writes."""
+        candidate_sql = """
+            select tasks.id, tasks.execution_generation
+            from tasks
+            where tasks.record_type='reply_tasks'
+              and tasks.status in ('failed', 'needs_human')
+              and exists (
+                  select 1
+                  from errors as settled
+                  where settled.conversation_id=tasks.conversation_id
+                    and settled.message_id=tasks.trigger_message_id
+                    and settled.kind='reply_task_already_settled'
+                    and trim(coalesce(settled.resolved_at, ''))<>''
+                    and trim(coalesce(settled.resolution, ''))<>''
+              )
+        """
+        with self._connect() as db:
+            candidates = db.execute(candidate_sql + " order by tasks.id").fetchall()
+
+        reconciled = 0
+        for offset in range(0, len(candidates), SETTLED_REPLY_RECONCILE_BATCH_SIZE):
+            batch = candidates[offset:offset + SETTLED_REPLY_RECONCILE_BATCH_SIZE]
+            predicates = " or ".join(
+                "(tasks.id=? and tasks.execution_generation=?)" for _ in batch
+            )
+            parameters = [
+                value
+                for row in batch
+                for value in (row["id"], row["execution_generation"])
+            ]
+            with self._immediate_write_transaction() as db:
+                rows = db.execute(
+                    candidate_sql
+                    + f" and ({predicates}) order by tasks.id",
+                    parameters,
+                ).fetchall()
+                for row in rows:
+                    cursor = db.execute(
+                        """
+                        update tasks as tasks
+                        set status='done', error='', available_at='', locked_at=null,
+                            updated_at=current_timestamp
+                        where tasks.record_type='reply_tasks' and tasks.id=?
+                          and tasks.status in ('failed', 'needs_human')
+                          and tasks.execution_generation=?
+                          and exists (
+                              select 1
+                              from errors as settled
+                              where settled.conversation_id=tasks.conversation_id
+                                and settled.message_id=tasks.trigger_message_id
+                                and settled.kind='reply_task_already_settled'
+                                and trim(coalesce(settled.resolved_at, ''))<>''
+                                and trim(coalesce(settled.resolution, ''))<>''
+                          )
+                        returning id
+                        """,
+                        (row["id"], row["execution_generation"]),
+                    ).fetchone()
+                    if cursor is not None:
+                        self._compact_settled_reply_task_input(db, int(cursor["id"]))
+                        reconciled += 1
+        return reconciled
 
     def has_sent_reply_for_trigger(
         self,

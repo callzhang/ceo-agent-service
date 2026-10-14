@@ -18,6 +18,13 @@ historical completion in the Console. Unknown historical delivery is a technical
 verification failure, not a needs_human business choice. No maintenance runs in
 read paths or startup.
 
+Startup reply-task projection recovery performs candidate discovery on read-only
+connections and applies bounded batches in short SQLite write transactions. Both
+the failed-current-run repair and settled-trigger reconciliation recheck the exact
+task generation and current evidence inside each write transaction, so a concurrent
+terminal update is preserved and a large historical backlog cannot monopolize the
+database writer for one transaction.
+
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
 revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override

@@ -3490,6 +3490,74 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
     assert "accepted event-1" in error[1]
 
 
+def test_settlement_evidence_reconcile_commits_between_bounded_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_ids: list[int] = []
+    for index in range(2):
+        store.enqueue_reply_task(
+            conversation_id=f"cid-settlement-batch-{index}",
+            conversation_title="Direct chat",
+            single_chat=True,
+            trigger_message_id=f"msg-settlement-batch-{index}",
+            trigger_create_time="2026-09-20 09:00:00",
+            trigger_sender="Derek",
+            trigger_text="Please handle this",
+        )
+        [task] = store.claim_reply_tasks(limit=1)
+        task_ids.append(task.id)
+        with store._connect() as db:
+            db.execute(
+                "update tasks set status='failed' where record_type='reply_tasks' and id=?",
+                (task.id,),
+            )
+            db.execute(
+                "insert into errors (conversation_id, message_id, kind, detail, "
+                "resolved_at, resolution) values (?, ?, ?, ?, current_timestamp, ?)",
+                (
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    "reply_task_already_settled",
+                    "External settlement was verified.",
+                    "External settlement was verified.",
+                ),
+            )
+
+    monkeypatch.setattr(store_module, "SETTLED_REPLY_RECONCILE_BATCH_SIZE", 1)
+    original_transaction = store._immediate_write_transaction
+    committed_batches = 0
+    interleaved_writer_acquired = False
+
+    @contextmanager
+    def transaction_with_competing_writer():
+        nonlocal committed_batches, interleaved_writer_acquired
+        with original_transaction() as db:
+            yield db
+        committed_batches += 1
+        if committed_batches == 1:
+            with store._connect() as other_writer:
+                other_writer.execute("begin immediate")
+                other_writer.execute(
+                    "update tasks set status='skipped' where record_type='reply_tasks' and id=?",
+                    (task_ids[1],),
+                )
+                other_writer.execute("commit")
+            interleaved_writer_acquired = True
+
+    monkeypatch.setattr(
+        store, "_immediate_write_transaction", transaction_with_competing_writer
+    )
+
+    assert store.reconcile_unresolved_reply_tasks_with_settlement_evidence() == 1
+    assert committed_batches == 2
+    assert interleaved_writer_acquired
+    first = store.get_reply_task(task_ids[0])
+    second = store.get_reply_task(task_ids[1])
+    assert first is not None and first.status == "done"
+    assert second is not None and second.status == "skipped"
+
+
 def test_skip_failed_reply_task_with_terminal_no_action_run(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
