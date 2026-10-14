@@ -2112,3 +2112,39 @@ counts and task-owned temporary cleanup.
 ### Task5B12 independent acceptance, 2026-10-14
 
 Root accepts626ca557b54a01ec02e14b72384ba72dafbcec16 overe282f43d1f015bd091decc8e92b73e72db2acd7f. Fresh SPEC independently3wrappers24.24s with exact40/6/2nestedcases, collect3212.64s/lint/diff, complete40removed AST incldecorators identical to0441 and entirecurrentmodulesminus40 identical; ownedtempsabsent. Subsequent fresh QUALITY independently proves missing/empty/wrongnode/skipped/failed/error/nonzero/extra-child-report rejection with diagnostics, exactsuccess accepted, missingcommit/archive/extract failures propagate and tempcleanup verified. OnlyCIcheckoutfetch-depth0, no runtime. Both PASS and frozen cleanHEAD. Accepted implementation fullfocused321pass69.65s contains318current+3wrappers and48actualnestedsourcecases; initialomittedsnapshot321pass1fail71.62s was corrected explicitly, not hidden. Root additionally ran test_email_context_source.py and test_email_task_producer.py:8passed0.30s exit0 with ownedtemp absent, after reviewfreeze no source edits. NamedTask5collect1099 identifies six remaining currentfixture files and additional genuineoldH in four files; these and latest-copy/native/CI/publication/full10+1 remain open.
+
+### Task5C1 Email Web API current fixtures (local candidate)
+
+Thirteen current Web API functions (19 collected cases) replace retired direct
+Email action SQL with finite source-shaped projections and existing source-ROWID,
+autoincrement-ID or composite-key writers. The two processing-progress callers
+share only `_signal_failed_move_plan`; seven lineage-mismatch parameters,
+response codes, queue/list counts, retry windows, private-data and throughput
+assertions stay intact. A local `register_email_routes` future-ledger case now
+expects the existing paired selector's `sqlite_integrity_error` and verifies
+schema, Email ledger, Store marker, schema cookie and database bytes unchanged.
+Its original healthy non-Email routes, unavailable Email endpoints and one
+factory call are still asserted.
+
+The original whole Audit-app Email51 isolation test is AST-identical to the
+fixed `0441cf15` source and passed there in an owned archive (`1 passed in
+2.92s`, exit 0). The target Store20/Email52 constructor instead rejects an
+advanced Email ledger before `create_audit_app` registers routes. The current
+test checks that exact paired `IntegrityError`, with unchanged schema, ledger,
+Store marker, cookie, bytes and no WAL. This distinguishes local Email route
+isolation from construction of the whole Audit app without changing runtime.
+
+Original targeted 20 cases gave `15 failed, 5 passed` in 8.30s, exit 1, on
+retired physical SQL and the prior route diagnostic. Converted cases gave
+`19 passed, 1 failed` in 8.93s, exit 1; the one new no-WAL assertion required
+the established DELETE-journal fixture setting and then passed alone
+(`1 passed in 1.74s`, exit 0). A first full Web API file run exposed the
+unselected whole-app test (`180 passed, 1 failed` in 27.96s, exit 1), prompting
+its genuine-old-source/current-pair split above. The bounded final gate over
+the complete Web API file and four historical group entrances reported
+`185 passed in 42.80s`, exit 0: 181 current API cases plus four wrappers,
+whose exact nested published-source case counts are 40/6/2/1 with no skip.
+Its owned `/tmp/email13-task5c1-focused-*` root was removed and verified
+absent. No current runtime, provider, native CLI, production or CI operation
+was changed. Other named Task5 files and the additional 11 genuine-old-source
+functions remain open.

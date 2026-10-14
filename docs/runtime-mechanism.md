@@ -3246,3 +3246,12 @@ or automatic retry path. Current retained Email business-table identifiers
 remain case-insensitive under the existing validator; their quoted forms use
 SQLite's normal double-quote, backtick and bracket syntax. Shared `actions`
 metadata and the pair markers are outside that retained Email owner scope.
+
+The Web API's direct `register_email_routes` path catches this paired
+IntegrityError and keeps Email endpoints unavailable while routes registered
+beforehand can answer. Full `create_audit_app` constructs AutoReplyStore first;
+its paired preflight rejects an unknown future Email ledger before route
+registration. The old Email51 whole-app isolation test runs in its bound
+published-source suite, while the current whole-app test asserts the refusal
+and unchanged schema, markers, cookie and bytes. No fallback, catch or retry
+was added to the runtime.

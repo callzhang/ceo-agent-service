@@ -38,10 +38,21 @@ from app.email_important import ImportantSignals
 from app.email_classifier_runtime import EmailClassifierRuntimeMode
 from app.email_training_snapshot import build_folder_training_snapshot
 from app.email_store import (
+    EMAIL_DIRECT_ACTION_SQL,
+    EMAIL_UNSUBSCRIBE_EFFECT_SQL,
+    EMAIL_UNSUBSCRIBE_STEP_SQL,
     EmailFolderBindingConflict,
     EmailStore,
     email_action_identity,
     email_unsubscribe_effect_digest,
+)
+from app.action_storage import (
+    delete_action,
+    delete_email_action,
+    email_action_projection,
+    insert_email_action,
+    update_action,
+    update_email_action,
 )
 from app.email_task_adapter import email_conversation_id
 from app.store import AgentRole, AutoReplyStore
@@ -231,7 +242,8 @@ def _signal_failed_move_plan(
     )
     with sqlite3.connect(store.path) as db:
         action_id = db.execute(
-            "select action_id from email_actions where action_plan_id=?", (plan.action_plan_id,)
+            f"select action_id from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
+            (plan.action_plan_id,),
         ).fetchone()[0]
     for number in range(1, attempts + 1):
         store.append_action_attempt(
@@ -249,12 +261,16 @@ def test_processing_progress_counts_a_failed_action_the_way_the_list_filter_does
     )
     # A failure from three days ago: outside the 24-hour window, still failed.
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update email_actions set "
-            "created_at='2020-01-01T00:00:00+00:00', updated_at='2020-01-01T00:00:00+00:00' "
+        rows = db.execute(
+            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
             "where classification_id=?",
             (identity,),
-        )
+        ).fetchall()
+        for (source_rowid,) in rows:
+            update_email_action(db, "email_actions", source_rowid, {
+                "created_at": "2020-01-01T00:00:00+00:00",
+                "updated_at": "2020-01-01T00:00:00+00:00",
+            })
 
     progress = client.get("/api/console/email/processing-progress").json()
     listed = client.get("/api/console/email/classifications?status=processed&action_status=failed").json()
@@ -271,13 +287,17 @@ def test_processing_progress_and_the_list_filter_split_failed_actions_by_whether
         store, identity, attempts=1, error="provider_read_failed:ImapConnectionError"
     )
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update email_actions set "
-            "next_attempt_at='2099-01-01T00:00:00+00:00', "
-            "created_at='2020-01-01T00:00:00+00:00', updated_at='2020-01-01T00:00:00+00:00' "
+        rows = db.execute(
+            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
             "where classification_id=?",
             (identity,),
-        )
+        ).fetchall()
+        for (source_rowid,) in rows:
+            update_email_action(db, "email_actions", source_rowid, {
+                "next_attempt_at": "2099-01-01T00:00:00+00:00",
+                "created_at": "2020-01-01T00:00:00+00:00",
+                "updated_at": "2020-01-01T00:00:00+00:00",
+            })
 
     progress = client.get("/api/console/email/processing-progress").json()
     retriable = client.get("/api/console/email/classifications?status=processed&action_status=failed_retriable").json()
@@ -2659,11 +2679,14 @@ def test_email_detail_marks_terminal_no_reliable_entry_as_non_success(
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
     with sqlite3.connect(fixture.database) as db:
-        db.execute(
-            "update email_unsubscribe_receipts set outcome='skipped_no_reliable_entry', "
-            "entry_url='' where action_identity=?",
+        source_rowid = db.execute(
+            f"select rowid from ({email_action_projection('email_unsubscribe_receipts', include_rowid=True)}) "
+            "where action_identity=?",
             (fixture.action_identity,),
-        )
+        ).fetchone()[0]
+        update_email_action(db, "email_unsubscribe_receipts", source_rowid, {
+            "outcome": "skipped_no_reliable_entry", "entry_url": "",
+        })
 
     response = fixture.client.get(
         f"/api/console/email/classifications/{fixture.classification_id}"
@@ -2698,10 +2721,12 @@ def test_email_unsubscribe_entry_url_requires_explicit_verified_receipt(
     assert response.json() == {"ok": True, "entry_url": fixture.entry_url}
 
     with sqlite3.connect(fixture.database) as db:
-        db.execute(
-            "update email_unsubscribe_receipts set entry_url='' where action_identity=?",
+        source_rowid = db.execute(
+            f"select rowid from ({email_action_projection('email_unsubscribe_receipts', include_rowid=True)}) "
+            "where action_identity=?",
             (fixture.action_identity,),
-        )
+        ).fetchone()[0]
+        update_email_action(db, "email_unsubscribe_receipts", source_rowid, {"entry_url": ""})
 
     unavailable = fixture.client.get(
         f"/api/console/email/classifications/{fixture.classification_id}/unsubscribe-entry"
@@ -2718,11 +2743,15 @@ def test_a_direct_receipt_without_agent_runs_still_shows_its_unsubscribe_address
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
     with sqlite3.connect(fixture.database) as db:
-        db.execute(
-            "update email_unsubscribe_effects set audit_agent_run_id=null "
+        effects = db.execute(
+            f"select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=?",
             (fixture.action_identity,),
-        )
+        ).fetchall()
+        for action_identity, effect_digest in effects:
+            update_action(db, "email_unsubscribe_effects", (action_identity, effect_digest), {
+                "audit_agent_run_id": None,
+            })
         db.execute("delete from runs where record_type='agent_runs'")
 
     detail = fixture.client.get(
@@ -2741,11 +2770,15 @@ def test_email_detail_projects_verified_attempt_for_legacy_receipt_without_audit
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
     with sqlite3.connect(fixture.database) as db:
-        db.execute(
-            "update email_unsubscribe_effects set audit_agent_run_id=null "
+        effects = db.execute(
+            f"select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=?",
             (fixture.action_identity,),
-        )
+        ).fetchall()
+        for action_identity, effect_digest in effects:
+            update_action(db, "email_unsubscribe_effects", (action_identity, effect_digest), {
+                "audit_agent_run_id": None,
+            })
 
     event = _audited_observability_event(fixture)
 
@@ -2758,11 +2791,19 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
     with sqlite3.connect(fixture.database) as db:
-        db.execute("delete from email_unsubscribe_steps")
-        db.execute("delete from email_unsubscribe_receipts")
-        db.execute("delete from email_unsubscribe_continuations")
-        db.execute("delete from email_unsubscribe_effects")
-        db.execute("delete from email_unsubscribe_claims")
+        for (step_id,) in db.execute(f"select id from ({EMAIL_UNSUBSCRIBE_STEP_SQL})").fetchall():
+            delete_action(db, "email_unsubscribe_steps", step_id)
+        for kind in ("email_unsubscribe_receipts", "email_unsubscribe_continuations"):
+            source = email_action_projection(kind, include_rowid=True)
+            for (source_rowid,) in db.execute(f"select rowid from ({source})").fetchall():
+                delete_email_action(db, kind, source_rowid)
+        for identity in db.execute(
+            f"select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL})"
+        ).fetchall():
+            delete_action(db, "email_unsubscribe_effects", tuple(identity))
+        claim_source = email_action_projection("email_unsubscribe_claims", include_rowid=True)
+        for (source_rowid,) in db.execute(f"select rowid from ({claim_source})").fetchall():
+            delete_email_action(db, "email_unsubscribe_claims", source_rowid)
         db.execute(
             "update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (fixture.task.id,),
@@ -2813,13 +2854,19 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
     with sqlite3.connect(fixture.database) as db:
-        db.execute("delete from email_unsubscribe_steps")
-        db.execute("delete from email_unsubscribe_receipts")
-        db.execute(
-            "update email_unsubscribe_claims set status='dispatching', "
-            "phase='navigating' where action_identity=?",
+        for (step_id,) in db.execute(f"select id from ({EMAIL_UNSUBSCRIBE_STEP_SQL})").fetchall():
+            delete_action(db, "email_unsubscribe_steps", step_id)
+        receipt_source = email_action_projection("email_unsubscribe_receipts", include_rowid=True)
+        for (source_rowid,) in db.execute(f"select rowid from ({receipt_source})").fetchall():
+            delete_email_action(db, "email_unsubscribe_receipts", source_rowid)
+        source_rowid = db.execute(
+            f"select rowid from ({email_action_projection('email_unsubscribe_claims', include_rowid=True)}) "
+            "where action_identity=?",
             (fixture.action_identity,),
-        )
+        ).fetchone()[0]
+        update_email_action(db, "email_unsubscribe_claims", source_rowid, {
+            "status": "dispatching", "phase": "navigating",
+        })
         db.execute(
             "update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (fixture.task.id,),
@@ -2933,20 +2980,19 @@ def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
                 (fixture.audit.id,),
             )
         elif mismatch == "effect":
-            db.execute(
-                "update email_unsubscribe_receipts set effect_digest=? "
+            source_rowid = db.execute(
+                f"select rowid from ({email_action_projection('email_unsubscribe_receipts', include_rowid=True)}) "
                 "where action_identity=?",
-                ("f" * 64, fixture.action_identity),
-            )
+                (fixture.action_identity,),
+            ).fetchone()[0]
+            update_email_action(db, "email_unsubscribe_receipts", source_rowid, {
+                "effect_digest": "f" * 64,
+            })
         else:
-            db.execute(
-                "update email_unsubscribe_effects set audit_agent_run_id=? "
-                "where action_identity=? and effect_digest=?",
-                (
-                    fixture.consumer.id,
-                    fixture.action_identity,
-                    fixture.effect_digest,
-                ),
+            update_action(
+                db, "email_unsubscribe_effects",
+                (fixture.action_identity, fixture.effect_digest),
+                {"audit_agent_run_id": fixture.consumer.id},
             )
 
     _assert_no_audited_lineage(_audited_observability_event(fixture))
@@ -2992,10 +3038,10 @@ def test_email_detail_preserves_all_valid_continuation_rounds_in_lineage(
         owner="audit-observability-revision-owner",
     )
     with sqlite3.connect(fixture.database) as db:
-        db.execute(
-            "update email_unsubscribe_effects set audit_agent_run_id=? "
-            "where action_identity=? and effect_digest=?",
-            (final_audit.id, fixture.action_identity, fixture.effect_digest),
+        update_action(
+            db, "email_unsubscribe_effects",
+            (fixture.action_identity, fixture.effect_digest),
+            {"audit_agent_run_id": final_audit.id},
         )
 
     event = _audited_observability_event(fixture)
@@ -3008,10 +3054,23 @@ def test_future_email_schema_isolated_from_non_email_routes(tmp_path: Path):
     database = tmp_path / "corrupt.sqlite3"
     EmailStore(database)
     with sqlite3.connect(database) as db:
+        assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
         db.execute(
             "update email_schema_migrations set version=?",
             (email_store_module.EMAIL_SCHEMA_VERSION + 1,),
         )
+    with sqlite3.connect(database) as db:
+        schema_before = db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall()
+        ledger_before = db.execute(
+            "select version, applied_at from email_schema_migrations order by version"
+        ).fetchall()
+        marker_before = db.execute(
+            "select value, updated_at from service_state where key='store_schema_version'"
+        ).fetchone()
+        cookie_before = db.execute("pragma schema_version").fetchone()[0]
+    bytes_before = sha256(database.read_bytes()).hexdigest()
     factory_calls = 0
 
     def factory() -> EmailStore:
@@ -3033,7 +3092,7 @@ def test_future_email_schema_isolated_from_non_email_routes(tmp_path: Path):
 
     availability = app.state.email_store_availability
     assert availability.store is None
-    assert availability.diagnostic == "email_persistence_corruption"
+    assert availability.diagnostic == "sqlite_integrity_error"
     assert str(database) not in availability.diagnostic
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
@@ -3041,6 +3100,19 @@ def test_future_email_schema_isolated_from_non_email_routes(tmp_path: Path):
         _assert_email_endpoints_unavailable(client)
         _assert_email_endpoints_unavailable(client)
     assert factory_calls == 1
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall() == schema_before
+        assert db.execute(
+            "select version, applied_at from email_schema_migrations order by version"
+        ).fetchall() == ledger_before
+        assert db.execute(
+            "select value, updated_at from service_state where key='store_schema_version'"
+        ).fetchone() == marker_before
+        assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
+    assert sha256(database.read_bytes()).hexdigest() == bytes_before
+    assert not Path(f"{database}-wal").exists()
 
 
 @pytest.mark.parametrize(
@@ -3103,16 +3175,56 @@ def test_locked_missing_schema_stays_unavailable_without_request_retry(
     assert migration_table is None
 
 
-def test_audit_app_starts_when_email_schema_is_unavailable(tmp_path: Path):
+def test_audit_app_rejects_unknown_future_email_pair_without_repair(tmp_path: Path):
     database = tmp_path / "audit-app.sqlite3"
     AutoReplyStore(database)
     EmailStore(database)
     with sqlite3.connect(database) as db:
+        assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
         db.execute(
             "update email_schema_migrations set version=?",
             (email_store_module.EMAIL_SCHEMA_VERSION + 1,),
         )
-    _assert_audit_app_email_unavailable(database, tmp_path)
+    with sqlite3.connect(database) as db:
+        schema_before = db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall()
+        ledger_before = db.execute(
+            "select version, applied_at from email_schema_migrations order by version"
+        ).fetchall()
+        marker_before = db.execute(
+            "select value, updated_at from service_state where key='store_schema_version'"
+        ).fetchone()
+        cookie_before = db.execute("pragma schema_version").fetchone()[0]
+    bytes_before = sha256(database.read_bytes()).hexdigest()
+
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "index.html").write_text("", encoding="utf-8")
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="unsupported or mixed Store/Email source schema",
+    ):
+        create_audit_app(
+            database,
+            workbench_asset_dir=assets,
+            workbench_workspace=tmp_path,
+            workbench_executor=_NonExecutingExecutor(tmp_path),
+        )
+
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+        ).fetchall() == schema_before
+        assert db.execute(
+            "select version, applied_at from email_schema_migrations order by version"
+        ).fetchall() == ledger_before
+        assert db.execute(
+            "select value, updated_at from service_state where key='store_schema_version'"
+        ).fetchone() == marker_before
+        assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
+    assert sha256(database.read_bytes()).hexdigest() == bytes_before
+    assert not Path(f"{database}-wal").exists()
 
 
 def test_audit_app_starts_when_current_email_schema_is_missing_a_column(
@@ -4449,19 +4561,26 @@ def test_action_throughput_is_the_whole_action_over_the_recent_window(tmp_path: 
     def action(index: int, *, status: str, started: datetime, seconds: int) -> None:
         with store._connect() as db:
             db.execute("pragma foreign_keys=off")
-            db.execute(
-                """insert into email_actions (
-                       action_id, action_plan_id, classification_id, account_id, action_type,
-                       parameters_json, config_version, status, attempt_count, started_at,
-                       finished_at, next_attempt_at, provider_operation, provider_target,
-                       provider_result_id, error, created_at, updated_at
-                   ) values (?, ?, 1, 'a', 'move', '{}', 'c', ?, 0, ?, ?, '', '', '', '', '', ?, ?)""",
-                (
-                    f"action-{index}", f"plan-{index}", status, started.isoformat(),
-                    (started + timedelta(seconds=seconds)).isoformat(),
-                    started.isoformat(), started.isoformat(),
-                ),
-            )
+            insert_email_action(db, "email_actions", {
+                "action_id": f"action-{index}",
+                "action_plan_id": f"plan-{index}",
+                "classification_id": 1,
+                "account_id": "a",
+                "action_type": "move",
+                "parameters_json": "{}",
+                "config_version": "c",
+                "status": status,
+                "attempt_count": 0,
+                "started_at": started.isoformat(),
+                "finished_at": (started + timedelta(seconds=seconds)).isoformat(),
+                "next_attempt_at": "",
+                "provider_operation": "",
+                "provider_target": "",
+                "provider_result_id": "",
+                "error": "",
+                "created_at": started.isoformat(),
+                "updated_at": started.isoformat(),
+            })
 
     for index, seconds in enumerate((4, 8, 12)):
         action(index, status="done", started=now - timedelta(minutes=5 + index), seconds=seconds)
@@ -4547,10 +4666,14 @@ def test_the_all_list_filters_by_category_decider_and_mailbox_action_state(tmp_p
     assert ids(action_status="failed") == []
 
     with store._connect() as db:
-        db.execute(
-            "update email_actions set status='failed', error='provider_destination_failed:ImapMoveUnsupported' "
+        rows = db.execute(
+            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
             "where classification_id=102"
-        )
+        ).fetchall()
+        for (source_rowid,) in rows:
+            update_email_action(db, "email_actions", source_rowid, {
+                "status": "failed", "error": "provider_destination_failed:ImapMoveUnsupported",
+            })
 
     assert ids(action_status="failed") == ["102"]
     assert ids(action_status="pending") == ["103"]
@@ -4586,10 +4709,14 @@ def test_a_failed_action_says_whether_it_will_be_retried() -> None:
 def test_a_listed_message_carries_its_mailbox_actions_and_why_one_failed(tmp_path: Path) -> None:
     store = _store_with_three_classifications(tmp_path)
     with store._connect() as db:
-        db.execute(
-            "update email_actions set status='failed', error='provider_destination_failed:ImapMoveUnsupported' "
+        rows = db.execute(
+            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
             "where classification_id=102"
-        )
+        ).fetchall()
+        for (source_rowid,) in rows:
+            update_email_action(db, "email_actions", source_rowid, {
+                "status": "failed", "error": "provider_destination_failed:ImapMoveUnsupported",
+            })
     client = TestClient(FastAPI())
     register_email_routes(client.app, lambda: store)
 

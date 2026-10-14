@@ -2478,3 +2478,12 @@ an otherwise complete current pair whose Email ledger is advanced beyond52.
 These read-only refusals preserve schema, marker and business facts, schema
 cookie and database bytes. This diagnostic ordering follows the existing
 paired selector; it adds no repair or recovery path.
+
+For a complete Store20 database whose Email ledger is advanced beyond52, a
+local Email route registration can still construct its non-Email FastAPI routes
+and mark Email unavailable with `sqlite_integrity_error`. Constructing the
+whole Audit app first opens AutoReplyStore, so the paired selector refuses
+that unsupported pair before route registration. The older Email51 Audit-app
+isolation assertion is exercised against its genuine published source. Current
+Web API tests use finite Email action projections and typed writers for synthetic
+fixtures; this changes no runtime route, recovery or authorization behavior.

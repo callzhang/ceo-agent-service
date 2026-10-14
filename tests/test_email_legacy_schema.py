@@ -68,6 +68,9 @@ RETRY_TESTS = (
     "test_schema51_empty_inverse_preserves_data_and_versions",
     "test_schema51_inverse_refuses_to_discard_request",
 )
+WEB_API_TESTS = (
+    "test_audit_app_starts_when_email_schema_is_unavailable",
+)
 
 
 @pytest.fixture(scope="module")
@@ -181,4 +184,16 @@ def test_published_email_retry_migrations(published_source: Path) -> None:
         extra_cases={},
         expected_functions=2,
         expected_cases=2,
+    )
+
+
+def test_published_email_web_api_schema_isolation(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="web-api",
+        module="test_email_web_api",
+        names=WEB_API_TESTS,
+        extra_cases={},
+        expected_functions=1,
+        expected_cases=1,
     )
