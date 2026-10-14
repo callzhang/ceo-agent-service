@@ -3223,3 +3223,14 @@ their existing treatment. Normal Email→Store call count/lock order, current
 provider-signal column repair, fresh orders and coordinator/inverse are unchanged.
 No general factory, writer, source contract or Task5A consumer was changed.
 This is an unpublished regression correction, not final Task5 acceptance.
+
+Current Email29 action-family metadata belongs to the shared Store20 `actions`
+table. If its generated Email column, CHECK, collation or attempt parent FK is
+malformed, the genuine Store schema preflight raises `sqlite3.IntegrityError`
+before EmailStore's own current-schema validation, even with
+`validate_rows=False`. The Email Web route's existing exception mapping marks
+this `sqlite_integrity_error` and keeps Email unavailable. The older Email51
+separate-table metadata path used `EmailPersistenceCorruption` and
+`email_persistence_corruption`; this diagnostic difference follows the physical
+owner of the schema. Neither path repairs the malformed structure or adds a
+retry, recovery or authorization rule.

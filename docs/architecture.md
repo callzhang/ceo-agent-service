@@ -2458,3 +2458,13 @@ index/route/feedback repairs and Email's existing provider signal-column repair
 remain supported; fresh/Store-first and paired migration behavior stay intact.
 This changes no data, authorization, recovery or business policy. Task5A finite
 readers remain unchanged; broader Task5/6/7 acceptance and deployment remain open.
+
+For the current Email29 candidate, the action-plan, action, attempt and receipt
+columns and the attempt parent key are generated or constrained by the shared
+`actions` table. A malformed one is therefore refused by the Store20 schema
+check that EmailStore invokes before its own validation, including when
+`validate_rows=False`. That path raises SQLite `IntegrityError` and the existing
+Email Web availability mapping reports `sqlite_integrity_error`; the old Email51
+constructor checked its separate native tables and reported
+`email_persistence_corruption`. Both remain unavailable, with no schema repair,
+automatic retry or change to audit, recovery or authorization policy.

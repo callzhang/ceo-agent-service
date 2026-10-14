@@ -2181,6 +2181,131 @@ def _replace_email_actions(
         )
 
 
+def _damage_current_email_actions_metadata(
+    database: Path,
+    *,
+    missing_column: str | None = None,
+    changed_check: str | None = None,
+    missing_attempt_fk: bool = False,
+    nocase_column: str | None = None,
+) -> None:
+    """Change one known Email29 action-table contract in a current test DB."""
+    missing_dependents = {
+        "email_result_text_truncated": (
+            " and (email_result_text_truncated is not null)",
+            " and ((email_result_text_truncated in ( 0 , 1 )))",
+        ),
+        "email_result_text_digest": (
+            " and (email_result_text_digest is not null)",
+            " and ((email_result_text_digest = '' or length ( email_result_text_digest ) = 64))",
+        ),
+        "email_authorization_snapshot_json": (
+            " and ((email_authorization_snapshot_json is null or json_valid ( email_authorization_snapshot_json )))",
+        ),
+        "email_legacy_serialization_pre_v16": (
+            " and (email_legacy_serialization_pre_v16 is not null)",
+            " and ((email_legacy_serialization_pre_v16 in ( 0 , 1 )))",
+        ),
+    }
+    checks = {
+        "action_uppercase_status": (
+            "email_status in ( 'pending' , 'processing' , 'done' , 'skipped' , 'failed' )",
+            "email_status in ( 'PENDING' , 'PROCESSING' , 'DONE' , 'FAILED' )",
+        ),
+        "action_auto_reply": (
+            "email_action_type in ( 'label' , 'mark_read' , 'archive' , 'move' , 'trash' , 'flag_important' )",
+            "email_action_type in ( 'label' , 'mark_read' , 'archive' , 'move' , 'trash' , 'flag_important' , 'auto_reply' )",
+        ),
+        "action_reordered_status": (
+            "email_status in ( 'pending' , 'processing' , 'done' , 'skipped' , 'failed' )",
+            "email_status in ( 'pending' , 'processing' , 'done' , 'failed' , 'skipped' )",
+        ),
+        "attempt_nonpositive_number": (
+            "email_attempt_number > 0", "email_attempt_number >= 0",
+        ),
+        "attempt_processing_status": (
+            "email_status in ( 'done' , 'skipped' , 'failed' )",
+            "email_status in ( 'processing' , 'done' , 'skipped' , 'failed' )",
+        ),
+    }
+    assert sum((missing_column is not None, changed_check is not None,
+                missing_attempt_fk, nocase_column is not None)) == 1
+    with sqlite3.connect(database) as db:
+        original = db.execute(
+            "select sql from sqlite_schema where type='table' and name='actions'"
+        ).fetchone()[0]
+        damaged = original
+        if missing_column is not None:
+            assert missing_column in missing_dependents
+            start = damaged.index("," + missing_column + " ")
+            end = damaged.index(" virtual", start) + len(" virtual")
+            damaged = damaged[:start] + damaged[end:]
+            for clause in missing_dependents[missing_column]:
+                assert damaged.count(clause) == 1
+                damaged = damaged.replace(clause, "")
+        elif changed_check is not None:
+            assert changed_check in checks
+            old, new = checks[changed_check]
+            assert damaged.count(old) == (2 if changed_check == "attempt_nonpositive_number" else 1)
+            if changed_check == "attempt_nonpositive_number":
+                assert damaged.index("check(record_type<>'email_action_attempts'") < damaged.index(old)
+                assert damaged.index(old) < damaged.index("check(record_type<>'email_action_plans'")
+            damaged = damaged.replace(old, new, 1)
+        elif missing_attempt_fk:
+            clause = ("foreign key(email_operation_parent_type,email_action_id) "
+                      "references actions(record_type,email_public_key) "
+                      "on update NO ACTION on delete RESTRICT")
+            assert damaged.count("," + clause) == 1
+            damaged = damaged.replace("," + clause, "")
+        else:
+            assert nocase_column in {"email_action_type", "email_status"}
+            old = f"{nocase_column} text generated always"
+            assert damaged.count(old) == 1
+            damaged = damaged.replace(old, f"{nocase_column} text collate nocase generated always")
+        assert damaged != original
+        version = db.execute("pragma schema_version").fetchone()[0]
+        db.execute("pragma writable_schema=on")
+        try:
+            db.execute(
+                "update sqlite_schema set sql=? where type='table' and name='actions'",
+                (damaged,),
+            )
+            db.execute(f"pragma schema_version={version + 1}")
+            db.commit()
+        finally:
+            db.execute("pragma writable_schema=off")
+
+
+def _assert_current_email_metadata_rejected_without_repair(database: Path) -> None:
+    with sqlite3.connect(database) as db:
+        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
+        assert db.execute("select count(*) from actions").fetchone()[0] >= 0
+        schema_before = db.execute(
+            "select type,name,sql from sqlite_schema order by type,name"
+        ).fetchall()
+        facts_before = db.execute(
+            "select record_type,legacy_key,payload_json from actions order by id"
+        ).fetchall()
+    bytes_before = sha256(database.read_bytes()).hexdigest()
+    for validate_rows in (True, False):
+        with pytest.raises(sqlite3.IntegrityError) as error:
+            EmailStore(database, validate_rows=validate_rows)
+        assert str(error.value) == (
+            "unsupported or malformed Store source schema; expected a fresh Store, "
+            "or the current 2026-10-14.1 schema"
+        )
+    with sqlite3.connect(database) as db:
+        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
+        assert db.execute("select count(*) from actions").fetchone()[0] >= 0
+        assert db.execute(
+            "select type,name,sql from sqlite_schema order by type,name"
+        ).fetchall() == schema_before
+        assert db.execute(
+            "select record_type,legacy_key,payload_json from actions order by id"
+        ).fetchall() == facts_before
+    assert sha256(database.read_bytes()).hexdigest() == bytes_before
+
+
 def test_terminal_unsubscribe_probe_does_not_hydrate_classification_payloads(tmp_path):
     from contextlib import contextmanager
 
@@ -4133,21 +4258,11 @@ def test_current_schema_rejects_uppercase_action_status_literals(tmp_path: Path)
     database = tmp_path / "uppercase-action-status-literals.sqlite3"
     EmailStore(database)
     gc.collect()
-    _replace_email_actions(
-        database,
-        action_type_declaration=(
-            "text not null check(action_type in "
-            "('label', 'mark_read', 'archive', 'move', 'trash'))"
-        ),
-        status_declaration=(
-            "text not null check(status in ('PENDING', 'PROCESSING', 'DONE', 'FAILED'))"
-        ),
-    )
-
-    with pytest.raises(
-        EmailPersistenceCorruption, match="required check.*email_actions"
-    ):
-        EmailStore(database)
+    _damage_current_email_actions_metadata(database, changed_check="action_uppercase_status")
+    with sqlite3.connect(database) as db:
+        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
+    assert "email_status in ( 'PENDING' , 'PROCESSING' , 'DONE' , 'FAILED' )" in sql
+    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 @pytest.mark.parametrize("populated", (False, True))
@@ -4243,17 +4358,16 @@ def test_current_schema_rejects_weakened_direct_action_checks(
     database = tmp_path / "weakened-direct-action-check.sqlite3"
     EmailStore(database)
     gc.collect()
-    _replace_email_actions(
-        database,
-        action_type_declaration=action_type_declaration,
-        status_declaration=status_declaration,
-    )
-
-    with pytest.raises(
-        EmailPersistenceCorruption,
-        match="required check.*email_actions",
-    ):
-        EmailStore(database)
+    change = ("action_auto_reply" if "auto_reply" in action_type_declaration
+              else "action_reordered_status")
+    _damage_current_email_actions_metadata(database, changed_check=change)
+    with sqlite3.connect(database) as db:
+        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
+    if change == "action_auto_reply":
+        assert "'flag_important' , 'auto_reply'" in sql
+    else:
+        assert "email_status in ( 'pending' , 'processing' , 'done' , 'failed' , 'skipped' )" in sql
+    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 @pytest.mark.parametrize(
@@ -4286,17 +4400,15 @@ def test_current_schema_rejects_collation_on_required_direct_action_columns(
     database = tmp_path / f"collated-email-actions-{column}.sqlite3"
     EmailStore(database)
     gc.collect()
-    _replace_email_actions(
-        database,
-        action_type_declaration=action_type_declaration,
-        status_declaration=status_declaration,
-    )
-
-    with pytest.raises(
-        EmailPersistenceCorruption,
-        match=rf"email_actions.*{column}",
-    ):
-        EmailStore(database)
+    target_column = "email_" + column
+    _damage_current_email_actions_metadata(database, nocase_column=target_column)
+    with sqlite3.connect(database) as db:
+        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
+    assert f"{target_column} text collate nocase generated always" in sql
+    if column == "status":
+        declaration = sql.split("email_status text collate nocase generated always", 1)[1].split(" virtual", 1)[0]
+        assert "('email_action_attempts','email_actions','email_unsubscribe_claims','email_reply_dispatch_claims')" in declaration
+    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 @pytest.mark.parametrize(
@@ -4320,17 +4432,16 @@ def test_current_schema_rejects_weakened_action_attempt_checks(
     database = tmp_path / "weakened-action-attempt-check.sqlite3"
     EmailStore(database)
     gc.collect()
-    _replace_email_action_attempts(
-        database,
-        attempt_number_declaration=attempt_number_declaration,
-        status_declaration=status_declaration,
-    )
-
-    with pytest.raises(
-        EmailPersistenceCorruption,
-        match="required check.*email_action_attempts",
-    ):
-        EmailStore(database)
+    change = ("attempt_nonpositive_number" if ">= 0" in attempt_number_declaration
+              else "attempt_processing_status")
+    _damage_current_email_actions_metadata(database, changed_check=change)
+    with sqlite3.connect(database) as db:
+        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
+    if change == "attempt_nonpositive_number":
+        assert "email_attempt_number >= 0" in sql
+    else:
+        assert "email_status in ( 'processing' , 'done' , 'skipped' , 'failed' )" in sql
+    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 def test_current_schema_rejects_collation_on_required_action_attempt_status(
@@ -4339,20 +4450,15 @@ def test_current_schema_rejects_collation_on_required_action_attempt_status(
     database = tmp_path / "collated-email-action-attempt-status.sqlite3"
     EmailStore(database)
     gc.collect()
-    _replace_email_action_attempts(
-        database,
-        attempt_number_declaration="integer not null check(attempt_number > 0)",
-        status_declaration=(
-            "text collate nocase not null "
-            "check(status in ('done', 'skipped', 'failed'))"
-        ),
-    )
-
-    with pytest.raises(
-        EmailPersistenceCorruption,
-        match=r"email_action_attempts.*status",
-    ):
-        EmailStore(database)
+    # Both source status columns use the same target generated column.
+    _damage_current_email_actions_metadata(database, nocase_column="email_status")
+    with sqlite3.connect(database) as db:
+        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
+    assert "email_status text collate nocase generated always" in sql
+    declaration = sql.split("email_status text collate nocase generated always", 1)[1].split(" virtual", 1)[0]
+    for kind in ("email_action_attempts", "email_actions", "email_unsubscribe_claims", "email_reply_dispatch_claims"):
+        assert kind in declaration
+    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path):
@@ -4549,18 +4655,12 @@ def test_current_v17_schema_missing_result_integrity_column_fails_without_repair
 ) -> None:
     database = tmp_path / f"missing-{missing_column}.sqlite3"
     EmailStore(database)
+    target_column = "email_" + missing_column
+    _damage_current_email_actions_metadata(database, missing_column=target_column)
     with sqlite3.connect(database) as db:
-        db.execute(
-            f"alter table email_unsubscribe_receipts drop column {missing_column}"
-        )
-
-    with pytest.raises(EmailPersistenceCorruption, match=missing_column):
-        EmailStore(database)
-    with sqlite3.connect(database) as db:
-        assert missing_column not in {
-            row[1]
-            for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
-        }
+        assert target_column not in {row[1] for row in db.execute("pragma table_xinfo(actions)")}
+        assert target_column not in db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
+    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
@@ -4687,31 +4787,14 @@ def test_current_schema_missing_required_foreign_key_is_domain_corruption(
     database = tmp_path / "missing-action-attempt-foreign-key.sqlite3"
     EmailStore(database)
     gc.collect()
+    _damage_current_email_actions_metadata(database, missing_attempt_fk=True)
     with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            alter table email_action_attempts rename to old_email_action_attempts;
-            create table email_action_attempts (
-                id integer primary key autoincrement,
-                action_id text not null,
-                attempt_number integer not null check(attempt_number > 0),
-                status text not null check(status in ('done', 'failed')),
-                provider_operation text not null,
-                provider_target text not null,
-                provider_result_id text not null,
-                error text not null,
-                started_at text not null,
-                finished_at text not null,
-                unique(action_id, attempt_number)
-            );
-            drop table old_email_action_attempts;
-            """
+        assert not any(
+            row[2] == "actions" and row[3] == "email_operation_parent_type"
+            and row[4] == "record_type"
+            for row in db.execute("pragma foreign_key_list(actions)")
         )
-
-    with pytest.raises(
-        EmailPersistenceCorruption, match="foreign key.*email_action_attempts"
-    ):
-        EmailStore(database)
+    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 def test_current_schema_missing_required_primary_key_is_domain_corruption(
@@ -5110,35 +5193,12 @@ def test_current_v16_missing_authorization_column_fails_without_schema_repair(
 ):
     database = tmp_path / "v16-missing-authorization-column.sqlite3"
     EmailStore(database)
+    target_column = "email_authorization_snapshot_json"
+    _damage_current_email_actions_metadata(database, missing_column=target_column)
     with sqlite3.connect(database) as db:
-        db.execute(
-            "alter table email_action_plans drop column authorization_snapshot_json"
-        )
-        schema_before = list(
-            db.execute(
-                "select type, name, sql from sqlite_master "
-                "where name not like 'sqlite_%' order by type, name"
-            )
-        )
-
-    with pytest.raises(
-        EmailPersistenceCorruption,
-        match="email_action_plans.*authorization_snapshot_json",
-    ):
-        EmailStore(database)
-
-    with sqlite3.connect(database) as db:
-        schema_after = list(
-            db.execute(
-                "select type, name, sql from sqlite_master "
-                "where name not like 'sqlite_%' order by type, name"
-            )
-        )
-        columns = {
-            row[1] for row in db.execute("pragma table_info(email_action_plans)")
-        }
-    assert schema_after == schema_before
-    assert "authorization_snapshot_json" not in columns
+        assert target_column not in {row[1] for row in db.execute("pragma table_xinfo(actions)")}
+        assert target_column not in db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
+    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 def test_current_v16_missing_legacy_provenance_column_fails_without_schema_repair(
@@ -5146,44 +5206,12 @@ def test_current_v16_missing_legacy_provenance_column_fails_without_schema_repai
 ):
     database = tmp_path / "v16-missing-legacy-provenance-column.sqlite3"
     EmailStore(database)
+    target_column = "email_legacy_serialization_pre_v16"
+    _damage_current_email_actions_metadata(database, missing_column=target_column)
     with sqlite3.connect(database) as db:
-        columns = {
-            row[1] for row in db.execute("pragma table_info(email_action_plans)")
-        }
-        if "legacy_serialization_pre_v16" not in columns:
-            db.execute(
-                "alter table email_action_plans add column "
-                "legacy_serialization_pre_v16 integer not null default 0 "
-                "check(legacy_serialization_pre_v16 in (0, 1))"
-            )
-        db.execute(
-            "alter table email_action_plans drop column legacy_serialization_pre_v16"
-        )
-        schema_before = list(
-            db.execute(
-                "select type, name, sql from sqlite_master "
-                "where name not like 'sqlite_%' order by type, name"
-            )
-        )
-
-    with pytest.raises(
-        EmailPersistenceCorruption,
-        match="email_action_plans.*legacy_serialization_pre_v16",
-    ):
-        EmailStore(database)
-
-    with sqlite3.connect(database) as db:
-        schema_after = list(
-            db.execute(
-                "select type, name, sql from sqlite_master "
-                "where name not like 'sqlite_%' order by type, name"
-            )
-        )
-        columns = {
-            row[1] for row in db.execute("pragma table_info(email_action_plans)")
-        }
-    assert schema_after == schema_before
-    assert "legacy_serialization_pre_v16" not in columns
+        assert target_column not in {row[1] for row in db.execute("pragma table_xinfo(actions)")}
+        assert target_column not in db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
+    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 def test_v2_upgrade_does_not_reapply_prototype_classification_backfill(

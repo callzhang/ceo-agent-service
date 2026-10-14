@@ -1934,3 +1934,33 @@ still pending and the broader Task5/publication gates remain open.
 ### Task5B6 independent acceptance including P2 correction, 2026-10-14
 
 Root accepts b2a8e762 plusf9674b957a3e1c25c9883425e0253b56931a2e1f. Initial SPEC independently7pass2.98s/lint/diff/cleanup. Initial QUALITY found a P2: batch-only trace filtering ignored additional point reads; the batch was not accepted then. Same actor corrected the count to all finite plan projection reads regardless selected columns/predicate, then separately checks sole batch shape. New real SQLite batch plus SELECT action_plan_id point-read regression fails under old batch-only and intermediate SELECT-star-prefix guards; final two tests2pass1.94s. SPEC follow-up independently2pass2.00s/lint/diff/cleanup. QUALITY follow-up PASS: exact-helper independent probe accepts batch/case variant and rejects batch+point/point-only/no-read/two-batches. Original one-connection/20row/current-ID and other six test semantics unchanged. All frozen cleanHEADs verified; no runtime/provider/production changes. Remaining metadata/shared/history/composite fixtures and broader copy/native/CI/publication/full10+1 remain open.
+
+### Task5B7 current metadata fixtures (unpublished)
+
+Nine selected current test symbols, thirteen parameter cases, retain the source
+missing-column, required-FK, CHECK-literal/order and column-collation questions
+against the Email29 shared `actions` table. The four source receipt/plan columns
+map to the matching `email_` generated columns; each fixture removes exactly
+that generated declaration and its actual dependent NOT NULL/CHECK clauses.
+The attempt parent-FK fixture removes only the typed
+`(email_operation_parent_type,email_action_id)` reference. Five CHECK variants
+change only the selected Email-family constraint. Both old status-collation
+cases remain and test the same target `email_status` generated column, whose
+physical scope includes attempts, actions, unsubscribe claims and reply
+dispatch claims; action-type collation changes its independent generated column.
+Historical v21 still uses the unchanged native `_replace_email_actions` helper.
+
+The unchanged thirteen cases ran RED: `13 failed in 3.10s`, pytest exit 1,
+because the native tables are absent. After finite target adaptation, the
+selected run passed `13 passed in 4.89s`, exit 0; exact Store diagnostics were
+then asserted and the final selected run passed `13 passed in 4.28s`, exit 0. Every
+fixture requires a new SQLite connection to load the damaged schema, checks
+`integrity_check=ok` and its exact missing/changed target metadata, then checks
+that both default and `validate_rows=False` EmailStore construction raise
+`sqlite3.IntegrityError` with the exact current Store20 malformed-schema
+message. Schema objects, action facts and whole-file SHA-256 remain identical
+across both rejected constructors. This is the existing shared-ownership
+diagnostic boundary; no runtime exception mapping, repair, retry or policy was
+changed. Each run removed and verified absence of its owned `/tmp/email13-5b7-*`
+directory. Historical H, shared native-rebuild S and remaining current T tests
+are still deferred; this is not full Task5 or publication acceptance.
