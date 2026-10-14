@@ -23941,11 +23941,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             shared_exclusions = f"""
                 and not exists (
                     select 1
-                    from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
-                    join ({SENT_REPLY_SQL}) as replies
-                      on replies.external_action_key=actions.external_action_key
-                    where actions.business_object_key=tasks.business_object_key
+                    from actions as actions
+                    indexed by idx_actions_global_business
+                    where actions.record_type='external_action_results'
+                      and actions.business_object_key=tasks.business_object_key
                       and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
+                      and exists (
+                          select 1
+                          from actions as replies
+                          indexed by idx_actions_sent_external_key
+                          where replies.record_type='sent_replies'
+                            and replies.external_action_key<>''
+                            and replies.external_action_key=actions.legacy_key
+                      )
                 )
                 and not exists (
                     select 1

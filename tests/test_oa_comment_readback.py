@@ -289,9 +289,12 @@ def test_oa_comment_existing_effect_reconciles_after_store_reopen(tmp_path, chan
     assert after["external_action_key"] == original["external_action_key"]
     assert source.comments == 1
     receipt = reopened.get_candidate_external_action(original["external_action_key"])
+    # Existing uncertain dispatch reconciles its native receipt without resending,
+    # even if mutable source facts or the original review context changed.
     assert recovered.outcome == "executed"
     assert after["status"] == "verified"
     assert receipt is not None
     result = json.loads(receipt["provider_result_json"])
     assert result["operation_record"]["user_id"] == "principal"
+    assert result["content_sha256"]
     assert "comment_id" not in result and "readback" not in result

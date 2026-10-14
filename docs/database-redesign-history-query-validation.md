@@ -130,3 +130,24 @@ and the separate new-dispatch source fence remain covered by their existing
 tests. The three adjacent OA comment, OA return and SystemExecutor test files
 passed 102 tests; scoped Ruff and `git diff --check` passed. This is a local
 test correction; independent review and replacement CI are still required.
+
+
+### Independent CI repair acceptance and main integration
+
+Test-only538bf7ee passed sequential independent SPEC then QUALITY. SPEC ran37
+focused cases and inspected source-check-before-new-dispatch coverage. QUALITY
+ran all102 cases across OA comment, OA return and System Executor. Both found
+the changed expectations match existing540e409f behavior; no runtime/policy
+change was introduced. Both owned temporary roots were cleaned.
+
+The subsequent normal merge incorporates origin/main834b8348 (PR85), whose
+full Quality38561782610 passed. That increment independently fixes the same
+stale OA assertions and changes only startup receipt-query index use in Store;
+it does not change the History query or schema declarations. The conflict
+resolution preserves the unified three-case positive assertions, original
+uncertain state/identity/time/no-resend checks, and main's content_sha256 receipt
+assertion for all three cases. Focused merged verification passed110 cases in
+3.38s: OA comment, OA return, System Executor, History pagination and three
+startup-reconciliation cases. Scoped Ruff and whitespace checks passed. The
+owned temporary root was cleaned. This is local integration evidence; a new
+complete remote Quality run, normal deployment and live readback remain pending.
