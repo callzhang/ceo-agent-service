@@ -2,7 +2,11 @@ from contextlib import contextmanager
 
 import pytest
 
-from app.store import AutoReplyStore
+from app import history_types
+from app.action_storage import update_action
+from app.run_storage import insert_run
+from app.store import AutoReplyStore, OperationLog
+from app.task_storage import REPLY_TASK_SQL
 
 
 @pytest.mark.parametrize("offset,limit", [(0, 1), (3, 2), (8, 2)])
@@ -52,3 +56,169 @@ def test_history_hydrates_bodies_only_for_requested_page(
     assert total == 8
     assert rows == expected
     assert len(body_reads) == len(rows)
+
+
+def test_failed_history_uses_source_candidates_without_changing_results(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "failed-history.sqlite3")
+    for number in range(40):
+        store.record_reply_attempt(
+            conversation_id="history-candidates",
+            conversation_title="History candidates",
+            trigger_message_id=f"recovered-{number}",
+            trigger_sender="sender",
+            trigger_text=f"failed body {number}",
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status="failed",
+        )
+        store.record_reply_attempt(
+            conversation_id="history-candidates",
+            conversation_title="History candidates",
+            trigger_message_id=f"recovered-{number}",
+            trigger_sender="sender",
+            trigger_text=f"successful body {number}",
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status="sent",
+        )
+    for number in range(100):
+        store.record_reply_attempt(
+            conversation_id="history-candidates",
+            conversation_title="History candidates",
+            trigger_message_id=f"ok-{number}",
+            trigger_sender="sender",
+            trigger_text=f"successful body {number}",
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status="sent",
+        )
+    failed_id = store.record_reply_attempt(
+        conversation_id="history-candidates",
+        conversation_title="History candidates",
+        trigger_message_id="failed",
+        trigger_sender="sender",
+        trigger_text="failed body",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.enqueue_reply_task(
+        conversation_id="history-candidates",
+        conversation_title="History candidates",
+        single_chat=False,
+        trigger_message_id="same-task-failures",
+        trigger_create_time="2026-10-14 00:00:00",
+        trigger_sender="sender",
+        trigger_text="failed task body",
+        execution_generation="history-generation",
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
+            ("same-task-failures",),
+        ).fetchone()[0]
+    same_task_attempts = []
+    for turn in range(2):
+        attempt_id = store.record_reply_attempt(
+            conversation_id="history-candidates",
+            conversation_title="History candidates",
+            trigger_message_id="same-task-failures",
+            trigger_sender="sender",
+            trigger_text=f"same task failure {turn}",
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status="failed",
+        )
+        with store._connect() as db:
+            run = insert_run(
+                db,
+                "agent_runs",
+                {
+                    "task_id": task_id,
+                    "execution_generation": "history-generation",
+                    "role": "consumer",
+                    "turn_attempt": turn,
+                    "status": "failed",
+                },
+            )
+            update_action(
+                db,
+                "reply_attempts",
+                attempt_id,
+                {"agent_run_id": run.lastrowid},
+            )
+        same_task_attempts.append(attempt_id)
+    source_tables = history_types.HISTORY_SOURCE_TABLES
+    where_sql, where_args = store._operation_log_filters(
+        statuses=("failed",), source_tables=source_tables
+    )
+    with store._connect() as db:
+        baseline_rows = db.execute(
+            f"""
+            with operation_logs as ({store._operation_logs_base_query(source_tables)})
+            select *, count(*) over() as __total
+            from operation_logs
+            {where_sql}
+            order by occurred_at desc, source_table desc, source_id desc
+            """,
+            tuple(where_args),
+        ).fetchall()
+    expected_total = int(baseline_rows[0]["__total"]) if baseline_rows else 0
+    expected_rows = [
+        OperationLog.model_validate(
+            {key: value for key, value in dict(row).items() if key != "__total"}
+        )
+        for row in baseline_rows
+    ]
+
+    original_base = store._operation_logs_base_query
+    source_calls = []
+    attempt_id_batch_sizes = []
+    original_attempt_projection = store._failed_reply_attempt_operation_logs
+
+    def instrumented_base(sources=None, *args, **kwargs):
+        source_calls.append(tuple(sources or ()))
+        reply_attempt_ids = kwargs.get("reply_attempt_ids")
+        if reply_attempt_ids is None and args:
+            reply_attempt_ids = args[0]
+        if reply_attempt_ids is not None:
+            attempt_id_batch_sizes.append(len(reply_attempt_ids))
+        return original_base(sources, *args, **kwargs)
+
+    def instrumented_attempt_projection(db, attempt_ids):
+        attempt_id_batch_sizes.append(len(attempt_ids))
+        return original_attempt_projection(db, attempt_ids)
+
+    monkeypatch.setattr(store, "_operation_logs_base_query", instrumented_base)
+    monkeypatch.setattr(
+        store, "_failed_reply_attempt_operation_logs", instrumented_attempt_projection
+    )
+    actual_total, actual_rows = store.list_operation_logs_with_count(
+        limit=100,
+        source_tables=source_tables,
+        statuses=("failed",),
+        _skip_history_cache=True,
+    )
+
+    assert actual_total == expected_total == 2
+    assert [(row.source_table, row.source_id, row.status) for row in actual_rows] == [
+        (row.source_table, row.source_id, row.status) for row in expected_rows
+    ]
+    assert ("reply_attempts",) not in source_calls
+    assert source_tables not in source_calls
+    assert all(len(sources) <= 1 for sources in source_calls)
+    assert attempt_id_batch_sizes == [2]
+    actual_attempt_ids = {row.source_id for row in actual_rows if row.source_table == "reply_attempts"}
+    assert actual_attempt_ids == {failed_id, same_task_attempts[-1]}
+
+    page_total, page_rows = store.list_operation_logs_with_count(
+        limit=1,
+        source_tables=source_tables,
+        statuses=("failed",),
+        _skip_history_cache=True,
+    )
+    assert page_total == expected_total
+    assert page_rows == expected_rows[:1]
+    assert attempt_id_batch_sizes[-1] == 1
