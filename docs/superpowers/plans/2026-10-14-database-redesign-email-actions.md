@@ -320,6 +320,16 @@ historical <=48 cached-plan/DDL contracts left intact. F alone selects fresh
 seeding and must reject unsupported source versions before mutation. No default
 constructor, marker or activation is accepted by this E1 preparation.
 
+**Task4E2 accepted as unpublished preparation (2026-10-14):**
+`f1778a7e` passed sequential independent SPEC (21+7 cases) then QUALITY
+(15 cases plus source-binding, read-only authorizer, metadata-corruption and
+installer-savepoint probes). Current validators close17 physical query sites,
+preserve original retained coverage/policy and accept both exact29 variants;
+source maps/capture/inverse/historical helpers remain unchanged. Public preview
+is read-only and method-specific NULL/error behavior matches genuine2773.
+F paired constructors/locking/coordinator/real markers/default activation is
+next; this partial branch is still not default-runtime-ready.
+
 **Implementation scheduling clarification (2026-10-14):** the selected
 constructor/DAO/validator/marker transition remains one paired activation and
 publication. Source inspection found hundreds of old-family references and about90 active

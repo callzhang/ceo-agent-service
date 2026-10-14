@@ -1450,3 +1450,5 @@ reverts committed work they did not author.
 | codex-history-live-acceptance-20261014 | Publication acceptance worktree: appended History validation, scoped History readback paragraphs in architecture/runtime, own claim only | Record exact CI/merge/deploy and production read-only API/browser observations; no runtime/schema/provider changes. | recorded 2026-10-14: History list/chart/filter/page/detail and Attention rendered; Status API succeeded but visual page remained loading; degraded health remains; owned tab closed |
 
 | codex-email13-seeds-e1-acceptance | Email integration: E1 acceptance in scoped Email plan/validation/program and own claim only | Record sequential independent SPEC then QUALITY; no runtime/default/constructor change. | active 2026-10-14 |
+
+| codex-email13-validation-e2-acceptance | Email integration: E2 acceptance in scoped Email plan/validation/program and own claim only | Record sequential independent SPEC/QUALITY of current validators and finite installer, maintaining exact partial/source boundaries. No runtime/default change. | active 2026-10-14 |

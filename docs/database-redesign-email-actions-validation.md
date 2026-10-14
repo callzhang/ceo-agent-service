@@ -1104,3 +1104,37 @@ checks passed. The exact owned `/tmp/email13-validation-e2.oa6ROt` root was
 inspected, removed and verified absent. All temporary archived code, owned
 source/target databases, pytest runs and the editing intermediate were removed;
 no historical test archive is retained.
+
+
+### Independent Task4E2 acceptance, 2026-10-14
+
+Candidatef1778a7ef9cec587c8fc5806b13922d41dedf7d6 passed sequential
+independent SPEC then QUALITY againstd79ee961. SPEC independently captured21
+passed in105.19s, then7 passed in7.59s, both exit0: all15 new cases, both-variant
+external blockers, MAIN/TEMP isolation, late forward rollback, finite metadata,
+all144 native values/types, all13 current-fact inverse/reforward and paired
+inverse. Source-required declarations and durable-policy ASTs match genuine2773
+outside SQL arguments; only the three current validator methods changed.
+Their15-method helper closure has no old-family physical SQL; the18 residual
+historical/bootstrap methods are explicitly inventoried. Source capture,
+original translated SQL and current-fact inverse stay unchanged.
+
+QUALITY independently captured15 passed in38.02s, exit0, plus successful
+isolated counterexamples. It bound the oracle module path and bytes to exact
+genuine2773, ran all three validators under a read-only SQLite authorizer with
+no attempted writes or changed facts/total_changes, refused extra action index/
+trigger objects, and compared exact source/target errors for retained CHECK,
+FK delete action and PK corruption. Changed retained partial-key predicates
+were refused. Denial on the second trigger creation kept the first inside the
+caller savepoint; savepoint/outer rollback restored the original state.
+Both reviewers left HEAD clean and verified all owned temporary roots absent.
+No live/provider/native CLI/publication operation occurred.
+
+This accepts E2 target validation preparation, including17 retained required
+tables and32 required triggers, both exact action variants, public read-only
+cancellation preview, and method-specific NULL/error semantics. It does not
+accept the current default constructors: these still produce the old layout,
+while validators now require Email29. F must couple constructors, locking,
+source-pair release/coordinator, real markers and default29 selection and prove
+unsupported-source refusal before mutation. Task5 consumers, fresh current-copy/
+genuine-old-code/native and publication remain separate unfinished gates.
