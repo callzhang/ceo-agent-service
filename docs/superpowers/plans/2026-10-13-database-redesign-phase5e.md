@@ -141,20 +141,20 @@ The frozen JSON lists exact literal occurrences/functions; use it as bounded nav
 
 **Files:** source JSON/map; `tests/test_reply_attempt_action_migration.py`; own claim.
 
-- [ ] Read the C and D final acceptance receipts; record actual commit/Store/Email marker from read-only source. Refresh only schema metadata, sequences, counts and dependency inventory in one read transaction; preserve no private rows in the committed artifacts.
-- [ ] Compare both supported source declarations, source `actions` declarations, inbound FK/trigger/view/index closure and exact same-name source objects against the captured manifests. Test actual/fresh, unknown marker, mixed old/target tables, missing required column and extra trigger/index rejection **before mutation**.
-- [ ] Run `python -m pytest -q tests/test_reply_attempt_source.py`; expected frozen source result: 54 passed, 2 variant-specific skips. A changed source needs a reviewed refreshed manifest, not changed target expectations.
-- [ ] Commit source binding and migration preflight tests separately from runtime conversion; no E marker is allocated by this task alone.
+- [x] Read the C and D final acceptance receipts; record actual commit/Store/Email marker from read-only source. Refresh only schema metadata, sequences, counts and dependency inventory in one read transaction; preserve no private rows in the committed artifacts.
+- [x] Compare both supported source declarations, source `actions` declarations, inbound FK/trigger/view/index closure and exact same-name source objects against the captured manifests. Test actual/fresh, unknown marker, mixed old/target tables, missing required column and extra trigger/index rejection **before mutation**.
+- [x] Run `python -m pytest -q tests/test_reply_attempt_source.py`; expected frozen source result: 54 passed, 2 variant-specific skips. A changed source needs a reviewed refreshed manifest, not changed target expectations.
+- [x] Commit source binding and migration preflight tests separately from runtime conversion; no E marker is allocated by this task alone.
 
 ### Task 2: Finite target values, references, indices and allocators
 
 **Files:** `app/action_storage.py`; `tests/test_reply_attempt_action_storage.py`.
 
-- [ ] Add failing source/target comparison tests for both record types, identical public IDs across other types, defaults/nullability, source scalar run values and actual/fresh Memory membership/FK behavior. Reuse the literal source fixture so the target cannot define its own oracle.
-- [ ] Add explicit source-storage tests with synthetic `"not JSON\0 { trailing"` and `b"\x00\xffnot json"` in retained receipt/reference fields, nullable historical values and low/high/ignored/MAX_INT allocator cases. Approved removed audit/payload contents are tested as removal, not preservation.
-- [ ] Implement type-specific fields/references and E-only lossless SQLite source-value representation; preserve raw inner receipt strings and return original value/storage class. Implement the exact existing allocator namespace/savepoint behavior and type-filtered indices. Do not extend global run FK semantics to Attempt.
-- [ ] Run `python -m pytest -q tests/test_reply_attempt_source.py tests/test_reply_attempt_action_storage.py tests/test_action_storage.py` ; `tests/test_action_storage.py` exists at this preparation commit and must remain green along with preceding release suites. Compare source native sequence effects on success, ignore and failure, including transaction rollback.
-- [ ] Commit the finite storage unit with the preserved/removed field contract.
+- [x] Add failing source/target comparison tests for both record types, identical public IDs across other types, defaults/nullability, source scalar run values and actual/fresh Memory membership/FK behavior. Reuse the literal source fixture so the target cannot define its own oracle.
+- [x] Add explicit source-storage tests with synthetic `"not JSON\0 { trailing"` and `b"\x00\xffnot json"` in retained receipt/reference fields, nullable historical values and low/high/ignored/MAX_INT allocator cases. Approved removed audit/payload contents are tested as removal, not preservation.
+- [x] Implement type-specific fields/references and E-only lossless SQLite source-value representation; preserve raw inner receipt strings and return original value/storage class. Implement the exact existing allocator namespace/savepoint behavior and type-filtered indices. Do not extend global run FK semantics to Attempt.
+- [x] Run `python -m pytest -q tests/test_reply_attempt_source.py tests/test_reply_attempt_action_storage.py tests/test_action_storage.py` ; `tests/test_action_storage.py` exists at this preparation commit and must remain green along with preceding release suites. Compare source native sequence effects on success, ignore and failure, including transaction rollback.
+- [x] Commit the finite storage unit with the preserved/removed field contract.
 
 The target comparison test helper below is complete test code to put in `tests/test_reply_attempt_action_migration.py`. `source_columns` comes directly from the captured manifest; `target_projection_sql` is the finite projection defined by Task 2. Compare both values and storage classes so JSON-looking source strings, NULL, NUL and BLOB cannot disappear in an equal-looking DTO. The exception sets are exactly the approved copied-content fields; marker semantics are checked separately.
 

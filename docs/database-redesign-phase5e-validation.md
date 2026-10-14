@@ -92,7 +92,35 @@ successful autocommit update locked through its predicate scan and final write.
 The seven-file storage and published-source preflight gate passed 436 tests
 with eight variant-specific skips. No E migration or caller activation occurred.
 
-## Earlier source preparation
+## Independent storage acceptance and interrupted-work recovery
+
+Task 1 at `a01d14e0` passed independent SPEC and QUALITY review. Its eleven
+preflight cases still pass at the final Task 2 candidate. Task 2 at
+`1f4f28583b4bb3c5c617fafc890e9ca80ac5477d` passed independent SPEC and QUALITY
+review: the seven-file storage/source/preflight gate passed 436 tests with
+eight variant-specific skips. Independent checks additionally covered 2,232
+insert field/value cases, 1,612 update field/value cases, 80 native binding-error
+and second-writer comparisons, and 40 valid-update scan-lock cases. The earlier
+six/nine/twelve/fourteen-type manifests retain exactly 28/41/42/53 objects.
+These are storage acceptance results; migration, caller conversion and release
+acceptance have not occurred.
+
+The application removed the old Phase5C checkout during startup cleanup, saving
+its four changed files in Git snapshot `3c7534820bd878820942435e90e71127401ed968`.
+The root verified its parent and diff, restored it by fast-forward on the same
+E branch in the managed `database-redesign-phase5e-resume` worktree, and repaired
+the remaining transaction defects there. No source work was reset or discarded.
+
+Production independently advanced to `748519023c4e0d98d802820ed57b3d727a9a5e39`.
+A new single read-only transaction confirmed Store `2026-10-13.4`, Email 51,
+the same exact Attempt/Memory and fourteen-type action fingerprints, and the
+actual-origin variant. At that observation there were 14,822 Attempts with
+sequence 15,410 and 476 Memory events with sequence 1,426. Counts are observations,
+never constants for migration. No private row was exported or production data
+changed. The deployed interpreter's in-memory SQLite BLOB `unhex` probe also
+passed; final publication CI and candidate deployment remain separate gates.
+
+## Earlier source preparation details
 
 The work below was source preparation for the approved Attempt/Memory action
 consolidation before the isolated target storage checkpoint above. It did not
