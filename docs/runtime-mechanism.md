@@ -2918,8 +2918,11 @@ The default factories still build their prior declarations. The Email addition
 defines the 13 original families, their source-field projections and their
 own native constraints/indexes/triggers. It does not route live Email reads or
 writes through `actions`; no Store/Email initializer selects this option.
-Signed source ROWID allocation, AUTOINCREMENT writer semantics, external Email
-trigger closure and source/current-fact migration remain to be implemented
+Finite source-shaped Email mutation helpers now preserve nine signed source
+ROWID locators, two independent AUTOINCREMENT sequences and two composite keys.
+The writer lock precedes source default evaluation and locator/payload reads;
+successful calls return the source identity. External Email trigger closure
+and source/current-fact migration remain to be implemented
 before an Email schema release. The candidate is local storage preparation,
 not a production Store/Email version.
 Generated Email columns are scoped to their exact source family membership;

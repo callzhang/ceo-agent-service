@@ -94,3 +94,28 @@ that merge. This accepts Task2A definitions/projections only; it establishes
 no writer, allocator, constructor, migration, version, publication or provider
 behavior. Default Email opt-in remains disabled. The complete ten-core-table
 plus-ledger redesign remains incomplete.
+
+## Task2B local writer validation
+
+The finite opt-in writer unit adds source-shaped insert, update and delete
+paths for all thirteen Email kinds. Nine ordinary ROWID kinds use independent
+signed source locators; the two AUTOINCREMENT kinds retain separate
+`sqlite_sequence` aliases; effects and direct retry use source-affinity
+composite keys. Original omitted fields and defaults are materialized under
+SQLite's writer lock. No Store or Email constructor selects this schema.
+
+The writer regression was first RED on the missing ROWID helper, then GREEN
+against the frozen actual source DDL. The focused comparison covers all
+thirteen native inserts and `typeof` projections, nullable public keys,
+negative/zero and reused ROWIDs, MAX fallback, independent deleted-high
+AUTOINCREMENT sequence, explicit-ID conflict and UPDATE behavior, composite
+affinity and partial key update, immutable retry conflict, CHECK ignore,
+no-target binding errors, and two-connection deferred/autocommit contention.
+The existing Email source and declaration oracles and selected older storage
+tests also passed: 431 focused tests and six existing variant skips. Ruff and
+diff checks passed; all six default-disabled table/index/trigger manifests
+remained byte-identical to the pre-writer commit. A bounded work regression
+checks that the indexed Email MAX lookup does not grow with 1,000 additional
+lower IDs. This local writer result is pending independent SPEC and
+QUALITY review; migration, constructor activation, version assignment,
+publication and provider effects are outside this unit.

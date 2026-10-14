@@ -2115,9 +2115,12 @@ TEXT key in the payload; two AUTOINCREMENT families retain numeric public IDs;
 effects and retry requests retain two-component keys. Native generated columns,
 CHECKs, unique indexes, parent-key foreign keys, count triggers and immutable
 retry triggers enforce the source declarations. The Email option is disabled in
-all Store/Email constructors and runtime callers. Allocation/writer helpers,
-external source-table triggers, migration and publication are separate pending
-units; the focused validation boundary is recorded in
+all Store/Email constructors and runtime callers. The finite Email writer
+helpers now accept source-shaped inserts, updates and deletes: nine families
+locate by signed source ROWID, two use independent AUTOINCREMENT aliases, and
+two use projected composite keys. They evaluate original source defaults under
+the writer lock and return source identities. External source-table triggers,
+migration and publication remain separate pending units; the focused validation boundary is recorded in
 `docs/database-redesign-email-actions-validation.md`.
 Each generated Email source column returns NULL for all older action types and
 for Email kinds that lack that original field; its finite CASE reads only the
