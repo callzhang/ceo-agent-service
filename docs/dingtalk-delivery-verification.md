@@ -67,13 +67,13 @@ and is not relabeled as unknown. The first deploy was stopped while still waitin
 for quiet, before any production checkout change, so this recovery correction
 ships with the delivery-verification change.
 
-## Deployment checkpoint
+## Pre-authorization deployment checkpoint (historical)
 
 Code is pushed as411a4f36 plus recovery correctiondec96517. The normal formal
 deployment waited30 minutes and exited with “service did not become idle;
 nothing was changed” at2026-10-14T05:35:08Z. Production remains9a2a23fc;
-historical correction has not been applied live. A decision to interrupt in-flight
-work via the existing --skip-quiet-wait deployment option is pending. No manual
+historical correction has not been applied live. At that checkpoint, authorization to interrupt in-flight work via
+the existing --skip-quiet-wait deployment option was pending. No manual
 launchctl/kill, production edits, sends or historical-state writes were performed.
 
 One additional old-code receipt appeared during the quiet wait. Its original
@@ -89,3 +89,45 @@ Restart regression: the recorded-delivery startup recovery previously completed 
 Historical terminal Attempt or settlement projections cannot override a current external_action_uncertain/external_action_failed task error. A later verified provider result uses the normal execution completion writer. Original Attempt and settlement history remains unchanged.
 
 Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
+
+## Production acceptance — 2026-10-14
+
+Derek authorized immediate formal deployment with --skip-quiet-wait and recovery
+of in-flight work. The initial deployment timed out its health wait and rolled
+back to 9a2a23fc without changing these receipts. Subsequent formal deployments
+succeeded; final runtime commit is d9d34093 (including d55a21b8 and e23544c4
+startup/projection corrections). No manual process control or production source
+edit was used.
+
+A final 76-receipt correction set was applied in batches of at most10 after a
+fresh verified production backup.64 original send tasks returned SUCCESS, with
+matching original task/conversation identities;12 returned Task not exists and
+remain unverified, not proved failed deliveries. Their current tasks are
+failed/external_action_uncertain and their registered executions/actions are
+uncertain. Original raw accepted reply responses are preserved, including their
+initial unknown delivery status. Corrected wrappers retain original verifier,
+previous execution/task states and the provider query. This maintenance did not
+send messages, create new Agent revisions, or enqueue these12 tasks.
+
+The live scope's original run rows and preexisting historical Attempt rows are
+unchanged. quick_check is ok; reapplying all76 proofs changes0 rows. A final
+inventory finds0 receipts with the original malformed native-reply verification
+pattern. The final disposable-copy check applied76, changed0 on repeat, passed
+integrity_check and preserved all original run/Attempt rows.
+
+Attempt15391 is now legitimately done: its stored verification names the
+original outgoing openTaskId and the native status result contains
+sendStatus=SUCCESS with outgoing message msg557iduuezBrwdZS7Yx4zeg==.
+All12 uncertain Attempt details were read through the live API after the final
+restart: each remains failed, its message and Attention reason say the external
+or delivery result is unconfirmed, and requires_decision=false. Historical
+Agent success summaries remain historical text and do not override this display.
+
+Validation: initial broad focused set454 passed; latest receipt/History/detail
+set71 passed, receipt/caller set29 passed and existing Store recovery selection7
+passed. The new failing regressions were reproduced before implementation.
+Ruff and diff checks pass. No whole live-tree test suite was run.
+
+Readback at 2026-10-14T07:27:13.212635+00:00: main PID 73677, healthz ok, service running, quality health healthy with 0 violations; Attention 12 groups and History 20 items readable. Reply task failure count15 equals prior3 plus the12 explicit uncertainty corrections. Reply, meeting and scheduled dispatcher jobs are running/requeued through normal recovery; active business jobs have not all finished. Native history availability remains separate (29 readable, 442 unavailable).
+
+The normal backup workflow now retains a verified 2026-10-14 production backup reflecting the corrected receipts. Task-owned temporary copies, captured query files and diagnostic samples have been removed after readback; correction provenance remains in the production receipts and this acceptance record.
