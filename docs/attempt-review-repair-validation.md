@@ -90,3 +90,75 @@ Skill loading. Runtime publication is verified independently.
 
 Final project Skill SHA-256:
 `950d752ae159737752dc46285c6896924b45b17a7b2119c12e98bcec7f24ba66`.
+
+## Live readback
+
+Formal `python -m app.deploy --skip-quiet-wait` completed from d9d34093 to
+5691f6c7. launchd PID was 34642 and `/healthz` returned ok. Runtime capture
+published project Skill revision 159 (revision number 5), matching the final
+950d752a source hash. No scheduled-task or runtime-config binding referenced
+this project Skill, so no frozen historical input was replaced.
+
+A fresh download read through the deployed production `app/agent_cli.py` returned
+the same original settlement PDF digest, one complete OCR page, 495 characters
+and confidence 0.9543. Maintenance then used the existing normal Store and
+SystemExecutor paths: 15446 execution179 became done and action175 verified from
+its existing native return proof; 15452 settled the original Derek node, leaving
+the process's other-approver nodes untouched; 15436 settled only the explicit
+request to repair scanned PDF reading, without approving materials or payment.
+All three task rows are done. The 26 original run rows had identical pre/post
+SHA-256 a79f969bc7a42c349f26ebcb9a618309c3139c5567df6e343bbb21f2483deccb.
+
+Normal settled-input compaction clears the Attempt preview text and updates
+its provenance/payload. It does not rewrite original runs or review decisions.
+15452's full original trigger remains byte-identical in candidate660 source
+bindings; the compacted input points to input404820 and records the same 1673-byte
+source digest 20ea1490bd1ceeea7c309b6a24f8f86ac00d25204e23fed2e1db4efeeefdf841.
+The Console details show 15436/15452 done without a human decision, and 15446
+System execution done with one of one actions verified. No new message or OA
+write was dispatched during this maintenance.
+
+Recovery readback identified two old-process failures. The old-table reply query
+was from the pre-deployment loaded process: task404869 automatically retried with
+the deployed actions projection, completed Consumer356308/Audit356315 and became
+done. No redundant SQL patch was added. Meeting job404821 also recovered through
+new completed runtime356313 and became sent. Its original persistence failure
+was a prompt/codec mismatch: the prompt required an absolute profile source path
+that the existing codec correctly refused. A follow-up input repair uses a
+SHA-256 reference to exactly the same one-time injected profile text; it leaves
+the codec unchanged and passed 91 focused tests including a RED/GREEN regression
+and a final-message path rejection control.
+
+Another interrupted task404777 resumed Consumer/Audit and reached System execution.
+The initially read provider receipt was classified ambiguous and an exact
+message search returned no evidence. Further inspection found the accepted native
+send-task identity under the successful `result.result` response and the registered
+`sendReceipt`. The exact native send-status query returned SUCCESS. A separate
+receipt parser fix and read-only journal reconciliation then recorded the verified
+effect: execution184 is done, action180 verified, and Task404777 done. No send was
+replayed. Its seven original run rows retained SHA-256
+386e123107fc3c8bac827d457bc707c8ae093a6be9b18c88d62d7afd46238064. Unknown/PENDING
+and conflicting send-task identities continue to remain unverified. Health status still
+includes unrelated historical warnings; endpoint health alone is not a claim
+that every historical task in the service is resolved.
+
+The shared backup workflow retained the newest verified database backup at
+`~/Library/Application Support/ceo-agent-service/backups/auto-reply-before-send-reconcile-2026-10-14.sqlite3`;
+temporary rehearsal databases and downloaded files are removed at task completion.
+
+
+Second formal deployment installed eb797e6b, containing the independently committed
+meeting-input, send-receipt/reconciliation and stop-completion fixes. launchd PID
+78336 started at 2026-10-14T10:01:20Z; the old supervisor and worker PIDs had exited,
+and healthz returned ok. At 10:06:16Z no Agent/runtime failed run had been created
+since that restart. All five inspected recovery tasks were done with cleared task
+errors. Console Attention and individual History detail reads completed, including
+15446 System done and one verified action. Broad Status/History list polls exceeded
+their request budgets; current queues were independently read from Store18 and
+individual affected details were verified. These list latency limits do not prove
+that unrelated historical warnings are resolved.
+
+Focused verification of the follow-up changes: 91 meeting tests, 63 delivery/
+executor/source-revision tests, and 68 updater/schema tests passed. Each repaired
+mechanism has a regression that failed before its change; no full-suite run was
+started while the service was live.
