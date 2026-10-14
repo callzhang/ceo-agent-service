@@ -1792,3 +1792,26 @@ acceptance.
 ### Task5B2 independent acceptance, 2026-10-14
 
 Root accepts e9d38852c6a22fdac64bf5afcdf47a50c59baef4 over6dc0b946d7eaba5469950e29d962e8ea13e53d82. Fresh SPEC independently ran exactly14 cases:14 passed11.80s, lint/diff exit0, all nonselected AST nodes unchanged, owned temp removed. Fresh QUALITY inspected all14 bodies and verified reversing only21 finite projection substitutions and the count-map adaptation makes the entire module AST identical to its parent. No assertions/helpers/H/S/otherT changes; source aliases/order/direct record-type filters retain row identity and count semantics. QUALITY did not rerun sufficient existing execution and created no temps. Both reviewers verified clean frozen HEAD and PASS. This only accepts current reads; fixture mutations, corruption/history tests, dynamic SQL sites, broader gates, latest-copy/native/CI/publication and full10+1 remain open.
+
+### Task5B3: six current fixture and poll tests
+
+The selected six test symbols expand to nine cases, including four idle-poll
+parameters. Their unchanged form ran RED: seven failed at direct SQL against
+retired `email_actions` or `email_unsubscribe_receipts`, two passed, pytest
+exit 1. Only those six bodies now obtain all matching source ROWIDs through
+the existing finite locator projections, then use `update_email_action` to
+set the same status, timestamps or receipt URL. The receipt read uses its
+source-shaped projection. The source ROWID is never the public action ID or
+physical `actions.id`; each original predicate, parameter, complete selected
+row set, poll/claim behavior and business assertion remains. The retired-plan
+probe keeps its SQLite authorizer assertion, pointed at the exact generated
+`actions.email_actions_json` column for the plan body; no trace substitute was
+added. These synthetic done/failed fixtures serve poll/report scenarios and
+are not claimed as strict cold-reopen-valid persisted histories.
+
+After adjusting two native SQLite tuple-row locator reads, the final selected
+run reported `9 passed in 4.38s`, pytest exit 0. Scoped Ruff and diff-check
+passed. Each run removed and verified absence of its own
+`/tmp/email13-task5b3-*` temporary root. Historical H, shared rebuild S,
+other current T and the two dynamic four-table cursor-count tests remain
+deferred; this is not full Task5 or publication acceptance.

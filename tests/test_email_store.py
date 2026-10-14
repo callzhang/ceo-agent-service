@@ -36,8 +36,11 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
 )
 from app.email_store import (
+    EMAIL_DIRECT_ACTION_LOCATOR_SQL,
     EMAIL_DIRECT_ACTION_SQL,
     EMAIL_PLAN_SQL,
+    EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL,
+    EMAIL_UNSUBSCRIBE_RECEIPT_SQL,
     StoredEmailLocator,
     EmailActionAttemptConflict,
     EmailActionPlanConflict,
@@ -57,6 +60,7 @@ from app.email_task_adapter import email_action_identity
 from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
 from app.store import AgentRole, AutoReplyStore
+from app.action_storage import update_email_action
 
 
 def _frozen_training_observation(**overrides):
@@ -1813,10 +1817,12 @@ def test_backfill_fills_a_missing_entry_url_only_when_it_hashes_to_the_receipt(
     )
     action_identity = str(authorization["action_identity"])
     with store._connect() as db:
-        db.execute(
-            "update email_unsubscribe_receipts set entry_url='' where action_identity=?",
+        receipt_rows = db.execute(
+            f"select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?",
             (action_identity,),
-        )
+        ).fetchall()
+        for receipt_row in receipt_rows:
+            update_email_action(db, "email_unsubscribe_receipts", receipt_row["rowid"], {"entry_url": ""})
     wrong = "https://elsewhere.example.test/unsubscribe?token=other"
 
     with pytest.raises(ValueError, match="entry reference"):
@@ -1824,7 +1830,7 @@ def test_backfill_fills_a_missing_entry_url_only_when_it_hashes_to_the_receipt(
     assert store.backfill_email_unsubscribe_entry_url("no-such-action", wrong) is False
     with store._connect() as db:
         assert db.execute(
-            "select entry_url from email_unsubscribe_receipts where action_identity=?",
+            f"select entry_url from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
             (action_identity,),
         ).fetchone()[0] == ""
 
@@ -6797,7 +6803,9 @@ def test_direct_action_claim_does_not_materialize_settled_history(tmp_path: Path
         )
         _persist_scan(store, classification)
     with store._connect() as db:
-        db.execute("update email_actions set status='done'")
+        action_rows = db.execute(f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})").fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row["rowid"], {"status": "done"})
     fetch_sizes = []
     connect = store._connect
 
@@ -6846,10 +6854,12 @@ def test_direct_action_probe_does_not_load_retired_pending_plan_bodies(
             store, original, request_id=f"retired-plan-correction-{index}",
         )
         with store._connect() as db:
-            db.execute(
-                "update email_actions set status='done' where action_plan_id=?",
+            action_rows = db.execute(
+                f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_plan_id=?",
                 (application.resulting_action_plan_id,),
-            )
+            ).fetchall()
+            for action_row in action_rows:
+                update_email_action(db, "email_actions", action_row["rowid"], {"status": "done"})
     original_open = store._open_connection
     payload_reads = []
 
@@ -6857,7 +6867,7 @@ def test_direct_action_probe_does_not_load_retired_pending_plan_bodies(
         db = original_open()
 
         def authorize(operation, table, column, database, trigger):
-            if operation == sqlite3.SQLITE_READ and table == "email_action_plans" and column == "actions_json":
+            if operation == sqlite3.SQLITE_READ and table == "actions" and column == "email_actions_json":
                 payload_reads.append(table)
             return sqlite3.SQLITE_OK
 
@@ -6879,12 +6889,15 @@ def test_idle_direct_action_poll_does_not_wait_for_writer(tmp_path, monkeypatch,
         )
         with store._connect() as db:
             if queue == "settled":
-                db.execute("update email_actions set status='done'")
+                action_rows = db.execute(f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})").fetchall()
+                for action_row in action_rows:
+                    update_email_action(db, "email_actions", action_row["rowid"], {"status": "done"})
             elif queue == "blocked":
-                db.execute(
-                    "update email_actions set status='failed', next_attempt_at=?",
-                    ("2026-09-01T12:00:00+00:00",),
-                )
+                action_rows = db.execute(f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})").fetchall()
+                for action_row in action_rows:
+                    update_email_action(db, "email_actions", action_row["rowid"], {
+                        "status": "failed", "next_attempt_at": "2026-09-01T12:00:00+00:00",
+                    })
     open_connection = store._open_connection
 
     def no_wait_connection():
@@ -7232,20 +7245,23 @@ def test_processing_action_blocks_only_its_own_classification(tmp_path: Path):
     assert first.classification_id == first_classification.classification_id
     _persist_scan(store, second_classification)
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            update email_actions set updated_at='2026-08-30T11:00:00+00:00'
-            where classification_id=? and action_type='mark_read'
-            """,
+        first_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) "
+            "where classification_id=? and action_type='mark_read'",
             (first_classification.classification_id,),
-        )
-        db.execute(
-            """
-            update email_actions set updated_at='2026-08-30T13:00:00+00:00'
-            where classification_id=?
-            """,
+        ).fetchall()
+        for action_row in first_rows:
+            update_email_action(db, "email_actions", action_row[0], {
+                "updated_at": "2026-08-30T11:00:00+00:00",
+            })
+        second_rows = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where classification_id=?",
             (second_classification.classification_id,),
-        )
+        ).fetchall()
+        for action_row in second_rows:
+            update_email_action(db, "email_actions", action_row[0], {
+                "updated_at": "2026-08-30T13:00:00+00:00",
+            })
 
     claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:01:00+00:00")
 
@@ -11402,18 +11418,18 @@ def test_flagged_important_between_lists_only_done_flags_in_the_window(
             ("outside", "done", "2026-09-23T15:59:59+00:00"),
             ("not-done", "failed", "2026-09-24T03:00:00+00:00"),
         ):
-            db.execute(
-                """update email_actions set status=?, created_at=?
+            action_rows = db.execute(
+                f"""select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})
                    where classification_id=(
                        select id from email_classifications
                        where stable_message_identity=?
                    )""",
-                (
-                    status,
-                    created_at,
-                    f"dingtalk-account:message-id:<{message_id}@example.com>",
-                ),
-            )
+                (f"dingtalk-account:message-id:<{message_id}@example.com>",),
+            ).fetchall()
+            for action_row in action_rows:
+                update_email_action(db, "email_actions", action_row[0], {
+                    "status": status, "created_at": created_at,
+                })
 
     flagged = store.list_flagged_important_between(
         datetime(2026, 9, 23, 16, tzinfo=timezone.utc),
