@@ -1964,3 +1964,7 @@ diagnostic boundary; no runtime exception mapping, repair, retry or policy was
 changed. Each run removed and verified absence of its owned `/tmp/email13-5b7-*`
 directory. Historical H, shared native-rebuild S and remaining current T tests
 are still deferred; this is not full Task5 or publication acceptance.
+
+### Task5B7 independent acceptance, 2026-10-14
+
+Root accepts966c23c215020cab86129d7067115ac06b41bcfb over135b4db33ae2a92060eb3f9d26920d9f92740cf2. Fresh SPEC independently13pass10.33s/lint/diff/otherASTunchanged/ownedtempsabsent. Subsequent fresh QUALITY confirms exact generated-column dependencies, sole attemptFK, finite family-specific CHECKs, real shared-column collation, exact target Store error/defaultFalse and no-repair facts. Independent exact-helper probe verifies only attempt CHECK changes while retry CHECK retains >0, schema-cookie reload on warmed and fresh connections, writable_schema off, integrityok and realmanifest rejection; exit0, own temp removed. It did not repeat sufficient13case execution. Both PASS and frozen cleanHEAD. Target diagnostic difference is explicitly accepted existing shared-ownership behavior, not an added catch or policy. Historical helpers remain unchanged. Remaining composites/history/source gates and broader latest-copy/native/CI/publication/full10+1 remain open.
