@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 import time
 from contextlib import contextmanager
 from email import policy
@@ -2857,63 +2856,6 @@ def test_historical_queue_persists_only_minimal_json_safe_projection(tmp_path):
         assert forbidden not in database_bytes
 
 
-def test_v29_historical_queue_migration_securely_redacts_legacy_provider_record(
-    tmp_path,
-):
-    database = tmp_path / "historical-v29-redaction.sqlite3"
-    store = EmailStore(database)
-    candidate = HistoricalClassificationCandidate(
-        stable_message_identity="stable-legacy-private",
-        normalized_text="safe initial input",
-        provider_message={
-            "accountId": "account-1",
-            "folder": "INBOX",
-            "uidValidity": 42,
-            "uid": 9,
-            "messageId": "<legacy-private@example.test>",
-            "threadId": "thread-legacy-private",
-            "stableMessageIdentity": "stable-legacy-private",
-        },
-    )
-    store.enqueue_historical_page(
-        account_id="account-1",
-        folder="INBOX",
-        model_id="model-legacy",
-        uidvalidity=42,
-        last_seen_uid=9,
-        candidates=(candidate,),
-    )
-    legacy = {
-        **candidate.provider_message,
-        "subject": "LEGACY-PRIVATE-SUBJECT",
-        "textBody": "LEGACY-PRIVATE-BODY",
-        "listUnsubscribe": "<https://private.test/u?token=LEGACY-PRIVATE-TOKEN>",
-    }
-    with sqlite3.connect(database) as db:
-        restore_action_plan_snapshot_column(db)
-        db.execute("pragma secure_delete = on")
-        db.execute("delete from email_schema_migrations")
-        db.execute(
-            "insert into email_schema_migrations(version, applied_at) "
-            "values (29, '2026-09-08T00:00:00+00:00')"
-        )
-        db.execute(
-            "update email_historical_candidates "
-            "set normalized_text=?, provider_message_json=?",
-            ("LEGACY-PRIVATE-BODY", json.dumps(legacy)),
-        )
-
-    migrated = EmailStore(database)
-    [queued] = migrated.list_historical_candidates(
-        account_id="account-1", folder="INBOX", model_id="model-legacy"
-    )
-    assert queued["normalized_input_hash"] == sha256(
-        b"LEGACY-PRIVATE-BODY"
-    ).hexdigest()
-    database_bytes = database.read_bytes()
-    assert b"LEGACY-PRIVATE-BODY" not in database_bytes
-    assert b"LEGACY-PRIVATE-TOKEN" not in database_bytes
-    assert b"LEGACY-PRIVATE-SUBJECT" not in database_bytes
 
 
 def test_historical_unsubscribe_input_is_reread_from_provider_not_queue(tmp_path):

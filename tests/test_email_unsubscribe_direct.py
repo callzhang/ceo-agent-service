@@ -1068,49 +1068,8 @@ def test_principal_cancellation_rejects_changed_or_active_identity(tmp_path, cha
     assert browser.calls == []
 
 
-def test_cancellation_storage_migrates_schema49_without_changing_plan_or_receipt(tmp_path):
-    database = tmp_path / "schema49.sqlite3"
-    store = _seed(database)
-    original = store.get_classification(CLASSIFICATION_ID)
-    with sqlite3.connect(database) as db:
-        db.execute("drop table email_direct_retry_requests")
-        db.execute("drop table email_unsubscribe_cancellations")
-        db.execute("delete from email_schema_migrations where version>=50")
-        db.execute("insert into email_schema_migrations(version,applied_at) values (49,'2026-10-11T00:00:00Z')")
-    migrated = EmailStore(database)
-    assert migrated.get_classification(CLASSIFICATION_ID) == original
-    assert migrated.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
-    assert migrated.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
-    with sqlite3.connect(database) as db:
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 51
-        assert db.execute("select count(*) from email_direct_retry_requests").fetchone()[0] == 0
-        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
 
 
-def test_cancellation_cli_preview_refuses_schema49_without_store_initialization(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from app import email_worker
-    from app.email_store import EmailPersistenceCorruption
-
-    operation, task, email_store, _browser = _operation(tmp_path, [])
-    database = tmp_path / "direct-unsubscribe.sqlite3"
-    with sqlite3.connect(database) as db:
-        db.execute("drop table email_unsubscribe_cancellations")
-        db.execute("delete from email_schema_migrations where version>=50")
-        db.execute("insert or ignore into email_schema_migrations(version,applied_at) values (49,'2026-10-11T00:00:00Z')")
-        before = db.execute("select type,name,sql from sqlite_master order by name").fetchall()
-    def forbidden(_settings):
-        raise AssertionError("preview initialized writable stores")
-    monkeypatch.setattr(email_worker, "_build_email_unsubscribe_context", forbidden)
-    with pytest.raises(EmailPersistenceCorruption, match="requires deployed email schema"):
-        email_worker.cancel_failed_email_unsubscribe(
-            SimpleNamespace(db_path=database), task_id=task.id, action_identity=ACTION_IDENTITY,
-            execution_generation=task.execution_generation, input_version=task.input_version,
-            reason="Retain subscription.",
-        )
-    with sqlite3.connect(database) as db:
-        assert db.execute("select type,name,sql from sqlite_master order by name").fetchall() == before
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 49
 
 
 @pytest.mark.parametrize("adapter", ["reply", "scheduled_execution", "meeting"])

@@ -2152,3 +2152,31 @@ functions remain open.
 ### Task5C1 independent acceptance, 2026-10-14
 
 Root accepts9887c07662d882842cc21a7aed01bf889ea794b5 over552fa0551ae458e68c4b2f51e193279c9a5448c7. Fresh SPEC independently22pass12.63s/lint/diff/ownedtempabsent, original13businessassertions/decorators/helper2callers/18field6rowthroughput exact; typedidentities/ordereddelete and route/wholeapp split verified. Subsequent fresh QUALITY independently confirms assertionASTs, allmatchingrow identities, SQLNULL encoding, rawvalues/FK0 preservation, privacy/window/lineage7cases, exactnewsource1wrapper count and existingFpairedconstructor behavior. No repeated sufficient tests or temps; both PASS cleanfrozenHEAD. Accepted implementationAPI181+legacy4 parent185pass42.80 contains49nestedoldsourcecases. Formerwholeappindependentfutureisolation remains actual0441source assertion; currentwholepairedfutureunknownschema refusesunchangedDB, no runtimepolicy/catch. AdditionalH11func56cases sourceboundintegration and five remainingfixturefiles plus finalTask5/latest-copy/native/CI/publication/full10+1 remain open.
+
+### Task5C2 remaining genuine historical fixtures (local candidate)
+
+Eleven original source-version tests were removed from four current default
+modules: two schema49 direct-unsubscribe cases, two v7/v8 reply-delivery cases,
+one v29 worker case and six v25 task-adapter cases. Every removed function,
+including decorators, is AST-identical to its fixed published `0441cf15`
+version; every remaining top-level current test function is unchanged. The
+existing historical archive/runner and its four groups remain unchanged. Four
+explicit additional groups run those eleven original nodes in the same
+isolated source subprocess with exact function/case expectations 2/2, 2/2,
+1/1 and 6/51. No old source code is vendored or rewritten, and no missing
+source ref, skipped child, error or nonzero child exit can pass the existing
+Junit guard.
+
+The new groups reported `4 passed in 12.76s`, exit 0, executing all 56
+genuine old-source cases. The complete eight-group entrance reported
+`8 passed in 25.06s`, exit 0, executing 105 source cases with counts
+40/6/2/1/2/2/1/51. Both owned `/tmp/email13-task5c2-*` roots were removed
+and verified absent. Read-only collection of the four remaining current files
+reported worker249, direct47, reply45 and adapter67, totaling408 current
+cases; adding the eight historical entrances collects416 parent-visible
+cases. Those 408 current cases were not run in this unit and still include
+retired-table fixtures to adapt separately. Four source-only imports made
+unused by the removal had no remaining local or external references and were
+removed after explicit scope approval; retained source helpers and their
+still-used imports remain. No runtime, CI, provider, native CLI or production
+operation changed.

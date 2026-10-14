@@ -71,6 +71,25 @@ RETRY_TESTS = (
 WEB_API_TESTS = (
     "test_audit_app_starts_when_email_schema_is_unavailable",
 )
+UNSUBSCRIBE_DIRECT_TESTS = (
+    "test_cancellation_storage_migrates_schema49_without_changing_plan_or_receipt",
+    "test_cancellation_cli_preview_refuses_schema49_without_store_initialization",
+)
+REPLY_DELIVERY_TESTS = (
+    "test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows",
+    "test_v8_store_preserves_existing_claim_as_fenced_history",
+)
+WORKER_TESTS = (
+    "test_v29_historical_queue_migration_securely_redacts_legacy_provider_record",
+)
+TASK_ADAPTER_TESTS = (
+    "test_v25_classifier_queue_migration_preserves_task_and_scrubs_private_url",
+    "test_v25_completed_null_unsubscribe_result_migrates_nullable_projection",
+    "test_v25_completed_selected_result_preserves_schema_keys_and_replays",
+    "test_v25_migration_redacts_only_sensitive_query_and_fragment_values",
+    "test_v25_migration_classifies_shared_sensitive_parameter_families",
+    "test_v25_migration_structurally_redacts_unicode_url_and_token_everywhere",
+)
 
 
 @pytest.fixture(scope="module")
@@ -196,4 +215,54 @@ def test_published_email_web_api_schema_isolation(published_source: Path) -> Non
         extra_cases={},
         expected_functions=1,
         expected_cases=1,
+    )
+
+
+def test_published_email_unsubscribe_direct_migrations(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="unsubscribe-direct",
+        module="test_email_unsubscribe_direct",
+        names=UNSUBSCRIBE_DIRECT_TESTS,
+        extra_cases={},
+        expected_functions=2,
+        expected_cases=2,
+    )
+
+
+def test_published_email_reply_delivery_migrations(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="reply-delivery",
+        module="test_email_reply_delivery",
+        names=REPLY_DELIVERY_TESTS,
+        extra_cases={},
+        expected_functions=2,
+        expected_cases=2,
+    )
+
+
+def test_published_email_worker_migration(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="worker",
+        module="test_email_worker",
+        names=WORKER_TESTS,
+        extra_cases={},
+        expected_functions=1,
+        expected_cases=1,
+    )
+
+
+def test_published_email_task_adapter_migrations(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="task-adapter",
+        module="test_email_task_adapter",
+        names=TASK_ADAPTER_TESTS,
+        extra_cases={
+            "test_v25_migration_classifies_shared_sensitive_parameter_families": 46,
+        },
+        expected_functions=6,
+        expected_cases=51,
     )

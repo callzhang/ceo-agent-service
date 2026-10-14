@@ -6,12 +6,10 @@ from pathlib import Path
 import json
 import sqlite3
 
-from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 import threading
 
 import pytest
 
-import app.email_store as email_store_module
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
@@ -383,94 +381,8 @@ def test_outgoing_message_id_is_stable_and_uses_first_32_sha256_hex() -> None:
     )
 
 
-def test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows(
-    tmp_path: Path,
-) -> None:
-    database = tmp_path / "v6-migration.sqlite3"
-    store = EmailStore(database)
-    store.create_account(ACCOUNT_VALUES)
-    account_before = store.get_account("account-primary")
-    with sqlite3.connect(database) as db:
-        restore_action_plan_snapshot_column(db)
-        _remove_post_v16_unsubscribe_receipt_columns(db)
-        db.execute("drop table email_reply_dispatch_claims")
-        db.execute("update email_schema_migrations set version=7")
-
-    migrated = EmailStore(database)
-
-    assert migrated.get_account("account-primary") == account_before
-    with sqlite3.connect(database) as db:
-        assert (
-            db.execute(
-                "select version from email_schema_migrations order by version desc limit 1"
-            ).fetchone()[0]
-            == email_store_module.EMAIL_SCHEMA_VERSION
-        )
-        assert (
-            db.execute("select count(*) from email_reply_dispatch_claims").fetchone()[0]
-            == 0
-        )
 
 
-def test_v8_store_preserves_existing_claim_as_fenced_history(tmp_path: Path) -> None:
-    store, _, effect = _delivery_setup(tmp_path)
-    with sqlite3.connect(store.path) as db:
-        restore_action_plan_snapshot_column(db)
-        for trigger in (
-            "trg_email_reply_dispatch_blocks_plan_switch",
-            "trg_email_reply_dispatch_blocks_account_update",
-            "trg_email_reply_dispatch_blocks_account_delete",
-            "trg_email_reply_dispatch_blocks_thread_update",
-            "trg_email_reply_dispatch_blocks_message_delete",
-        ):
-            db.execute(f"drop trigger {trigger}")
-        db.execute("drop table email_reply_dispatch_claims")
-        db.execute(
-            """
-            create table email_reply_dispatch_claims (
-                action_identity text primary key,
-                effect_digest text not null,
-                action_plan_id text not null,
-                classification_id integer not null,
-                account_id text not null,
-                stable_message_identity text not null,
-                outgoing_message_id text not null unique,
-                status text not null,
-                claimed_at text not null,
-                updated_at text not null
-            )
-            """
-        )
-        db.execute(
-            """
-            insert into email_reply_dispatch_claims values (
-                ?, ?, ?, ?, ?, ?, ?, 'uncertain',
-                '2026-08-30T08:00:00+00:00',
-                '2026-08-30T08:01:00+00:00'
-            )
-            """,
-            (
-                effect.action_identity,
-                effect.effect_digest,
-                effect.action_plan_id,
-                effect.classification_id,
-                effect.account_id,
-                effect.stable_message_identity,
-                outgoing_message_id(effect.action_identity, "stardust.ai"),
-            ),
-        )
-        _remove_post_v16_unsubscribe_receipt_columns(db)
-        db.execute("update email_schema_migrations set version=8")
-
-    migrated = EmailStore(store.path)
-    claim = migrated.get_email_reply_dispatch_claim(effect.action_identity)
-
-    assert claim is not None
-    assert claim["status"] == "uncertain"
-    assert claim["owner_id"] == "legacy-v8"
-    assert claim["owner_generation"] == 1
-    assert claim["sender"] == effect.sender
-    assert claim["thread_identity"] == effect.thread_identity
 
 
 def test_normal_send_preserves_exact_audit_accepted_fields_and_persists_receipt(
