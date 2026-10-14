@@ -2108,3 +2108,7 @@ The archive additionally checks that the fixed source includes its original
 `tests/conftest.py` and `app/email_store.py`. The three wrappers passed again
 after that guard (`3 passed in 10.84s`, exit 0), with the same exact nested
 counts and task-owned temporary cleanup.
+
+### Task5B12 independent acceptance, 2026-10-14
+
+Root accepts626ca557b54a01ec02e14b72384ba72dafbcec16 overe282f43d1f015bd091decc8e92b73e72db2acd7f. Fresh SPEC independently3wrappers24.24s with exact40/6/2nestedcases, collect3212.64s/lint/diff, complete40removed AST incldecorators identical to0441 and entirecurrentmodulesminus40 identical; ownedtempsabsent. Subsequent fresh QUALITY independently proves missing/empty/wrongnode/skipped/failed/error/nonzero/extra-child-report rejection with diagnostics, exactsuccess accepted, missingcommit/archive/extract failures propagate and tempcleanup verified. OnlyCIcheckoutfetch-depth0, no runtime. Both PASS and frozen cleanHEAD. Accepted implementation fullfocused321pass69.65s contains318current+3wrappers and48actualnestedsourcecases; initialomittedsnapshot321pass1fail71.62s was corrected explicitly, not hidden. Root additionally ran test_email_context_source.py and test_email_task_producer.py:8passed0.30s exit0 with ownedtemp absent, after reviewfreeze no source edits. NamedTask5collect1099 identifies six remaining currentfixture files and additional genuineoldH in four files; these and latest-copy/native/CI/publication/full10+1 remain open.
