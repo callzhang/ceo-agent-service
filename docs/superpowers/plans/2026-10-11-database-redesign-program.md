@@ -254,3 +254,30 @@ still awaits actual E publication binding and Task3B real-copy/old-code proof.
 Readonly configs/provider/schedules/state preparation covers34 existing tables
 and238 fields exactly against the approved CSV; it selects no runtime migration.
 The full ten-core-table plus ledger objective remains incomplete.
+
+
+### 2026-10-14 E publication readback and remaining acceptance
+
+The first timeout above remains a historical no-change receipt. A separate
+repository upgrade succeeded at09:38:23 UTC fromd9d34093 to5691f6c7; this task's
+second normal deploy exited0 because another deploy had already reached that
+commit. Readonly09:40–09:46 metadata confirmed Store19/Email51,121 tables,
+exact complete16-type actual action declaration and retirement of the two
+physical E source tables. Quick_check returnedok; the original single
+runs190042→tasks FK violation is unchanged. Main file474468352 bytes is not
+smaller; no VACUUM or file-size improvement is claimed.
+
+Status eventually rendered PID34642 with degraded recovery health and30
+failed queue items at09:55:14 UTC; earlier degraded health predates E.
+Several Status/Attention/History requests timed out. Readonly profiling
+isolated a History correlated anti-join bottleneck; a query-shape diagnostic
+reduced full page-key selection from>5s to1.440s, but set equivalence, HTTP
+acceptance and the other timeouts remain unverified. Publication is established;
+complete live acceptance is not.
+
+Followup9 pure migration/current-fact inversec57de7bc now passed sequential
+SPEC then QUALITY and is accepted locally at e60adb84. It remains disabled.
+Email13 now starts Task1 binding against actual published5691f6c7; Task3B
+latest-copy/genuine-old-code read/write/re-forward remains required before
+constructors, paired markers or any activation. The ten-core-table plus one
+ledger objective remains active and incomplete.

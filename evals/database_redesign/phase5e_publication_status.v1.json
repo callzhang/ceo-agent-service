@@ -36,11 +36,80 @@
     "system_health": "degraded",
     "health_detail": "latest reply attempt has no active task recovery",
     "violations": 5,
-    "summary": {"queue_count": 13, "pending": 6, "processing": 3, "failed": 28, "retryable": 1, "attention": 23},
+    "summary": {
+      "queue_count": 13,
+      "pending": 6,
+      "processing": 3,
+      "failed": 28,
+      "retryable": 1,
+      "attention": 23
+    },
     "earlier_baseline_at": "2026-10-14T08:25:59Z",
     "earlier_baseline_failed": 26,
     "earlier_baseline_attention": 21,
     "cross_system_capture_atomic": false
   },
-  "evidence_boundary": "CI and merge accepted; production migration and live acceptance incomplete. Copy/native artifacts retain their actual 74ac execution bindings. Pre-deploy failure increment occurred on original code before E migration. No forced restart, test provider send or production data modification."
+  "evidence_boundary": "E is published by another deployment, independently observed Store19/Email51 with121 tables and exact16-type declaration. Both own deployment receipts remain historical and distinct. Live UI/performance acceptance remains incomplete; no file-size reduction claimed. Copy/native artifacts retain actual74ac bindings, not5691. Full10+1 redesign remains incomplete. No root forced restart or test provider send.",
+  "second_normal_deployment": {
+    "exit_code": 0,
+    "receipt": "another deploy got there first; production is at 5691f6c7",
+    "performed_by_this_task": false
+  },
+  "published_operation_readback": {
+    "status": "succeeded",
+    "original_commit": "d9d340939cc5665cb2b9e26ee3f474216981ace6",
+    "target_commit": "5691f6c78a2a64cab0c900cb9c0cb780e48b5271",
+    "updated_at": "2026-10-14T09:38:23.940689+00:00",
+    "error": ""
+  },
+  "production_observed_after_migration": {
+    "observed_interval_utc": "2026-10-14T09:40:00Z/2026-10-14T09:46:00Z",
+    "commit": "5691f6c78a2a64cab0c900cb9c0cb780e48b5271",
+    "pid": 34642,
+    "store_version": "2026-10-13.5",
+    "email_version": 51,
+    "non_sqlite_internal_tables": 121,
+    "complete_sixteen_type_action_declaration_matches": true,
+    "reply_source_variant": "actual_no_memory_fk",
+    "retired_physical_tables_absent": [
+      "reply_attempts",
+      "memory_write_events"
+    ],
+    "quick_check": [
+      "ok"
+    ],
+    "foreign_key_check": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "foreign_key_check_matches_original": true,
+    "main_database_bytes": 474468352,
+    "free_pages": 4,
+    "page_size": 4096,
+    "healthz": "ok",
+    "capture_atomic_across_git_process_database_http": false
+  },
+  "live_acceptance": {
+    "status": "incomplete",
+    "status_ui_readback": {
+      "displayed_updated_at_utc": "2026-10-14T09:55:14Z",
+      "pid": 34642,
+      "system_health": "degraded",
+      "failed": 30,
+      "processing": 0,
+      "retryable": 0
+    },
+    "detail_routes_http_200": [
+      15260,
+      15447,
+      15452
+    ],
+    "status_attention_history_requests": "30-45 second timeouts observed; Status browser eventually rendered",
+    "history_sql_diagnostic": "Readonly equivalent materialized latest-Attempt-per-task query: full page keys1.440s versus original >5s. Exact key equivalence, full endpoint and repair acceptance pending.",
+    "health_regression_attribution": "not established; degraded recovery baseline predates E"
+  }
 }

@@ -55,23 +55,25 @@ recovery and technical retries reconstruct it from the adopted review without
 native trajectory reads. Feedback budgets, candidate binding, terminal states
 and external execution remain unchanged.
 
-Published Store18 (`2026-10-13.4`) uses the fourteen-type delivery action layout.
-Its exact Store17 forward/current-fact inverse and fresh bootstrap preserve
-public IDs, sent facts, observer identities, feedback filters, raw values and
-allocation waters. Auxiliary repair does not recreate retired sent/observer
-tables. Store, Audit, quality, deferral and scheduled recovery read finite
-delivery projections; the publication selector supports the exact previous
-layout during deployment. Recall timestamps are evaluated under the ordinary
-writer lock and nonempty external-key lookups retain an index seek. Existing
-blockers, exclusions, labels and recovery behavior are unchanged.
+Published Store19 (`2026-10-13.5`) at5691f6c7 uses the sixteen-type
+action layout. Readonly observation on2026-10-14 found Email51,121 physical
+noninternal tables and no physical reply_attempts or memory_write_events.
+Their existing public IDs, allocation waters, results and receipts use finite
+projections. Store18 delivery consolidation and its inverse proof remain
+historical evidence; the current E actual layout retains no Memory FK.
+Existing blockers, exclusions, labels, delivery verification and recovery
+behavior are unchanged.
 
-Phase5D CI and production acceptance passed. The last verified production
-observation on2026-10-14 remained Store18/Email51 atd9d34093. Phase5E's Store19
-candidate passed final CI and merged inPR82, but normal deployment exited after
-the idle wait without changing production. E production conversion/readback is
-therefore outstanding; its receipt is in
-`evals/database_redesign/phase5e_publication_status.v1.json`. Neither that merged
-candidate nor the disabled Email/follow-up preparation completes the10+1 goal.
+E passed complete CI and merged inPR82. This task's first normal deploy made
+no changes after the idle timeout; a separate deployment later succeeded.
+The second normal invocation observed production already at5691f6c7. Exact
+receipts and readonly schema checks are in
+`evals/database_redesign/phase5e_publication_status.v1.json`. Quick_check is ok,
+and the one original runs/task FK violation remains unchanged. Live
+UI/performance acceptance is still incomplete: Status eventually rendered
+PID34642 with degraded recovery health, while Status/Attention/History request
+timeouts require further diagnosis. Neither this publication nor disabled
+Email/follow-up preparation completes the10+1 goal.
 
 OA return uses its own effect verification, not the approval/rejection node
 completion predicate. The exact pending-node ownership check still precedes a

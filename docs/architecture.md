@@ -28,25 +28,24 @@ Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整�
 正文、附件、分页与状态信息及原始错误；线程使用 conversationId，单封使用 messageId，
 发送状态使用 internetMessageId。它们不发送邮件、不增加审核规则，也不开放 Audit 命令执行。
 
-Store18 (`2026-10-13.4`) delivery consolidation is published. The last verified
-production observation on2026-10-14 remained Store18/Email51 atd9d34093, with
-fourteen finite `actions` types and no physical `sent_replies` or
-`sent_reply_observers` tables. Sent public IDs and their native allocation
-watermark remain independent; sent `agent_run_id` is a scalar, while observer
-run/task/delivery endpoints remain foreign keys. Delivery writes, feedback,
-History, settlement, Audit and recovery readers use the finite projections.
-Recall timestamps are evaluated under the ordinary writer lock; validated
-nonempty external keys retain an indexed lookup. Existing recovery predicates,
-result labels and receipt policy are unchanged.
+Store19 (`2026-10-13.5`) is published at5691f6c7, observed on2026-10-14
+with Email51 and121 physical noninternal tables. Its complete sixteen-type
+`actions` declaration matches the actual-no-Memory-FK source variant; physical
+`reply_attempts` and `memory_write_events` are absent. Native public IDs,
+allocation waters, adopted results and receipts remain in finite action
+projections. Existing delivery blockers, recovery predicates, result labels
+and receipt policy remain unchanged.
 
-Publication readers support the exact previous/current layouts during the
-normal deploy window, and the release router pairs17→18 with a current-fact
-inverse. Phase5D validation records its accepted CI, copy, old-code, native
-substitute and production evidence. Phase5E's sixteen-type Store19 candidate
-passed final CI and merged inPR82, but its normal deployment timed out waiting
-for idle without changing production. Its publication status is recorded in
-`evals/database_redesign/phase5e_publication_status.v1.json`. Merged E code is
-not live acceptance or completion of the full10+1 redesign.
+Phase5D's Store18 delivery publication and E's accepted copy/current-fact
+inverse/old-code/native-substitute proofs remain separately recorded. E's
+first normal deployment timed out without changes; a later independent
+deployment succeeded, and this task's second normal invocation observed that
+publication. `evals/database_redesign/phase5e_publication_status.v1.json`
+retains both receipts. Readonly quick_check passed and the single original
+runs-to-tasks FK violation is unchanged. Live UI/performance acceptance is
+still incomplete: Status eventually rendered but exposed degraded recovery
+health; Status/Attention/History request timeouts remain under investigation.
+This publication does not complete the full10+1 redesign.
 
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
 body-free TSV metadata with separate Root and Relative path columns. Joining
