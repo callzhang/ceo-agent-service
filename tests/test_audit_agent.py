@@ -402,6 +402,7 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
 def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
     setup, protocol_source, protocol_present, fact_source
 ):
+    import hashlib
     store, task, parent, context, _config, _router = setup
     saved_task_instruction = "Apply this task's exact private review requirement."
     context = replace(
@@ -440,6 +441,8 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
     assert executor.prompts[0].count(saved_task_instruction) == 1
     assert "ceo-document-review" in executor.prompts[0]
     assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
+    assert executor.prompts[0].count(hashlib.sha256(b"FROZEN BODY").hexdigest()) == 1
+    assert "FROZEN BODY" not in executor.prompts[0]
     assert (
         "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" in executor.prompts[0]
     ) is protocol_present

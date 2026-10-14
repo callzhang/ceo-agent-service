@@ -272,6 +272,7 @@ def test_consumer_without_selected_skill_uses_active_discovery(store, task, cont
 def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
     store, task, context, protocol_source, protocol_present, fact_source
 ):
+    import hashlib
     store.upsert_conversation(task.conversation_id, "Group", False, "session-selected")
     store.set_codex_session_contract_hash(
         task.conversation_id,
@@ -318,6 +319,8 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
     assert executor.commands[0][3:5] == ["exec", "resume"]
     assert "ceo-document-review" in executor.prompts[0]
     assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
+    assert executor.prompts[0].count(hashlib.sha256(b"FROZEN BODY").hexdigest()) == 1
+    assert "FROZEN BODY" not in executor.prompts[0]
     assert (
         "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" in executor.prompts[0]
     ) is protocol_present

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import csv
+import hashlib
 from dataclasses import dataclass
 import io
 import json
@@ -504,6 +505,7 @@ def render_task_skill_discovery(
     *,
     catalog: tuple[BusinessSkillCatalogEntry, ...],
     frozen_names: Iterable[str] = (),
+    frozen_materials: tuple[FrozenTaskSkillMaterial, ...] = (),
 ) -> str:
     """Render name/use/read-only discovery without preloading Skill bodies."""
     selected = tuple(dict.fromkeys(name for name in selected_names if name))
@@ -522,34 +524,18 @@ def render_task_skill_discovery(
         heading = "## Selected Task Skills"
         instructions: list[str] = []
         if frozen:
-            names = ", ".join(f"`{name}`" for name in selected if name in frozen)
             instructions.append(
-                f"For the task-frozen selection {names}, use this task's exact content. "
-                "Reuse complete content already loaded in this session only while "
-                "this selected frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content "
-                "with `agent_cli.read_task_skill(name)`; do not substitute a similarly "
-                "named installed Skill."
-            )
-        installed = tuple(name for name in selected if name not in frozen)
-        if installed:
-            instructions.append(
-                "For each installed selection, call its exact "
-                "`agent_cli.read_skill(path=...)` entry below before deciding "
-                "or reviewing."
+                "Task-frozen reads: `agent_cli.read_task_skill(name)`."
             )
         instructions.append(
-            "When a selected Skill names another installed Skill, read that exact "
-            "dependency on demand with `agent_cli.read_skill(name=...)`."
+            "Other Skill reads: `agent_cli.read_skill(name=...)`."
         )
         read_instruction = " ".join(instructions)
     else:
         entries = tuple((entry.name, entry) for entry in dict.fromkeys(catalog))
         heading = "## Skill Discovery"
         read_instruction = (
-            "No task Skill was selected. When the task needs business or operation "
-            "guidance, call `agent_cli.read_skill()` to discover installed names, "
-            "uses, and authorized read paths, then read the applicable Skill by "
-            "exact name or path before applying it."
+            "No task Skill was selected. Discover with `agent_cli.read_skill()`."
         )
     lines = [heading]
     for name, entry in entries:
@@ -559,6 +545,12 @@ def render_task_skill_discovery(
             else "Selected for this task."
         ) or "Selected for this task."
         line = f"- `{name}`: {use}"
+        if name in frozen:
+            line += " Task-frozen."
+            matches = tuple(m for m in frozen_materials if m.name == name)
+            if len(matches) == 1:
+                digest = hashlib.sha256(matches[0].content.encode("utf-8")).hexdigest()
+                line += f" Frozen content sha256: `{digest}`."
         if name not in frozen:
             assert entry is not None
             path = json.dumps(str(entry.skill_path.resolve()), ensure_ascii=False)

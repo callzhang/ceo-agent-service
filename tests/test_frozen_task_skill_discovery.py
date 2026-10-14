@@ -241,7 +241,7 @@ def test_role_prompt_carries_current_frozen_skill_catalog_without_body():
     assert _context().role_prompt() == _context().prompt
 
 
-def test_frozen_discovery_reuses_only_complete_unchanged_source_in_session():
+def test_frozen_discovery_keeps_task_lookup_without_repeating_read_procedure():
     from app.business_skills import render_task_skill_discovery
 
     prompt = render_task_skill_discovery(
@@ -250,8 +250,8 @@ def test_frozen_discovery_reuses_only_complete_unchanged_source_in_session():
         frozen_names=("ceo-calendar-invite",),
     )
     assert "agent_cli.read_task_skill(name)" in prompt
-    assert "Reuse complete content already loaded in this session" in prompt
-    assert "this selected frozen Skill's revision_id/sha256 is unchanged" in prompt
-    assert "Otherwise read the exact frozen content" in prompt
-    assert "do not substitute a similarly named installed Skill" in prompt
+    assert "Task-frozen." in prompt
+    assert "agent_cli.read_skill(name=...)" in prompt
+    assert "Reuse complete content already loaded in this session" not in prompt
+    assert "Otherwise read the exact frozen content" not in prompt
     assert "before deciding or reviewing" not in prompt

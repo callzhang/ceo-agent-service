@@ -1,0 +1,30 @@
+{
+  "version": "frozen-skill-metadata-native-input.v1",
+  "base_commit": "9cdcddae",
+  "candidate_commit": "3f00ea6d",
+  "native_cli_version": "codex-cli 0.154.0",
+  "records": [
+    {
+      "role": "consumer",
+      "native_task_equals_submitted": true,
+      "frozen_sha_once": true,
+      "body_inlined": false,
+      "task_characters": 625,
+      "task_sha256": "8cc23b776722ed51c84d4f26517fa4212aa79f88373144c33bae320f98d96536"
+    },
+    {
+      "role": "audit",
+      "native_task_equals_submitted": true,
+      "frozen_sha_once": true,
+      "body_inlined": false,
+      "task_characters": 625,
+      "task_sha256": "8cc23b776722ed51c84d4f26517fa4212aa79f88373144c33bae320f98d96536"
+    }
+  ],
+  "model_requests": 0,
+  "limits": [
+    "Native message rendering only, not full API request/base instructions/tool schemas",
+    "No model business judgment or live source read",
+    "No production deployment yet"
+  ]
+}
