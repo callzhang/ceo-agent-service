@@ -28,29 +28,25 @@ Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整�
 正文、附件、分页与状态信息及原始错误；线程使用 conversationId，单封使用 messageId，
 发送状态使用 internetMessageId。它们不发送邮件、不增加审核规则，也不开放 Audit 命令执行。
 
-Store18 publication readers select exact Store17 native delivery tables or
-Store18 finite action projections during the existing deploy window. Quality,
-deferral and scheduled recovery read the candidate's typed delivery facts;
-their predicates, logical result labels and recovery decisions are unchanged.
-The existing Store release router now selects the verified17→18 paired inverse.
-These integrations remain a development candidate. Real constructor copy,
-current-fact rollback, published-old-code reopen and native substitute execution
-have passed; CI and production acceptance remain pending.
+Store18 (`2026-10-13.4`) delivery consolidation is published. The last verified
+production observation on2026-10-14 remained Store18/Email51 atd9d34093, with
+fourteen finite `actions` types and no physical `sent_replies` or
+`sent_reply_observers` tables. Sent public IDs and their native allocation
+watermark remain independent; sent `agent_run_id` is a scalar, while observer
+run/task/delivery endpoints remain foreign keys. Delivery writes, feedback,
+History, settlement, Audit and recovery readers use the finite projections.
+Recall timestamps are evaluated under the ordinary writer lock; validated
+nonempty external keys retain an indexed lookup. Existing recovery predicates,
+result labels and receipt policy are unchanged.
 
-Store18 delivery integration is an isolated development candidate, not a
-published runtime. Its fresh bootstrap and exact Store17 migration use fourteen
-finite `actions` types and retire physical `sent_replies` and
-`sent_reply_observers`. Sent public IDs and their native allocation watermark
-remain independent; sent `agent_run_id` is the existing scalar field, while
-observer run/task/delivery endpoints remain actual foreign keys. Current-fact
-inverse and published-old-code copy evidence are in the Phase5D validation.
-Store sent delivery writes, feedback/history reads, settlement checks and the
-Audit console sent reader now use the finite action projection. This is caller
-conversion in the development candidate. Recall timestamps are read after the
-ordinary writer lock is acquired, matching the source UPDATE. Integrated release
-acceptance is still pending. Validated nonempty external-key lookups retain a
-key seek through the finite sent index. This is not a production migration or
-the full10+1 goal.
+Publication readers support the exact previous/current layouts during the
+normal deploy window, and the release router pairs17→18 with a current-fact
+inverse. Phase5D validation records its accepted CI, copy, old-code, native
+substitute and production evidence. Phase5E's sixteen-type Store19 candidate
+passed final CI and merged inPR82, but its normal deployment timed out waiting
+for idle without changing production. Its publication status is recorded in
+`evals/database_redesign/phase5e_publication_status.v1.json`. Merged E code is
+not live acceptance or completion of the full10+1 redesign.
 
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
 body-free TSV metadata with separate Root and Relative path columns. Joining
@@ -2098,7 +2094,7 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
-第五期C已通过PR77／46bfdbe0正常发布，生产Store17／Email51及126物理表读回通过；实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
+第五期C曾通过PR77／46bfdbe0正常发布，阶段验收时的Store17／Email51及126物理表读回通过；这是历史发布回执，后续已发布Store18。实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
 
 ### Calendar organizer source projection
 

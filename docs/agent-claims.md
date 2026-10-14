@@ -1363,3 +1363,5 @@ reverts committed work they did not author.
 | codex-followup-sync-capture-acceptance | Email-actions worktree: own followup-sync plan/validation acceptance paragraphs and this claim | Root records sequential independent SPEC then QUALITY of b6214a28 read-only capture after dependency repair. No forward/inverse/version/provider or production change. | accepted disabled Task2A only 2026-10-14 |
 
 | codex-phase5e-publication-wait-receipt | Email-actions worktree: new E publication-status JSON and appended program status; own claim only | Record final E CI/merge and normal deployment timeout with unchanged production, separately observed pre-migration health increment. No runtime/schema/provider mutation. | evidence only 2026-10-14; E publication incomplete |
+
+| codex-runtime-schema-status-correction | Email-actions worktree: older D-stage publication paragraphs in architecture/runtime only; own claim | Replace stale claims of current Store17 with verified Store18 publication and explicitly pending E deployment; retain C historical receipt as historical. No code/schema/task/provider behavior change. | docs-only 2026-10-14 |
