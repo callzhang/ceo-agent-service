@@ -91,21 +91,36 @@ def test_public_id_order_and_range_use_bounded_work(variant, reply_variant, kind
             # The Store reader asks for full rows and paginates by public ID.
             source_sql = f"select * from {kind} order by id desc limit ? offset ?"
             target_sql = f"select * from ({projection}) order by id desc limit ? offset ?"
-            expected, source_work = _steps(source, source_sql, (5, 0))
-            actual, target_work = _steps(target, target_sql, (5, 0))
-            columns = [item[0] for item in source.execute(source_sql, (5, 0)).description]
-            expected_rows = [dict(zip(columns, row, strict=True)) for row in expected]
-            actual_rows = [dict(zip(columns, row, strict=True)) for row in actual]
-            if kind == "reply_attempts":
-                for row in expected_rows:
-                    row["audit_tool_events_json"] = "[]"
-            assert actual_rows == expected_rows
-            plan = target.execute("explain query plan " + target_sql, (5, 0)).fetchall()
-            assert not any("USE TEMP B-TREE" in row[3] for row in plan), plan
-            assert any(f"idx_actions_{'reply' if kind == 'reply_attempts' else 'memory'}_public_order" in row[3] for row in plan), plan
-            yield target_work, source_work
+            for offset in (0, 3):
+                arguments = (5, offset)
+                expected, source_work = _steps(source, source_sql, arguments)
+                actual, target_work = _steps(target, target_sql, arguments)
+                columns = [item[0] for item in source.execute(source_sql, arguments).description]
+                expected_rows = [dict(zip(columns, row, strict=True)) for row in expected]
+                actual_rows = [dict(zip(columns, row, strict=True)) for row in actual]
+                if kind == "reply_attempts":
+                    for row in expected_rows:
+                        row["audit_tool_events_json"] = "[]"
+                assert actual_rows == expected_rows
+                plan = target.execute("explain query plan " + target_sql, arguments).fetchall()
+                assert not any("USE TEMP B-TREE" in row[3] for row in plan), plan
+                assert any(f"idx_actions_{'reply' if kind == 'reply_attempts' else 'memory'}_public_order" in row[3] for row in plan), plan
+                yield target_work, source_work
 
         add_ids([*range(1, 20), 99999])
+        # Both E tables use the same public ID in independent namespaces.
+        if kind == "reply_attempts":
+            source.execute("insert into memory_write_events(id,attempt_id,event_type,payload_json) values(1,50000,'overlap','{}')")
+            storage.insert_action(target, "memory_write_events",
+                                  {"id": 1, "attempt_id": 50000, "event_type": "overlap", "payload_json": "{}"})
+        else:
+            source.execute("insert into reply_attempts(id," + ",".join(ATTEMPT) + ") values(1," +
+                           ",".join("?" for _ in ATTEMPT) + ")", tuple(ATTEMPT.values()))
+            storage.insert_action(target, "reply_attempts", ATTEMPT | {"id": 1})
+        for reply_kind in ("reply_attempts", "memory_write_events"):
+            assert source.execute(f"select id from {reply_kind} where id=1").fetchall() == [(1,)]
+            assert target.execute("select id from (" + storage.reply_action_projection(reply_kind, reply_variant) +
+                                  ") where id=1").fetchall() == [(1,)]
         small = list(check_queries())
         add_ids(range(20, 1020))
         # A different action type shares physical storage and public IDs.
@@ -118,4 +133,9 @@ def test_public_id_order_and_range_use_bounded_work(variant, reply_variant, kind
         source.execute(f"delete from {kind} where id=10")
         target.execute("delete from actions where record_type=? and legacy_key='10'", (kind,))
         add_ids([10])
+        field = "send_status" if kind == "reply_attempts" else "status"
+        expected_reused = source.execute(f"select id,{field} from {kind} where id=10").fetchall()
+        actual_reused = target.execute("select id," + field + " from (" +
+                                       storage.reply_action_projection(kind, reply_variant) + ") where id=10").fetchall()
+        assert expected_reused == actual_reused == [(10, "pending")]
         list(check_queries())
