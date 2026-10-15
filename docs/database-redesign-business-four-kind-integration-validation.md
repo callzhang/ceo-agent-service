@@ -284,3 +284,12 @@ red then green. Changed-file Ruff, compileall and diff checks passed. These
 are local fixture/test results only. A replacement exact-head Linux CI run is
 still required; no runtime app module, provider, real database, native CLI,
 production service, push, PR or deployment changed in this repair.
+
+QUALITY follow-up: the rejected native affinity case now snapshots source and
+target rows for all four Business kinds, plus both sets of allocator waters,
+before requiring an unchanged state. A temporary in-process mutant changed an
+Anchor title without advancing a water, then called the real native insert
+with an invalid Task JSON BLOB. The previous Task-only snapshot passed that
+mutant (1/1); the all-kind snapshot failed at the intended unchanged-state
+assertion (1/1). The unmutated sixteen affinity cases passed. The mutant
+wrapper was not retained in test or app code.

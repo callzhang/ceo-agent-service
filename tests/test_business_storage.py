@@ -200,12 +200,18 @@ def test_every_native_not_null_and_ignore(pair, kind, field, ignore):
 def test_native_storage_classes_exact_text_and_affinity(pair, kind, overrides):
     seed(pair)
     values = BASE[kind] | overrides | {"created_at": "stamp", **({"updated_at": "stamp", "last_activity_at": "stamp"} if kind == "task" else {})}
-    before = (rows(pair, False, kind), rows(pair, True, kind), waters(pair, False), waters(pair, True))
+    def snapshot():
+        return (
+            tuple(rows(pair, target, current_kind) for target in (False, True) for current_kind in KINDS),
+            waters(pair, False), waters(pair, True),
+        )
+
+    before = snapshot()
     try:
         native = native_insert(pair[0], kind, values)
     except sqlite3.IntegrityError as error:
         assert failure(lambda: insert_business(pair[1], kind, values)) == error.sqlite_errorname
-        assert (rows(pair, False, kind), rows(pair, True, kind), waters(pair, False), waters(pair, True)) == before
+        assert snapshot() == before
         return
     target_result = insert_business(pair[1], kind, values)
     assert (target_result.lastrowid, target_result.rowcount) == native
