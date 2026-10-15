@@ -49,6 +49,10 @@ def _skill_text() -> str:
             "newer_context_completed_matter",
             "Use canonical `no_action`.",
         ),
+        (
+            "oa_change_already_submitted",
+            "Read the live OA process and compare its latest form with the announced change; do not request a duplicate submission, and identify only a concrete mismatch that remains.",
+        ),
     ],
 )
 def test_message_triage_skill_defines_behavior_case(case: str, handling: str):
@@ -93,6 +97,22 @@ def test_message_triage_skill_verifies_external_target_before_asking_for_disambi
         "exactly one match",
         "Only after that search remains ambiguous or empty",
         "never guess the target",
+    ):
+        assert required in text
+
+
+def test_message_triage_skill_reconciles_material_chat_updates_with_live_oa_state():
+    text = _skill_text()
+
+    for required in (
+        "material change to a project or approval-backed request",
+        "load `dingtalk-oa-approval` and the relevant business Skill",
+        "read-only DWS OA detail and operation records",
+        "compare the announced change with the newest submitted form",
+        "does not prove the process is cancelled; verify its live status",
+        "If a matching new submission already exists, do not ask for another submission",
+        "Identify the exact mismatch in the live form",
+        "Keep chat acknowledgment separate from the OA decision",
     ):
         assert required in text
 

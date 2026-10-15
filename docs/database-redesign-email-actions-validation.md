@@ -3469,3 +3469,50 @@ unchanged, so these are corrected test expectations rather than a runtime fix.
 Compact evidence is `docs/superpowers/specs/2026-10-15-email-final-ci-resume-regression.json`.
 The failed run remains a failure; a replacement submitted-head CI run is required.
 No extra real CLI, database-copy, provider send, main merge or deployment occurred.
+
+### Follow-up CI meeting Memory lease fixture, 2026-10-15
+
+CI38736466402 reported 1 failed and 13795 passed. Its sole failure was
+`test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write`: the
+heartbeat could read fake time before the writer advanced it by eight seconds,
+renew to the original ten-second expiry, then allow the intruder's claim at
+twelve seconds. The resulting `lost_lease=1` was a valid consequence of that
+test schedule. No runtime lease behavior was changed.
+
+The test now forces the heartbeat to reach its clock first, holds that clock
+read until the writer advances by eight seconds, then waits for a successful
+renewal before probing the intruder at twelve seconds. This makes the old
+failure schedule deterministic: with the clock gate absent, the exact target
+test failed with `completed=0, lost_lease=1`; with the gate, the target and two
+adjacent lease tests passed (3 passed). Every observed renewal must succeed;
+the intruder must claim zero events; the final count must stay unchanged after
+the processing call returns, and no lease thread may remain. The full meeting
+Memory write test file passed (44 tests). Ruff and diff checks passed. This is
+local test evidence only; replacement CI is pending.
+
+
+#### Independent acceptance of the lease fixture correction
+
+Root inspected committed `9ce27583` and the original failed job. Fresh sequential
+SPEC and QUALITY reviews accepted the exact synchronization repair. SPEC ran
+the target plus two adjacent lease cases (3 passed); QUALITY ran the target
+independently (1 passed in 1.21 seconds). The forced early heartbeat remains
+part of the regression, and successful settlement, zero reclaim, successful
+renewals and stopped-thread evidence remain required. No application, schema,
+provider or audit behavior changed. CI38736466402 remains failed; the next pushed
+head requires a new complete run. This acceptance is not Business integration
+coverage, production migration, a main merge or deployment.
+
+
+#### Exact main reconciliation after the lease fixture
+
+GitHub reported PR90 as conflicting after `04bff706`, and no Quality run was
+created for that head. Root fetched `origin/main` at `c2aa8082` and performed
+normal merge `df691c39`. Only `docs/agent-claims.md` conflicted; both sets of
+rows were retained. Incoming code adds OA image OCR and source-identifier
+read guidance, with no Email/Business storage or release changes. The selected
+checks `test_agent_cli`, `test_consumer_system_release`,
+`test_message_triage_skill`, `test_oa_skill_identifier_integrity` and
+`test_email_action_schema_release` passed **133 tests in 51.98 seconds**.
+This is merge-local evidence; a new submitted-head Quality run remains required.
+No production change, main merge or deployment occurred.

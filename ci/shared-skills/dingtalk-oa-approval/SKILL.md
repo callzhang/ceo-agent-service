@@ -49,7 +49,7 @@ OA 操作使用从当前源对象核实的字符串 `process_instance_id`、`tas
    dws drive +download --space-id <spaceId> --node <fileId> --output <工作目录内的相对路径> --format json
    ```
 
-   授权之前 `drive +info` 会报 `forbidden.accessDenied`，授权之后同一 `fileId` 就能读元数据并下载正文；xlsx 用表格库读全表，pdf/docx 用文档读取，不得只看截图或文件名下结论。服务中的 Consumer/Audit 只有具名只读工具，`authorize-preview` 是会改变授权状态的写操作，当前没有提供给这两个角色；不得通过 shell、任意 DWS 命令或界面代为调用。服务角色对已授权且可读取的钉盘节点使用 `read_dingtalk_drive_file(node_id, space_id, file_name)` 获取受限正文和任务运行期间的临时文件路径。PDF 无可提取文本时返回 `ocr_required` 和临时路径；只有当前审批材料已获准发送至配置的 OCR 服务时才调用 OCR Skill，否则如实报告技术能力不可用并保留待办。任何工具或 OCR 失败都不能被伪装成申请人未交材料或业务规则缺口。
+   授权之前 `drive +info` 会报 `forbidden.accessDenied`，授权之后同一 `fileId` 就能读元数据并下载正文；xlsx 用表格库读全表，pdf/docx 用文档读取，不得只看截图或文件名下结论。服务中的 Consumer/Audit 只有具名只读工具，`authorize-preview` 是会改变授权状态的写操作，当前没有提供给这两个角色；不得通过 shell、任意 DWS 命令或界面代为调用。服务角色对已授权且可读取的钉盘节点使用 `read_dingtalk_drive_file(node_id, space_id, file_name)` 获取受限正文和任务运行期间的临时文件路径；该工具会对支持的图片附件及扫描 PDF 自动调用已配置的 Stardust OCR，并返回抽取文本、来源摘要及可用的置信度/警告，不需再从角色内部启动另一套 OCR 命令。OCR 或解析失败是审阅端技术读取故障，应保留待办并排查或协调权限，不得归责申请人、当作未交材料或作为拒绝理由；不得未经授权切换到其他 OCR 服务。
    2026-09-17 长沙银行 POC 的 checklist 曾被两次判为“读不到”，实际按此路径 10,549 字节正常下载读全。
 
 5. **缺材料和读不到是两回事，处理完全不同（Derek, 2026-09-23）。** 两者都不得通过，不得用“同意后补”替代审批前审阅。
@@ -96,6 +96,8 @@ OA 审阅下载的附件、OCR 中间文件和转换结果只能放在本次运�
 若已有 OA 退回执行结果为 `external_action_uncertain`，不得再次发起退回。按原动作身份读取同一实例的 detail、records、tasks，并核对原 task 是否已取消、当前审批人是否一致、流水是否唯一匹配原动作的 `REDIRECT_PROCESS` 与完整备注、目标 activity 是否生成对应新 task。OpenAPI 的流水时间若只有秒级，应以 DWS 结构化流水中同实例、同操作类型、同操作人的毫秒 `operationTime` 唯一补足精度；不能唯一关联、证据缺失或时间不在原派发与接受边界内时，继续保留未确认状态。秒级时间不能向下取整或扩展派发边界。此核对只确认原动作是否送达，不授权新的审批动作。
 
 服务中的 Consumer/Audit 没有 shell 或任意 DWS 命令执行器，只调用角色目录中具名的只读 `agent_cli` 工具。Consumer 提议审批动作，Audit 只审核；System Executor 才通过固定的具名操作执行和回读。下列命令是交互式会话的操作参考，不能在服务角色里当作工具替代品。附件正文通过 `read_dingtalk_drive_file` 读取；若 PDF 需 OCR，只有当前审批材料已获准发送至配置的 OCR 服务时才调用 OCR Skill。返回路径只在当前 Agent CLI 进程存活期间有效。所需读取/OCR 能力不可用时，报告技术阻塞，不能当作申请人漏交材料。
+
+调用 OA 详情、流水、任务或退回路径读取工具时，参数必须使用待办/详情对象中对应 ID 字段的原始字符串值。调用前逐字符核对 `process_instance_id`、`task_id` 与来源字段相同；参数值不能混入字段名、URL/query、引号或花括号、标点和其他说明文字。若工具报 `invalid parameter`、`invalid ... response` 等参数/结构错误，先核对实际发出的参数与来源值；仅在确认参数值被抄错或附加了字符时，才用正确原值对同一目标重试只读读取。正确原值仍失败时，按具体技术依赖失败处理，不把它改写成材料缺失或业务不合格，也不更换审批对象。
 
 交互式会话优先使用 `dws`，所有命令加 `--format json`。
 
