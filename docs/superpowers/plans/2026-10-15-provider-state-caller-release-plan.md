@@ -50,3 +50,14 @@
 ## Evidence boundary and publication follow-up
 
 This plan does not execute migration, native CLI, provider calls, real-data copy, push, or deploy. The combined Email13+Business4 target is still unpublished; provider selection would make the published 121 physical noninternal tables become **104** after the same paired release (existing combined target 105, provider two-to-one net minus one). Before any publication claim, a separate copy/native phase must bind the actual published `7dadc492` source and exact current coordinator/HEAD, prove all retained facts and the original FK finding, run genuine old-code provider reads/writes including flags and generations after inverse, reforward, and verify the actual 104-table target. `scripts/validate_action_email_copy.py` and `scripts/validate_native_copy_lifecycle.py` bind the whole app and coordinator, so that phase must explicitly update its tables/count/fact-diff contract and use in-memory provider doubles only; it is not hidden inside this focused caller unit.
+
+
+## Root acceptance, 2026-10-15
+
+Fresh sequential SPEC then QUALITY accept the revised docs-only plan6119b024.
+Both checked the actual current constructor/caller/schema/coordinator owners.
+The SPEC fixes preserve generation-specific late-failure proof and include
+all three active provider lookup-index cases; QUALITY found no further defect.
+Review was static, not runtime execution. Implement this one coherent target
+path before actual-source-copy/cold-old-code/native acceptance. No production
+change or release selection was made by this plan acceptance.
