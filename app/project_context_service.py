@@ -1,6 +1,8 @@
 """Transactional persistence for source-backed official Project context."""
 
 from __future__ import annotations
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import insert_business
 
 import json
 import sqlite3
@@ -33,7 +35,7 @@ class ProjectContextService:
 
     @staticmethod
     def _require_project(project_id: int, db: sqlite3.Connection) -> None:
-        if db.execute("select 1 from business_projects where id=?", (project_id,)).fetchone() is None:
+        if db.execute(f'select 1 from ({BUSINESS_PROJECTIONS["project"]}) where id=?', (project_id,)).fetchone() is None:
             raise ValueError(f"official project {project_id} does not exist")
 
     @staticmethod
@@ -83,13 +85,14 @@ class ProjectContextService:
             context.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
         previous = db.execute(
-            "select context_json from business_project_context_revisions "
+            f'select context_json from ({BUSINESS_PROJECTIONS["project_context_revision"]}) '
             "where project_id=? order by id desc limit 1", (project_id,)
         ).fetchone()
         if not context_changed(str(previous["context_json"]) if previous else None, current_json):
             return None
         evidence_json = json.dumps(sorted(ids), separators=(",", ":"))
-        return int(db.execute(
-            "insert into business_project_context_revisions (project_id, context_json, evidence_json) "
-            "values (?, ?, ?)", (project_id, current_json, evidence_json),
-        ).lastrowid)
+        return int(insert_business(db, "project_context_revision", {
+            "project_id": project_id,
+            "context_json": current_json,
+            "evidence_json": evidence_json,
+        }).lastrowid)

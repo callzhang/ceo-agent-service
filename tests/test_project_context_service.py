@@ -5,6 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from app.business_definitions import BUSINESS_PROJECTIONS
 from app.project_context_service import ProjectContextService, context_changed
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
@@ -184,7 +185,8 @@ def test_context_service_rejection_leaves_no_partial_writes_inside_caller_transa
             "select count(*) from business_project_evidence where project_id=?", (project_id,)
         ).fetchone()[0] == 0
         assert db.execute(
-            "select count(*) from business_project_context_revisions where project_id=?", (project_id,)
+            f"select count(*) from ({BUSINESS_PROJECTIONS['project_context_revision']}) "
+            "where project_id=?", (project_id,)
         ).fetchone()[0] == 0
 
 
@@ -197,4 +199,6 @@ def test_project_context_evidence_requires_observed_original_source(project_stor
         with pytest.raises(ValueError, match="observed"):
             ProjectContextService(store).apply(project_id=project_id, context=None, signal_ids=(signal_id,), db=db)
         assert db.execute("select count(*) from business_project_evidence").fetchone()[0] == 0
-        assert db.execute("select count(*) from business_project_context_revisions").fetchone()[0] == 0
+        assert db.execute(
+            "select count(*) from business where record_type='project_context_revision'"
+        ).fetchone()[0] == 0

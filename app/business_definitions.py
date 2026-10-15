@@ -1,4 +1,4 @@
-"""Unselected four-kind Business declarations; source metadata is frozen here."""
+"""Finite four-kind Business declarations; source metadata is frozen here."""
 
 from app.action_email_definitions import _encoded_value, _encoded_value_check
 
@@ -327,9 +327,15 @@ def _definitions():
 BUSINESS_TABLE_DDL, BUSINESS_INDEX_DDL, BUSINESS_TRIGGER_DDL = _definitions()
 
 
-def _projection(kind, fields):
-    return "select " + ",".join(business_column(kind, f) + " as " + f for f in fields) +         f" from business where record_type='{kind}'"
+def _projection(kind, fields, *, index=None):
+    relation = "business" + (f" indexed by {index}" if index else "")
+    return ("select "
+            + ",".join(business_column(kind, f) + " as " + f for f in fields)
+            + f" from {relation} where record_type='{kind}'")
 
 
 BUSINESS_PROJECTIONS = {k: _projection(k, fields) for k, fields in BUSINESS_FIELDS.items()}
 BUSINESS_FRESH_PROJECTIONS = {k: _projection(k, fields) for k, fields in BUSINESS_FRESH_FIELDS.items()}
+BUSINESS_TASK_LIST_PROJECTION = _projection(
+    "task", BUSINESS_FIELDS["task"], index="idx_business_task_updated"
+)

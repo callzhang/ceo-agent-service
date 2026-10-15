@@ -1,6 +1,7 @@
 # Current Runtime Mechanism
 
-An unselected four-kind Business storage unit now declares Task, Project,
+The unpublished Store `2026-10-14.1`/Email52 candidate selects the four-kind
+Business storage unit for Task, Project,
 Anchor and Project context revision together, preserving all 42 existing source
 fields. Source-shaped reads retain actual/fresh source column order and public
 signed IDs. Writes use the existing tagged SQLite value codec, native affinities,
@@ -11,14 +12,15 @@ installation leave commit/rollback to an already active caller transaction;
 all omitted row defaults share one SQLite statement. Public allocator exhaustion
 matches the actual plain INSERT/lastrowid source writers: SQLITE_FULL rolls back
 the caller transaction. Native INSERT RETURNING has a different demonstrated
-exhaustion outcome and is not the source API contract. No constructor or caller
-selects this unit. Existing Signal/document/evidence/date/event tables, all 19
-incoming FK groups from 15 retained children, versions, migrations and providers
-remain at their existing endpoints. Full ten-core-plus-ledger implementation
+exhaustion outcome and is not the source API contract. Both current constructors
+select this unit. The 19 incoming FK groups from 15 retained children target
+typed Business aliases; Signal/document/evidence/date/event tables, their
+public APIs, provider behavior and other FK groups retain their contracts. Full
+ten-core-plus-ledger implementation
 and source-body retirement are still incomplete. See
 `docs/superpowers/plans/2026-10-15-business-four-kind-storage-plan.md`.
 
-An unselected `app/business_schema_release.py` provides the finite actual/fresh
+`app/business_schema_release.py` provides the finite actual/fresh
 four-kind migration and current-fact inverse. It requires the caller's active
 foreign-key-off transaction and never commits. Before DDL it rejects unsupported
 source declarations, mixed target objects, broken moved-parent references and
@@ -31,8 +33,13 @@ reads current facts from `main.business` after any target writes, removes four
 manually named allocator aliases and restores the original declarations. The
 caller rolls back the transaction on a failed copy or inverse. Exact TEMP collisions with
 forward or inverse DDL destination table names are refused before any DROP;
-other TEMP tables do not affect these MAIN-bound reads. No current Store
-bootstrap, route, version marker or deployed path invokes this module.
+other TEMP tables do not affect these MAIN-bound reads. The paired Email13
+coordinator invokes this module only for the exact published Store19/Email51
+source pair. It converts Email then Business and writes both target markers in
+one foreign-key-off transaction. Inverse converts Business then Email and
+restores the exact source marker values and timestamps. Current Store and Email
+constructors require the new Business declaration; a marker-correct malformed
+target is refused without repair. No deployed path uses this candidate yet.
 
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
 can reconstruct an exact historical source body from already recorded Codex or

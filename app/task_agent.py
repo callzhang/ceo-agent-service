@@ -1,3 +1,4 @@
+from app.business_definitions import BUSINESS_PROJECTIONS
 import hashlib
 import json
 import logging
@@ -1315,11 +1316,7 @@ def _confirmed_official_project_anchors(
     return {
         int(row["anchor_id"])
         for row in db.execute(
-            """select link.anchor_id from business_task_anchor_links link
-               join business_anchors anchor on anchor.id=link.anchor_id
-               join business_projects project on project.canonical_anchor_id=link.anchor_id
-               where link.task_id=? and link.status='confirmed' and link.active=1
-                 and anchor.anchor_type='project' and anchor.active=1""",
+            f'select link.anchor_id from business_task_anchor_links link\n               join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id\n               join ({BUSINESS_PROJECTIONS["project"]}) project on project.canonical_anchor_id=link.anchor_id\n               where link.task_id=? and link.status=\'confirmed\' and link.active=1\n                 and anchor.anchor_type=\'project\' and anchor.active=1',
             (task_id,),
         ).fetchall()
     }
@@ -1470,7 +1467,7 @@ def _resolved_context(store, context, *, work_item, db, current_signal_id):
 
 def _official_project(store, anchor_id, *, db):
     row = db.execute(
-        "select p.id from business_projects p join business_anchors a on a.id=p.canonical_anchor_id "
+        f'select p.id from ({BUSINESS_PROJECTIONS["project"]}) p join ({BUSINESS_PROJECTIONS["anchor"]}) a on a.id=p.canonical_anchor_id '
         "where a.id=? and a.anchor_type='project' and a.active=1",
         (anchor_id,),
     ).fetchone()
@@ -1522,8 +1519,8 @@ def _validate_stored_project_assessments(
                     "report Project registration must match the cited report registry row and source authority"
                 )
         matches = db.execute(
-            "select p.canonical_anchor_id from business_projects p "
-            "join business_anchors a on a.id=p.canonical_anchor_id "
+            f'select p.canonical_anchor_id from ({BUSINESS_PROJECTIONS["project"]}) p '
+            f'join ({BUSINESS_PROJECTIONS["anchor"]}) a on a.id=p.canonical_anchor_id '
             "where p.title=? and a.active=1 and a.anchor_type='project' limit 2",
             (proposal.title,),
         ).fetchall()

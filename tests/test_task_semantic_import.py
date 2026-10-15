@@ -7,6 +7,7 @@ from dataclasses import replace
 import pytest
 
 import app.task_semantic_import as semantic_import
+from app.business_definitions import BUSINESS_PROJECTIONS
 from app.store import AutoReplyStore
 from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, task_physical_id
 from app.task_business_resolution import BusinessResolutionService
@@ -20,7 +21,12 @@ from app.task_semantic_import import (
 
 def _rows(path, table):
     with sqlite3.connect(path) as db:
-        return db.execute(f"select * from {table} order by id").fetchall()
+        kind = {
+            "business_tasks": "task", "business_projects": "project",
+            "business_anchors": "anchor",
+        }.get(table)
+        relation = f"({BUSINESS_PROJECTIONS[kind]})" if kind else table
+        return db.execute(f"select * from {relation} order by id").fetchall()
 
 
 def _legacy_store(tmp_path):
@@ -141,7 +147,9 @@ def test_formal_import_requires_exact_source_backed_basis(
     assert second.history_only == 2
     with sqlite3.connect(store.path) as db:
         db.row_factory = sqlite3.Row
-        task = db.execute("select * from business_tasks").fetchone()
+        task = db.execute(
+            f"select * from ({BUSINESS_PROJECTIONS['task']})"
+        ).fetchone()
         link = db.execute(
             "select * from business_legacy_links where work_todo_id=?", (todo_id,)
         ).fetchone()
@@ -225,7 +233,9 @@ def test_candidate_evidence_is_retained_in_history_not_promoted(tmp_path):
     result = apply_task_semantic_import_manifest(store.path, manifest)
     assert result.history_only == len(manifest.items)
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from business_tasks").fetchone()[0] == 0
+        assert db.execute(
+            f"select count(*) from ({BUSINESS_PROJECTIONS['task']})"
+        ).fetchone()[0] == 0
         assert db.execute("select count(*) from business_task_signals").fetchone()[0] == 0
 
 
@@ -255,7 +265,9 @@ def test_official_project_requires_exact_pre_registered_registry_key(tmp_path):
             "select project_id from business_legacy_links where work_project_id=?",
             (matched,),
         ).fetchone()[0] == official_id
-        assert db.execute("select count(*) from business_projects").fetchone()[0] == 1
+        assert db.execute(
+            f"select count(*) from ({BUSINESS_PROJECTIONS['project']})"
+        ).fetchone()[0] == 1
 
 
 def test_changed_source_fingerprint_rejects_before_first_write(tmp_path):

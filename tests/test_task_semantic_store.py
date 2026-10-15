@@ -9,6 +9,9 @@ import pytest
 
 from app import store as store_module
 from app import task_semantic_models as models
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_schema_release import business_schema_is_current
+from app.business_storage import insert_business
 from app.store import AutoReplyStore
 from app.run_storage import TASK_AGENT_RUN_SQL, insert_run
 from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task
@@ -311,6 +314,17 @@ def insert_row(db, table, values):
         values["crm_customer_evidence_json"] = json.dumps(
             evidence or {}, ensure_ascii=False
         )
+    kind = {
+        "business_tasks": "task",
+        "business_projects": "project",
+        "business_anchors": "anchor",
+        "business_project_context_revisions": "project_context_revision",
+    }.get(table)
+    if kind is not None:
+        if not db.in_transaction:
+            db.execute("begin")
+        insert_business(db, kind, values)
+        return
     db.execute(
         f"insert into {table} ({', '.join(values)}) values ({', '.join('?' for _ in values)})",
         tuple(values.values()),
@@ -324,7 +338,14 @@ def read_record_row(db, table):
             "join business_source_documents document on document.id=signal.source_document_id "
             "order by signal.id limit 1"
         ).fetchone()
-    row = db.execute(f"select * from {table} limit 1").fetchone()
+    kind = {
+        "business_tasks": "task",
+        "business_projects": "project",
+        "business_anchors": "anchor",
+        "business_project_context_revisions": "project_context_revision",
+    }.get(table)
+    relation = f"({BUSINESS_PROJECTIONS[kind]})" if kind is not None else table
+    row = db.execute(f"select * from {relation} limit 1").fetchone()
     if table != "business_projects":
         return row
     values = dict(row)
@@ -352,6 +373,18 @@ def seed_references(db):
     db.execute("insert into work_projects (id, title) values (1, 'Legacy source')")
 
 
+def current_rows(db, table):
+    kind = {
+        "business_tasks": "task",
+        "business_projects": "project",
+        "business_anchors": "anchor",
+        "business_project_context_revisions": "project_context_revision",
+    }.get(table)
+    relation = f"({BUSINESS_PROJECTIONS[kind]})" if kind is not None else table
+    ordering = "id" if kind is not None else "rowid"
+    return db.execute(f"select * from {relation} order by {ordering}").fetchall()
+
+
 @pytest.mark.parametrize("confirmed", [True, False])
 def test_project_attention_evidence_migration_preserves_original_history_once(tmp_path, confirmed):
     path = tmp_path / "project-proof-migration.sqlite3"
@@ -364,7 +397,7 @@ def test_project_attention_evidence_migration_preserves_original_history_once(tm
         ))
         insert_row(db, "business_attention_events", ROWS["business_attention_events"][1])
         before = {
-            table: [dict(row) for row in db.execute(f"select * from {table} order by rowid")]
+            table: [dict(row) for row in current_rows(db, table)]
             for table in (
                 "business_tasks", "business_task_signals", "business_task_evidence",
                 "business_task_anchor_links", "business_attention_items", "business_attention_events"
@@ -379,7 +412,7 @@ def test_project_attention_evidence_migration_preserves_original_history_once(tm
         [(1, 1)] if confirmed else []
     )
     with upgraded.business_task_transaction() as db:
-        after = {table: [dict(row) for row in db.execute(f"select * from {table} order by rowid")] for table in before}
+        after = {table: [dict(row) for row in current_rows(db, table)] for table in before}
         assert before == after
         assert db.execute("pragma foreign_key_check").fetchall() == []
         assert db.execute("select value from service_state where key='business_project_attention_evidence_migrated'").fetchone()[0] == "1"
@@ -457,7 +490,7 @@ def test_project_attention_migration_isolates_projects_deduplicates_and_rolls_ba
     )
     with original.business_task_transaction() as db:
         db.execute("insert into business_project_evidence(project_id, signal_id, created_at) values (?, ?, ?)", (projects[0], preserved, STAMP))
-        before = {table: [tuple(row) for row in db.execute(f"select * from {table} order by rowid")] for table in tables}
+        before = {table: [tuple(row) for row in current_rows(db, table)] for table in tables}
         if fail_insert:
             db.execute(f"create trigger fixture_fail_project_proof before insert on business_project_evidence when new.project_id={projects[1]} begin select raise(abort, 'fixture migration failure'); end")
         db.execute("delete from service_state where key='business_project_attention_evidence_migrated'")
@@ -469,9 +502,13 @@ def test_project_attention_migration_isolates_projects_deduplicates_and_rolls_ba
     else:
         with original.business_task_transaction() as db:
             original._migrate_project_attention_evidence(db)
-    AutoReplyStore(path)
+    if fail_insert:
+        with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source"):
+            AutoReplyStore(path)
+    else:
+        AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        assert before == {table: db.execute(f"select * from {table} order by rowid").fetchall() for table in tables}
+        assert before == {table: current_rows(db, table) for table in tables}
         proofs = db.execute("select project_id, signal_id, created_at from business_project_evidence order by project_id, signal_id").fetchall()
         assert (projects[0], preserved, STAMP) in proofs
         assert {(row[0], row[1]) for row in proofs} == (
@@ -549,10 +586,24 @@ def test_schema_manifest_and_complete_record_columns(store, table):
         expected.remove("crm_customer_evidence")
         expected.update({"crm_customer_candidates_json", "crm_customer_evidence_json"})
     with store._connect() as db:
-        actual = {row["name"] for row in db.execute(f"pragma table_info({table})")}
+        kind = {
+            "business_tasks": "task",
+            "business_projects": "project",
+            "business_anchors": "anchor",
+        }.get(table)
+        if kind is not None:
+            actual = {column[0] for column in db.execute(
+                f"select * from ({BUSINESS_PROJECTIONS[kind]}) limit 0"
+            ).description}
+            assert business_schema_is_current(db)
+        else:
+            actual = {row["name"] for row in db.execute(f"pragma table_info({table})")}
     assert actual == expected
-    assert table in store_module.STORE_SCHEMA_REQUIRED_TABLES
-    assert expected <= set(store_module.STORE_SCHEMA_REQUIRED_COLUMNS[table])
+    if kind is not None:
+        assert "business" in store_module.STORE_SCHEMA_REQUIRED_TABLES
+    else:
+        assert table in store_module.STORE_SCHEMA_REQUIRED_TABLES
+        assert expected <= set(store_module.STORE_SCHEMA_REQUIRED_COLUMNS[table])
 
 
 @pytest.mark.parametrize("table", ROWS)
@@ -833,13 +884,13 @@ def test_default_task_listing_uses_updated_id_index_without_sorting(store):
         ]
         assert not any("TEMP B-TREE" in detail for detail in plan), plan
         assert any(
-            "USING INDEX idx_business_tasks_updated_id" in detail for detail in plan
+            "USING INDEX idx_business_task_updated" in detail for detail in plan
         ), plan
         columns = [
             row["name"]
-            for row in db.execute("pragma index_info(idx_business_tasks_updated_id)")
+            for row in db.execute("pragma index_info(idx_business_task_updated)")
         ]
-        assert columns[:2] == ["updated_at", "id"]
+        assert columns[:2] == ["updated_at", "public_id"]
 
 
 def test_evidence_is_a_typed_unique_task_signal_role_link(store):
@@ -991,11 +1042,34 @@ FOREIGN_KEYS = {
 @pytest.mark.parametrize("table", FOREIGN_KEYS)
 def test_every_semantic_reference_has_a_foreign_key(store, table):
     with store._connect() as db:
+        if table in {"business_tasks", "business_projects"}:
+            actual = {
+                (row["from"], row["table"], row["to"])
+                for row in db.execute("pragma foreign_key_list(business)")
+            }
+            expected = (
+                {("merged_task_ref", "business", "id"),
+                 ("merged_task_ref_type", "business", "record_type"),
+                 ("task_merged_into_task_id", "business", "public_id")}
+                if table == "business_tasks" else
+                {("canonical_anchor_ref", "business", "id"),
+                 ("canonical_anchor_ref_type", "business", "record_type"),
+                 ("project_canonical_anchor_id", "business", "public_id"),
+                 ("project_anchor_type", "business", "anchor_anchor_type")}
+            )
+            assert expected <= actual
+            return
         actual = {
             row["from"]: row["table"]
             for row in db.execute(f"pragma foreign_key_list({table})")
         }
-    assert actual == FOREIGN_KEYS[table]
+    expected = {
+        column: "business" if parent in {
+            "business_tasks", "business_projects", "business_anchors"
+        } else parent
+        for column, parent in FOREIGN_KEYS[table].items()
+    }
+    assert actual == expected
 
 
 @pytest.mark.parametrize(
@@ -1103,9 +1177,12 @@ def test_list_indexes_are_present_and_in_the_required_manifest(store):
     expected = {
         "idx_business_task_signals_source",
         "idx_business_signal_document",
-        "idx_business_tasks_updated_id",
-        "idx_business_tasks_list",
-        "idx_business_tasks_relevance",
+        "idx_business_task_updated",
+        "idx_business_task_stage",
+        "idx_business_task_relevance",
+        "idx_business_task_public_id",
+        "idx_business_project_public_id",
+        "idx_business_anchor_public_id",
         "idx_business_task_evidence_task",
         "idx_business_task_events_task",
         "idx_business_task_relations_from",
@@ -1128,187 +1205,12 @@ def test_list_indexes_are_present_and_in_the_required_manifest(store):
     assert expected <= set(store_module.STORE_SCHEMA_REQUIRED_INDEXES)
 
 
-def test_existing_pre_semantic_store_initializes_without_rewriting_legacy(tmp_path):
-    path = tmp_path / "pre-semantic.sqlite3"
-    original = AutoReplyStore(path)
-    # Build a pre-semantic fixture with actual legacy data before initialization.
-    # The DROP statements operate only on this test's new temporary database.
-    with sqlite3.connect(path) as db:
-        for table in reversed(ROWS):
-            db.execute(f"drop table {table}")
-        db.execute("drop table business_source_documents")
-        db.execute(
-            "insert into work_projects (id, title) values (7, 'Pre-existing legacy source')"
-        )
-    # Emulate a fresh process opening the older schema, as the store's existing
-    # migration tests do after changing a fixture behind its per-process cache.
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    original._initialize()
-    store = AutoReplyStore(path)
-    with store._connect() as db:
-        seed_references(db)
-    reopened = AutoReplyStore(path)
-    assert reopened.get_business_task(1).description == "美国客户报价第一版"
-    with reopened._connect() as db:
-        assert (
-            db.execute("select title from work_projects where id=1").fetchone()[0]
-            == "Legacy source"
-        )
-        assert (
-            db.execute("select title from work_projects where id=7").fetchone()[0]
-            == "Pre-existing legacy source"
-        )
-        assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_previous_semantic_schema_migrates_without_classifying_legacy_deadline(tmp_path):
-    path = tmp_path / "previous-semantic.sqlite3"
-    original = AutoReplyStore(path)
-    task_id = original.create_business_task(
-        title="旧报价", stage="candidate", deadline_at="2026-09-25T18:00:00+08:00"
-    )
-    signal_id = original.create_business_task_signal(
-        source_type="message", source_ref="old:1", evidence_text="旧报价待确认",
-        dedupe_key="old:1", author_user_id="wangming", author_kind="human",
-    )
-    original.link_business_task_evidence(
-        task_id=task_id, signal_id=signal_id, evidence_role="discovery"
-    )
-    with original.business_task_transaction() as db:
-        original_event_id = original.append_business_task_event(
-            task_id=task_id, event_type="created", signal_id=signal_id,
-            before_json="{}", after_json='{"stage":"candidate"}', reason="旧语义任务",
-            _db=db,
-        )
-    original_signal = original.get_business_task_signal(signal_id).model_dump(
-        mode="json", exclude={"source_document_id"}
-    )
-    with sqlite3.connect(path) as db:
-        db.row_factory = sqlite3.Row
-        install_legacy_signals(db, [original_signal])
-        for trigger in (
-            "trg_business_task_date_evidence_immutable_update",
-            "trg_business_task_date_evidence_immutable_delete",
-            "trg_business_task_date_evidence_immutable_replace",
-        ):
-            db.execute(f"drop trigger {trigger}")
-        db.execute("drop table business_task_date_evidence")
-        db.execute("alter table business_task_signals drop column author_kind")
-        event_sql = db.execute(
-            "select sql from sqlite_master where type='table' and name='business_task_events'"
-        ).fetchone()["sql"]
-        old_event_sql = event_sql.replace("'details_changed', 'fields_changed', ", "")
-        assert old_event_sql != event_sql
-        db.execute("drop table business_task_events")
-        db.execute(old_event_sql)
-        db.execute(
-            """insert into business_task_events (
-                id, task_id, event_type, signal_id, before_json, after_json, reason
-            ) values (?, ?, 'created', ?, '{}', '{"stage":"candidate"}', '旧语义任务')""",
-            (original_event_id, task_id, signal_id),
-        )
-        db.execute(
-            "create index idx_business_task_events_task "
-            "on business_task_events(task_id, created_at, id)"
-        )
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    original._initialize()
-    migrated = AutoReplyStore(path)
-    assert migrated._schema_is_current() is True
-    assert migrated.get_business_task(task_id).deadline_at == "2026-09-25T18:00:00+08:00"
-    assert migrated.list_business_task_date_evidence(task_id) == ()
-    assert migrated.get_business_task_signal(signal_id).author_kind.value == "unknown"
-    assert [event.id for event in migrated.list_business_task_events(task_id)] == [original_event_id]
-    with migrated._connect() as db:
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-        migrated_event_sql = db.execute(
-            "select sql from sqlite_master where type='table' and name='business_task_events'"
-        ).fetchone()["sql"]
-        assert "details_changed" in migrated_event_sql
-        assert "fields_changed" in migrated_event_sql
-        assert "'skipped'" in db.execute(
-            "select sql from sqlite_master where type='table' and name='task_todo_sync_outbox'"
-        ).fetchone()["sql"]
-    fresh = AutoReplyStore(tmp_path / "fresh-semantic.sqlite3")
-    for table in (
-        "business_task_signals", "business_task_date_evidence", "business_task_events"
-    ):
-        with migrated._connect() as old_db, fresh._connect() as new_db:
-            assert [tuple(row) for row in old_db.execute(f"pragma table_info({table})")] == [
-                tuple(row) for row in new_db.execute(f"pragma table_info({table})")
-            ]
-            assert [tuple(row) for row in old_db.execute(f"pragma foreign_key_list({table})")] == [
-                tuple(row) for row in new_db.execute(f"pragma foreign_key_list({table})")
-            ]
-    with migrated.business_task_transaction() as db:
-        migrated.create_business_task_date_evidence_in_transaction(
-            task_id=task_id, source_signal_id=signal_id,
-            date_type="estimated_deadline_at", value_at="", raw_phrase="大概下周",
-            actor_kind="unknown", _db=db,
-        )
-    assert migrated.list_business_task_date_evidence(task_id)[0].raw_phrase == "大概下周"
-    assert len(AutoReplyStore(path).list_business_task_date_evidence(task_id)) == 1
 
 
-def test_event_constraint_migration_rolls_back_when_copy_fails(tmp_path):
-    path = tmp_path / "event-migration-failure.sqlite3"
-    original = AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        event_sql = db.execute(
-            "select sql from sqlite_master where type='table' and name='business_task_events'"
-        ).fetchone()[0]
-        old_event_sql = event_sql.replace("'details_changed', 'fields_changed', ", "")
-        db.execute("drop table business_task_events")
-        db.execute(old_event_sql)
-        db.execute(
-            """insert into business_task_events
-               (id, task_id, event_type, signal_id, before_json, after_json, reason)
-               values (7, 999, 'created', null, '{}', '{}', 'legacy orphan')"""
-        )
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-
-    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
-        original._initialize()
-
-    with sqlite3.connect(path) as db:
-        names = {row[0] for row in db.execute(
-            "select name from sqlite_master where type='table'"
-        )}
-        assert "business_task_events" in names
-        assert "business_task_events_before_date_evidence" not in names
-        assert db.execute("select id from business_task_events").fetchall() == [(7,)]
-        sql = db.execute(
-            "select sql from sqlite_master where type='table' and name='business_task_events'"
-        ).fetchone()[0]
-        assert "details_changed" not in sql
 
 
-def test_event_constraint_migration_recovers_stranded_rename(tmp_path):
-    path = tmp_path / "stranded-event-migration.sqlite3"
-    original = AutoReplyStore(path)
-    task_id = original.create_business_task(title="报价", stage="candidate")
-    with original.business_task_transaction() as db:
-        original.append_business_task_event(
-            task_id=task_id, event_type="created", signal_id=None,
-            before_json="{}", after_json="{}", reason="source event", _db=db,
-        )
-    with sqlite3.connect(path) as db:
-        event_sql = db.execute(
-            "select sql from sqlite_master where type='table' and name='business_task_events'"
-        ).fetchone()[0]
-        db.execute("alter table business_task_events rename to business_task_events_before_date_evidence")
-        db.execute(event_sql)
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    original._initialize()
-    recovered = AutoReplyStore(path)
-    assert [event.reason for event in recovered.list_business_task_events(task_id)] == [
-        "source event"
-    ]
-    with recovered._connect() as db:
-        assert db.execute(
-            "select name from sqlite_master where type='table' "
-            "and name='business_task_events_before_date_evidence'"
-        ).fetchone() is None
 
 
 @pytest.mark.parametrize(
@@ -1503,86 +1405,8 @@ def source_history_snapshot(db):
     return history
 
 
-@pytest.mark.parametrize("include_author_kind", [True, False])
-def test_legacy_signal_bodies_migrate_without_changing_evidence_identity_or_history(tmp_path, include_author_kind):
-    path = tmp_path / "legacy-source.sqlite3"
-    original_signals = legacy_source_store(path, include_author_kind=include_author_kind)
-    with sqlite3.connect(path) as db:
-        db.row_factory = sqlite3.Row
-        original_history = source_history_snapshot(db)
-    assert original_history["work_summary_inputs"][0]["payload_json"] == '{ "body": "原始输入" }'
-    task_run = original_history["task_agent_runs"][0]
-    assert (
-        task_run["id"], task_run["summary_input_id"], task_run["codex_session_id"],
-    ) == (8, 5, "historical-task-session")
-    assert task_run["status"] == "completed"
-    assert task_run["projection_json"] == '{ "signal_id": 11 }'
-    assert task_run["decision_json"] == "{}"
-    migrated = migrate_legacy_source_store(path)
-    signals = migrated.list_business_task_signals()
-    added_fields = {"source_document_id"}
-    if not include_author_kind:
-        added_fields.add("author_kind")
-        assert all(s.author_kind is models.BusinessActorKind.UNKNOWN for s in signals)
-    assert [s.model_dump(mode="json", exclude=added_fields) for s in signals] == original_signals
-    assert signals[0].source_document_id == signals[1].source_document_id
-    assert signals[0].source_document_id != signals[2].source_document_id
-    with migrated._connect() as db:
-        assert source_history_snapshot(db) == original_history
-        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
-        assert db.execute("select seq from sqlite_sequence where name='business_task_signals'").fetchone()[0] == 83
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-        assert "evidence_text" not in {r["name"] for r in db.execute("pragma table_info(business_task_signals)")}
-        assert db.execute("select value from service_state where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,)).fetchone()[0] == store_module.STORE_SCHEMA_VERSION
-    assert migrated._schema_is_current()
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    reopened = AutoReplyStore(path)
-    assert reopened.list_business_task_signals() == signals
-    with reopened._connect() as db:
-        assert source_history_snapshot(db) == original_history
-        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
-    repeated_source = signal_input(**(original_signals[0] | {
-        "dedupe_key": "after-migration", "author_kind": "human" if include_author_kind else "unknown",
-    }))
-    new_id = reopened.create_business_task_signal(**repeated_source)
-    assert new_id == 84
-    assert reopened.get_business_task_signal(new_id).source_document_id == signals[0].source_document_id
-    with reopened._connect() as db:
-        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
 
 
-def test_source_body_migration_rolls_back_on_foreign_key_failure(tmp_path):
-    path = tmp_path / "legacy-source-failure.sqlite3"
-    original_signals = legacy_source_store(path)
-    with sqlite3.connect(path) as db:
-        db.row_factory = sqlite3.Row
-        original_history = source_history_snapshot(db)
-    original_migration = AutoReplyStore._business_source_document_id
-
-    def inject_new_violation(db, source):
-        document_id = original_migration(db, source)
-        if source.get("id") == 1:
-            db.execute(
-                "insert into business_task_evidence (task_id, signal_id, evidence_role) "
-                "values (2, 999, 'discovery')"
-            )
-        return document_id
-
-    AutoReplyStore._business_source_document_id = staticmethod(inject_new_violation)
-    try:
-        with pytest.raises(sqlite3.IntegrityError, match="changed foreign key violations"):
-            migrate_legacy_source_store(path)
-    finally:
-        AutoReplyStore._business_source_document_id = staticmethod(original_migration)
-    with sqlite3.connect(path) as db:
-        db.row_factory = sqlite3.Row
-        assert [dict(r) for r in db.execute("select * from business_task_signals order by id")] == original_signals
-        assert source_history_snapshot(db) == original_history
-        assert db.execute("select name from sqlite_master where name in ('business_source_documents', 'business_task_signals_source_migration')").fetchall() == []
-        assert db.execute("select seq from sqlite_sequence where name='business_task_signals'").fetchone()[0] == 83
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            db.execute("update business_task_signals set evidence_text='rewritten' where id=1")
-        assert db.execute("select value from service_state where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,)).fetchone()[0] == store_module.STORE_SCHEMA_VERSION
 
 
 def insert_preexisting_orphan_meeting_run(db):
@@ -1602,74 +1426,8 @@ def insert_preexisting_orphan_meeting_run(db):
     })
 
 
-def test_source_body_migration_preserves_exact_preexisting_foreign_key_violations(tmp_path):
-    path = tmp_path / "legacy-source-with-existing-orphan.sqlite3"
-    legacy_source_store(path)
-    with sqlite3.connect(path) as db:
-        insert_preexisting_orphan_meeting_run(db)
-        db.execute(
-            "insert into business_task_evidence (task_id, signal_id, evidence_role) "
-            "values (2, 999, 'discovery')"
-        )
-        before = sorted(tuple(row) for row in db.execute("pragma foreign_key_check"))
-        assert {row[0] for row in before} == {
-            "runs", "business_task_evidence",
-        }
-
-    migrated = migrate_legacy_source_store(path)
-    assert len(migrated.list_business_task_signals()) == 3
-    with migrated._connect() as db:
-        after = sorted(tuple(row) for row in db.execute("pragma foreign_key_check"))
-        assert after == before
-        assert "evidence_text" not in {
-            row["name"] for row in db.execute("pragma table_info(business_task_signals)")
-        }
-        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
 
 
-def test_source_body_migration_rolls_back_if_it_adds_a_foreign_key_violation(tmp_path):
-    path = tmp_path / "legacy-source-with-new-orphan.sqlite3"
-    original_signals = legacy_source_store(path)
-    with sqlite3.connect(path) as db:
-        db.row_factory = sqlite3.Row
-        insert_preexisting_orphan_meeting_run(db)
-        before = sorted(tuple(row) for row in db.execute("pragma foreign_key_check"))
-        original_history = source_history_snapshot(db)
-    original_migration = AutoReplyStore._business_source_document_id
-
-    def inject_new_violation(db, source):
-        document_id = original_migration(db, source)
-        if source.get("id") == 1:
-            db.execute(
-                "insert into business_task_evidence (task_id, signal_id, evidence_role) "
-                "values (2, 998, 'discovery')"
-            )
-        return document_id
-
-    AutoReplyStore._business_source_document_id = staticmethod(inject_new_violation)
-    try:
-        with pytest.raises(sqlite3.IntegrityError, match="changed foreign key violations"):
-            migrate_legacy_source_store(path)
-    finally:
-        AutoReplyStore._business_source_document_id = staticmethod(original_migration)
-    with sqlite3.connect(path) as db:
-        db.row_factory = sqlite3.Row
-        assert [dict(row) for row in db.execute("select * from business_task_signals order by id")] == original_signals
-        assert source_history_snapshot(db) == original_history
-        assert sorted(tuple(row) for row in db.execute("pragma foreign_key_check")) == before
-        assert db.execute(
-            "select name from sqlite_master where name in "
-            "('business_source_documents', 'business_task_signals_source_migration')"
-        ).fetchall() == []
-        assert db.execute(
-            "select seq from sqlite_sequence where name='business_task_signals'"
-        ).fetchone()[0] == 83
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            db.execute("update business_task_signals set evidence_text='rewritten' where id=1")
-        assert db.execute(
-            "select value from service_state where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        ).fetchone()[0] == store_module.STORE_SCHEMA_VERSION
 
 
 @pytest.mark.parametrize("statement", [

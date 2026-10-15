@@ -3,6 +3,7 @@
 Run baseline and candidate in separate processes with explicit --code-root and
 CEO_SKILLS_ROOT. Expected labels are evaluated only after persisted readback.
 """
+from app.business_definitions import BUSINESS_PROJECTIONS
 
 import argparse
 import hashlib
@@ -203,21 +204,35 @@ def seed_case(store, case):
 def domain_snapshot(store) -> dict[str, tuple[str, ...]]:
     """Read exact persisted domain state; exclude Agent run/attempt bookkeeping."""
     with store._connect() as db:
-        tables = [row[0] for row in db.execute(
-            "select name from sqlite_master where type='table' and name glob 'business_*' order by name"
-        )]
-        return {
+        tables = [
+            row[0] for row in db.execute(
+                "select name from sqlite_master where type='table' "
+                "and (name='business' or name glob 'business_*') order by name"
+            )
+        ]
+        result = {
             table: tuple(sorted(json.dumps(dict(row), ensure_ascii=False, sort_keys=True)
                                 for row in db.execute(f"select * from {table}")))
             for table in tables
         }
+        for table, kind in (
+            ("business_tasks", "task"),
+            ("business_projects", "project"),
+            ("business_anchors", "anchor"),
+            ("business_project_context_revisions", "project_context_revision"),
+        ):
+            result[table] = tuple(sorted(
+                json.dumps(dict(row), ensure_ascii=False, sort_keys=True)
+                for row in db.execute(f"select * from ({BUSINESS_PROJECTIONS[kind]})")
+            ))
+        return result
 
 
 def comparison_capabilities(store):
     """Inspect actual schema without upgrading the runtime under comparison."""
     with store._connect() as db:
         tables = {row[0] for row in db.execute("select name from sqlite_master where type='table'")}
-    required = {"business_project_context_revisions", "business_project_evidence", "business_source_documents"}
+    required = {"business", "business_project_evidence", "business_source_documents"}
     return {"missing_tables": sorted(required - tables)}
 
 
@@ -232,8 +247,8 @@ def read_project_centered_expectations(store, before, expected):
         return ("project_centered_storage_missing",)
     failures: list[str] = []
     with store._connect() as db:
-        projects = [dict(row) for row in db.execute("select * from business_projects")]
-        tasks = [dict(row) for row in db.execute("select * from business_tasks")]
+        projects = [dict(row) for row in db.execute(f'select * from ({BUSINESS_PROJECTIONS["project"]})')]
+        tasks = [dict(row) for row in db.execute(f'select * from ({BUSINESS_PROJECTIONS["task"]})')]
         cards = [dict(row) for row in db.execute(
             "select * from business_attention_items where status='active'"
         )]
@@ -258,7 +273,7 @@ def read_project_centered_expectations(store, before, expected):
         }
         contexts = {
             row["id"]: db.execute(
-                "select context_json from business_project_context_revisions "
+                f'select context_json from ({BUSINESS_PROJECTIONS["project_context_revision"]}) '
                 "where project_id=? order by id desc limit 1", (row["id"],)
             ).fetchone()
             for row in projects
@@ -372,18 +387,19 @@ def read_project_centered_expectations(store, before, expected):
 
 def read_domain(store):
     with store._connect() as db:
-        return {
-            name: [
-                dict(row) for row in db.execute(f"select * from {table} order by id")
-            ]
+        result = {
+            name: [dict(row) for row in db.execute(f"select * from {table} order by id")]
             for name, table in (
-                ("tasks", "business_tasks"),
-                ("projects", "business_projects"),
                 ("attention", "business_attention_items"),
                 ("attention_events", "business_attention_events"),
                 ("task_events", "business_task_events"),
             )
         }
+        for name, kind in (("tasks", "task"), ("projects", "project")):
+            result[name] = [dict(row) for row in db.execute(
+                f"select * from ({BUSINESS_PROJECTIONS[kind]}) order by id"
+            )]
+        return result
 
 
 def evidence_contains(text, quote):
@@ -447,12 +463,12 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
         project_evidence = {
             (row["canonical_anchor_id"], row["signal_id"])
             for row in db.execute(
-                "select p.canonical_anchor_id,e.signal_id from business_projects p "
+                f'select p.canonical_anchor_id,e.signal_id from ({BUSINESS_PROJECTIONS["project"]}) p '
                 "join business_project_evidence e on e.project_id=p.id"
             )
         } if not capabilities["missing_tables"] else set()
         active_anchors = {
-            row["id"] for row in db.execute("select id from business_anchors where active=1")
+            row["id"] for row in db.execute(f'select id from ({BUSINESS_PROJECTIONS["anchor"]}) where active=1')
         }
     project_by_anchor = {p["canonical_anchor_id"]: p for p in after["projects"]}
     task_by_id = {task["id"]: task for task in after["tasks"]}

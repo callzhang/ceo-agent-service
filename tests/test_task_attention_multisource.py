@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import update_business
 from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceType
 from app.task_semantic_models import ProjectContext
 from app.task_agent import apply_task_agent_decision
@@ -132,11 +134,8 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
 
     def domain_snapshot():
         tables = (
-            "business_tasks",
-            "business_projects",
-            "business_anchors",
+            "business",
             "business_source_documents",
-            "business_project_context_revisions",
             "business_project_evidence",
             "business_attention_items",
             "business_attention_tasks",
@@ -146,13 +145,23 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
             "business_task_evidence",
         )
         with store._connect() as db:
-            return {
+            result = {
                 table: [
                     dict(row)
                     for row in db.execute(f"select * from {table} order by rowid")
                 ]
                 for table in tables
             }
+            for table, kind in (
+                ("business_tasks", "task"),
+                ("business_projects", "project"),
+                ("business_anchors", "anchor"),
+                ("business_project_context_revisions", "project_context_revision"),
+            ):
+                result[table] = [dict(row) for row in db.execute(
+                    f"select * from ({BUSINESS_PROJECTIONS[kind]}) order by id"
+                )]
+            return result
 
     initial_domain = domain_snapshot()
 
@@ -2656,7 +2665,9 @@ def test_invalid_registry_proof_rolls_back_domain_transaction(tmp_path, change):
         )
     assert store.list_business_projects() == []
     with store._connect() as db:
-        assert db.execute("select count(*) from business_tasks").fetchone()[0] == 0
+        assert db.execute(
+            f"select count(*) from ({BUSINESS_PROJECTIONS['task']})"
+        ).fetchone()[0] == 0
         assert (
             db.execute("select count(*) from business_task_signals").fetchone()[0] == 0
         )
@@ -2692,7 +2703,9 @@ def test_registry_prose_cannot_register_a_project(tmp_path, quote_from_following
         )
     assert store.list_business_projects() == []
     with store._connect() as db:
-        assert db.execute("select count(*) from business_tasks").fetchone()[0] == 0
+        assert db.execute(
+            f"select count(*) from ({BUSINESS_PROJECTIONS['task']})"
+        ).fetchone()[0] == 0
 
 
 @pytest.mark.parametrize(
@@ -3339,8 +3352,8 @@ def test_existing_project_link_rejects_unproven_target_or_current_action(
             assessment_task_ids = [seed.task_id]
         target_anchor = other
     elif failure == "inactive":
-        with store._connect() as db:
-            db.execute("update business_anchors set active=0 where id=?", (anchor_id,))
+        with store.business_task_transaction() as db:
+            update_business(db, "anchor", anchor_id, {"active": 0})
     elif failure == "wrong_quote":
         payload["project_link_evidence"][0]["source_excerpt"] = (
             "示例交付项目不存在于当前来源的关联句。"
@@ -4076,15 +4089,12 @@ def test_existing_unconfirmed_task_can_confirm_project_link_with_real_source_upd
         tmp_path
     )
     quote = item.summary.splitlines()[1]
-    with store._connect() as db:
+    with store.business_task_transaction() as db:
         db.execute(
             "update business_task_anchor_links set status='proposed' where task_id=?",
             (seed.task_id,),
         )
-        db.execute(
-            "update business_tasks set business_relevance='unknown' where id=?",
-            (seed.task_id,),
-        )
+        update_business(db, "task", seed.task_id, {"business_relevance": "unknown"})
     payload = {
         **new_task,
         "action": "update_task",

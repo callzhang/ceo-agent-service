@@ -16,6 +16,7 @@ from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from app.business_definitions import BUSINESS_PROJECTIONS  # noqa: E402
 from scripts.validate_native_copy_lifecycle import (  # noqa: E402
     InMemoryProvider, NativeExecutor, _backup_database, _file_sha256,
     _publish_email_pair, _reserve_fixture_task_ids, original_rows_unchanged,
@@ -184,7 +185,7 @@ def work_summary(store, workspace, config):
         projection=json.loads(projection_row[1])
         assert len(projection['task_decisions'])==1
         applied=projection['task_decisions'][0]
-        business=db.execute('select id,title from business_tasks where id=?',(applied['task_id'],)).fetchall()
+        business=db.execute(f'select id,title from ({BUSINESS_PROJECTIONS["task"]}) where id=?',(applied['task_id'],)).fetchall()
         assert db.execute('select source_ref from business_task_signals where id=?',(applied['signal_id'],)).fetchone()[0]==key
         state=db.execute("select body_compacted,body_sha256,body_bytes,payload_json from tasks where record_type='work_summary_inputs' and legacy_key=?",(str(input_id),)).fetchone()
         assert len(business)==1 and state[0]==1 and state[1] and state[2]>0 and state[3]=='{}'

@@ -1,4 +1,5 @@
 """Task management DTOs and read-only console payload builders."""
+from app.business_definitions import BUSINESS_PROJECTIONS
 
 import json
 from datetime import datetime, timezone
@@ -989,13 +990,7 @@ def _confirmed_project_ids_by_task(store: Any) -> dict[int, set[int]]:
     """Load active Task→Project membership once for summary projections."""
     with store._connect() as db:
         rows = db.execute(
-            """
-            select link.task_id, project.id
-            from business_task_anchor_links link
-            join business_projects project on project.canonical_anchor_id=link.anchor_id
-            join business_anchors anchor on anchor.id=link.anchor_id
-            where link.status='confirmed' and link.active=1 and anchor.active=1
-            """
+            f'\n            select link.task_id, project.id\n            from business_task_anchor_links link\n            join ({BUSINESS_PROJECTIONS["project"]}) project on project.canonical_anchor_id=link.anchor_id\n            join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id\n            where link.status=\'confirmed\' and link.active=1 and anchor.active=1\n            '
         ).fetchall()
     result: dict[int, set[int]] = {}
     for row in rows:
@@ -1015,28 +1010,11 @@ def _project_summary_context_and_activity(
     anchor_ids_json = json.dumps(anchor_ids)
     with store._connect() as db:
         context_rows = db.execute(
-            """
-            with requested(project_id) as (
-                select cast(value as integer) from json_each(?)
-            ), latest as (
-                select revision.project_id, max(revision.id) as id
-                from business_project_context_revisions revision
-                join requested using (project_id)
-                group by revision.project_id
-            )
-            select revision.project_id, revision.context_json
-            from business_project_context_revisions revision
-            join latest using (project_id, id)
-            """,
+            f'\n            with requested(project_id) as (\n                select cast(value as integer) from json_each(?)\n            ), latest as (\n                select revision.project_id, max(revision.id) as id\n                from ({BUSINESS_PROJECTIONS["project_context_revision"]}) revision\n                join requested using (project_id)\n                group by revision.project_id\n            )\n            select revision.project_id, revision.context_json\n            from ({BUSINESS_PROJECTIONS["project_context_revision"]}) revision\n            join latest using (project_id, id)\n            ',
             (project_ids_json,),
         ).fetchall()
         revision_rows = db.execute(
-            """
-            select project_id, max(created_at) as created_at
-            from business_project_context_revisions
-            where project_id in (select cast(value as integer) from json_each(?))
-            group by project_id
-            """,
+            f'\n            select project_id, max(created_at) as created_at\n            from ({BUSINESS_PROJECTIONS["project_context_revision"]})\n            where project_id in (select cast(value as integer) from json_each(?))\n            group by project_id\n            ',
             (project_ids_json,),
         ).fetchall()
         evidence_rows = db.execute(
@@ -1096,7 +1074,7 @@ def _project_summary_payload(
     if summary_context_and_activity is None:
         context = store.get_business_project_context(project.id)
         with store._connect() as db:
-            revision_time = db.execute("select max(created_at) from business_project_context_revisions where project_id=?", (project.id,)).fetchone()[0]
+            revision_time = db.execute(f'select max(created_at) from ({BUSINESS_PROJECTIONS["project_context_revision"]}) where project_id=?', (project.id,)).fetchone()[0]
             evidence_time = db.execute("select max(created_at) from business_project_evidence where project_id=?", (project.id,)).fetchone()[0]
             attention_reasons = [row[0] for row in db.execute(
                 "select why_attention from business_attention_items where anchor_id=? and status='active' order by id", (project.canonical_anchor_id,)
@@ -1285,7 +1263,7 @@ def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProje
     revisions = store.list_business_project_context_revisions(project_id, limit=20)
     with store._connect() as db:
         evidence_count = db.execute("select count(*) from business_project_evidence where project_id=?", (project_id,)).fetchone()[0]
-        revision_count = db.execute("select count(*) from business_project_context_revisions where project_id=?", (project_id,)).fetchone()[0]
+        revision_count = db.execute(f'select count(*) from ({BUSINESS_PROJECTIONS["project_context_revision"]}) where project_id=?', (project_id,)).fetchone()[0]
     def metadata(total: int, visible: int) -> ApiListMeta:
         return ApiListMeta(snapshot_at=snapshot_at(), page=1, page_size=20, total=total,
                            has_more=total > visible, next_cursor="")

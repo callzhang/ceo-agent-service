@@ -4,6 +4,8 @@ from dataclasses import replace
 import pytest
 
 from app.store import AutoReplyStore
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import update_business
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_business_resolution import BusinessResolutionService
 from app.project_context_service import ProjectContextService
@@ -62,7 +64,8 @@ def _task_with_anchor(projection: BusinessAttentionProjection, key: str) -> tupl
 def _link_project_signal(projection, anchor_id, signal_id):
     with projection.store.business_task_transaction() as db:
         project_id = db.execute(
-            "select id from business_projects where canonical_anchor_id=?", (anchor_id,)
+            f"select id from ({BUSINESS_PROJECTIONS['project']}) "
+            "where canonical_anchor_id=?", (anchor_id,)
         ).fetchone()[0]
         ProjectContextService(projection.store).apply(
             project_id=project_id, context=None, signal_ids=(signal_id,), db=db
@@ -302,7 +305,7 @@ def test_upsert_synchronizes_membership_and_rejects_inactive_anchor(projection):
     assert '"task_ids":[%s]' % first in latest.after_json
 
     with projection.store.business_task_transaction() as db:
-        db.execute("update business_anchors set active=0 where id=?", (anchor_id,))
+        update_business(db, "anchor", anchor_id, {"active": 0})
     with pytest.raises(ValueError, match="active"):
         projection.upsert(_proposal((first,), anchor_id, signal_id))
 

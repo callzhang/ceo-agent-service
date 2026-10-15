@@ -9,7 +9,6 @@ import sqlite3
 import pytest
 
 from app.business_storage import create_business_schema
-from app.store import AutoReplyStore
 
 FRESH_DECLARATIONS = Path(__file__).parent / "fixtures/business_four_kind_fresh_declarations.json"
 SOURCE_ORACLE = (Path(__file__).parents[1] / "docs/superpowers/specs/"
@@ -127,12 +126,10 @@ def test_typed_public_parent_key(kind, alias):
         )
 
 
-def test_source_capture_fresh_is_declarations_only(tmp_path):
+def test_source_capture_fresh_is_declarations_only():
     from app.business_schema_release import capture_business_source
 
-    path = tmp_path / "source.sqlite3"
-    AutoReplyStore(path)
-    with closing(sqlite3.connect(path)) as db:
+    with closing(_source_db("fresh")) as db:
         source = capture_business_source(db)
         assert source["variant"] == "fresh"
         assert len(source["parents"]) == 4

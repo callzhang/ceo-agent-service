@@ -10,6 +10,7 @@ that already receives merged sources cannot itself become a merged source.
 """
 
 from __future__ import annotations
+from app.business_definitions import BUSINESS_PROJECTIONS
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -501,8 +502,8 @@ class TaskSemanticService:
             else self.store.business_task_transaction()
         ) as db:
             project = db.execute(
-                "select project.id from business_projects project "
-                "join business_anchors anchor on anchor.id=project.canonical_anchor_id "
+                f'select project.id from ({BUSINESS_PROJECTIONS["project"]}) project '
+                f'join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=project.canonical_anchor_id '
                 "where anchor.id=? and anchor.anchor_type='project' and anchor.active=1",
                 (command.project_anchor_id,),
             ).fetchone()
@@ -579,7 +580,7 @@ class TaskSemanticService:
                 }:
                     raise ValueError("cannot update a terminal suggestion")
                 different_project = db.execute(
-                    "select 1 from business_task_anchor_links link join business_projects project "
+                    f'select 1 from business_task_anchor_links link join ({BUSINESS_PROJECTIONS["project"]}) project '
                     "on project.canonical_anchor_id=link.anchor_id "
                     "where link.task_id=? and link.status='confirmed' and link.active=1 "
                     "and link.anchor_id<>? limit 1",
@@ -1158,7 +1159,7 @@ class TaskSemanticService:
             if source.status is BusinessTaskStatus.MERGED or target.status is BusinessTaskStatus.MERGED:
                 raise ValueError("merge chains and merged targets are not allowed")
             incoming_merge = db.execute(
-                "select 1 from business_tasks where merged_into_task_id=? limit 1",
+                f'select 1 from ({BUSINESS_PROJECTIONS["task"]}) where merged_into_task_id=? limit 1',
                 (source.id,),
             ).fetchone()
             if incoming_merge is not None:

@@ -2,6 +2,7 @@ import json
 import sqlite3
 from typing import Any
 
+from app.business_storage import update_business
 from app.store import AutoReplyStore
 from app.task_models import TodoStatus
 
@@ -37,10 +38,11 @@ def complete_business_task_from_external_todo(
             task_id=business_task_id, signal_id=signal_id, evidence_role="completion", _db=db
         )
         before = {"status": task.status.value, "commitment_status": task.commitment_status.value}
-        db.execute(
-            "update business_tasks set status='done', commitment_status='completed', updated_at=current_timestamp where id=?",
-            (business_task_id,),
-        )
+        update_business(db, "task", business_task_id, {
+            "status": "done",
+            "commitment_status": "completed",
+            "updated_at": db.execute("select current_timestamp").fetchone()[0],
+        })
         after = {"status": "done", "commitment_status": "completed", "completion_evidence": evidence}
         store.append_business_task_event(
             task_id=business_task_id, event_type="status_changed", signal_id=signal_id,

@@ -1,6 +1,7 @@
 """Evidence-backed grouping, anchor, Project, and relevance commands."""
 
 from __future__ import annotations
+from app.business_definitions import BUSINESS_PROJECTIONS
 
 from datetime import datetime, timezone
 from contextlib import nullcontext
@@ -161,7 +162,7 @@ class BusinessResolutionService:
             if not anchor.active:
                 raise ValueError("official Project requires an active project anchor")
             existing_row = db.execute(
-                "select * from business_projects where canonical_anchor_id=?", (anchor_id,)
+                f'select * from ({BUSINESS_PROJECTIONS["project"]}) where canonical_anchor_id=?', (anchor_id,)
             ).fetchone()
             if existing_row is not None:
                 existing = BusinessProject.model_validate(dict(existing_row))
@@ -183,9 +184,7 @@ class BusinessResolutionService:
         self._require_nonblank(registry_source, field="canonical registry source")
         with self._transaction(_db) as db:
             matches = db.execute(
-                """select p.* from business_projects p
-                   join business_anchors a on a.id=p.canonical_anchor_id
-                   where p.title=? and a.anchor_type='project' and a.active=1 limit 2""",
+                f'select p.* from ({BUSINESS_PROJECTIONS["project"]}) p\n                   join ({BUSINESS_PROJECTIONS["anchor"]}) a on a.id=p.canonical_anchor_id\n                   where p.title=? and a.anchor_type=\'project\' and a.active=1 limit 2',
                 (title,),
             ).fetchall()
             if len(matches) > 1:
@@ -363,7 +362,7 @@ class BusinessResolutionService:
                         "explicit Project confirmation requires an active project anchor"
                     )
                 existing_row = db.execute(
-                    "select id from business_projects where canonical_anchor_id=?",
+                    f'select id from ({BUSINESS_PROJECTIONS["project"]}) where canonical_anchor_id=?',
                     (anchor_id,),
                 ).fetchone()
                 resolved_project_id = (
@@ -377,7 +376,7 @@ class BusinessResolutionService:
                     )
                 )
             project_row = db.execute(
-                "select canonical_anchor_id from business_projects where id=?",
+                f'select canonical_anchor_id from ({BUSINESS_PROJECTIONS["project"]}) where id=?',
                 (resolved_project_id,),
             ).fetchone()
             assert project_row is not None
