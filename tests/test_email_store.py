@@ -3263,9 +3263,13 @@ def _downgrade_task10_schema(database: Path, *, version: int) -> None:
 
 
 
+@pytest.mark.parametrize(
+    "read_data_version", (False, True), ids=("native-trace", "quoted-main-data-version")
+)
 def test_current_schema_initialization_preserves_delete_journal_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    read_data_version: bool,
 ):
     database = tmp_path / "current-schema-read-snapshot.sqlite3"
     EmailStore(database)
@@ -3281,6 +3285,9 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
     def traced_open_connection(self: EmailStore) -> sqlite3.Connection:
         db = original_open_connection(self)
         db.set_trace_callback(statements.append)
+        if read_data_version:
+            # SQLite 3.45.1 emits this read during schema introspection on Linux.
+            assert isinstance(db.execute("PRAGMA 'main'.data_version").fetchone()[0], int)
         return db
 
     monkeypatch.setattr(EmailStore, "_open_connection", traced_open_connection)
@@ -3310,7 +3317,7 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
         statement
         for statement in normalized
         if not (
-            statement in {"begin", "commit"}
+            statement in {"begin", "commit", "pragma 'main'.data_version"}
             or statement.startswith("select ")
             or statement.startswith(read_pragma_prefixes)
         )

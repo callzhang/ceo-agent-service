@@ -3190,3 +3190,35 @@ proof result, metadata and active remote-CI log remain aggregate working evidenc
 no prior raw backup remains. The new owned source is for actual native acceptance.
 No production write, provider call, main merge or deployment followed. Native
 approve/revision, final-head CI, capacity recovery and full10+1 are still open.
+
+
+### Linux constructor trace assertion: exact quoted-main data-version read
+
+The completed cfc candidate CI run 38705149084 reported 2 failed, 13746 passed,
+118 skipped and 44 deselected in 4282.84s. Its Email failure was confined to
+`test_current_schema_initialization_preserves_delete_journal_mode`: Python
+3.12.15 / SQLite 3.45.1 emitted two normalized `pragma 'main'.data_version`
+reads. DELETE journal, unchanged schema version, deferred BEGIN, no immediate
+BEGIN and no journal assignment assertions had already passed. The other
+terminal-input chronology failure is addressed by the separate main264 change.
+
+On clean candidate 6056cddc, the existing Email test now has two cases: native
+constructor traces, and an actual `PRAGMA 'main'.data_version` read executed
+on each traced connection after installing its callback. This read returns an
+integer and produces the same SQLite trace even on local Python 3.12.11 /
+SQLite 3.53.4, which does not emit it implicitly. RED with the original allow
+predicate was 1 failed / 1 passed in 11.39s, rejecting exactly the same two
+quoted-main reads as Linux. GREEN adds only the exact no-argument normalized
+statement to the existing allowed set; the same two cases passed in 14.55s.
+
+All original top-level assertion ASTs and the complete read-PRAGMA-prefix tuple
+are unchanged. A direct evaluation of the old and new predicate ASTs confirmed
+only the exact read changes from rejected to accepted: data-version assignment,
+argument form, journal-mode assignment, CREATE, ALTER, INSERT, UPDATE and DELETE
+controls remain rejected. No generic PRAGMA acceptance, version branch, skip,
+runtime or schema change was introduced. Scoped Ruff and `git diff --check`
+passed. Both focused runs used explicit basetemps beneath the owned
+`/private/tmp/ceo-email-linux-data-version.LUFrFy`; that exact root was removed
+and its absence verified. No full file/suite, native CLI, provider, production,
+push, main merge or deploy was run for this test-only repair. Fresh independent
+SPEC/QUALITY review and Linux CI remain separate acceptance steps.
