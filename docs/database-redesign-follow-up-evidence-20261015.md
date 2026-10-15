@@ -72,8 +72,8 @@ body retirement, raw-body export, native file copy or source rewrite occurred.
 
 ## Provider and CI boundaries
 
-Provider current integrationb13a01d0 has fresh SPEC acceptance; QUALITY is a
-separate pending review. Root independently passed33 focused source/current/
+Provider current integrationb13a01d0 has fresh sequential SPEC and QUALITY
+acceptance. Root independently passed33 focused source/current/
 pure-migration checks in2.37s. The synthetic pair target is still unpublished;
 actual121-to104 source conversion and genuine-old-code/native acceptance are
 not established by these checks.

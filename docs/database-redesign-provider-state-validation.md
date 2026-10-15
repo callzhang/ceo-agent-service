@@ -173,3 +173,23 @@ then QUALITY reviews, actual immutable source-copy conversion, genuine old-code
 cold writes/reforward, native/provider doubles, CI and any publication are
 separate gates. No production database, provider network, outbound action,
 main branch, push or deployment was touched by this integration.
+
+## Root current-integration acceptance, 2026-10-15
+
+Fresh sequential independent SPEC then QUALITY accepted the exact current
+integration rangeb92ed762..b13a01d0. SPEC checked the actual implementation and
+passed14 focused schema/signal-rollback/constructor cases in2.72s. QUALITY
+checked all six changed application modules and passed13 focused cases with
+six deselected in2.76s. Root independently passed33 source/current/pure-migration
+cases in2.37s. No concrete deviation or regression remained in these reviews;
+neither reran the previously recorded132-case pair suite or a full local suite.
+
+This accepts the coherent unpublished current path only. The combined
+Business/Email ancestor CI38769762524 at ac60db6d subsequently reported28 failures
+and nine errors (14361 passing); its fixtures and portability issues are being
+repaired in the separate Business worktree before reconciliation. That result
+does not cover the local Provider integration. Actual immutable121-to104
+conversion, current-fact inverse, genuine published7dad cold Provider writes
+and reforward, real CLI/provider doubles, replacement CI and final production
+approval remain separate outstanding gates. No production migration, main
+merge, push, restart, deploy or real outbound test action occurred here.

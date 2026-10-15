@@ -14,9 +14,14 @@ connection cleanup8ceaf4b5. The20 focused cases and120 independent value/type
 comparisons pass; evidence is in `../database-redesign-provider-state-validation.md`.
 Sequential fresh SPEC/QUALITY also accept pure current-fact migrationa2d10fac
 with34focused cases. Fresh sequential SPEC/QUALITY accept the exact current
-caller/fresh factory/validator/paired release plan6119b024; its coherent
-implementation is next. No old production table has been removed or current caller
-selected by this Provider unit. Full10+1 remains open.
+caller/fresh factory/validator/paired release plan6119b024. Its coherent
+implementationb13a01d0 now has fresh sequential SPEC and QUALITY acceptance;
+root33 focused checks pass in2.37s, alongside the implementer's132-case paired
+suite. This selects the local unpublished Provider path, not production.
+Actual121-to104 source-copy/cold-old-code/native proof remains outstanding.
+Separate ancestor Business/Email CI38769762524 failed28 tests and nine setup
+cases, with14361 passing; scoped closure is underway in its own worktree before
+reconciliation. No old production table has been removed. Full10+1 remains open.
 
 ## Latest unpublished Business/Email acceptance, 2026-10-15
 
