@@ -75,6 +75,10 @@ def converted_pair(tmp_path, request):
     import tarfile
 
     from app.action_email_storage import migrate_email_action_schema
+    from app.provider_state_schema_release import (
+        apply_provider_state_migration,
+        capture_provider_state_source,
+    )
     from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
     from app.email_store import EmailStore
     from tests.test_email_store import _classification
@@ -157,10 +161,12 @@ print(json.dumps(s.direct_action_ids_for_plan(c.action_plan.action_plan_id)))
         original.backup(db)
         db.execute("pragma foreign_keys=off")
         db.execute("begin immediate")
+        provider_source = capture_provider_state_source(db)
         migrate_email_action_schema(db)
+        apply_provider_state_migration(db, provider_source)
         db.commit()
-    # Deliberate test-only object setup: current default constructor still
-    # validates the retired physical tables until the coupled activation.
+    # Scope this converted-copy test to DAO methods; paired constructor and
+    # marker validation are covered by the release tests.
     store = object.__new__(EmailStore)
     store.path = target
     store.training_run_id = None

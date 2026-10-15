@@ -41,6 +41,7 @@ def test_prepare_publishes_current_pair_before_store_open_and_reserves_task_ids(
         "store": "2026-10-14.1", "email": 52,
         "action_types": 29, "retired_email_tables": 13,
         "retired_business_parents": 4,
+        "retired_provider_tables": 2,
     }
     assert AutoReplyStore(store.path) and EmailStore(store.path)
     baseline = root / "pre-native-target.sqlite3"

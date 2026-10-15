@@ -126,6 +126,10 @@ def unsubscribe_pair(tmp_path, request):
     import sys
     import tarfile
     from app.action_email_storage import migrate_email_action_schema
+    from app.provider_state_schema_release import (
+        apply_provider_state_migration,
+        capture_provider_state_source,
+    )
     from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
     from app.email_store import EmailStore
     from tests.test_email_store import _classification, _task2_account_values
@@ -218,7 +222,9 @@ if sys.argv[4] in ('audit','orphan','lineage'):
         original.backup(db)
         db.execute("pragma foreign_keys=off")
         db.execute("begin immediate")
+        provider_source = capture_provider_state_source(db)
         migrate_email_action_schema(db)
+        apply_provider_state_migration(db, provider_source)
         db.commit()
     store = object.__new__(EmailStore)
     store.path = target
