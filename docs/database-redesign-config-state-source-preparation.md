@@ -560,3 +560,34 @@ config source fields. Each row and its real schedule parent inserted without
 error into both literal actual and genuine fresh in-memory source schemas.
 This is a source-fixture readiness check; target eight-kind DML and typed
 action integration remain unimplemented and unverified.
+
+### Complete unselected target prototype and plan preflight (2026-10-15)
+
+The later integrated prototype supersedes the isolated schedule/schema syntax
+probes above. In task-owned `/tmp/configs-target-proto.gyuWUJ`, a copied app
+package and focused test files contain the complete unselected 15-kind
+`configs`, real one-kind `schedules`, and flagged two-kind Skill receipt
+`actions` declarations/storage. The applyable 12-file patch is embedded in
+`docs/superpowers/plans/2026-10-15-configs-schedules-receipts-storage-plan.md`;
+its SHA-256 is
+`56efae5dc86675eaddc30e092dd06a4163e2fd01b7045aabc88ef1f8554119b5`.
+The twelve prototype Python files, hashed as ordered `path\0content\0` pairs, have SHA-256 `8610626895eb6c96b83f2d1c37eb215172baeca2441070d74062ded86b4b1e91`. `git apply --check` passed against this worktree. The prototype and patch are
+retained as implementation input through independent SPEC/QUALITY review and
+the subsequent implementation handoff, on the parent task's request; after
+that implementation is fixed, the task-owned temporary parent must be removed
+and its absence asserted.
+
+The prototype passed 19 focused integrated cases (numeric SQLite FK affinity
+including `'01'`/`'1.0'`/`1.0` and BLOB rejection, mutable integer-alias
+rekey, schedule 17-field CAS delete, exact receipt body bytes and independent
+sequences) plus three eight-kind source/target cases covering all 45 remaining
+source fields in actual and fresh variants. Existing seven-kind tests passed
+75/75; the positive published account case passed 1/1; the accepted genuine
+receipt source oracle passed 4/4. Ruff passed on the twelve patched Python
+files; focused `compileall` passed. The original default actions table DDL,
+receipt variant DDL, and `_current_objects()` SHA-256 values matched the
+unmodified app exactly. The positive account fixture's historical archive was
+resolved in the prototype by a **temporary-only** path adaptation; the patch
+does not change that repository path. This is target prototype verification,
+not production copy, migration, public caller selection, real DB readback or
+native-SQL parity for the four recorded receipt counterexamples.
