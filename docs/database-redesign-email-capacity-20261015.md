@@ -102,3 +102,36 @@ publication and the full ten-table program are separate acceptance levels.
 The remaining business/email/config/provider/state/schedule consolidation and
 old-structure cleanup are still required. No main merge, deployment, real
 provider sending or production database write occurred in this evidence unit.
+
+## Refreshed production source at6c44
+
+The read-only backup captured at2026-10-15T08:16:16.530378+00:00 bound exact
+production6c44b082 before/after capture. Integrity and frozen source binding
+passed:483487744bytes, Store19/Email51,121 noninternal tables, zero free-list
+bytes and the unchanged1 FK finding. This is about483.5MB decimal. The prior
+raw fca backup was removed after verification; only thin aggregate comparison
+metadata remains beside the active source copy.
+
+Compared with the earlier fca source, the file grew2191360bytes; active pages
+grew2228224bytes because the earlier36864bytes of free pages were also used.
+The source table-name set is identical. The old page report omitted the
+zero-page codex_session_search_fts virtual-table declaration; its existence
+and zero own/index pages were verified directly before comparison. Its shadow
+table pages remain separately counted.
+
+| Source table | Current rows | Current table plus index bytes | Increase in allocated bytes |
+| --- | ---: | ---: | ---: |
+| actions | 22,816 | 90,955,776 | 962,560 |
+| tasks | 25,780 | 50,126,848 | 573,440 |
+| managed_skill_revisions | 171 | 4,698,112 | 233,472 |
+| runs | 229,837 | 124,080,128 | 204,800 |
+| email_classifications | 8,911 | 39,759,872 | 57,344 |
+| email_messages | 8,911 | 35,463,168 | 49,152 |
+| email_action_plans | 9,945 | 15,032,320 | 40,960 |
+| email_actions | 10,339 | 13,852,672 | 36,864 |
+| email_provider_observations | 72,131 | 24,928,256 | 16,384 |
+| runtime_skill_load_receipts | 4,087 | 4,481,024 | 16,384 |
+
+These are measured source-page growth contributors, not proof that each new
+row is necessary or that the candidate reduces storage. This new source has
+not yet completed its candidate migration/capacity or native acceptance run.

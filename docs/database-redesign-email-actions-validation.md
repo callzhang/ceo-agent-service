@@ -3042,3 +3042,28 @@ full CI or production result and does not close the remaining Email redesign,
 source-copy/native and publication gates.
 The exact owned basetemp directory was removed after the test receipt and its
 absence verified.
+
+### Root acceptance: combined main integration and refreshed6c44 source
+
+Root accepts1aace7e3 after fresh sequential SPEC and QUALITY PASS covering
+the complete d5abeaae-to-1aace7e3 unit, including both exact normal main merges.
+SPEC checked every incoming blob and all1244 uninvolved candidate paths;
+QUALITY checked caller/model/schema/renderer/receipt and diagnostic/session
+composition. The415 and307 focused passes remain implementation evidence;
+neither reviewer duplicated those suites. Central candidate schema/storage/
+inverse/History/copy/native files are unchanged by these main increments.
+
+A new production SQLite online backup was captured read-only, with checkout
+HEAD6c44b082 equal before and after capture. At2026-10-15T08:16:16.530378+00:00
+it contained483487744bytes, Store2026-10-13.5/Email51,121 noninternal tables,
+zero free-list bytes and the original1 FK finding. Quick/integrity checks and
+the frozen published source declaration/ledger binding passed. File SHA-256:
+a10667d4690aa693765af6a2e35357d25dfb58816c80eb21d3b26901b5b29d26.
+
+The superseded task-owned fca raw database and its empty SQLite sidecars were
+removed only after new-backup verification; absence was checked. Three thin
+prior aggregate metadata files remain in the active working root for growth
+comparison, not another raw backup. Full source-copy/current-fact inverse/
+old-code/reforward and actual native approval/revision evidence remain pending
+for this new source. PR90 stays draft; no main merge, deployment or real
+provider sending was performed by these verification steps.
