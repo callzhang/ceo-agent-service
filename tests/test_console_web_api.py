@@ -1374,9 +1374,11 @@ def test_console_status_accepts_human_decision_evidence(monkeypatch, tmp_path: P
     assert response.json()["item"]["human_decision_rows"][0]["detail"] == (
         "The current policy does not cover this case."
     )
-    assert response.json()["item"]["summary"]["attention"] == 0
+    assert response.json()["item"]["summary"]["attention"] == 1
     assert attention.status_code == 200
-    assert attention.json()["meta"]["total"] == 0
+    assert attention.json()["meta"]["total"] == 1
+    assert attention.json()["items"][0]["records"][0]["id"] == "42"
+    assert attention.json()["items"][0]["category"] == "本次事项选择"
 
 
 @pytest.mark.parametrize(

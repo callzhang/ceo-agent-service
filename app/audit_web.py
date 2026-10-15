@@ -2230,6 +2230,7 @@ def build_worker_status_payload(
         for row in attention_rows
         if isinstance(row, Mapping)
     )
+    attention_count += len(human_decision_rows)
     payload: dict[str, object] = {
         "service": service,
         "components": _service_component_snapshots(store),
@@ -10361,10 +10362,13 @@ def create_audit_app(
         return payload
 
     def read_cached_attention_rows() -> list[dict[str, object]]:
-        """Read the current Attention snapshot without serving stale status data."""
+        """Read queue failures and current actionable decisions in one snapshot."""
 
         with audit_store.read_snapshot():
-            return _queue_attention_rows(audit_store)
+            return [
+                *_queue_attention_rows(audit_store),
+                *_human_decision_attention_rows(audit_store),
+            ]
 
     def read_fresh_feedback_backlog() -> dict[str, object]:
         """Read authoritative queue counts straight from SQLite.
@@ -10553,14 +10557,10 @@ def create_audit_app(
             _connector_status_snapshots, lambda: {}
         ),
         feedback_backlog_factory=read_fresh_feedback_backlog,
-        # The React Attention page must share Status's cached snapshot.  The
-        # legacy/non-SPA handlers retain their direct read for compatibility,
-        # while the SPA avoids a second multi-table SQLite scan per navigation.
-        attention_rows_factory=(
-            read_cached_attention_rows
-            if spa_enabled
-            else lambda: _queue_attention_rows(audit_store)
-        ),
+        # Both current queue failures and unselected, Audit-approved human
+        # decisions are actionable Attention. Read them from one SQLite
+        # snapshot so the API and Status summary agree.
+        attention_rows_factory=read_cached_attention_rows,
         task_row_builder=_task_row_payload,
         history_chart_factory=render_history_chart,
         email_store_factory=get_audit_email_store,
