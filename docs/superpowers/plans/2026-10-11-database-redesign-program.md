@@ -1,5 +1,16 @@
 # Database Redesign Program
 
+## Latest Provider source acceptance, 2026-10-15
+
+Sequential independent SPEC and QUALITY accepted source contract3b5c5939:
+11 synthetic tests cover the two existing provider families and all12 original
+fields against frozen actual/fresh declarations from published7dad, Store
+`2026-10-13.5` and Email51. Corrections preserve available-only signal shape decoding and direct
+Star/Flag writes that leave both observation and generation times unchanged.
+This is source evidence, not target storage, migration, provider or production
+verification. The exact unselected single-table plan101c121e is under review;
+no old table has been removed by this Provider unit. Full10+1 remains open.
+
 ## Latest unpublished Business/Email acceptance, 2026-10-15
 
 The approved target is still ten core tables plus one migration ledger. Clean
