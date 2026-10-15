@@ -20,7 +20,8 @@ read paths or startup.
 
 For a historical native reply with an existing sent-reply row but an unavailable
 provider task, `reconcile-failed-reply-chat-readback --task-id ...` performs a
-bounded, paginated read of the original conversation around `sent_at`. A
+bounded, paginated read of the original conversation around `sent_at`; naive
+SQLite `CURRENT_TIMESTAMP` values are UTC. A
 complete result must contain exactly one message matching the conversation,
 the recorded query range, quoted trigger, exact persisted body, and authenticated
 sender identity. The native page ledger must be complete, non-partial,

@@ -15,7 +15,6 @@ from app.run_storage import AGENT_RUN_SQL
 
 def collect_native_chat_readback(store, dws, task_id: int) -> dict:
     """Read one reply's exact conversation window and bind it to the current principal."""
-    from app.dws_client import DINGTALK_MESSAGE_TIME_ZONE
     from app.store import REPLY_TASK_SQL
 
     with store._connect() as db:
@@ -33,7 +32,7 @@ def collect_native_chat_readback(store, dws, task_id: int) -> dict:
 
     sent_time = datetime.fromisoformat(str(sent_at).replace("Z", "+00:00"))
     if sent_time.tzinfo is None:
-        sent_time = sent_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+        sent_time = sent_time.replace(tzinfo=timezone.utc)
     start = (sent_time - timedelta(minutes=3)).isoformat(timespec="seconds")
     end = (sent_time + timedelta(minutes=3)).isoformat(timespec="seconds")
     payload = dws.run_json([

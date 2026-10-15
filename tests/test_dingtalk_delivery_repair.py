@@ -201,6 +201,8 @@ def test_native_chat_readback_queries_exact_conversation_without_write_tools(tmp
     assert "--no-reactions" in dws.command
     assert not any("send" in part or "comment" in part for part in dws.command)
     assert proof["principal_open_dingtalk_id"] == "principal-open-id"
+    assert proof["start"].endswith("+00:00")
+    assert proof["end"].endswith("+00:00")
 
 
 @pytest.mark.parametrize("mutation", ["partial", "wrong_sender", "wrong_text", "wrong_quote"])

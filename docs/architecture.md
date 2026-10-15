@@ -92,7 +92,8 @@ uncertain 执行状态，不生成管理者业务决策问题。
 `reconcile-failed-reply-chat-readback --task-id ...` is an explicit, one-task
 maintenance path for a historical reply whose send is already present in the
 sent-reply ledger but whose provider task can no longer be queried. It reads
-only that conversation around the recorded send time and requires the exact
+only that conversation around the UTC `sent_at` instant (SQLite's naive
+`CURRENT_TIMESTAMP` is interpreted as UTC) and requires the exact
 query range plus complete, untruncated, failure-free native history, one exact
 outgoing body quoting the original trigger, and a sender matching the authenticated principal. `--apply` records that evidence
 against the same approved candidate, external action and generation in one
