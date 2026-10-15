@@ -12687,7 +12687,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         *,
         owner: str,
         transcript_start_line: int = 0,
-        allow_consumer_session_handoff: bool = False,
+        allow_session_handoff: bool = False,
         now: str | datetime | None = None,
     ) -> AgentRun:
         if not codex_session_id.strip():
@@ -12712,8 +12712,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("agent run does not exist")
             current_session_id = str(current["codex_session_id"] or "")
             replace_session = (
-                allow_consumer_session_handoff
-                and current["role"] == AgentRole.CONSUMER.value
+                allow_session_handoff
                 and bool(current_session_id)
                 and current_session_id != codex_session_id
             )
