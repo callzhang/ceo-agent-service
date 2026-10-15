@@ -2515,7 +2515,7 @@ untouched. Task7 fixture implementation, CI/publication and full10+1 remain open
 
 Task7 current bootstrap marker fixtures: the five selected current tests now
 expect Store `2026-10-14.1`; the fresh delivery and postfix action manifest
-checks include Email in the published 29-type current target. Original source
+checks include Email in the candidate 29-type current target. Original source
 IDs, mutations, rows, reopen checks, and absence assertions remain in place.
 The genuine published-source delivery test retains its historical Store19
 binding. Root baseline was five failures out of five, each on the obsolete
