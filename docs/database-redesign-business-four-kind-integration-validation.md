@@ -215,3 +215,28 @@ the Workbench build and two browser checks. It is not combined Business coverage
 A new combined CI result, main merge, production migration/deploy and operational
 readback remain separate gates. No production database write, main merge,
 restart, deployment or real test delivery occurred during this acceptance.
+
+### Exact-head combined CI failure, 2026-10-15
+
+Quality CI38769762524 on exact PR92 head
+`ac60db6d4a9d4f01db25a1009a21f384c90378fb` failed its Python test step:
+28 failed,14361 passed,118 skipped,44 deselected,9 errors in4812.79 seconds.
+Lint passed; frontend tests, Workbench build and browser checks did not run
+after the Python failure. Run:
+https://github.com/callzhang/ceo-agent-service/actions/runs/38769762524
+
+The failed-log clusters are native JSON-BLOB fixture acceptance(two), a
+test attention helper entering the explicit Business transaction API without
+starting a transaction(one), historical Store13 fixture declaration closure,
+current suggestion fixtures still querying the retired Business parent table,
+a replay comparison fixture missing the current Business storage, and six
+native additional-harness setup errors from the Mac-only `/private/tmp` path
+on Linux. These are diagnosis categories, not accepted repairs; exact source
+DDL and SQLite native acceptance still need investigation. In particular, do
+not widen runtime source fingerprints or skip negative tests to make CI pass.
+
+The previously recorded real-copy/native/focused results retain their stated
+scope. They do not override this failed combined CI result. No main merge,
+production publication or deployment is authorized by this receipt. Provider
+selection in the separate worktree remains unpushed and is not covered by
+this Business/Email CI run.
