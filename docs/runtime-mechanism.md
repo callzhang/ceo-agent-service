@@ -3148,3 +3148,5 @@ Task Agent 当前每轮已经完整提交仓库中的 Work Tracking Skill，Code
 其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
 或共享 AGENTS 配置。该改动消除第二份旧 Skill 的可见入口，尚未把完整正文改成按需读取。
 验证与限制见 `docs/task-inline-skill-once-validation.md`。
+
+Attempt current failure descriptions use only the latest Agent turn or the persisted final task/execution stop. A later completed turn supersedes earlier technical failures in the current-stop projection; historical runs remain available in the runtime trajectory and are never rewritten. A final Audit return/reject keeps its actual summary, and accepted but unverified System actions retain their uncertain execution diagnosis.

@@ -151,8 +151,14 @@ def stopped_because(runs: Sequence[Any]) -> dict[str, str]:
     which is true of one and false of the other.
     """
 
-    for run in reversed(list(runs)):
+    # A later completed turn supersedes the technical failure it recovered.
+    for run in list(runs)[-1:]:
         if str(getattr(run, "status", "")) != "failed":
+            result = _loads(getattr(run, "adopted_result_json", ""))
+            outcome = str(result.get("outcome") or "")
+            if str(getattr(run, "role", "")) == "audit" and outcome in {"return", "reject"}:
+                return {"kind": "rule", "code": outcome,
+                        "sentence": str(result.get("summary") or "")}
             continue
         payload = _loads(getattr(run, "structured_error_json", ""))
         code = str(payload.get("code") or "")
@@ -278,13 +284,13 @@ def proposed_text(runs: Sequence[Any]) -> str:
 
 
 def build_what_happened(
-    runs: Iterable[Any], *, store: Any = None
+    runs: Iterable[Any], *, store: Any = None, stop_reason: dict[str, str] | None = None
 ) -> dict[str, Any]:
     """The three answers, in the order a person needs them."""
 
     ordered = list(runs)
     actions = external_actions(ordered, store=store)
-    stopped = stopped_because(ordered)
+    stopped = stop_reason if stop_reason is not None else stopped_because(ordered)
     acted_in = acting_run_id(ordered, store=store)
     return {
         "external_actions": actions,
