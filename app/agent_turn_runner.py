@@ -428,7 +428,13 @@ def _process_failure_detail(process: ProcessRunResult) -> str:
     def add(value: object) -> None:
         if not isinstance(value, str):
             return
-        normalized = " ".join(value.split())
+        # Keep original line ends and whitespace-spanning field patterns before
+        # diagnostics from separate fields are joined.
+        lines = (
+            redact_credentials(" ".join(line.split()))
+            for line in value.splitlines()
+        )
+        normalized = redact_credentials(" ".join(line for line in lines if line))
         if normalized and normalized not in parts:
             parts.append(normalized)
 
@@ -460,7 +466,6 @@ def _process_failure_detail(process: ProcessRunResult) -> str:
     detail = " | ".join(parts)
     if not detail:
         return ""
-    detail = redact_credentials(detail)
     detail = redact_forbidden_leak_markers(detail)
     return detail[:1000]
 

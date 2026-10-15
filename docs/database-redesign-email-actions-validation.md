@@ -3013,3 +3013,32 @@ its absence was verified.
 This unit is local integration evidence only. The full Email redesign,
 fresh Linux CI, actual source-copy/native validation, push and publication
 remain with the root owner; this unit made no provider or production write.
+
+### Same integration unit: exact main 6c44b082 increment
+
+The same isolated branch continued from the unreviewed `5aa6909a` merge,
+claimed the extension in `2c40a4c0`, and normally merged exact main
+`6c44b082dfac035da8ed6020c7a49a60cf70fda6`. Its nine-path increment
+contains the already-published native inline-Skill test adapters and the
+diagnostic/unsubscribe redaction boundary repair. Only
+`docs/agent-claims.md` conflicted; its resolution retains both the candidate
+claim rows and incoming adapter/redaction claim rows. The other eight paths
+merged automatically. Seven non-shared-document paths, including
+`app/email_unsubscribe.py`, are byte-identical to `6c44b082`; the incoming
+`docs/runtime-mechanism.md` addition is retained alongside candidate notes.
+The central candidate Email storage/schema/History/copy files listed in the
+`5aa6909a` integration section remain byte-identical to the pre-extension
+branch `2c40a4c0`.
+
+Focused validation used `/Users/derek/miniforge3/bin/python -m pytest -q`
+with explicit owned `--basetemp /tmp/ceo-email-main-6c44.KRGtpe` and
+`test_agent_turn_runner.py`, `test_email_unsubscribe.py`,
+`test_routed_codex_execution.py`, `test_task_agent_runtime_repair.py`, and
+`test_email_unsubscribe_direct.py`: **307 passed in 133.34 seconds**.
+Scoped Ruff on the two incoming implementation files and four changed test
+files passed; staged and working-tree whitespace checks passed. This run is
+separate from the prior 415-pass meeting increment. It does not establish a
+full CI or production result and does not close the remaining Email redesign,
+source-copy/native and publication gates.
+The exact owned basetemp directory was removed after the test receipt and its
+absence verified.
