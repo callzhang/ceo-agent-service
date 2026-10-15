@@ -1,6 +1,7 @@
 """Bounded offline Email13 proof regressions against genuine published old code."""
 
 from contextlib import closing
+import hashlib
 import io
 import json
 import os
@@ -527,7 +528,10 @@ def test_final_production_head_change_keeps_all_completed_case_evidence(bounded_
     assert "app/process_runner.py" not in report["candidate_module_sha256"]
     assert "finite" in report["candidate_module_hash_scope"].lower()
     assert "app/" in report["candidate_module_hash_scope"]
-    assert len(report["candidate_proof_sha256"]) == 20
+    assert len(report["candidate_proof_sha256"]) == 21
+    assert report["candidate_proof_sha256"]["tests/test_provider_state_source.py"] == hashlib.sha256(
+        (repo / "tests/test_provider_state_source.py").read_bytes()
+    ).hexdigest()
     assert proof.BINDING_RELATIVE in report["candidate_proof_sha256"]
     assert report["scope"] == "combined Provider2/Business4/Email13 paired copy and three Email-only SQL-boundary cases"
     assert len(report["published_old_module_sha256"]) == 10
@@ -588,7 +592,7 @@ def test_latest_copy_rejects_published_marker_or_fk_drift(bounded_run, field):
 @pytest.mark.parametrize("path", (
     "app/store.py", "app/email_store.py", "app/project_context_service.py",
     "app/task_semantic_models.py", "app/provider_state_schema_release.py",
-    "tests/test_provider_state_copy_proof.py",
+    "tests/test_provider_state_copy_proof.py", "tests/test_provider_state_source.py",
     "docs/superpowers/specs/2026-10-15-database-redesign-business-email-published-source.json",
 ))
 def test_latest_copy_rejects_dirty_executed_module_or_binding(bounded_run, monkeypatch, path):

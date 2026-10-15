@@ -1620,6 +1620,7 @@ def run(source, source_ref, repo):
     proof_paths = ("scripts/validate_action_email_copy.py", "tests/test_email_action_copy_proof.py",
                    "tests/test_business_copy_proof.py", "tests/test_provider_state_copy_proof.py",
                    "tests/test_business_schema_release.py", "tests/test_provider_state_schema_release.py",
+                   "tests/test_provider_state_source.py",
                    "scripts/validate_native_copy_lifecycle.py",
                    "tests/test_native_copy_lifecycle_harness.py",
                    "app/action_storage.py", "app/action_email_storage.py",

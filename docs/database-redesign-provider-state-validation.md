@@ -238,3 +238,13 @@ folder generation; the full image comparison carries those exact values and
 types through forward, current-fact inverse and reforward. Six direct and two
 paired focused tests passed after this follow-up. Actual copied-source and
 native CLI acceptance remain pending.
+
+### QUALITY follow-up on proof attribution
+
+The copied-database report now includes the literal Provider source fixture
+`tests/test_provider_state_source.py` in its clean Git guard and SHA-256 proof
+manifest. Before the change, focused regressions showed a 20-entry manifest
+and accepted a dirty fixture. After adding the exact path, the report contains
+21 proof hashes and rejects that dirty fixture; all nine focused report and
+guard cases pass. This changes only proof attribution, not Provider data or
+migration behavior.
