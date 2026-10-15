@@ -515,5 +515,5 @@ def build_agent_classification_prompt(
         f"Managed Skill:\n{skill_text}\n\n"
         f"{_similar_examples_block(similar_examples)}"
         "Exact invocation context:\n"
-        + json.dumps(classification_context, ensure_ascii=False, sort_keys=True, indent=2)
+        + json.dumps(classification_context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     )

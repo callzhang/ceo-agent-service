@@ -3040,3 +3040,12 @@ this renderer. Candidate digest calculation, source binding, business validation
 role/tool boundaries, session reuse and historical saved inputs remain unchanged.
 See docs/context-json-formatting-validation.md for focused verification and
 metadata-only measurements; publication status is recorded there.
+
+
+Specialized Meeting, email-classification and Task inputs serialize their existing
+JSON blocks compactly. Meeting inline schema (still minus its existing root
+description) and complete MeetingSource, sorted classification context, and
+current WorkItem metadata retain the same parsed values and field selection.
+Full source strings, schema constraints, source projection, business rules,
+roles, native schema delivery and session behavior are unchanged. See
+docs/specialized-json-formatting-validation.md for acceptance/publication status.
