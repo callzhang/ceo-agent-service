@@ -10,9 +10,9 @@ from app.action_email_storage import _quote, _sequence, _set_sequence
 from app.action_storage import _encoded_sqlite_value
 from app.business_definitions import (
     BUSINESS_COMMON, BUSINESS_FIELDS, BUSINESS_FRESH_FIELDS,
-    BUSINESS_PROJECTIONS, BUSINESS_FRESH_PROJECTIONS, BUSINESS_REFERENCES,
+    BUSINESS_REFERENCES,
     BUSINESS_TABLE_DDL, BUSINESS_INDEX_DDL, BUSINESS_TRIGGER_DDL,
-    business_payload_fields,
+    business_column, business_payload_fields,
 )
 from app.business_storage import create_business_schema
 from app.task_schema_release import _foreign_keys
@@ -172,7 +172,20 @@ def _source_fk_findings(db: sqlite3.Connection) -> tuple:
     return findings
 
 
+def _assert_no_temp_relation_collision(db: sqlite3.Connection, names) -> None:
+    names = tuple(names)
+    placeholders = ",".join("?" for _ in names)
+    if db.execute(
+        "select 1 from temp.sqlite_schema where type in ('table','view') "
+        f"and name collate nocase in ({placeholders}) limit 1", names,
+    ).fetchone():
+        raise ValueError("Business TEMP name collision")
+
+
 def capture_business_source(db: sqlite3.Connection) -> dict:
+    # Unqualified index/trigger DDL resolves its ON table through TEMP first,
+    # even when CREATE TABLE and row snapshots target MAIN explicitly.
+    _assert_no_temp_relation_collision(db, ("business", *RETAINED_CHILD_FKS))
     parents = _objects(db, SOURCE_PARENTS.values())
     children = _objects(db, RETAINED_CHILD_FKS)
     variant = _source_variant(parents, children)
@@ -274,15 +287,16 @@ def _insert_business_parents(db: sqlite3.Connection, parents: dict, physical: di
 
 def _projected_parent_facts(db: sqlite3.Connection, kind: str, variant: str) -> dict:
     fields = (BUSINESS_FRESH_FIELDS if variant == "fresh" else BUSINESS_FIELDS)[kind]
-    relation = (BUSINESS_FRESH_PROJECTIONS if variant == "fresh"
-                else BUSINESS_PROJECTIONS)[kind]
-    selected = ",".join(_quote(field) for field in fields)
-    types = ",".join(f"typeof({_quote(field)})" for field in fields)
+    columns = tuple(business_column(kind, field) for field in fields)
+    selected = ",".join(f"{_quote(column)} as {_quote(field)}"
+                        for field, column in zip(fields, columns, strict=True))
+    types = ",".join(f"typeof({_quote(column)})" for column in columns)
+    source = " from main.business where record_type=? order by public_id"
     rows = tuple(tuple(row) for row in db.execute(
-        f"select {selected} from ({relation}) order by id"
+        f"select {selected}{source}", (kind,)
     ))
     classes = tuple(tuple(row) for row in db.execute(
-        f"select {types} from ({relation}) order by id"
+        f"select {types}{source}", (kind,)
     ))
     return {"columns": fields, "rows": rows, "types": classes,
             "hidden_rowid": False}
@@ -379,6 +393,7 @@ def _recreate_source(db: sqlite3.Connection, source: dict) -> None:
 
 def restore_business_schema(db: sqlite3.Connection, source: dict) -> None:
     _assert_transaction(db)
+    _assert_no_temp_relation_collision(db, (*SOURCE_PARENTS.values(), *RETAINED_CHILD_FKS))
     variant = source["variant"]
     if _source_variant(source["parents"], source["children"]) != variant:
         raise ValueError("unsupported Business source declarations")

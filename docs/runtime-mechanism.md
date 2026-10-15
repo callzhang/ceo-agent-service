@@ -27,10 +27,12 @@ Business table, translates nineteen FK endpoints in fifteen retained children
 to three typed public aliases, and preserves the other twenty-one FK groups,
 source-shaped facts, hidden ROWIDs, indexes, triggers and thirteen sequence
 waters. Inverse validates the captured declarations and current target shape,
-reads current facts after any target writes, removes four manually named
-allocator aliases and restores the original declarations. The caller rolls
-back the transaction on a failed copy or inverse. No current Store bootstrap,
-route, version marker or deployed path invokes this module.
+reads current facts from `main.business` after any target writes, removes four
+manually named allocator aliases and restores the original declarations. The
+caller rolls back the transaction on a failed copy or inverse. Exact TEMP collisions with
+forward or inverse DDL destination table names are refused before any DROP;
+other TEMP tables do not affect these MAIN-bound reads. No current Store
+bootstrap, route, version marker or deployed path invokes this module.
 
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
 can reconstruct an exact historical source body from already recorded Codex or

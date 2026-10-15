@@ -683,3 +683,76 @@ def test_each_isolated_endpoint_blocks_its_own_parent_delete_and_public_id_updat
                 db.rollback()
             checked += 1
     assert checked == 19
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+def test_inverse_reads_main_business_when_temp_business_shadows_it(variant):
+    from app.business_schema_release import migrate_business_schema, restore_business_schema
+
+    with closing(_source_db(variant)) as db:
+        _seed_complete_source(db)
+        original = db.execute("select title from main.business_tasks where id=-11").fetchone()
+        db.execute("begin immediate")
+        inverse = migrate_business_schema(db)
+        db.commit()
+        db.execute("create temp table business as select * from main.business")
+        db.execute("update temp.business set title='shadow-only title' "
+                   "where record_type='task' and public_id=-11")
+        assert db.execute("select title from main.business where record_type='task' "
+                          "and public_id=-11").fetchone() == original
+        db.commit()
+        db.execute("begin immediate")
+        restore_business_schema(db, inverse)
+        assert db.execute("select title from main.business_tasks where id=-11").fetchone() == original
+        db.rollback()
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+@pytest.mark.parametrize("shadow", ("business", "business_task_evidence"))
+def test_forward_refuses_temp_target_or_child_collision_before_ddl(variant, shadow):
+    from app.business_schema_release import capture_business_source, migrate_business_schema
+
+    with closing(_source_db(variant)) as db:
+        _seed_complete_source(db)
+        db.execute(f"create temp table {shadow}(shadow_marker text)")
+        db.commit()
+        before = tuple(db.iterdump())
+        with pytest.raises(ValueError, match="Business TEMP name collision"):
+            capture_business_source(db)
+        assert tuple(db.iterdump()) == before
+        db.execute("begin immediate")
+        with pytest.raises(ValueError, match="Business TEMP name collision"):
+            migrate_business_schema(db)
+        db.rollback()
+        assert tuple(db.iterdump()) == before
+
+
+@pytest.mark.parametrize("shadow", ("business_tasks", "business_task_evidence"))
+def test_inverse_refuses_temp_source_destination_collision_before_ddl(shadow):
+    from app.business_schema_release import business_schema_is_current
+    from app.business_schema_release import migrate_business_schema, restore_business_schema
+
+    with closing(_source_db("fresh")) as db:
+        _seed_complete_source(db)
+        db.execute("begin immediate")
+        inverse = migrate_business_schema(db)
+        db.commit()
+        db.execute(f"create temp table {shadow}(shadow_marker text)")
+        db.commit()
+        before = tuple(db.iterdump())
+        db.execute("begin immediate")
+        with pytest.raises(ValueError, match="Business TEMP name collision"):
+            restore_business_schema(db, inverse)
+        assert business_schema_is_current(db, "fresh")
+        db.rollback()
+        assert tuple(db.iterdump()) == before
+
+
+def test_native_unqualified_index_ddl_binds_temp_relation_first():
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("create table main.business(public_id integer)")
+        db.execute("create temp table business(shadow_marker text)")
+        with pytest.raises(sqlite3.OperationalError, match="no such column: public_id"):
+            db.execute("create index native_binding_probe on business(public_id)")
+        assert db.execute("select 1 from main.sqlite_schema "
+                          "where name='native_binding_probe'").fetchone() is None

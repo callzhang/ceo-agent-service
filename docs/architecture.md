@@ -28,8 +28,10 @@ before copying references, and preserves source-shaped values and storage
 classes, hidden child ROWIDs, auxiliary declarations, native FK findings, and
 thirteen independent sequence waters. Its inverse reads current target facts,
 including later writes, and recreates the captured source declarations inside
-the caller's FK-off transaction. No constructor, version or coordinator selects
-this release module yet. See
+the caller's FK-off transaction. Migration projections read `main.business`
+explicitly, so a same-named TEMP table cannot substitute its rows. Exact TEMP
+relation collisions with tables whose DDL is rebuilt are refused before DDL.
+No constructor, version or coordinator selects this release module yet. See
 `docs/database-redesign-business-four-kind-migration-validation.md`.
 
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
