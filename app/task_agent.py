@@ -545,7 +545,7 @@ def build_task_agent_prompt(
     if isinstance(scheduled_payload, dict):
         scheduled_payload.pop("skill_protocol", None)
         scheduled_payload.pop("skill_materials", None)
-    work_item_json = json.dumps(work_item_payload, ensure_ascii=False, indent=2)
+    work_item_json = json.dumps(work_item_payload, ensure_ascii=False, separators=(",", ":"))
     effective_current_time = (
         current_time.strip() or datetime.now(timezone.utc).isoformat()
     )
