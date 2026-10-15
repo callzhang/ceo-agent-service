@@ -1,5 +1,12 @@
 # Current Runtime Mechanism
 
+The main launchd job declares `ProcessType=Interactive` because the local HTTP
+Console is a user-facing application dependency and does not use XPC activity
+for Adaptive classification. Omitting ProcessType applies Standard CPU/I/O
+limits. Existing installed plist settings must match this declaration before
+the formal deploy/restart re-bootstraps the job; deployment does not copy the
+entire plist over machine-specific environment settings.
+
 Hourly quality checks reuse the unchanged credential/path predicate result for
 identical runtime metadata strings within one scan. Every historical runtime
 row and all seven fields remain in scope, violations are still counted per
