@@ -135,3 +135,48 @@ table pages remain separately counted.
 These are measured source-page growth contributors, not proof that each new
 row is necessary or that the candidate reduces storage. This new source has
 not yet completed its candidate migration/capacity or native acceptance run.
+
+## Latest readonly264 source: full per-table aggregate retained
+
+The backup observed at2026-10-15T09:15:41.822422+00:00 has484073472bytes
+(484.1MB decimal),290816free-list bytes and483782656active bytes. Production
+HEAD was264c073c both before/after backup; Store19/Email51 and121noninternal
+tables remain. This is a new source observation, not the candidate target size.
+Full row/table/index counts for all121tables, including zero-own-page virtual
+declarations and independently counted FTS shadow pages, are retained in
+`docs/superpowers/specs/2026-10-15-database-redesign-264-source-pages.json`.
+No page cost is allocated to record families by row share.
+
+| Source table | Rows | Table bytes | Index bytes |
+| --- | ---: | ---: | ---: |
+| runs | 230,058 | 75,677,696 | 48,525,312 |
+| actions | 22,875 | 80,068,608 | 11,198,464 |
+| tasks | 25,791 | 43,556,864 | 6,283,264 |
+| email_classifications | 8,919 | 36,532,224 | 3,239,936 |
+| email_messages | 8,919 | 33,939,456 | 1,536,000 |
+| email_provider_observations | 72,136 | 13,328,384 | 11,612,160 |
+| email_action_plans | 9,953 | 13,737,984 | 1,302,528 |
+| email_actions | 10,347 | 9,035,776 | 4,825,088 |
+| work_updates | 5,468 | 12,115,968 | 249,856 |
+| follow_up_drafts | 2,477 | 10,596,352 | 610,304 |
+| errors | 15,380 | 7,561,216 | 950,272 |
+| work_projects | 975 | 6,643,712 | 40,960 |
+
+Account configuration is small: email_accounts still has2rows and8192combined
+bytes. The72136email_provider_observations are per-message current facts, not
+account settings; they occupy13328384table bytes plus11612160index bytes.
+That distinction does not establish every index as necessary. The approved
+provider duplicate-index work remains a separate measured optimization.
+
+The source file grew565248bytes from the exact f264 source used by the completed
+four-case proof. That source has been replaced after verifying the new backup;
+its aggregate receipts remain. This report does not imply all retained records
+are required, nor that reducing121to108tables saves capacity. The documented
+Email target growth remains unresolved and the full ten-core-table-plus-ledger
+goal remains open.
+
+Bounded current-code scheduled-history findings are recorded separately in
+`docs/database-redesign-scheduled-history-findings-20261015.md`. They identify
+83610exact zero-work summaries as a classification cohort only, with concrete
+source/recovery references that prevent equating the cohort to deletable rows.
+No age cutoff, claim cleanup, history retirement or schema behavior was added.

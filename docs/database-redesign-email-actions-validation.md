@@ -3166,3 +3166,27 @@ push, main merge or deploy occurred. The existing cfc remote CI38705149084 is
 owned by root and is not claimed as validation of this integration. Fresh
 sequential SPEC/QUALITY, final CI/native/publication and full10+1 acceptance
 remain separate gates.
+
+### Root acceptance: exact main264 and latest readonly native source
+
+Root acceptsc08dca3d after fresh sequential independent SPEC and QUALITY PASS.
+SPEC verified exact parents, complete16incoming paths plus owned evidence,
+10main-exact standalone paths,1790uninvolved candidate blobs and3950chronology
+ASTs; QUALITY traced frozen OA input/Skill/retry and precise receipt reconciliation
+through candidate finite actions. Neither duplicated the98passing focused cases.
+Five storage hashes still match the committed cfc/f264 copied-data receipt.
+
+At2026-10-15T09:15:41.822422+00:00 a new readonly SQLite online backup observed
+production264c073cfe779b76a5a7f001480149fb784f0591 before/after capture. It is
+484073472bytes, Store2026-10-13.5/Email51,121noninternal tables with the original
+1FK finding. Quick/integrity checks, complete frozen source ledger/declaration
+binding and SHA57c9595a77e71fab6f89a518b68307b490eaf0a2833fc216610611cc5f10060d
+passed. The aggregate per-table report is
+`docs/superpowers/specs/2026-10-15-database-redesign-264-source-pages.json`.
+
+Only after this verification and confirming no open old-source handle, root
+removed the exact superseded f264 raw source and its empty WAL/SHM. The earlier
+proof result, metadata and active remote-CI log remain aggregate working evidence;
+no prior raw backup remains. The new owned source is for actual native acceptance.
+No production write, provider call, main merge or deployment followed. Native
+approve/revision, final-head CI, capacity recovery and full10+1 are still open.
