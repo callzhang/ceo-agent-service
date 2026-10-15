@@ -227,3 +227,28 @@ an actual migration. The original38-case adjacent run and exact19-case new
 file run remain separate receipts. The118-field figure is metadata coverage;
 behavior is sampled by the specified cases. No production, provider, native
 Agent CLI, policy or schema version change is part of this acceptance.
+
+### Unselected seven-kind Email configs storage plan, 2026-10-15
+
+`docs/superpowers/plans/2026-10-15-configs-email-storage-plan.md` is the next
+bounded, docs-only implementation plan. It covers exactly the seven existing
+Email config kinds and 73 captured source fields: four ordinary rowid tables
+and three immutable `WITHOUT ROWID` TEXT-primary-key tables. It gives finite
+target declaration, source-shaped write API and synthetic actual/fresh parity
+tests using the accepted 15-family/118-field metadata capture and 19-case
+source oracle. The target keeps raw source JSON TEXT values, native nullable
+TEXT keys, signed rowids, typed binding/promotion FKs, partial active-folder
+uniqueness, snapshot freeze semantics and six account blockers against current
+typed `actions`.
+
+The plan's code fences were extracted into an owned temporary package and
+checked without writing `app/`, `tests/` or source artifacts. The isolated
+synthetic run passed 73 plan cases across actual/fresh variants, including
+the seven-kind constraint matrix, with no production database or native
+Agent CLI use. This is plan-code self-check only; no target storage module or
+caller has been implemented in this worktree. Eight Skill/schedule/WeChat
+config kinds remain outside this first declaration, and final publication
+still requires complete 15-kind closure plus schedules/runs, the two receipt
+families, empty training-observation disposition, actual-copy and native
+acceptance. No schema version, production write, provider call, push or
+deployment is selected by this plan.
