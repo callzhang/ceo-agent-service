@@ -425,4 +425,9 @@ changed files and `git diff --check` passed. This local GREEN resolves the
 reproduced fixture failure path, but is not a replacement CI receipt. No app,
 schema, validator, source fixture JSON, real database, provider, native CLI,
 network push, main merge or deployment was changed or exercised by the repair.
-Fresh sequential SPEC and QUALITY review remain pending.
+Fresh sequential independent SPEC then QUALITY accepted the exact test-only
+range `e40349ab..925905d9`. Both verified archived source preservation,
+unchanged corruption/business assertions, same-transaction conversion order
+against the real paired release, and the actual publisher's retirement count.
+Neither reran the already passing 58 cases or changed repository files.
+Replacement exact-head remote CI remains outstanding.
