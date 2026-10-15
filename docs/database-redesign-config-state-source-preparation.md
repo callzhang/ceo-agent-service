@@ -408,6 +408,13 @@ and its capacity increase remain frozen-copy evidence, not production facts.
 
 #### Load receipt duplicate-body probe and explicit exception
 
+The live per-table receipt also compares all 121 same-named tables with the
+frozen source allocation: file and summed table/index net growth both equal
+1,118,208 bytes. The largest deltas are runs +552,960,
+business_source_documents +217,088 and managed_skill_revisions +106,496.
+This attributes allocated page changes to tables only; it does not determine
+which input/output content or writer caused each change.
+
 On the unchanged frozen source SHA256 `970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320`,
 all **4,105** load receipts are successful; their raw TEXT bodies contain
 **3,678,270 UTF-8 bytes** and 17 distinct body hashes. Every body exactly

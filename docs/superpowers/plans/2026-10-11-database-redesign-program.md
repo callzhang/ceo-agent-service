@@ -1,5 +1,35 @@
 # Database Redesign Program
 
+## Latest unselected configs storage and live readback, 2026-10-15
+
+Fresh sequential independent SPEC and QUALITY accept `dc15505d`'s seven Email
+config kinds/73 source fields and `9f695659`'s genuine published-fresh positive
+account mutation/cascade proof. Root separately passed 100 storage/source/
+metadata cases and the one archived constructor case. This is unselected
+`configs` storage: no default caller, migration, schema marker or production
+table changed. Eight config families/45 fields, schedules and the two Skill
+receipt conversions remain outside that local unit. The sixteen state families
+and bootstrap/deploy/dispatcher direct SQL dependencies are mapped, not converted.
+
+At 2026-10-15 20:09 UTC, live query-only metadata still shows **121 tables**,
+**486,330,368 logical bytes**, Store `2026-10-13.5` and Email51. Production
+checkout is `35d1636f`; no redesign deployment was performed. All per-table
+data/index totals are in the production-table-size readback receipt. Its frozen
+source comparison shows **1,118,208 net new allocated bytes**, chiefly runs
+552,960, business_source_documents 217,088 and managed_skill_revisions 106,496.
+These are page changes, not content-level growth causes. Account config is two
+rows/8,192 bytes; the separate provider inventory is 72,147 rows/24,956,928
+bytes. Do not report either 104 candidate tables or complete 10+1 as production.
+
+The frozen 970a source's 4,105 successful Skill load bodies all reconstruct
+byte-exactly from referenced configs (3,678,270 UTF-8 bytes,17 distinct bodies).
+The exact public serialization and native-SQL late-binding/noncanonical
+exceptions are recorded in the config source preparation. New source oracle
+`ee350913` passed four local cases; its independent reviews remain open. No
+body retirement or receipt compression is selected. The approved full target
+remains **ten core tables plus one ledger**; this work does not make legacy
+tables a permanent exception.
+
 ## Latest Provider source acceptance, 2026-10-15
 
 Sequential independent SPEC and QUALITY accepted source contract3b5c5939:

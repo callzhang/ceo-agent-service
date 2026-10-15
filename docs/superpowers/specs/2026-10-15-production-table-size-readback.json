@@ -750,5 +750,78 @@
     "email_accounts": 2,
     "scope": "read-only live snapshot; no deploy by this task; largest-object list contains indexes separately, not per-table totals"
   },
-  "scope": "Live readonly metadata only. No migration, writes, restart or deployment by this task. Table totals include their indexes; no source row bodies exported."
+  "scope": "Live readonly metadata only. No migration, writes, restart or deployment by this task. Table totals include their indexes; no source row bodies exported.",
+  "net_growth_vs_frozen_source": {
+    "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "scope": "Frozen source-copy allocated pages versus later live readonly allocated pages; per-table net page growth, not content-level causal attribution or migration savings.",
+    "file_growth_bytes": 1118208,
+    "table_count_unchanged": 121,
+    "table_and_index_net_growth_bytes": 1118208,
+    "deltas": [
+      {
+        "table": "runs",
+        "net_bytes": 552960
+      },
+      {
+        "table": "business_source_documents",
+        "net_bytes": 217088
+      },
+      {
+        "table": "managed_skill_revisions",
+        "net_bytes": 106496
+      },
+      {
+        "table": "actions",
+        "net_bytes": 69632
+      },
+      {
+        "table": "email_classifications",
+        "net_bytes": 36864
+      },
+      {
+        "table": "email_messages",
+        "net_bytes": 28672
+      },
+      {
+        "table": "business_task_events",
+        "net_bytes": 20480
+      },
+      {
+        "table": "business_task_signals",
+        "net_bytes": 20480
+      },
+      {
+        "table": "tasks",
+        "net_bytes": 16384
+      },
+      {
+        "table": "email_action_plans",
+        "net_bytes": 12288
+      },
+      {
+        "table": "email_actions",
+        "net_bytes": 12288
+      },
+      {
+        "table": "business_tasks",
+        "net_bytes": 12288
+      },
+      {
+        "table": "email_provider_observations",
+        "net_bytes": 8192
+      },
+      {
+        "table": "email_action_attempts",
+        "net_bytes": 4096
+      },
+      {
+        "table": "scheduled_task_config_versions",
+        "net_bytes": 4096
+      },
+      {
+        "table": "dispatcher_claim_leases",
+        "net_bytes": -4096
+      }
+    ]
+  }
 }
