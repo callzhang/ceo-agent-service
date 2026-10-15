@@ -134,3 +134,22 @@ continued after restart. The existing retained standard backup
 `auto-reply-2026-10-14.sqlite3` passed read-only `PRAGMA quick_check = ok`.
 Disposable diagnostic databases and generated navigation artifacts are removed
 at task end; regression code and this concise evidence remain in the repository.
+
+## launchd resource-class boundary
+
+Both the installed main job and repository template omitted `ProcessType`.
+The local `launchd.plist(5)` manual and [Apple's launchd manual source](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5)
+specify that an omitted value applies Standard CPU/I/O resource limits.
+Interactive is appropriate when application responsiveness depends on the job
+and Adaptive XPC activity cannot be used. This service responds through local
+HTTP rather than XPC. The template now declares Interactive, without changing
+program arguments, environment or the existing 4096-file limit. Existing
+installed settings are updated for the same key before the formal deploy
+re-bootstraps the job; the updater does not overwrite the whole native plist.
+
+A regression first observed the missing declaration and then passed with it.
+The observed standalone/live discrepancy motivates this configuration repair;
+actual latency improvement still requires the live post-restart comparison.
+The experimental three-index metadata query is not published: it adds about
+20% VM work and its single-run wall-clock gain was not stable. No database
+schema, unregistered index or new query cache is introduced by this repair.
