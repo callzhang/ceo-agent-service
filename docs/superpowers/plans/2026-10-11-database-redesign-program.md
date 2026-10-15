@@ -25,8 +25,9 @@ real native reply lifecycle branches with fake outbound are running separately.
 The paired target active pages increased32129024 bytes versus that frozen
 source, so table reduction is not capacity acceptance. Separate ancestor
 Business/Email CI38769762524 failed28 tests and nine setup cases, with14361
-passing; scoped closure887cd377 is pushed and replacement38785796782 remains
-in progress. No old production table has been removed. Full10+1 remains open.
+passing; scoped closure887cd377 is pushed and replacement38785796782 passes
+14401 Python cases,729 frontend cases, build and two browser cases. This
+exact ancestor CI does not cover later Provider or configs source commits. No old production table has been removed. Full10+1 remains open.
 
 ## Latest unpublished Business/Email acceptance, 2026-10-15
 
