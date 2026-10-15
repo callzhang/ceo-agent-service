@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "captured_at": "2026-10-15T10:36:30.556284+00:00",
+  "scope": "Current public Consumer preview; no selected business task, not historical actual-input reconstruction",
+  "role": "consumer",
+  "route": "codex_oauth",
+  "mode": "current",
+  "developer_chars": 35765,
+  "task_chars": 24,
+  "sections": [
+    {
+      "name": "角色合同",
+      "source": "服务角色合同",
+      "placement": "developer",
+      "characters": 785
+    },
+    {
+      "name": "Skill 使用约定",
+      "source": "服务角色合同",
+      "placement": "developer",
+      "characters": 310
+    },
+    {
+      "name": "共同工作原则",
+      "source": "已保存 Developer 模板",
+      "placement": "developer",
+      "characters": 625
+    },
+    {
+      "name": "系统动作目录",
+      "source": "系统动作合同",
+      "placement": "developer",
+      "characters": 922
+    },
+    {
+      "name": "输出契约",
+      "source": "Pydantic 业务模型",
+      "placement": "developer",
+      "characters": 9737
+    },
+    {
+      "name": "能力边界",
+      "source": "服务能力合同",
+      "placement": "developer",
+      "characters": 4482
+    },
+    {
+      "name": "后台记忆说明",
+      "source": "服务运行合同",
+      "placement": "developer",
+      "characters": 350
+    },
+    {
+      "name": "角色边界",
+      "source": "服务角色合同",
+      "placement": "developer",
+      "characters": 2741
+    },
+    {
+      "name": "决策证据",
+      "source": "服务决策质量合同",
+      "placement": "developer",
+      "characters": 3505
+    },
+    {
+      "name": "应用结果合同",
+      "source": "服务应用合同",
+      "placement": "developer",
+      "characters": 891
+    },
+    {
+      "name": "工作人格",
+      "source": "已保存 Work Profile",
+      "placement": "developer",
+      "characters": 8532
+    },
+    {
+      "name": "运行上下文",
+      "source": "实际运行配置",
+      "placement": "developer",
+      "characters": 2863
+    },
+    {
+      "name": "任务输入",
+      "source": "当前任务正文",
+      "placement": "task",
+      "characters": 24
+    }
+  ],
+  "boundary": "Metadata only. Source content, Profile body, secrets and business records are not stored."
+}

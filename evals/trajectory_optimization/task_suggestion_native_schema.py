@@ -13,12 +13,6 @@ def suggestion_output_schema():
     schema = task_agent_output_schema()
     original = schema["$defs"]["TaskDecision"]
     properties = original["properties"]
-    shared = {}
-    for field, definition in properties.items():
-        name = f"TaskDecisionField_{field}"
-        schema["$defs"][name] = definition
-        shared[field] = {"$ref": f"#/$defs/{name}"}
-
     def non_null(field):
         return deepcopy(next(part for part in properties[field]["anyOf"] if part.get("type") != "null"))
 
@@ -35,10 +29,21 @@ def suggestion_output_schema():
         {**suggestion, "action": {"type": "string", "enum": ["record_candidate"]}, "transition": {"type": "string", "enum": ["none"]}},
         {**suggestion, "action": {"type": "string", "enum": ["update_task"]}, "transition": {"type": "string", "enum": ["update_fields"]}, "task_id": non_null("task_id")},
     ]
+    shared = {}
+    for index, (field, definition) in enumerate(properties.items()):
+        if any(field not in restriction for restriction in restrictions):
+            name = f"TS{index}"
+            schema["$defs"][name] = definition
+            shared[field] = {"$ref": f"#/$defs/{name}"}
     variants = []
     for restriction in restrictions:
         variant = {key: deepcopy(value) for key, value in original.items() if key != "properties"}
-        variant["properties"] = {field: deepcopy(restriction.get(field, reference)) for field, reference in shared.items()}
+        variant["properties"] = {}
+        for field, definition in properties.items():
+            selected = deepcopy(restriction.get(field, shared.get(field)))
+            if field in restriction and "description" in definition:
+                selected["description"] = definition["description"]
+            variant["properties"][field] = selected
         variants.append(variant)
     schema["$defs"]["TaskDecision"] = {"anyOf": variants}
     return schema

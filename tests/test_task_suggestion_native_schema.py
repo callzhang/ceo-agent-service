@@ -61,3 +61,21 @@ def test_base_schema_and_other_definitions_are_untouched():
         if key != "TaskDecision":
             assert result["$defs"][key] == value
     assert {k: v for k, v in result.items() if k != "$defs"} == {k: v for k, v in original.items() if k != "$defs"}
+
+
+def test_every_branch_preserves_original_field_descriptions():
+    original = task_agent_output_schema()["$defs"]["TaskDecision"]["properties"]
+    schema = suggestion_output_schema()
+    for variant in schema["$defs"]["TaskDecision"]["anyOf"]:
+        for field, definition in variant["properties"].items():
+            if "$ref" in definition and "description" not in definition:
+                definition = schema["$defs"][definition["$ref"].split("/")[-1]]
+            assert definition.get("description") == original[field].get("description"), field
+
+
+def test_added_shared_definitions_are_all_used():
+    original_names = set(task_agent_output_schema()["$defs"])
+    schema = suggestion_output_schema()
+    variants = json.dumps(schema["$defs"]["TaskDecision"])
+    for added in set(schema["$defs"]) - original_names:
+        assert f"#/$defs/{added}" in variants

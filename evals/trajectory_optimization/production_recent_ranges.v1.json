@@ -1,0 +1,483 @@
+{
+  "version": 1,
+  "asof_utc": "2026-10-15T10:32:28.238017+00:00",
+  "scope": "Readonly most recent8 production execution/audit native ranges; structure/provenance only, no new task or business replay",
+  "attempts": [
+    {
+      "id": 361262,
+      "workload_key": "361261",
+      "session_mode": "fresh",
+      "status": "completed",
+      "failure_code": "",
+      "transcript_start": 0,
+      "transcript_end": 59,
+      "started_at": "2026-10-15 10:29:28",
+      "role": "audit",
+      "reply_task_id": 405043,
+      "codex_session_id": "01a13f1c-1f12-7d00-83be-c92bf4db1b43",
+      "native_available": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T03-29-30-01a13f1c-1f12-7d00-83be-c92bf4db1b43.jsonl",
+      "range_sha256": "4db469e7fdc02845fe802841e9b1f7f8e74bee752f3bf4e2b3b348ccf8fb8b89",
+      "tools": [
+        {
+          "line": 13,
+          "name": "exec"
+        },
+        {
+          "line": 19,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 24,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 29,
+          "name": "read_system_action_contract"
+        },
+        {
+          "line": 36,
+          "name": "read_dingtalk_messages"
+        },
+        {
+          "line": 41,
+          "name": "read_dingtalk_oa"
+        },
+        {
+          "line": 48,
+          "name": "search_dingtalk_contacts"
+        }
+      ],
+      "tool_output_clipping_lines": [],
+      "inputs": [
+        {
+          "line": 3,
+          "role": "developer",
+          "chars": 34488
+        },
+        {
+          "line": 4,
+          "role": "user",
+          "chars": 4832
+        },
+        {
+          "line": 7,
+          "role": "user",
+          "chars": 17241
+        }
+      ]
+    },
+    {
+      "id": 361257,
+      "workload_key": "361256",
+      "session_mode": "fresh",
+      "status": "completed",
+      "failure_code": "",
+      "transcript_start": 0,
+      "transcript_end": 92,
+      "started_at": "2026-10-15 10:28:33",
+      "role": "consumer",
+      "reply_task_id": 405043,
+      "codex_session_id": "01a13f1b-4de3-78d2-a8a3-657d1e957cef",
+      "native_available": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T03-28-36-01a13f1b-4de3-78d2-a8a3-657d1e957cef.jsonl",
+      "range_sha256": "fb9a2bfb70222450f8d7a6ebe9ec19611969dd9184b3d0449d2c1ffc2bd2d509",
+      "tools": [
+        {
+          "line": 13,
+          "name": "exec"
+        },
+        {
+          "line": 20,
+          "name": "exec"
+        },
+        {
+          "line": 26,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 31,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 36,
+          "name": "read_system_action_contract"
+        },
+        {
+          "line": 43,
+          "name": "read_dingtalk_messages"
+        },
+        {
+          "line": 52,
+          "name": "list_dingtalk_pending_oa"
+        },
+        {
+          "line": 59,
+          "name": "exec"
+        },
+        {
+          "line": 65,
+          "name": "read_dingtalk_oa"
+        },
+        {
+          "line": 72,
+          "name": "read_dingtalk_oa_tasks"
+        },
+        {
+          "line": 81,
+          "name": "read_system_action_contract"
+        }
+      ],
+      "tool_output_clipping_lines": [],
+      "inputs": [
+        {
+          "line": 3,
+          "role": "developer",
+          "chars": 36889
+        },
+        {
+          "line": 4,
+          "role": "user",
+          "chars": 5438
+        },
+        {
+          "line": 7,
+          "role": "user",
+          "chars": 8570
+        }
+      ]
+    },
+    {
+      "id": 361237,
+      "workload_key": "361236",
+      "session_mode": "fresh",
+      "status": "completed",
+      "failure_code": "",
+      "transcript_start": 0,
+      "transcript_end": 54,
+      "started_at": "2026-10-15 10:18:23",
+      "role": "audit",
+      "reply_task_id": 405041,
+      "codex_session_id": "01a13f11-ff9e-7e13-83d7-a72e4e801032",
+      "native_available": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T03-18-26-01a13f11-ff9e-7e13-83d7-a72e4e801032.jsonl",
+      "range_sha256": "8b9dc638ff406c4c8cc629252dcf569a65e559433081fcea077a365e232f1644",
+      "tools": [
+        {
+          "line": 13,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 18,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 23,
+          "name": "read_system_action_contract"
+        },
+        {
+          "line": 30,
+          "name": "exec"
+        },
+        {
+          "line": 36,
+          "name": "read_dingtalk_messages"
+        },
+        {
+          "line": 43,
+          "name": "read_dingtalk_document"
+        }
+      ],
+      "tool_output_clipping_lines": [],
+      "inputs": [
+        {
+          "line": 3,
+          "role": "developer",
+          "chars": 33648
+        },
+        {
+          "line": 4,
+          "role": "user",
+          "chars": 4832
+        },
+        {
+          "line": 7,
+          "role": "user",
+          "chars": 35214
+        }
+      ]
+    },
+    {
+      "id": 361232,
+      "workload_key": "361231",
+      "session_mode": "resume",
+      "status": "completed",
+      "failure_code": "",
+      "transcript_start": 97,
+      "transcript_end": 157,
+      "started_at": "2026-10-15 10:17:17",
+      "role": "consumer",
+      "reply_task_id": 405041,
+      "codex_session_id": "01a13d49-c82f-7343-b4c5-5e623f98a06a",
+      "native_available": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T19-00-08-01a13d49-c82f-7343-b4c5-5e623f98a06a.jsonl",
+      "range_sha256": "7affadfa53057bba1414ce027f27af574e815e3de3810b4ad0245b8ed946d04a",
+      "tools": [
+        {
+          "line": 110,
+          "name": "exec"
+        },
+        {
+          "line": 117,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 122,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 127,
+          "name": "read_system_action_contract"
+        },
+        {
+          "line": 132,
+          "name": "read_dingtalk_messages"
+        },
+        {
+          "line": 139,
+          "name": "read_dingtalk_document_info"
+        },
+        {
+          "line": 144,
+          "name": "read_dingtalk_document"
+        }
+      ],
+      "tool_output_clipping_lines": [],
+      "inputs": [
+        {
+          "line": 100,
+          "role": "user",
+          "chars": 1058
+        },
+        {
+          "line": 101,
+          "role": "developer",
+          "chars": 924
+        },
+        {
+          "line": 104,
+          "role": "user",
+          "chars": 23349
+        }
+      ]
+    },
+    {
+      "id": 361176,
+      "workload_key": "361175",
+      "session_mode": "fresh",
+      "status": "completed",
+      "failure_code": "",
+      "transcript_start": 0,
+      "transcript_end": 42,
+      "started_at": "2026-10-15 09:59:09",
+      "role": "audit",
+      "reply_task_id": 405039,
+      "codex_session_id": "01a13f00-637f-7623-9d29-93edd5828141",
+      "native_available": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T02-59-12-01a13f00-637f-7623-9d29-93edd5828141.jsonl",
+      "range_sha256": "7921872b6f4dce5bffd8be7a85ac8aef12b0157f36070430dbd1325b1cdc9ddb",
+      "tools": [
+        {
+          "line": 11,
+          "name": "exec"
+        },
+        {
+          "line": 19,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 24,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 31,
+          "name": "read_dingtalk_messages"
+        }
+      ],
+      "tool_output_clipping_lines": [],
+      "inputs": [
+        {
+          "line": 3,
+          "role": "developer",
+          "chars": 33668
+        },
+        {
+          "line": 4,
+          "role": "user",
+          "chars": 4832
+        },
+        {
+          "line": 7,
+          "role": "user",
+          "chars": 25144
+        }
+      ]
+    },
+    {
+      "id": 361172,
+      "workload_key": "361171",
+      "session_mode": "resume",
+      "status": "completed",
+      "failure_code": "",
+      "transcript_start": 49,
+      "transcript_end": 88,
+      "started_at": "2026-10-15 09:58:27",
+      "role": "consumer",
+      "reply_task_id": 405039,
+      "codex_session_id": "01a13efc-5a50-7742-87c9-b297670fde97",
+      "native_available": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T02-54-48-01a13efc-5a50-7742-87c9-b297670fde97.jsonl",
+      "range_sha256": "a721a9ab2e86c67b3643138a4fdd534f0e02fe3fecae45d6dba3b6fa05916904",
+      "tools": [
+        {
+          "line": 62,
+          "name": "exec"
+        },
+        {
+          "line": 67,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 72,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 77,
+          "name": "read_dingtalk_messages"
+        }
+      ],
+      "tool_output_clipping_lines": [],
+      "inputs": [
+        {
+          "line": 52,
+          "role": "user",
+          "chars": 1058
+        },
+        {
+          "line": 53,
+          "role": "developer",
+          "chars": 924
+        },
+        {
+          "line": 56,
+          "role": "user",
+          "chars": 18609
+        }
+      ]
+    },
+    {
+      "id": 361161,
+      "workload_key": "361160",
+      "session_mode": "fresh",
+      "status": "completed",
+      "failure_code": "",
+      "transcript_start": 0,
+      "transcript_end": 36,
+      "started_at": "2026-10-15 09:55:21",
+      "role": "audit",
+      "reply_task_id": 405037,
+      "codex_session_id": "01a13efc-e7bf-7153-807e-72564c9af020",
+      "native_available": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T02-55-24-01a13efc-e7bf-7153-807e-72564c9af020.jsonl",
+      "range_sha256": "bb633ab2508be6f4306d57f26ce781fb0bdced8f109634a369f8bf17c7c89853",
+      "tools": [
+        {
+          "line": 13,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 18,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 25,
+          "name": "read_dingtalk_messages"
+        }
+      ],
+      "tool_output_clipping_lines": [],
+      "inputs": [
+        {
+          "line": 3,
+          "role": "developer",
+          "chars": 33668
+        },
+        {
+          "line": 4,
+          "role": "user",
+          "chars": 4832
+        },
+        {
+          "line": 7,
+          "role": "user",
+          "chars": 26906
+        }
+      ]
+    },
+    {
+      "id": 361155,
+      "workload_key": "361154",
+      "session_mode": "fresh",
+      "status": "completed",
+      "failure_code": "",
+      "transcript_start": 0,
+      "transcript_end": 47,
+      "started_at": "2026-10-15 09:54:48",
+      "role": "audit",
+      "reply_task_id": 405035,
+      "codex_session_id": "01a13efc-635d-7482-86a3-e6082fb2c351",
+      "native_available": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T02-54-50-01a13efc-635d-7482-86a3-e6082fb2c351.jsonl",
+      "range_sha256": "044e70fda151bfad10e3b60c5bd048517d64645e24b1915e805c3be2977a12ef",
+      "tools": [
+        {
+          "line": 13,
+          "name": "exec"
+        },
+        {
+          "line": 19,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 24,
+          "name": "read_task_skill"
+        },
+        {
+          "line": 29,
+          "name": "read_system_action_contract"
+        },
+        {
+          "line": 36,
+          "name": "read_dingtalk_messages"
+        }
+      ],
+      "tool_output_clipping_lines": [],
+      "inputs": [
+        {
+          "line": 3,
+          "role": "developer",
+          "chars": 32724
+        },
+        {
+          "line": 4,
+          "role": "user",
+          "chars": 4832
+        },
+        {
+          "line": 7,
+          "role": "user",
+          "chars": 20909
+        }
+      ]
+    }
+  ]
+}
