@@ -97,7 +97,9 @@ class GroupDiscoveryRequest:
 
 
 @dataclass(frozen=True)
-class ParticipantCoverageEvidence:
+class MemberPrecisionEvidence:
+    """Matched reference members / complete group members; never permission."""
+
     matched: int | None
     total: int | None
     status: str
@@ -134,7 +136,7 @@ class GroupHistoryReadDenied(RuntimeError):
 @dataclass(frozen=True)
 class GroupEvidence:
     title_score: float | None = None
-    participant_coverage: ParticipantCoverageEvidence | None = None
+    member_precision: MemberPrecisionEvidence | None = None
     discussion: DiscussionEvidence | None = None
     sendability: Sendability | None = None
     prior_delivery_count: int = 0
@@ -184,11 +186,11 @@ class GroupDiscoveryProvider(Protocol):
 class GroupDiscoveryPolicy(Protocol):
     def build_queries(self, request: GroupDiscoveryRequest) -> Sequence[str]: ...
 
-    def participant_coverage(
+    def member_precision(
         self,
         request: GroupDiscoveryRequest,
         members: Sequence[MemberRef],
-    ) -> ParticipantCoverageEvidence: ...
+    ) -> MemberPrecisionEvidence: ...
 
     def title_score(self, request: GroupDiscoveryRequest, title: str) -> float: ...
 
@@ -235,8 +237,8 @@ class GroupDiscoveryService:
 
             candidate_groups = tuple(groups.values())
             prechecked_sendability: dict[tuple[str, str, str], Sendability] = {}
-            # With no authoritative attendee filter, title selection is
-            # independent of member reads. Do not fetch discarded rosters.
+            # With incomplete reference participants, title selection is
+            # independent of precision evidence. Do not fetch discarded rosters.
             if not request.audience_is_complete:
                 for group in candidate_groups:
                     sendability = (
@@ -261,9 +263,8 @@ class GroupDiscoveryService:
                     candidate_groups = title_selected
 
             staged: list[tuple[GroupRef, GroupEvidence]] = []
-            audience_keys = {member.scoped_key for member in request.audience}
             for group in candidate_groups:
-                coverage: ParticipantCoverageEvidence | None = None
+                precision: MemberPrecisionEvidence | None = None
                 members: tuple[MemberRef, ...] | None = None
                 if self.provider.capabilities.member_lists:
                     unique_members: dict[tuple[str, str, str], MemberRef] = {}
@@ -273,17 +274,12 @@ class GroupDiscoveryService:
                         unique_members.setdefault(member.scoped_key, member)
                     members = tuple(unique_members.values())
                     reads += 1
-                if request.audience_is_complete:
-                    if not self.provider.capabilities.member_lists:
-                        coverage = ParticipantCoverageEvidence(None, len(request.audience), "unavailable")
-                    else:
-                        member_keys = {member.scoped_key for member in members}
-                        matched = len(audience_keys & member_keys)
-                        coverage = self.policy.participant_coverage(request, members)
-                        if coverage.matched is None:
-                            coverage = ParticipantCoverageEvidence(matched, len(request.audience), coverage.status)
-                        if coverage.status == "ineligible":
-                            continue
+                if members is None:
+                    precision = MemberPrecisionEvidence(None, None, "unavailable")
+                else:
+                    precision = self.policy.member_precision(request, members)
+                    if request.audience_is_complete and precision.status == "ineligible":
+                        continue
 
                 title_score = self.policy.title_score(request, group.display_name)
                 sendability: Sendability | None = None
@@ -296,7 +292,7 @@ class GroupDiscoveryService:
                         continue
                 elif self.provider.capabilities.sendability is False:
                     sendability = Sendability(None, "unavailable")
-                staged.append((group, GroupEvidence(title_score=title_score, participant_coverage=coverage, sendability=sendability, members=members)))
+                staged.append((group, GroupEvidence(title_score=title_score, member_precision=precision, sendability=sendability, members=members)))
 
             minimum_title_score = self.policy.minimum_title_score(request)
             if any((evidence.title_score or 0) >= minimum_title_score for _, evidence in staged):
@@ -333,7 +329,7 @@ class GroupDiscoveryService:
                     group=group,
                     evidence=GroupEvidence(
                         title_score=evidence.title_score,
-                        participant_coverage=evidence.participant_coverage,
+                        member_precision=evidence.member_precision,
                         discussion=discussion,
                         sendability=Sendability(None, denial.reason) if denial else evidence.sendability,
                         members=evidence.members,
@@ -370,9 +366,9 @@ class GroupDiscoveryService:
     @staticmethod
     def _sort_key(candidate: GroupCandidate) -> tuple[float, float, float]:
         evidence = candidate.evidence
-        coverage = evidence.participant_coverage.ratio if evidence.participant_coverage else 0.0
+        precision = evidence.member_precision.ratio if evidence.member_precision else 0.0
         discussion = evidence.discussion.score if evidence.discussion else 0.0
-        return (discussion, evidence.title_score or 0.0, coverage or 0.0)
+        return (discussion, evidence.title_score or 0.0, precision or 0.0)
 
 
 class DingTalkGroupDiscoveryProvider:

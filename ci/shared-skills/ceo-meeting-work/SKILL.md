@@ -27,6 +27,16 @@ Load the matching chat or document-comment Skill only when delivery requires it.
 Use `ceo-calendar-invite` for attendance decisions and `ceo-work-tracking` when
 an agreed action becomes tracked work.
 
+## Management Weekly Meeting
+
+When preparing or revising Derek's management weekly agenda, report template,
+company-health section, or meeting feedback, read
+[management-weekly.md](references/management-weekly.md). It contains the
+confirmed 90-minute agenda, 3–5 core metrics per department, short inline metric
+rules, and the distinction between a shared blank template and restricted
+actual financial data. Apply this mode to management weekly work; do not impose
+it on other meeting types.
+
 ## Read Evidence Deliberately
 
 1. Identify the requested meeting outcome: preparation, summary, decision,
@@ -65,6 +75,17 @@ requested information found in the meeting evidence.
   recipients. Never send a private split or fallback to the current principal
   or a verified self alias. An unreadable or unsendable group does not authorize
   a different audience. Missing evidence remains a real dependency failure.
+- Layoff, workforce reduction and personnel optimization plans are sensitive even
+  without individual names or counts. Their existence, progress, timing, lists,
+  handover and replacement arrangements must not enter a business group unless
+  every current member is independently authorized for that exact content.
+  Verify the complete roster, stable identities and actual disclosure permission,
+  including nonparticipants; business relevance, past discussion, HR or management
+  titles and attendee overlap do not establish permission. Member matching uses
+  precision (matched reference participants / complete group members, 3/N), never
+  attendee recall (3/3); precision is discovery evidence, never authorization.
+  Unknown permission excludes the sensitive section, including hints in questions
+  and task mentions; keep it unresolved if no authorized recipient is established.
 - Ordinary ownership, delivery progress, project risk, and business results
   remain business content even when a person is named.
 - Place every participant mention adjacent to that person's concrete task,

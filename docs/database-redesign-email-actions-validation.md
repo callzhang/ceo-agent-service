@@ -2977,3 +2977,39 @@ evidence), then push the candidate and obtain fresh CI and actual source-copy/
 native acceptance. Existing capacity increase and full10+1 remaining scope
 remain explicit. No production write, provider operation, main merge or deploy
 is accepted by this local test unit.
+
+### Exact main 5aa6909a integration (2026-10-15)
+
+The isolated Email-actions branch at `d5abeaae079f608f9d414b8447c8551b52728c84`
+claimed this merge in `14fee9e4` and merged exact main
+`5aa6909ac79dec1f51bd5b75d86691b5ed24f13b` with a normal two-parent
+merge. The prior main merge base was `633f5e59d8235826b747a2afc55b3217dd0d8611`.
+The incoming increment contains 24 paths: 23 meeting/personnel runtime, Skill,
+test, eval and documentation paths through `131ae6a8e289cb63638c17e9f345d5c9fc17ad84`,
+plus one release-evidence file in `5aa6909a`. Git merged without conflicts.
+All incoming paths except shared `docs/agent-claims.md`,
+`docs/architecture.md` and `docs/runtime-mechanism.md` are byte-identical to
+`5aa6909a`. Those three shared documents retain both the incoming meeting
+contract and the candidate's Email redesign notes. The central candidate
+`app/action_storage.py`, `app/store.py`, `app/email_store.py`,
+`app/action_email_schema_release.py`, `app/audit_web.py` and
+`scripts/validate_action_email_copy.py` are byte-identical to their
+pre-merge `14fee9e4` versions.
+
+Focused validation used `/Users/derek/miniforge3/bin/python -m pytest -q`
+with an explicit owned `--basetemp` under `/tmp/ceo-email-main-5aa.J0NPdD`
+and these files: `test_group_discovery.py`, `test_meeting_alignment.py`,
+`test_meeting_alignment_agent.py`, `test_meeting_alignment_delivery.py`,
+`test_meeting_audience_eval.py`, `test_meeting_member_precision.py`,
+`test_meeting_alignment_models.py` and `test_meeting_recovery_safety.py`.
+Result: **415 passed in 139.76 seconds**. Scoped Ruff on the seven incoming
+Python implementation/script files and six changed test files passed. Merge
+index, working-tree and main-diff whitespace checks passed. The earlier
+`app/prompt_schema.py` EOF blank-line observation remains inherited from
+main633 and was not changed or represented as an integration fix.
+The exact owned basetemp directory was removed after the aggregate receipt;
+its absence was verified.
+
+This unit is local integration evidence only. The full Email redesign,
+fresh Linux CI, actual source-copy/native validation, push and publication
+remain with the root owner; this unit made no provider or production write.

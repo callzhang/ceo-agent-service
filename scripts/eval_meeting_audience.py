@@ -29,6 +29,14 @@ d=MeetingAlignmentDecision.model_validate(x['result'])
 _validate_source_aware_target(MeetingSource.model_validate(x['source']),d,group_candidates=x['groups'])
 print(d.model_dump_json())
 """
+RENDER = """
+import json,sys
+from app.meeting_alignment_models import MeetingSource,MeetingAlignmentDecision
+from app.meeting_alignment_delivery import meeting_followup_message
+x=json.load(sys.stdin)
+print(meeting_followup_message(MeetingAlignmentDecision.model_validate(x['result']),
+    MeetingSource.model_validate(x['source'])))
+"""
 
 
 def run_local(root, program, payload):
@@ -46,6 +54,11 @@ def score(case, result):
     if result.get("action") != "send" or result.get("audience_scope") != "business":
         return False
     if any(target.get(k) != v for k, v in case["expected_target"].items()):
+        return False
+    body = result.get("message_title", "") + "\n" + result.get("final_message", "")
+    if case.get("public_forbidden_marker") and case["public_forbidden_marker"] in body:
+        return False
+    if case.get("public_required_marker") and case["public_required_marker"] not in body:
         return False
     expected_private = case["expected_private_user_id"]
     if expected_private is None:
@@ -76,7 +89,7 @@ def main():
             root = Path(raw)
             archive_ref(ref, root)
             for case in manifest["cases"]:
-                source = {"meeting_id":case["id"], "title":"Pilot review", "status":"ended",
+                source = {"meeting_id":case["id"], "title":case.get("source_title", "Pilot review"), "status":"ended",
                     "started_at":"2026-10-01T10:00:00+00:00", "ended_at":"2026-10-01T10:20:00+00:00",
                     "participants":manifest["participants"], "attendee_evidence":"transcript",
                     "attendee_roster_complete":False, "creator":None, "current_user_id":"principal",
@@ -93,9 +106,13 @@ def main():
                     prompt=prompt, timeout=manifest["settings"]["timeout_seconds_per_case"])
                 validation = run_local(root, VALIDATE, {**payload,"result":native.get("result")})
                 valid = native["ok"] and validation.returncode == 0
+                rendered = run_local(root, RENDER, {**payload,"result":native.get("result")}) if valid else None
+                valid = valid and rendered is not None and rendered.returncode == 0
+                rendered_body = rendered.stdout.strip() if valid else ""
                 rows.append({"id":case["id"], "prompt_sha256":sha256(prompt.encode()).hexdigest(),
                     "native":native, "validation_ok":valid, "validation_error":validation.stderr[-1500:] if not valid else "",
-                    "passed":valid and score(case,native.get("result"))})
+                    "rendered_message":rendered_body,
+                    "passed":valid and score(case,{**native["result"],"final_message":rendered_body})})
                 print(f"{label} {case['id']}: {rows[-1]['passed']}", flush=True)
         report[label] = {"ref":ref,"cases":rows,"passed":sum(r["passed"] for r in rows)}
         args.output.parent.mkdir(parents=True,exist_ok=True)
