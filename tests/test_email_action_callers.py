@@ -1055,31 +1055,54 @@ def test_store_first_rejects_preexisting_unversioned_email_configuration(tmp_pat
         assert _fingerprint(path) == before
 
 
-def _old_provider_signal_column_readback(store, classification):
-    with store._connect() as db:
-        return [
-            list(row)
-            for row in db.execute("pragma table_info(email_provider_observations)")
-            if row[1] == "important_signals_json"
-        ]
+@pytest.mark.parametrize("damage", (
+    "missing_folder_index", "column_affinity", "kind_constraint",
+    "mixed_old_table", "mixed_old_view",
+))
+def test_current_provider_malformed_target_refused_before_constructor_mutation(tmp_path, monkeypatch, damage):
+    import app.store as store_module
 
+    path = tmp_path / "malformed-provider.sqlite3"
+    AutoReplyStore(path)
+    EmailStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
+        if damage == "missing_folder_index":
+            db.execute("drop index idx_provider_state_observation_folder")
+        elif damage in {"mixed_old_table", "mixed_old_view"}:
+            db.execute(
+                "create table email_provider_observations(id integer)" if damage == "mixed_old_table"
+                else "create view email_provider_observations as select 1 as id"
+            )
+        else:
+            sql = db.execute("select sql from sqlite_schema where name='provider_state'").fetchone()[0]
+            old, new = (
+                ("stable_message_identity TEXT,", "stable_message_identity NUMERIC,")
+                if damage == "column_affinity" else
+                ("record_type IN ('observation','folder_generation')",
+                 "record_type IN ('observation','folder_generation','other')")
+            )
+            assert sql.count(old) == 1
+            cookie = db.execute("pragma schema_version").fetchone()[0]
+            db.execute("pragma writable_schema=on")
+            db.execute("update sqlite_schema set sql=? where name='provider_state'", (sql.replace(old, new),))
+            db.execute(f"pragma schema_version={cookie + 1}")
+            db.execute("pragma writable_schema=off")
+        db.commit()
+    before = _fingerprint(path)
+    bytes_before = path.read_bytes()
+    store_module._INITIALIZED_STORE_PATHS.add(path.resolve())
 
-def test_current_provider_observation_signal_repair_matches_genuine51(predecessor):
-    from tests.test_email_action_plan_direct_dao import _genuine_old_result
+    def unexpected(*args, **kwargs):
+        raise AssertionError("malformed provider target reached an initializer")
 
-    source = predecessor[3]
-    with closing(sqlite3.connect(source)) as db, db:
-        db.execute("alter table email_provider_observations drop column important_signals_json")
-    expected = _genuine_old_result(predecessor, _old_provider_signal_column_readback)
-    assert len(expected) == 1
-    release = prepare_database_schema_release(ROOT, source)
-    release.publish()
-    markers = _markers(source)
-    for validate_rows in (False, True):
-        with closing(sqlite3.connect(source)) as db, db:
-            db.execute("alter table email_provider_observations drop column important_signals_json")
-        store = EmailStore(source, validate_rows=validate_rows)
-        assert _old_provider_signal_column_readback(store, predecessor[1]) == expected
-        assert _markers(source) == markers
-        with store._connect() as db:
-            _target_shape(db)
+    monkeypatch.setattr(AutoReplyStore, "_ensure_wal_journal_mode", unexpected)
+    monkeypatch.setattr(EmailStore, "_initialize", unexpected)
+    try:
+        for constructor in (AutoReplyStore, EmailStore):
+            with pytest.raises(sqlite3.IntegrityError, match="provider-state"):
+                constructor(path)
+            assert _fingerprint(path) == before and path.read_bytes() == bytes_before
+            assert not path.with_name(path.name + "-wal").exists()
+    finally:
+        store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())

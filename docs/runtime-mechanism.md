@@ -1,5 +1,13 @@
 # Current Runtime Mechanism
 
+The unselected `app/provider_state_storage.py` unit has point reads and writes,
+batch upserts and set-based reconciliation for observations and folder
+generations in one typed `provider_state` table. Its composite keys remain
+account-scoped; a generation's `observed_at` can overlay an observation's time
+when a later caller projects classification state. Every write requires a
+caller-owned transaction. No current Store constructor or provider path selects
+this table; the original two source tables remain the runtime contract.
+
 The unpublished Store `2026-10-14.1`/Email52 candidate selects the four-kind
 Business storage unit for Task, Project,
 Anchor and Project context revision together, preserving all 42 existing source
@@ -48,16 +56,21 @@ previously unlinked Project unlinked and preserves any existing confirmed CRM
 association; the endpoint does not write back to CRM. The writer's
 active-transaction requirement remains unchanged.
 
-`scripts/validate_action_email_copy.py` has one combined Business/Email paired
-case. It binds the source to the published `7dadc492` Store19/Email51 marker,
-ledger and Email/Business declaration fingerprints before operating on owned
-SQLite copies. In that case, moved Business parents and rebuilt children are
-compared as source-shaped facts instead of unchanged tables; all other ordinary
-tables retain the unchanged-row proof. A cold subprocess imports the published
-old code for Task, Anchor, Project, context and Email writes after inverse.
-The three separate SQL-boundary cases remain Email-only. The native copied-DB
-harness checks the combined target Business declaration before taking its
-immutable pre-native baseline.
+`scripts/validate_action_email_copy.py` has one combined Provider/Business/Email
+paired case. It binds the source to the published `7dadc492` Store19/Email51
+marker, ledger and Email/Business declarations, and requires the accepted
+actual Provider source declarations, before operating on owned SQLite copies.
+Moved Provider rows and Business parents/rebuilt children have separate
+source-shaped value/type proofs; all other ordinary tables retain the
+unchanged-row proof. Current Provider scan, flag and generation writes are
+restricted to synthetic fixture identities while original Provider rows remain
+intact. A later repeated observation keeps its exact values, types and earlier
+observation time while its folder generation moves to the later scan time.
+After current-fact inverse, a cold subprocess imports the published old
+code for Provider, Task, Anchor, Project, context and Email writes. The three
+separate SQL-boundary cases remain Email-only. The native copied-DB harness
+requires the exact combined Provider and Business target declarations before
+taking its immutable pre-native baseline.
 
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
 can reconstruct an exact historical source body from already recorded Codex or
@@ -2834,6 +2847,9 @@ Email schema 47→48 在现有初始化事务内删除
 或要求该索引，重复启动不重建它；folder 索引仍为 required schema。
 点查使用原主键，文件夹查询使用原 folder 索引。删除索引释放数据库内部页，
 不代表 SQLite 文件已经缩小；实际文件回收是独立的维护步骤。
+本段是已发布 47→48 的历史行为。未发布的 Store20/Email52 候选将
+两张 provider 表合并为 `provider_state`，以两个身份 partial unique 索引
+和一个 observation-folder partial 索引服务当前查询。
 
 ## Schema publication and failed-start rollback
 
@@ -3413,8 +3429,9 @@ current retained nonactions, ledger, original seeds, translated blockers and52;
 rollback returns to Store-first. No historical0→51/action_plan_json/old13 creation
 runs. Current reopen and source51 migration leave existing empty config/revision
 sets empty. Existing coherent-current Store repair behavior is retained. Email current
-reopen still invokes its original provider-observation `important_signals_json`
-column helper before validation, preserving the existing missing-column repair.
+reopen validates the exact current `provider_state` declaration before durable
+reads. The old Email51 provider-observation signal-column repair is retired;
+malformed marker-correct current targets are refused without repair.
 
 Local tests cover real constructors, both orders/concurrency, child fault/crash,
 current-fact inverse and the actual RepositoryUpdater lifecycle using the newly
@@ -3443,7 +3460,9 @@ before entering its original current-known-repair path. Missing Email auxiliarie
 remain missing without schema/fact/marker/DB-byte or DELETE-journal changes.
 The shared action table/public-ID index and all prior Store repair paths retain
 their existing treatment. Normal Email→Store call count/lock order, current
-provider-signal column repair, fresh orders and coordinator/inverse are unchanged.
+provider-state exact current validation, fresh orders and coordinator/inverse
+remain as described in the current candidate. The old provider signal-column
+repair is retired.
 No general factory, writer, source contract or Task5A consumer was changed.
 This is an unpublished regression correction, not final Task5 acceptance.
 

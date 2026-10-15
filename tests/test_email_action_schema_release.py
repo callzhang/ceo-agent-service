@@ -19,6 +19,10 @@ from app.email_current_schema import (
 )
 from tests.test_email_action_storage import PARENTS, CHILDREN, _cases, _source_tables
 from tests.test_business_core_source import CAPTURE as BUSINESS_CAPTURE
+from tests.test_provider_state_source import declarations as provider_declarations
+from app.provider_state_schema_release import capture_provider_state_source
+from app.provider_state_storage import insert_observation, insert_folder_generation
+from app.provider_state_schema_release import provider_state_schema_is_current
 
 
 # Deliberate test markers, not allocated deployment versions.
@@ -39,6 +43,17 @@ def source(tmp_path, request):
         db.execute("create table tasks(id integer primary key,record_type text)")
         db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
         create_current_email_non_action_schema(db)
+        # This fixture models the published Email51 source. The fresh current
+        # factory owns the target, so replace only its synthetic provider unit
+        # with the frozen actual/fresh source declarations.
+        db.execute("drop table provider_state")
+        for definition in provider_declarations(
+            "actual" if request.param == "actual" else "fresh"
+        ).values():
+            db.execute(definition["sql"])
+            for index in definition["indexes"]:
+                if index["sql"] is not None:
+                    db.execute(index["sql"])
         create_current_email_migration_ledger(db)
         db.execute("create table service_state(key text primary key,value text not null,updated_at text not null)")
         db.execute("insert into service_state values('store_schema_version',?,?)", ORIGINAL_STORE)
@@ -151,6 +166,53 @@ def test_paired_publication_contains_email_and_business(source_with_business):
             "('business_tasks','business_projects','business_anchors',"
             "'business_project_context_revisions')"
         ).fetchone()
+        assert provider_state_schema_is_current(db)
+
+
+def test_provider_current_facts_survive_inverse_old_writes_and_reforward(source):
+    with closing(sqlite3.connect(source)) as db:
+        db.execute("insert into email_provider_observations "
+                   "(account_id,stable_message_identity,state,provider_folder_id,"
+                   "provider_folder_name,category_key,important,important_signals_json,observed_at) "
+                   "values('account-a','message-a','available','inbox','Inbox',null,0,'[]','source-time')")
+        db.execute("insert into email_provider_folder_observation_generations "
+                   "values('account-a','inbox','source-time')")
+        db.commit()
+    release = _prepare(source)
+    release.apply()
+    with closing(sqlite3.connect(source)) as db:
+        db.execute("begin immediate")
+        insert_observation(db, {
+            "account_id": "account-b", "stable_message_identity": "message-b",
+            "state": "available", "provider_folder_id": "archive",
+            "provider_folder_name": "Archive", "category_key": "finance",
+            "important": 1, "important_signals_json": '["\\\\Flagged"]',
+            "observed_at": "target-time",
+        })
+        insert_folder_generation(db, {
+            "account_id": "account-b", "provider_folder_id": "archive",
+            "observed_at": "target-time",
+        })
+        db.commit()
+    release.rollback()
+    with closing(sqlite3.connect(source)) as db:
+        assert _markers(db) == (ORIGINAL_STORE, ORIGINAL_LEDGER)
+        assert db.execute("select account_id,category_key,important,observed_at "
+                          "from email_provider_observations order by account_id").fetchall() == [
+            ("account-a", None, 0, "source-time"),
+            ("account-b", "finance", 1, "target-time"),
+        ]
+        db.execute("update email_provider_observations set category_key='legal' "
+                   "where account_id='account-b'")
+        db.commit()
+    release.apply()
+    with closing(sqlite3.connect(source)) as db:
+        assert db.execute("select category_key,typeof(important) from provider_state "
+                          "where record_type='observation' and account_id='account-b'").fetchone() == (
+            "legal", "integer")
+        assert db.execute("select observed_at from provider_state "
+                          "where record_type='folder_generation' and account_id='account-b'").fetchone() == (
+            "target-time",)
 
 
 def test_paired_inverse_preserves_new_business_facts_and_original_markers(source_with_business):
@@ -219,6 +281,37 @@ def test_email_then_business_failure_rolls_back_entire_pair(
     with pytest.raises(RuntimeError, match="after Email conversion"):
         release.apply()
     assert _database_image(source_with_business) == original
+
+
+def test_provider_failure_after_conversion_rolls_back_all_three_components(monkeypatch, source):
+    release = _prepare(source)
+    before = _database_image(source)
+    convert = release_module.apply_provider_state_migration
+
+    def fail_after_provider(db, metadata):
+        convert(db, metadata)
+        raise RuntimeError("provider conversion injection")
+
+    monkeypatch.setattr(release_module, "apply_provider_state_migration", fail_after_provider)
+    with pytest.raises(RuntimeError, match="provider conversion injection"):
+        release.apply()
+    assert _database_image(source) == before
+
+
+def test_provider_inverse_failure_restores_complete_target(monkeypatch, source):
+    release = _prepare(source)
+    release.apply()
+    before = _database_image(source)
+    inverse = release_module.rollback_provider_state_migration
+
+    def fail_after_provider_inverse(db, metadata):
+        inverse(db, metadata)
+        raise RuntimeError("provider inverse injection")
+
+    monkeypatch.setattr(release_module, "rollback_provider_state_migration", fail_after_provider_inverse)
+    with pytest.raises(RuntimeError, match="provider inverse injection"):
+        release.rollback()
+    assert _database_image(source) == before
 
 
 def test_inverse_email_failure_rolls_back_business_inverse(
@@ -337,6 +430,7 @@ def test_prepare_is_readonly_and_captures_exact_pair_schema_aliases_and_ledger(s
     with closing(sqlite3.connect(source)) as db:
         expected = email_storage.capture_email_action_source(db)
         expected["business"] = capture_business_source(db)
+        expected["provider"] = capture_provider_state_source(db)
         assert release.source_schema == expected
     assert release.source_fk == (("unrelated_child", 1, "unrelated_parent", 0),)
     assert _fingerprint(source) == before
@@ -404,7 +498,7 @@ def test_inverse_uses_current_facts_receipt_backfill_native_ids_and_allocator_wa
         assert db.execute("select seq from sqlite_sequence where name='email_action_attempts'").fetchone() == (81,)
 
 
-@pytest.mark.parametrize("damage", ("store", "email", "timestamp", "ledger", "declaration"))
+@pytest.mark.parametrize("damage", ("store", "email", "timestamp", "ledger", "declaration", "provider_declaration"))
 def test_prepare_and_publish_refuse_changed_source_without_mutation(source, damage):
     release = _prepare(source)
     with closing(sqlite3.connect(source)) as db:
@@ -417,6 +511,8 @@ def test_prepare_and_publish_refuse_changed_source_without_mutation(source, dama
             db.execute("update service_state set updated_at='changed' where key='store_schema_version'")
         elif damage == "ledger":
             db.execute("update email_schema_migrations set applied_at='changed' where version=1")
+        elif damage == "provider_declaration":
+            db.execute("create index unknown_provider_source on email_provider_observations(observed_at)")
         else:
             db.execute("create index unknown_email_plan_index on email_action_plans(created_at)")
         db.commit()
@@ -424,7 +520,7 @@ def test_prepare_and_publish_refuse_changed_source_without_mutation(source, dama
     with pytest.raises(ValueError):
         release.apply()
     assert _fingerprint(source) == before
-    if damage in ("store", "email", "declaration"):
+    if damage in ("store", "email", "declaration", "provider_declaration"):
         with pytest.raises(ValueError):
             _prepare(source)
         assert _fingerprint(source) == before
@@ -478,7 +574,7 @@ def test_publication_failure_rolls_back_ddl_markers_and_all_source_facts(source,
     assert _fingerprint(source) == before
 
 
-@pytest.mark.parametrize("damage", ("store", "ledger", "action_declaration", "external_trigger", "alias"))
+@pytest.mark.parametrize("damage", ("store", "ledger", "action_declaration", "provider_index", "external_trigger", "alias"))
 def test_unsupported_current_inverse_preserves_entire_database(source, damage):
     release = _prepare(source)
     release.apply()
@@ -489,6 +585,8 @@ def test_unsupported_current_inverse_preserves_entire_database(source, damage):
             db.execute("update email_schema_migrations set applied_at='changed' where version=1")
         elif damage == "action_declaration":
             db.execute("create index unknown_email_action_index on actions(legacy_key)")
+        elif damage == "provider_index":
+            db.execute("drop index idx_provider_state_observation_folder")
         elif damage == "external_trigger":
             db.execute("drop trigger trg_email_direct_action_blocks_account_delete")
         else:

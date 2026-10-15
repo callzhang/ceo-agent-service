@@ -15,6 +15,7 @@ from app.email_current_schema import (
 )
 from tests.test_email_action_storage import _cases
 from app.store import AutoReplyStore
+from app.provider_state_schema_release import provider_state_schema_is_current
 
 
 _ORACLE = json.loads(
@@ -32,6 +33,12 @@ def test_current_retained_objects_match_archived_native_metadata() -> None:
         create_current_email_non_action_schema(db)
         create_current_email_migration_ledger(db)
         for item in _ORACLE["objects"]:
+            if item["name"] in {
+                "email_provider_observations",
+                "email_provider_folder_observation_generations",
+                "idx_email_provider_observations_folder",
+            }:
+                continue  # Frozen native Email51 metadata belongs to the source.
             sql = db.execute("select sql from sqlite_schema where type=? and name=?", (item["kind"], item["name"])).fetchone()
             assert sql is not None, item["name"]
             assert _normalized(sql[0]) == _normalized(item["sql"]), item["name"]
@@ -39,7 +46,8 @@ def test_current_retained_objects_match_archived_native_metadata() -> None:
                 assert [list(row) for row in db.execute(f"pragma table_xinfo({item['name']})")] == item["columns"]
                 assert [list(row) for row in db.execute(f"pragma foreign_key_list({item['name']})")] == item["fks"]
         counts = dict(db.execute("select type,count(*) from sqlite_schema where name like 'email_%' or name like 'idx_email_%' or name like 'trg_email_%' group by type"))
-        assert counts == {"table": 20, "index": 10, "trigger": 19}
+        assert counts == {"table": 18, "index": 9, "trigger": 19}
+        assert provider_state_schema_is_current(db)
         assert db.execute("pragma foreign_key_check").fetchall() == []
         create_current_email_non_action_schema(db)
         create_current_email_migration_ledger(db)

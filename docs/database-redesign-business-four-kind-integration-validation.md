@@ -312,3 +312,21 @@ Root will push this candidate branch to obtain replacement exact-head CI.
 Failed run38769762524 remains the only completed combined CI result until then.
 This is not main merge, deployment, production schema or real delivery proof;
 the separate Provider candidate remains outside this ancestor branch's scope.
+
+
+## Replacement combined CI accepted at887cd377
+
+GitHub Quality run38785796782 completed successfully on exact pushed head
+887cd377e3be07dec70e344cadd9093ee47d9ffd at2026-10-15T19:20:59Z.
+The remote Python gate passed14401 cases,118 skipped and44 deselected in
+3098.24s; frontend46 files/729 cases passed with two skipped; Workbench build
+passed, and the separate real-browser step passed two cases in6.68s. Ruff
+also passed. URL: https://github.com/callzhang/ceo-agent-service/actions/runs/38785796782
+
+This replaces the failed combined ac60 run for the reviewed Business/Email
+branch. It does not retrospectively turn that failed run green, and it does
+not cover later Provider code or configs source-oracle commits. Draft PR92
+remains unmerged; no main update, production migration, restart, deployment
+or real outbound send follows from CI success. The isolated Provider candidate
+already reconciles this reviewed Business ancestor by normal mergef89a83d8;
+its own copy/native/CI evidence remains separate.

@@ -90,6 +90,9 @@ def old_email_copy(tmp_path):
 
 def test_native_candidate_publishes_real_pair_before_immutable_baseline(old_email_copy, tmp_path):
     from app.business_schema_release import SOURCE_PARENTS, business_schema_is_current
+    from app.provider_state_schema_release import (
+        SOURCE_TABLES as PROVIDER_SOURCE_TABLES, provider_state_schema_is_current,
+    )
     from app.email_store import EmailStore
     from app.store import AutoReplyStore
 
@@ -100,13 +103,18 @@ def test_native_candidate_publishes_real_pair_before_immutable_baseline(old_emai
     published = _publish_email_pair(repo, path)
     assert published == {"store": "2026-10-14.1", "email": 52,
                          "action_types": 29, "retired_email_tables": 13,
-                         "retired_business_parents": 4}
+                         "retired_business_parents": 4,
+                         "retired_provider_tables": 2}
     _backup_database(path, baseline)
     assert AutoReplyStore(path) and EmailStore(path)
     with sqlite3.connect(baseline) as db:
         assert db.execute("select count(*) from email_schema_migrations where version=52").fetchone() == (1,)
         assert db.execute("select count(*) from sqlite_schema where type='table' and name='email_actions'").fetchone() == (0,)
         assert business_schema_is_current(db)
+        assert provider_state_schema_is_current(db)
+        assert not set(PROVIDER_SOURCE_TABLES).intersection(
+            row[0] for row in db.execute("select name from sqlite_schema where type='table'")
+        )
         assert not set(SOURCE_PARENTS.values()).intersection(
             row[0] for row in db.execute("select name from sqlite_schema where type='table'")
         )

@@ -73,13 +73,15 @@ def test_provider_scan_advances_folder_time_without_rewriting_message_rows(tmp_p
         message_times = tuple(
             row["observed_at"]
             for row in db.execute(
-                "select observed_at from email_provider_observations "
+                "select observed_at from provider_state "
+                "where record_type='observation' "
                 "order by stable_message_identity"
             )
         )
         folder_time = db.execute(
-            "select observed_at from email_provider_folder_observation_generations "
-            "where account_id='account-1' and provider_folder_id='folder-inbox'"
+            "select observed_at from provider_state "
+            "where record_type='folder_generation' and account_id='account-1' "
+            "and provider_folder_id='folder-inbox'"
         ).fetchone()["observed_at"]
 
     assert message_times == (
@@ -162,7 +164,7 @@ def test_latest_snapshot_and_provider_truth_use_set_queries_and_lookup_index(
         indexes = {
             row[1]
             for row in db.execute(
-                "pragma index_list(email_provider_observations)"
+                    "pragma index_list(provider_state)"
             )
         }
         plan = db.execute(
@@ -170,15 +172,14 @@ def test_latest_snapshot_and_provider_truth_use_set_queries_and_lookup_index(
             explain query plan
             select state, category_key, important, provider_folder_id,
                    provider_folder_name, observed_at
-            from email_provider_observations
-            where account_id=? and stable_message_identity=?
+            from provider_state
+            where record_type='observation' and account_id=? and stable_message_identity=?
             """,
             ("account-1", "stable-1"),
         ).fetchall()
-    assert "idx_email_provider_observations_lookup" not in indexes
-    assert "sqlite_autoindex_email_provider_observations_1" in indexes
+    assert "idx_provider_state_observation_identity" in indexes
     assert any(
-        "USING INDEX sqlite_autoindex_email_provider_observations_1" in str(row[3])
+        "USING INDEX idx_provider_state_observation_identity" in str(row[3])
         for row in plan
     )
     assert not any(" over " in statement.lower() for statement in select_statements)

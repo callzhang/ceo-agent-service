@@ -1,0 +1,24 @@
+{
+  "evidence_type": "read_only_frozen_actual_source_preflight_only",
+  "source_copy_receipt": "docs/superpowers/specs/2026-10-15-database-redesign-business-email-copy-acceptance.json",
+  "source_copy_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "source_capture_timestamp_utc": "2026-10-15T15:35:24.512765+00:00",
+  "execution_candidate_commit": "1bd6d27b",
+  "execution_module": "app/provider_state_schema_release.py",
+  "execution_module_sha256": "282901b13297ab63bdc3b93d73ac6d86fa1764b493502cd0c27c36834f12f307",
+  "producer_before": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "producer_after": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "source_markers": {
+    "store": "2026-10-13.5",
+    "email": 51
+  },
+  "variant": "actual",
+  "source_counts": {
+    "email_provider_observations": 72142,
+    "email_provider_folder_observation_generations": 55
+  },
+  "schema_metadata_sha256": "5e037cedd1e62cc6f30ab000dcee5c19b3524d4e30850ae5d28504dfe5b00e2d",
+  "source_access": "mode=ro; query_only; one read transaction; closed",
+  "result": "capture/declaration/inbound-FK/external-SQL dependency preflight passed",
+  "proof_limit": "No forward/inverse, target data comparison, cold old-code, current caller, native execution or publication was performed. Producer code observations and the older frozen-source capture are separate observations, not an atomic live database binding."
+}

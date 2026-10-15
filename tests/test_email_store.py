@@ -1760,7 +1760,7 @@ def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) ->
         required_identifiers.update(columns)
     required_identifiers.update(email_store_module._REQUIRED_INDEXES)
     required_identifiers.update(email_store_module._REQUIRED_TRIGGER_SQL)
-    assert len(required_identifiers) == 265
+    assert len(required_identifiers) == 261
     all_replacements = {
         identifier: (
             identifier.upper()
@@ -1793,17 +1793,17 @@ def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) ->
             and name != "email_schema_migrations"
             and name not in SOURCE_TABLES
         }
-        assert len(retained_tables) == 19
+        assert len(retained_tables) == 17
         selected = [row for row in rows if row[3] in retained_tables]
         assert {
             kind: sum(row[1] == kind for row in selected)
             for kind in ("table", "index", "trigger")
         } == {
-            "table": 19,
-            "index": 28,
+            "table": 17,
+            "index": 25,
             "trigger": 32,
         }
-        assert sum(row[4] is not None for row in selected) == 61
+        assert sum(row[4] is not None for row in selected) == 58
         owner_identifiers = set(retained_tables)
         for table in retained_tables:
             owner_identifiers.update(
@@ -1824,11 +1824,11 @@ def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) ->
             for name, value in all_sql_replacements.items()
             if name in owner_identifiers
         }
-        assert len(replacements) == 190
+        assert len(replacements) == 186
         assert {
             kind: sum(row[1] == kind and row[2] in replacements for row in selected)
             for kind in ("table", "index", "trigger")
-        } == {"table": 16, "index": 9, "trigger": 32}
+        } == {"table": 14, "index": 8, "trigger": 32}
         if quote:
             assert all(
                 any(value.startswith(opening) for value in sql_replacements.values())
@@ -3054,12 +3054,12 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
         "email_historical_traversals",
         "email_model_mode_transitions",
         "email_model_promotion_configs",
-        "email_provider_folder_observation_generations",
-        "email_provider_observations",
         "email_training_snapshot_observations",
         "email_training_snapshots",
     }
     assert {name for name in table_names if name.startswith("email_")} == retained_email_tables
+    assert "provider_state" in table_names
+    assert not {"email_provider_observations", "email_provider_folder_observation_generations"} & table_names
     assert "actions" in table_names
     assert not set(SOURCE_TABLES) & table_names
     with sqlite3.connect(database) as db:
@@ -3312,6 +3312,10 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
         "pragma index_info",
         "pragma index_xinfo",
         "pragma foreign_key_list",
+        "pragma main.table_xinfo",
+        "pragma main.foreign_key_list",
+        "pragma main.index_list",
+        "pragma main.index_xinfo",
     )
     rejected = [
         statement
