@@ -49,7 +49,7 @@ OA 操作使用从当前源对象核实的字符串 `process_instance_id`、`tas
    dws drive +download --space-id <spaceId> --node <fileId> --output <工作目录内的相对路径> --format json
    ```
 
-   授权之前 `drive +info` 会报 `forbidden.accessDenied`，授权之后同一 `fileId` 就能读元数据并下载正文；xlsx 用表格库读全表，pdf/docx 用文档读取，不得只看截图或文件名下结论。服务中的 Consumer/Audit 只有具名只读工具，`authorize-preview` 是会改变授权状态的写操作，当前没有提供给这两个角色；不得通过 shell、任意 DWS 命令或界面代为调用。服务角色对已授权且可读取的钉盘节点使用 `read_dingtalk_drive_file(node_id, space_id, file_name)` 获取受限正文和任务运行期间的临时文件路径。PDF 无可提取文本时返回 `ocr_required` 和临时路径；只有当前审批材料已获准发送至配置的 OCR 服务时才调用 OCR Skill，否则如实报告技术能力不可用并保留待办。任何工具或 OCR 失败都不能被伪装成申请人未交材料或业务规则缺口。
+   授权之前 `drive +info` 会报 `forbidden.accessDenied`，授权之后同一 `fileId` 就能读元数据并下载正文；xlsx 用表格库读全表，pdf/docx 用文档读取，不得只看截图或文件名下结论。服务中的 Consumer/Audit 只有具名只读工具，`authorize-preview` 是会改变授权状态的写操作，当前没有提供给这两个角色；不得通过 shell、任意 DWS 命令或界面代为调用。服务角色对已授权且可读取的钉盘节点使用 `read_dingtalk_drive_file(node_id, space_id, file_name)` 获取受限正文和任务运行期间的临时文件路径；该工具会对支持的图片附件及扫描 PDF 自动调用已配置的 Stardust OCR，并返回抽取文本、来源摘要及可用的置信度/警告，不需再从角色内部启动另一套 OCR 命令。OCR 或解析失败是审阅端技术读取故障，应保留待办并排查或协调权限，不得归责申请人、当作未交材料或作为拒绝理由；不得未经授权切换到其他 OCR 服务。
    2026-09-17 长沙银行 POC 的 checklist 曾被两次判为“读不到”，实际按此路径 10,549 字节正常下载读全。
 
 5. **缺材料和读不到是两回事，处理完全不同（Derek, 2026-09-23）。** 两者都不得通过，不得用“同意后补”替代审批前审阅。

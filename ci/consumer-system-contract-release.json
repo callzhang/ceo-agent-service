@@ -65,7 +65,7 @@
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
       "old_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
-      "new_sha256": "451a9282d0b7fb1a61c344333739c936edf7116fbd538615d16d3ba4470a4fe7"
+      "new_sha256": "b5bb7100c12bb86af615e7d8df4447ba41c36131f4f344d492b5ffdd6b34830b"
     }
   ]
 }

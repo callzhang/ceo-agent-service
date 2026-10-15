@@ -366,6 +366,64 @@ def test_read_text_file_rejects_non_utf8_material(tmp_path: Path):
         agent_cli.read_text_file(str(material))
 
 
+def test_read_text_file_extracts_image_material_with_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    material = tmp_path / "settlement.jpg"
+    material.write_bytes(b"\xff\xd8\xffimage-bytes")
+    expected = {
+        "data": [{
+            "source_id": f"input-1:{material.name}",
+            "text": "Customer acceptance record",
+            "confidence": 0.94,
+            "warnings": [],
+        }]
+    }
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps(expected)
+
+    def run(command, *, timeout):
+        assert command[1].endswith("/.agents/skills/ocr/scripts/ocr.py")
+        assert command[2] == str(material.resolve())
+        assert command[command.index("--format") + 1] == "json"
+        assert timeout == agent_cli.PDF_OCR_TIMEOUT_SECONDS
+        return Completed()
+
+    monkeypatch.setattr(agent_cli, "run_bounded_process", run)
+
+    result = agent_cli.read_text_file(str(material))
+
+    assert result["format"] == "image"
+    assert result["content"] == "Customer acceptance record"
+    assert result["confidence"] == 0.94
+    assert result["sha256"]
+
+
+def test_read_text_file_reports_image_ocr_failure_as_technical_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    material = tmp_path / "settlement.jpg"
+    material.write_bytes(b"\xff\xd8\xffimage-bytes")
+
+    class Completed:
+        returncode = 1
+        stdout = ""
+
+    monkeypatch.setattr(
+        agent_cli,
+        "run_bounded_process",
+        lambda *_args, **_kwargs: Completed(),
+    )
+
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="image_material_ocr_unavailable",
+    ):
+        agent_cli.read_text_file(str(material))
+
+
 def test_read_text_file_extracts_bounded_pdf_material(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
