@@ -4991,6 +4991,7 @@ def main() -> None:
         from app.dingtalk_delivery_repair import (
             apply_native_chat_readback,
             collect_native_chat_readback,
+            native_reply_text_matches,
         )
         if args.apply and settings.dry_run:
             raise SystemExit("--apply refused: dry-run is on")
@@ -5025,7 +5026,9 @@ def main() -> None:
                             1 for row in rows if isinstance(row, dict)
                             and row.get("conversationId") == task["conversation_id"]
                             and (row.get("quotedMessage") or {}).get("messageId") == task["trigger_message_id"]
-                            and row.get("text") == sent["reply_text"]
+                            and native_reply_text_matches(
+                                row.get("text"), sent["reply_text"], task["trigger_sender"]
+                            )
                             and (row.get("senderUserId") == proof["principal_user_id"]
                                  or row.get("senderOpenDingTalkId", row.get("senderId"))
                                  == proof["principal_open_dingtalk_id"])

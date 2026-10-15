@@ -13,6 +13,20 @@ from app.agent_contracts import SystemExecutionResult
 from app.run_storage import AGENT_RUN_SQL
 
 
+def native_reply_text_matches(actual: object, sent_body: object, trigger_sender: object) -> bool:
+    """Match a stored reply or its exact native quoted-sender rendering."""
+    if not isinstance(actual, str) or not isinstance(sent_body, str):
+        return False
+    normalized_actual = "".join(actual.split())
+    normalized_body = "".join(sent_body.split())
+    if normalized_actual == normalized_body:
+        return True
+    if not isinstance(trigger_sender, str) or not trigger_sender:
+        return False
+    expected = f"@{trigger_sender} {sent_body}"
+    return normalized_actual == "".join(expected.split())
+
+
 def collect_native_chat_readback(store, dws, task_id: int) -> dict:
     """Read one reply's exact conversation window and bind it to the current principal."""
     from app.store import REPLY_TASK_SQL
@@ -209,7 +223,9 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
         matches = [row for row in rows if
             row.get("conversationId") == task["conversation_id"]
             and (row.get("quotedMessage") or {}).get("messageId") == task["trigger_message_id"]
-            and row.get("text") == sent["reply_text"]
+            and native_reply_text_matches(
+                row.get("text"), sent["reply_text"], task["trigger_sender"]
+            )
             and matches_principal(row)]
         if len(matches) != 1:
             raise ValueError("native chat response does not uniquely prove this reply")

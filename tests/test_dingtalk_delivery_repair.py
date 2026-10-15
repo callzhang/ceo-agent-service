@@ -12,6 +12,7 @@ from app.dingtalk_delivery_repair import (
     apply_delivery_reverification,
     apply_native_chat_readback,
     collect_native_chat_readback,
+    native_reply_text_matches,
 )
 from app.run_storage import AGENT_RUN_SQL
 from app.system_executor import ActionOutcome, SystemExecutor
@@ -139,6 +140,10 @@ def _native_chat_proof(task, sent, *, mutation=""):
         row["text"] = "different body"
     elif mutation == "wrong_quote":
         row["quotedMessage"]["messageId"] = "different-trigger"
+    elif mutation == "wrong_mention":
+        row["text"] = f"@Someone {sent.reply_text}"
+    elif mutation == "extra_prefix":
+        row["text"] = f"@{task.trigger_sender} unrelated {sent.reply_text}"
     return {
         "task_id": task.id,
         "payload": payload,
@@ -164,6 +169,33 @@ def test_exact_complete_native_chat_readback_closes_without_resending(tmp_path):
     assert result["verification"]["message_id"] == "outgoing-message-1"
     assert result["verification_repair"]["native_chat_readback"]["quoted_trigger_id"] == task.trigger_message_id
     assert not apply_native_chat_readback(store, readback)
+
+
+def test_native_chat_readback_accepts_exact_native_quoted_sender_prefix(tmp_path):
+    store, task, _context, _driver, handler, receipt, _execution = historical_receipt(tmp_path)
+    assert apply_delivery_reverification(store, proof(receipt, "ambiguous"))
+    sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+    readback = _native_chat_proof(task, sent)
+    readback["payload"]["messages"][0]["text"] = (
+        f"@{task.trigger_sender}  {sent.reply_text}"
+    )
+
+    assert apply_native_chat_readback(store, readback)
+    assert store.get_reply_task(task.id).status == "done"
+    assert handler.sends == 1
+
+
+def test_native_reply_rendering_normalizes_only_whitespace():
+    assert native_reply_text_matches("**Status**  - One", "**Status**\n\n- One", "Derek")
+    assert native_reply_text_matches(
+        "@Derek  **Status**  - One", "**Status**\n\n- One", "Derek"
+    )
+    assert not native_reply_text_matches(
+        "@Derek extra **Status** - One", "**Status**\n\n- One", "Derek"
+    )
+    assert not native_reply_text_matches(
+        "@Someone **Status** - One", "**Status**\n\n- One", "Derek"
+    )
 
 
 def test_native_chat_readback_queries_exact_conversation_without_write_tools(tmp_path):
@@ -205,7 +237,9 @@ def test_native_chat_readback_queries_exact_conversation_without_write_tools(tmp
     assert proof["end"].endswith("+00:00")
 
 
-@pytest.mark.parametrize("mutation", ["partial", "wrong_sender", "wrong_text", "wrong_quote"])
+@pytest.mark.parametrize("mutation", [
+    "partial", "wrong_sender", "wrong_text", "wrong_quote", "wrong_mention", "extra_prefix",
+])
 def test_native_chat_readback_refuses_incomplete_or_mismatched_proof(tmp_path, mutation):
     store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)
     assert apply_delivery_reverification(store, proof(receipt, "ambiguous"))

@@ -23,8 +23,13 @@ provider task, `reconcile-failed-reply-chat-readback --task-id ...` performs a
 bounded, paginated read of the original conversation around `sent_at`; naive
 SQLite `CURRENT_TIMESTAMP` values are UTC. A
 complete result must contain exactly one message matching the conversation,
-the recorded query range, quoted trigger, exact persisted body, and authenticated
-sender identity. The native page ledger must be complete, non-partial,
+the recorded query range, quoted trigger, exact persisted body (or the native
+quoted-sender rendering using the persisted trigger sender and the unchanged
+full body), and authenticated sender identity. The native renderer's
+whitespace-only normalization is shared with the ordinary native reply
+reconciler; all non-whitespace characters, mention name and body content must
+match. Arbitrary prefixes or rewritten content do not match.
+The native page ledger must be complete, non-partial,
 failure-free, and untruncated. The
 explicit `--apply` then rechecks the failed task, generation, approved
 single-action candidate, uncertain external receipt and inactive execution
