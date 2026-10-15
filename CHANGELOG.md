@@ -33,6 +33,12 @@
 
 ## Unreleased
 
+- Store Consumer task artifacts in a private task/generation-specific `/tmp`
+  workspace rather than the durable memory workspace. Keep artifacts available
+  through task recovery and Audit readback, lazily migrate legacy task folders
+  on access, remove all generations on terminal completion, and include the
+  durable-memory/temporary-work rule in both role prompts.
+
 - Reject null or malformed DingTalk message-list responses with a typed provider
   contract error instead of an `AttributeError` or an empty-message result; do
   not repeat unread reads through the recent-message fallback for JSON `null`,

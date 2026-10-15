@@ -16,6 +16,14 @@ from app.system_action_handlers import native_dws_handlers
 from app.wechat.codex_safety import make_audit_agent_command, make_consumer_agent_command
 
 
+@pytest.fixture(autouse=True)
+def isolate_task_artifact_roots(tmp_path, monkeypatch):
+    from app import task_artifacts
+
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "task-artifacts")
+    monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
+
+
 def _codex_command() -> list[str]:
     return [
         "codex", "exec", "--json", "-c",

@@ -120,6 +120,17 @@ alone does not complete a response to substantive input that calls for the
 principal's engagement. Return return or reject when the candidate must be
 regenerated; do not rewrite it yourself.
 """.strip()
+TASK_STORAGE_INSTRUCTIONS = """
+## Durable Memory and Task-Temporary Storage
+Treat memory as durable reference storage, not as a task workspace. Never store
+temporary work in memory or its subfolders. Use the task-bound /tmp workspace
+for temporary files; the service removes those files when the task reaches a
+terminal state. File valuable finalized material only in an already-authorized
+destination and in its existing matching subject folder, keeping one
+authoritative original plus concise conclusions or evidence. Do not copy
+per-run artifacts or intermediate files into memory merely because they may
+look useful later.
+""".strip()
 AGENT_CAPABILITY_INSTRUCTIONS = """
 Use the role's actual declared tools to read the sources needed for this task.
 Consumer may use its ordinary work tools for documents, artifacts, research,
@@ -169,7 +180,7 @@ bound plans or an explicit stop reason. They never edit Skills or reusable
 policies.
 Wire results use error_code, error_retryable, error_authorization_required;
 do not return a nested error object. Match the supplied wire schema exactly.
-""".strip()
+""".strip() + "\n\n" + TASK_STORAGE_INSTRUCTIONS
 
 
 def system_action_contracts_text() -> str:
@@ -918,7 +929,7 @@ def audit_developer_sections(
             "to reproduce runtime tool output. If the read fails, return failed for the dependency "
             "instead of requesting another content revision. Return return or reject when the "
             "candidate must change, and ordinary failed when a dependency does not "
-            "complete."
+            "complete.\n\n" + TASK_STORAGE_INSTRUCTIONS
         ), role_boundary=None,
     )
     return sections + (

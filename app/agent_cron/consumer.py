@@ -292,6 +292,9 @@ class ScheduledAgentConsumer:
                 codex_reason=result.summary, audit_summary=result.summary,
                 send_status=send_status, send_error=error, channel="scheduled",
             )
+            from app.task_artifacts import cleanup_terminal_task_artifacts
+
+            cleanup_terminal_task_artifacts(self._store, task.id)
             return
         final_run = self._store.get_agent_run(result.final_run_id)
         if final_run is None:
@@ -314,6 +317,9 @@ class ScheduledAgentConsumer:
             ),
             send_status=send_status, send_error=error, channel="scheduled",
         )
+        from app.task_artifacts import cleanup_terminal_task_artifacts
+
+        cleanup_terminal_task_artifacts(self._store, task.id)
 
 
 def build_scheduled_orchestrator(

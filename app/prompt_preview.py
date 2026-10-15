@@ -14,6 +14,7 @@ from app.prompt_composition import (PromptSection, append_runtime_context, load_
     prompt_section_facts, render_prompt_sections)
 from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
 from app.store import AgentRole, AutoReplyStore
+from app.task_artifacts import task_artifact_directory
 
 
 PROMPT_SCOPE = "服务提交的 Developer 与 Task 输入；不包含 CLI 自行生成的系统提示、工具 schema 或会话历史。凭据脱敏处标记 [REDACTED]。"
@@ -179,7 +180,10 @@ def current_prompt_preview(
                          PromptSection("已保存任务正文", "历史输入快照", "task", prompt))
         prompt = render_prompt_sections(task_sections, placement="task")
     workspace = workspace_path()
-    cwd = workspace / "consumer-artifacts" / str(task.id) / task.execution_generation if task and role == "consumer" else workspace
+    cwd = (
+        task_artifact_directory(task.id, task.execution_generation, create=False)
+        if task and role == "consumer" else workspace
+    )
     if route.runtime_kind is RuntimeKind.CODEX_CLI:
         command = CodexRuntimeAdapter(workspace=workspace, config=config).build_command(
             route=route, prompt=prompt, session_id=None, image_paths=None, output_schema_path=None,
