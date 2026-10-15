@@ -741,6 +741,7 @@ def codex_skill_roots(
 def codex_skill_config_override(
     allowed_names: Iterable[str],
     *,
+    inlined_names: Iterable[str] = (),
     target_root: Path | None = None,
     codex_home: Path | None = None,
 ) -> str:
@@ -782,6 +783,9 @@ def codex_skill_config_override(
     items = [f'{{path="{path}",enabled=true}}' for path in enable] + [
         f'{{path="{path}",enabled=false}}' for path in disable
     ]
+    items.extend(
+        f"{{name={json.dumps(name)},enabled=false}}" for name in dict.fromkeys(inlined_names)
+    )
     return f"skills.config=[{','.join(items)}]" if items else ""
 
 

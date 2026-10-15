@@ -2097,6 +2097,8 @@ Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000�
 
 OA pending scans carry the complete scheduled Consumer wrapper, including exact frozen Skill materials, into the claimed reply input. Consumer and Audit read those original bodies through read_task_skill; the scanner must not use the Task extraction projection that omits skill_materials. Task extraction sources retain their existing body-free scheduled context. This changes input delivery only, not Skill contents, task classification, audit policy, routes or sessions; old inputs are not rebuilt.
 
+Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files.
+
 
 ### 第五期A：候选与执行存储合并
 
@@ -2234,3 +2236,10 @@ Skill/source, session, correction and Audit contracts are preserved. Consumer/Au
 schema text is byte-identical. See docs/task-schema-title-formatting-validation.md.
 
 会议消息新增 `message_title`，由 Agent 按实际接收受众核验：安全时可沿用会议原题，否则使用中性业务标题。正文首行与推送标题均只取此字段，不再自动拼接可能含人员方案信息的 `source.title`；没有已核验标题的持久化决策使用中性的“会议跟进”。原会议标题仍留在来源记录中用于追溯。
+
+Task Agent 当前每轮已经完整提交仓库中的 Work Tracking Skill，Codex 命令复用现有
+`inlined_skill_names` 元数据，由适配器把已有路径筛选和同名隐藏规则合成一份
+原生 `skills.config` 数组，避免重复配置键覆盖。仅隐藏同名安装副本的目录项。完整当前正文、
+其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
+或共享 AGENTS 配置。该改动消除第二份旧 Skill 的可见入口，尚未把完整正文改成按需读取。
+验证与限制见 `docs/task-inline-skill-once-validation.md`。
