@@ -505,6 +505,17 @@ def reply_action_projection(kind, reply_variant):
 # explicit projection omits only the four preserved actual-source history fields.
 REPLY_ATTEMPT_COMMON_SQL = reply_action_projection("reply_attempts", "fresh_memory_fk")
 
+# Read candidate status from its existing index before resolving virtual
+# identity fields from the full Attempt payload.
+REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL = """
+    select a.attempt_channel as channel,
+           a.attempt_conversation_id as conversation_id,
+           a.attempt_trigger_message_id as trigger_message_id
+    from actions a indexed by idx_actions_reply_status
+    where a.record_type='reply_attempts'
+      and lower(a.attempt_send_status) in ('failed','blocked','dry_run','needs_human')
+"""
+
 
 def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=False) -> str:
     """Select one complete canonical E declaration, including its FK and indexes."""

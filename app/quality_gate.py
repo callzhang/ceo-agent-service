@@ -28,6 +28,7 @@ from app.action_storage import (
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
+    REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL,
     reply_action_projection,
     validated_reply_variant,
 )
@@ -362,14 +363,26 @@ def _check_reply_attempts(
     # Only the newest attempt for a trigger can be actionable. This prevents an
     # old blocked/dry-run row from masking a later sent, skipped, or failed row.
     latest = f"""
-        with latest as (
-            select id, channel, conversation_id, trigger_message_id,
-                   action, send_status, updated_at, reviewed_at, resolved_at,
-                   agent_run_id, row_number() over (
-                partition by channel, conversation_id, trigger_message_id
-                order by datetime(updated_at) desc, id desc
-            ) as ordinal
-            from ({REPLY_ATTEMPT_COMMON_SQL})
+        with candidate_keys as (
+            select channel, conversation_id, trigger_message_id
+            from ({REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL})
+            group by channel, conversation_id, trigger_message_id
+        ), latest as (
+            select current.id, current.channel, current.conversation_id,
+                   current.trigger_message_id, current.action,
+                   current.send_status, current.updated_at,
+                   current.reviewed_at, current.resolved_at,
+                   current.agent_run_id, 1 as ordinal
+            from candidate_keys candidate
+            cross join ({REPLY_ATTEMPT_COMMON_SQL}) current on current.id=(
+                  select newest.id
+                  from ({REPLY_ATTEMPT_COMMON_SQL}) newest
+                  where newest.channel is candidate.channel
+                    and newest.conversation_id is candidate.conversation_id
+                    and newest.trigger_message_id is candidate.trigger_message_id
+                  order by datetime(newest.updated_at) desc, newest.id desc
+                  limit 1
+              )
         )
     """
     direct_terminal = _count(

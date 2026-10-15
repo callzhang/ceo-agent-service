@@ -5,6 +5,15 @@ identical runtime metadata strings within one scan. Every historical runtime
 row and all seven fields remain in scope, violations are still counted per
 row, and each new scan resolves the current path-prefix configuration afresh.
 
+Reply Attempt fields are VIRTUAL generated columns over `actions.payload_json`.
+The four trigger-latest quality checks first read candidate statuses through
+the existing status index, then group only candidate trigger keys and resolve
+each key's latest Attempt through the existing identity index. The candidate
+keys drive the lookup so SQLite cannot reverse it into another history scan.
+All statuses participate in the latest lookup; NULL key partitions and the
+original `datetime(updated_at), id` ordering remain unchanged. The separate
+OA process-identity window and all downstream quality predicates are unchanged.
+
 Task Agent's checked-in native strict schema documents existing Task identity
 fields: ordinary `update_task`/`update_fields` uses `task_id`; merge-only target
 and identity fields identify two distinct persisted Tasks. New supporting Tasks
