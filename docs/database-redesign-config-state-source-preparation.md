@@ -512,3 +512,44 @@ mutant was removed, and the unmodified four-case source oracle passed in
 31.63 seconds. Each pytest invocation used a new task-owned `/tmp` parent
 and `--basetemp`; the parent was absent after the run. This changes tests and
 source preparation only, without any target or runtime policy change.
+
+#### Accepted source baseline and bounded storage plan
+
+Fresh sequential SPEC and QUALITY accepted the receipt source oracle at
+`ee350913` plus reader correction `8021df4e`; independent QUALITY reran four
+cases in 33.25 seconds and removed its owned temporary parent. Comment-only
+`842b61e3` did not change executable behavior. This accepts source declaration,
+public writer/reader bytes and the explicit native-SQL counterexamples; it does
+not select target compression or prove a production copy.
+
+`docs/superpowers/plans/2026-10-15-configs-schedules-receipts-storage-plan.md`
+is the next bounded, unselected target-storage plan. It covers all 15 config
+families/118 source fields, the single schedule family/17 fields, and both
+Skill receipt families/11 fields. The existing field map's one
+`runtime_skill_load_receipts.loaded_json` disposition now specifies exact
+derivation from existing config bindings and revision SHA in one database
+snapshot, with literal `'{}'` for public failures. No body is added to a
+config, action payload or shadow table. The future copy must reject any row
+whose original body cannot be reconstructed byte-exactly; source native SQL
+still permits counterexample histories. This plan changes no selected runtime,
+schema version, migration or real database.
+
+The plan's complete schedule module code was extracted into task-owned
+`TemporaryDirectory` prototypes. Before those modules were written, the two
+focused schedule tests failed on the missing import; after extraction they
+passed (2 cases, 0.02 seconds). A second disposable differential probe
+reconstructed both literal actual and genuine fresh `scheduled_tasks` DDL,
+inserted all 17 fields, and matched every value and SQLite storage class to
+the plan's target DDL. Three constraint cases per variant (duplicate partial
+`migration_key`, invalid `enabled`, invalid `version`) matched. Target
+`runtime_options_json` accepted BLOB and capabilities accepted non-JSON TEXT,
+as the native source does. The extracted modules passed Ruff; selected
+standalone plan code blocks compiled, and the CSV still has 1,611 rows with
+only the one approved disposition correction. Both owned temporary parents
+were absent after closing. This checks the schedule prototype and plan syntax,
+not the future complete config/action integration, migration or actual data.
+The receipt schema fragment was also compiled in a private SQLite syntax probe:
+11 generated fields, seven CHECK/FK clauses, three indexes and six triggers
+installed without a parser error. Its minimal syntax carrier is not a complete
+Email/action/config fixture or a receipt DML parity result. Its temporary parent
+was absent after closing.

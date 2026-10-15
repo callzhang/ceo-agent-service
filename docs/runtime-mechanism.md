@@ -1,12 +1,12 @@
 # Current Runtime Mechanism
 
-The unselected `app/provider_state_storage.py` unit has point reads and writes,
-batch upserts and set-based reconciliation for observations and folder
-generations in one typed `provider_state` table. Its composite keys remain
-account-scoped; a generation's `observed_at` can overlay an observation's time
-when a later caller projects classification state. Every write requires a
-caller-owned transaction. No current Store constructor or provider path selects
-this table; the original two source tables remain the runtime contract.
+The unpublished Store `2026-10-14.1`/Email52 candidate selects one typed
+`provider_state` table in fresh and current Email schema construction, converts
+the two source families through paired release, and uses the target in current
+provider callers. Its composite keys remain account-scoped; a generation's
+`observed_at` can overlay an observation's time in classification state. Writes
+require caller-owned transactions. The last observed production remains Store
+`2026-10-13.5`/Email51; this candidate has not been published there.
 
 The unpublished Store `2026-10-14.1`/Email52 candidate selects the four-kind
 Business storage unit for Task, Project,

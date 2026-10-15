@@ -1220,7 +1220,7 @@ runtime_skill_configs,created_at,TEXT,1,0,configs,configs.created_at,已有公�
 runtime_skill_load_receipts,id,INTEGER,0,1,actions,actions.id + legacy_key,目标整数 ID；迁移映射保存原主键和历史 URL 可定位性，避免跨表 ID 冲突。
 runtime_skill_load_receipts,config_id,INTEGER,1,0,actions,actions.config_id（直接 FK/既有关系字段）,直接重映射关联目标 ID；不经通用 relations。确有多对多的关系为 actions 独立类型行，保留现有唯一性/角色约束。
 runtime_skill_load_receipts,pid,INTEGER,1,0,actions,actions.payload.pid,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-runtime_skill_load_receipts,loaded_json,TEXT,1,0,actions,actions.payload.loaded_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
+runtime_skill_load_receipts,loaded_json,TEXT,1,0,actions,由 actions.config_id 关联既有 configs 的 enabled bindings 与 managed revision sha256 派生源格式返回；不存储重复正文,成功回执在同一数据库快照中按原 Python json.dumps 整数键 sort_keys=True 原默认参数重建精确 TEXT 字节；失败回执返回字面量 {}。未来复制须逐行比对源字节且遇不匹配即停止；不新增 configs 正文字段。
 runtime_skill_load_receipts,error,TEXT,1,0,actions,actions.payload.error,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 runtime_skill_load_receipts,created_at,TEXT,1,0,actions,actions.created_at,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
 scheduled_task_config_versions,id,INTEGER,0,1,configs,configs.id + legacy_key,目标整数 ID；迁移映射保存原主键和历史 URL 可定位性，避免跨表 ID 冲突。

@@ -24,9 +24,12 @@ bytes. Do not report either 104 candidate tables or complete 10+1 as production.
 The frozen 970a source's 4,105 successful Skill load bodies all reconstruct
 byte-exactly from referenced configs (3,678,270 UTF-8 bytes,17 distinct bodies).
 The exact public serialization and native-SQL late-binding/noncanonical
-exceptions are recorded in the config source preparation. New source oracle
-`ee350913` passed four local cases; its independent reviews remain open. No
-body retirement or receipt compression is selected. The approved full target
+exceptions are recorded in the config source preparation. Source oracle
+`ee350913` with reader correction `8021df4e` passed fresh sequential SPEC and
+QUALITY review; independent QUALITY ran four cases in 33.25 seconds in an
+owned temporary directory and verified its removal. Comment-only `842b61e3`
+required no rerun. This accepts source behavior only: no target compression,
+body retirement or receipt storage selection has occurred. The approved full target
 remains **ten core tables plus one ledger**; this work does not make legacy
 tables a permanent exception.
 
