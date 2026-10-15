@@ -91,3 +91,43 @@ weakened. An exploratory local frontend run hit multiple concurrent timeouts
 and was stopped; those observations are not treated as code failures. Final
 acceptance follows the GitHub Quality run for the published repair revision,
 including any additional failures exposed by that complete run.
+
+## Production recovery readback
+
+Deployment of `7301f9a6` completed through `app.deploy --skip-quiet-wait`,
+replacing supervisor PID with 58973. The explicit recovery CLI requeued only
+input 404912. The normal worker completed new Task run 360429 at
+2026-10-15 05:45:33 UTC, retaining failed runs 357692 and 357883. Source input
+404912 is `done` after attempt 3 and was compacted by normal terminal cleanup.
+The adopted projection updated existing Task 471 and recorded signal 833 for
+the exact original source. Its `no_proposal` projection status describes no
+new Attention proposal; it does not negate the persisted Task update.
+
+A production-code, SQLite `mode=ro` quality scan checked at
+2026-10-15T05:53:49.988851Z returned no missing sources and no violations.
+The system-health projection was `healthy`, with zero violations; all 25
+persisted components were healthy, and Meeting Memory had no delayed,
+processing, failed or ghost work. Native delivery coverage remained explicit:
+39 readable results and 475 unavailable results. Active work and a genuine
+human decision remained visible; they were not relabelled as failures or
+completed to obtain this result.
+
+This confirms degraded recovery independently of HTTP responsiveness. Fresh
+Status HTTP requests still exceeded 20 seconds, including one 90-second
+zero-byte timeout. A read-only Status build plus the exact HTTP outer
+validation/serialization completed in 5.157 seconds; the outer stages took
+only milliseconds. A current all-history runtime metadata check performed
+167,041 credential checks and 2,338,574 regular-expression searches for
+23,863 rows, taking 8.218 seconds. These measured costs establish optimization
+work, but do not by themselves explain the entire observed HTTP delay.
+
+The bounded optimization reuses the unchanged credential/path predicate for
+identical strings only inside one runtime-invariant check. All historical
+rows and all seven fields remain checked; violations still count per row and
+the next scan rereads path configuration. On the same production read-only
+snapshot the original and new functions returned identical empty issues:
+8.460s / 167,048 credential calls / 2,338,672 regex searches versus
+2.365s / 25,456 calls / 356,384 searches. RED duplicate-value coverage failed
+before implementation; all 83 scan-cost/quality tests passed afterward, with
+18 scan-cost cases independently rerun. No global health-result cache or
+check policy changed.

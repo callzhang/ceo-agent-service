@@ -1,5 +1,10 @@
 # Current Runtime Mechanism
 
+Hourly quality checks reuse the unchanged credential/path predicate result for
+identical runtime metadata strings within one scan. Every historical runtime
+row and all seven fields remain in scope, violations are still counted per
+row, and each new scan resolves the current path-prefix configuration afresh.
+
 Task Agent's checked-in native strict schema documents existing Task identity
 fields: ordinary `update_task`/`update_fields` uses `task_id`; merge-only target
 and identity fields identify two distinct persisted Tasks. New supporting Tasks

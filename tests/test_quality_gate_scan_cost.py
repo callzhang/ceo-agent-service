@@ -1,4 +1,7 @@
 import sqlite3
+from collections import Counter
+
+import pytest
 
 from app import leak_check, quality_gate
 from app.run_storage import create_run_schema, insert_run
@@ -31,6 +34,50 @@ def test_runtime_history_resolves_path_configuration_once_per_scan(monkeypatch):
         quality_gate._check_runtime_attempt_invariants(db, issues)
     assert issues == []
     assert len(calls) == 1
+
+
+def test_runtime_history_checks_identical_values_once_per_scan(monkeypatch):
+    credential_calls = Counter()
+    path_calls = Counter()
+    credential_check = quality_gate.contains_credential
+    path_check = quality_gate.contains_local_runtime_leak
+
+    def credential(value):
+        credential_calls[value] += 1
+        return credential_check(value)
+
+    def local_path(value, **kwargs):
+        path_calls[value] += 1
+        return path_check(value, **kwargs)
+
+    monkeypatch.setattr(quality_gate, "contains_credential", credential)
+    monkeypatch.setattr(quality_gate, "contains_local_runtime_leak", local_path)
+    with runtime_history() as db:
+        issues = []
+        quality_gate._check_runtime_attempt_invariants(db, issues)
+
+    assert issues == []
+    expected = Counter({value: 1 for value in (
+        "route", "runtime", "oauth", "model", "session", "", "session:reference",
+    )})
+    assert credential_calls == expected
+    assert path_calls == expected
+
+
+@pytest.mark.parametrize("column", [
+    "route_name", "runtime_kind", "credential_mode", "model", "session_id",
+    "failure_code", "transcript_reference",
+])
+@pytest.mark.parametrize("unsafe_value", [
+    "Bearer synthetic-test-credential", "/tmp/runtime-evidence",
+])
+def test_repeated_unsafe_values_still_count_every_runtime_row(column, unsafe_value):
+    with runtime_history(count=4) as db:
+        db.execute(f"update runs set {column}=?", (unsafe_value,))
+        issues = []
+        quality_gate._check_runtime_attempt_invariants(db, issues)
+
+    assert [(issue.code, issue.count) for issue in issues] == [("runtime_secret_leak", 4)]
 
 
 def test_runtime_history_reads_new_configuration_on_each_scan(monkeypatch):
