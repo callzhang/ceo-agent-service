@@ -3502,3 +3502,17 @@ renewals and stopped-thread evidence remain required. No application, schema,
 provider or audit behavior changed. CI38736466402 remains failed; the next pushed
 head requires a new complete run. This acceptance is not Business integration
 coverage, production migration, a main merge or deployment.
+
+
+#### Exact main reconciliation after the lease fixture
+
+GitHub reported PR90 as conflicting after `04bff706`, and no Quality run was
+created for that head. Root fetched `origin/main` at `c2aa8082` and performed
+normal merge `df691c39`. Only `docs/agent-claims.md` conflicted; both sets of
+rows were retained. Incoming code adds OA image OCR and source-identifier
+read guidance, with no Email/Business storage or release changes. The selected
+checks `test_agent_cli`, `test_consumer_system_release`,
+`test_message_triage_skill`, `test_oa_skill_identifier_integrity` and
+`test_email_action_schema_release` passed **133 tests in 51.98 seconds**.
+This is merge-local evidence; a new submitted-head Quality run remains required.
+No production change, main merge or deployment occurred.
