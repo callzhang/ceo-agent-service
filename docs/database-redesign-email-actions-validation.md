@@ -2888,3 +2888,28 @@ point; the other 3 selected controls passed. After the fix and exact four-case
 mapping assertion, those 6 selected tests passed in 0.43 seconds. Seven
 adjacent current-fact loss, target public write, and old History locator
 guards passed in 82.72 seconds. Scoped Ruff and `git diff --check` passed.
+
+### Root acceptance: main633 integration and completed-report preservation
+
+Root accepts the exact main633 integration at411d8176 plus evidence14f53a39
+after fresh sequential SPEC and QUALITY PASS. Reviewers independently verified
+the merge ancestry, all48 incoming files, exact new SQL/functions and complete
+prior candidate behavior outside those changes. The118 focused passes remain
+implementation evidence; no schema/source-binding/copy/native behavior was
+changed by the integration. The inherited prompt_schema blank EOF warning is
+explicitly retained, not reported as a clean default publication diff check.
+
+Root separately accepts06507ce1 after fresh sequential SPEC and QUALITY PASS.
+QUALITY independently reran6 coordinator/CLI checks successfully. This accepts
+only completed-result preservation and unchanged failure boundaries; the failed
+fca copy invocation cannot be retroactively turned into a passing JSON report.
+Actual refreshed source-copy/native cases and CI still need acceptance.
+
+Capacity limits are recorded in database-redesign-email-capacity-20261015.md.
+CI38692215658 remains failed, with38 source-addressed Audit fixtures plus8
+historical/current schema mismatches and1 unresolved Linux trace diagnostic.
+The next bounded unit preserves genuine0441 historical tests, corrects only
+current refusal expectations, and adds diagnostic evidence without widening
+the read-only SQL whitelist. Incoming main131ae6a8 meeting changes also require
+integration before final publication. PR90 remains draft and unmerged;
+production writes, provider sends and full10+1 acceptance have not occurred.
