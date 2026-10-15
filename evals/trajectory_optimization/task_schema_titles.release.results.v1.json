@@ -213,5 +213,23 @@
     "ci_chars": 24895,
     "cold_tool_reads": "Both native cold runs additionally read shared AGENTS and a different installed Skill,260/280 lines; neither returns full installed Skill. This existing source duplication/version issue is separate from title-only change.",
     "not_a_claim": "No assertion that native discovery, installed version consistency, reference freshness or all-route business behavior is fixed."
-  }
+  },
+  "owned_fixture_cleanup": {
+    "path": "/private/tmp/ceo-title-release-pair.uAjTfa",
+    "removed": true,
+    "bytes": 3633870,
+    "reason": "Both anonymous Stores verified terminal and complete; preserve committed fixtures/metadata and CLI-owned original native sessions, no historical Store/code backups."
+  },
+  "native_originals": [
+    {
+      "session_id": "01a13e36-bfda-7552-af1c-c08cebdc01b5",
+      "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T23-18-57-01a13e36-bfda-7552-af1c-c08cebdc01b5.jsonl",
+      "sha256": "10b34b0837907d31b594a69e4066fc10b92af4c253d297c4b212a80dc848b71e"
+    },
+    {
+      "session_id": "01a13e37-04eb-77e1-a7ab-cdc46afbaaf7",
+      "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T23-19-15-01a13e37-04eb-77e1-a7ab-cdc46afbaaf7.jsonl",
+      "sha256": "414ab40adce5a37888e4c3c1dc40717c542b6e424a3561b296b0f6c483ab567a"
+    }
+  ]
 }
