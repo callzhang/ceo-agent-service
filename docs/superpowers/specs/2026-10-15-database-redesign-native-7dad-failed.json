@@ -1,0 +1,311 @@
+{
+  "execution_binding": {
+    "candidate_commit": "1a8b3edde03cbe95aa716fb8a3551b0ef3d4be03",
+    "modules": {
+      "scripts/validate_native_copy_lifecycle.py": "d04acaf0c1f911a2837720222bc33d6dca683d0788c984f6d445b907d6598831",
+      "app/consumer_agent.py": "7300fdc83db115e8a3b7273ee7970edbb253aaa86d1befc217e0987d1b9e44cd",
+      "app/audit_agent.py": "98a86625e718fcc667038f4c8ba8444813c428f4426986a5246a9816adcfb580",
+      "app/agent_turn_runner.py": "9776747ef604cee5d54d12a3943cb7061922dd190d10caf96466fc7de9866390",
+      "app/agent_context.py": "ca850ead30d4d0d3185d18407df3eed163d28ff678a22324575ca793e72bf1f6",
+      "app/agent_orchestrator.py": "fe218d5d0c6443a281564d9f8099a4e7a6d2e0b23dcd2024f2a8dd38c0312d65",
+      "app/store.py": "d97777d46cfe17f6c0091a66b5c629778c882f54375758c1bded4d5bd0741b21",
+      "app/system_executor.py": "61850795c77645d7714e6ba6541b9ea3c84a15f367b63433b3728d2fbc6e9606",
+      "app/action_storage.py": "5fc0787a1ab89be57b489f318b2821243d085a40a26e4083c140fd3e798cfac4",
+      "app/action_email_storage.py": "12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c",
+      "app/action_email_definitions.py": "edde1bd647c5c04a515f6cf107390b3bc02dedbec1b0b02a32b00ef26469b4bf",
+      "app/action_email_schema_release.py": "ddb5d4f30403b878972f07387c583bac4b549a4ad60526943b44ade805622a43",
+      "app/codex_runner.py": "f8d5b3d9750e0cb5839d0fa0701eb31ef5ed6b57ead9266be2f714db5838ac5e",
+      "app/worker.py": "faaaa314d14e72d71472172dc5a6bb5b9d8e5c71d92e990dbc35beee01ef29dd"
+    }
+  },
+  "result": {
+    "case": "approve",
+    "interrupted": false,
+    "source": {
+      "source_ref": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+      "production_head_after": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+      "observed_at_utc": "2026-10-15T10:36:53.649516+00:00",
+      "bytes": 484175872,
+      "store": "2026-10-13.5",
+      "email": 51,
+      "tables": 121,
+      "fk_findings": 1,
+      "sha256": "c3fcfb543032ab632c948cd9540739a698dda83a33047b0c9388d636c8bbf67e",
+      "schema_binding_verified": true,
+      "integrity_check": "ok"
+    },
+    "published_pair": {
+      "store": "2026-10-14.1",
+      "email": 52,
+      "action_types": 29,
+      "retired_email_tables": 13
+    },
+    "native_baseline_phase": "post_email_publication",
+    "task_id": 405049,
+    "conversation_id": "native-copy-acceptance:e3f0d393-bdd6-43da-b186-501de34eed1b",
+    "status": "pending",
+    "completed": false,
+    "native_invocations": [
+      {
+        "role": "consumer",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "4da48eedf5fa58f14f02221dafb6f9516e36faa02fec227ff1868eea5b207c8b"
+      },
+      {
+        "role": "audit",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "067e4989127e71a1216da0617520c00ee2b0c1cc20081ca95d511e74b26df9c6"
+      },
+      {
+        "role": "consumer",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "aa86ff294129d6828a0d193baa0d1f5b35a7c2ce6d9c3e266b44b638dd49142a"
+      },
+      {
+        "role": "audit",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "ecbe15e68e4b59e3918fc3ffdfb0f07713592679d27ad2054fdba927e29918da"
+      },
+      {
+        "role": "consumer",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "cd83cc5bb992676adb9bc20f3d508404af306649a5489847312e3724f6091fa6"
+      },
+      {
+        "role": "audit",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "7cba2f869255f04adde12a6cd2581203f717b0dc981669864a228850f5a4a15b"
+      },
+      {
+        "role": "consumer",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "fc161a02c5de03eee81cf1c8847e41175ec91987a00d8b67b8a4d1bca4770ded"
+      },
+      {
+        "role": "audit",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "8edd3d3abffa3e3136d0de009b43ca0871b111f29bc57453e88969a4e578661d"
+      },
+      {
+        "role": "audit",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "3918de3ae6378be8e98650e259db6749854063b14bf125e2e98385afa6114a10"
+      }
+    ],
+    "provider_calls": 0,
+    "verification_calls": 0,
+    "runs": [
+      {
+        "id": 361291,
+        "role": "consumer",
+        "status": "completed",
+        "revision": 0,
+        "parent_id": null,
+        "session_id": "01a13f2c-fcb2-7480-8aac-586b71fa522c",
+        "start": 0,
+        "end": 40,
+        "native_exists": true,
+        "tool_events": 6,
+        "error": "",
+        "attempts": [
+          {
+            "id": 361292,
+            "status": "completed",
+            "session_id": "01a13f2c-fcb2-7480-8aac-586b71fa522c",
+            "start": 0,
+            "end": 40
+          }
+        ]
+      },
+      {
+        "id": 361293,
+        "role": "audit",
+        "status": "completed",
+        "revision": 0,
+        "parent_id": 361291,
+        "session_id": "01a13f2d-45d9-7260-847a-1b9513486001",
+        "start": 0,
+        "end": 29,
+        "native_exists": true,
+        "tool_events": 4,
+        "error": "",
+        "attempts": [
+          {
+            "id": 361294,
+            "status": "completed",
+            "session_id": "01a13f2d-45d9-7260-847a-1b9513486001",
+            "start": 0,
+            "end": 29
+          }
+        ]
+      },
+      {
+        "id": 361295,
+        "role": "consumer",
+        "status": "completed",
+        "revision": 1,
+        "parent_id": 361293,
+        "session_id": "01a13f2c-fcb2-7480-8aac-586b71fa522c",
+        "start": 0,
+        "end": 66,
+        "native_exists": true,
+        "tool_events": 4,
+        "error": "",
+        "attempts": [
+          {
+            "id": 361296,
+            "status": "completed",
+            "session_id": "01a13f2c-fcb2-7480-8aac-586b71fa522c",
+            "start": 40,
+            "end": 66
+          }
+        ]
+      },
+      {
+        "id": 361297,
+        "role": "audit",
+        "status": "completed",
+        "revision": 1,
+        "parent_id": 361295,
+        "session_id": "01a13f2d-c3fa-7600-aa4d-91857d0c5e84",
+        "start": 0,
+        "end": 29,
+        "native_exists": true,
+        "tool_events": 4,
+        "error": "",
+        "attempts": [
+          {
+            "id": 361298,
+            "status": "completed",
+            "session_id": "01a13f2d-c3fa-7600-aa4d-91857d0c5e84",
+            "start": 0,
+            "end": 29
+          }
+        ]
+      },
+      {
+        "id": 361299,
+        "role": "consumer",
+        "status": "completed",
+        "revision": 2,
+        "parent_id": 361297,
+        "session_id": "01a13f2c-fcb2-7480-8aac-586b71fa522c",
+        "start": 0,
+        "end": 92,
+        "native_exists": true,
+        "tool_events": 4,
+        "error": "",
+        "attempts": [
+          {
+            "id": 361300,
+            "status": "completed",
+            "session_id": "01a13f2c-fcb2-7480-8aac-586b71fa522c",
+            "start": 66,
+            "end": 92
+          }
+        ]
+      },
+      {
+        "id": 361301,
+        "role": "audit",
+        "status": "completed",
+        "revision": 2,
+        "parent_id": 361299,
+        "session_id": "01a13f2e-4cef-7c42-a868-a8dd07c8653f",
+        "start": 0,
+        "end": 29,
+        "native_exists": true,
+        "tool_events": 4,
+        "error": "",
+        "attempts": [
+          {
+            "id": 361302,
+            "status": "completed",
+            "session_id": "01a13f2e-4cef-7c42-a868-a8dd07c8653f",
+            "start": 0,
+            "end": 29
+          }
+        ]
+      },
+      {
+        "id": 361303,
+        "role": "consumer",
+        "status": "completed",
+        "revision": 3,
+        "parent_id": 361301,
+        "session_id": "01a13f2c-fcb2-7480-8aac-586b71fa522c",
+        "start": 0,
+        "end": 118,
+        "native_exists": true,
+        "tool_events": 4,
+        "error": "",
+        "attempts": [
+          {
+            "id": 361304,
+            "status": "completed",
+            "session_id": "01a13f2c-fcb2-7480-8aac-586b71fa522c",
+            "start": 92,
+            "end": 118
+          }
+        ]
+      },
+      {
+        "id": 361305,
+        "role": "audit",
+        "status": "failed",
+        "revision": 3,
+        "parent_id": 361303,
+        "session_id": "01a13f2e-c66c-7163-98fd-575b2dcca5cf",
+        "start": 0,
+        "end": 12,
+        "native_exists": true,
+        "tool_events": 4,
+        "error": "{\"authorization_required\":false,\"code\":\"codex_result_invalid\",\"detail\":\"result: Value error, feedback is only valid for return or reject\",\"retryable\":true,\"session_continuable\":true,\"source\":\"codex\",\"stage\":\"result\"}",
+        "attempts": [
+          {
+            "id": 361306,
+            "status": "failed",
+            "session_id": "01a13f2e-c66c-7163-98fd-575b2dcca5cf",
+            "start": 0,
+            "end": 31
+          }
+        ]
+      },
+      {
+        "id": 361307,
+        "role": "audit",
+        "status": "failed",
+        "revision": 3,
+        "parent_id": 361303,
+        "session_id": "01a13f2e-c66c-7163-98fd-575b2dcca5cf",
+        "start": 0,
+        "end": 43,
+        "native_exists": true,
+        "tool_events": 1,
+        "error": "{\"authorization_required\":false,\"code\":\"agent_reported_failure\",\"reported_summary\":\"审核未完成：本轮按要求读取本地材料 case-input.json 时，系统返回“task file is unavailable”，因此无法独立核实 verification_tag、条目数量及 units 总和。send_group_message 契约已成功读取，确认目标必须使用 conversation_id，正文必须使用完整的 content。当前候选字段还显示 payload.content 实际仍包含“units 总和：100(via agent)”，但 summary 和 authored_judgment 声称正文最后一行为不含该附加文字的“units 总和：100”，候选内部不一致。由于材料依赖读取失败，本轮不能批准或完成事实审核；材料可读取后应重新提交完整候选并重新审核。\",\"retryable\":true,\"session_continuable\":false,\"source\":\"agent\",\"source_code\":\"task_artifact_unavailable\",\"stage\":\"\"}",
+        "attempts": [
+          {
+            "id": 361308,
+            "status": "failed",
+            "session_id": "01a13f2e-c66c-7163-98fd-575b2dcca5cf",
+            "start": 31,
+            "end": 43
+          }
+        ]
+      }
+    ]
+  },
+  "acceptance_passed": false,
+  "failure_summary": "Audit returned revisions0/1/2 over the service-appended signature; revision3 hit output contract and missing-artifact failures; no dispatch. Shared global Task artifact ID collision independently confirmed; deleting process unverified.",
+  "failed_case_original_tables_unchanged": 103,
+  "baseline_sha256": "23e04cceaba1ca66f9d8c61b14767de84508291289e43dd9cb21801328547920"
+}

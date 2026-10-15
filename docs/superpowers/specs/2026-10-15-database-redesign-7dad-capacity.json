@@ -1,0 +1,26 @@
+{
+  "source_ref": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "source_sha256": "c3fcfb543032ab632c948cd9540739a698dda83a33047b0c9388d636c8bbf67e",
+  "candidate_commit": "1a8b3edde03cbe95aa716fb8a3551b0ef3d4be03",
+  "target_phase": "post_paired_publication_pre_native_same_facts",
+  "copies": {
+    "source.sqlite3": {
+      "file_bytes": 484175872,
+      "page_bytes": 484175872,
+      "free_bytes": 45056,
+      "noninternal_tables": 121,
+      "action_scope_table_bytes": 111792128,
+      "action_scope_index_bytes": 19824640,
+      "quick_check": "ok"
+    },
+    "pre-native-target.sqlite3": {
+      "file_bytes": 506478592,
+      "page_bytes": 506478592,
+      "free_bytes": 0,
+      "noninternal_tables": 108,
+      "action_scope_table_bytes": 127578112,
+      "action_scope_index_bytes": 26238976,
+      "quick_check": "ok"
+    }
+  }
+}

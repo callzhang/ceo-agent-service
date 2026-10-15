@@ -3363,3 +3363,54 @@ Fresh sequential SPEC/QUALITY, final CI, capacity reduction, publication/live
 readback and full10core-plus-ledger completion remain separate outstanding
 work. No push, CI trigger, main merge, provider send or production/deploy action
 was performed by this integration unit.
+
+### Root acceptance: main7dad integration, current-source capacity and failed native case
+
+Fresh sequential independent SPEC and QUALITY accepted exact integration
+`1a8b3edde03cbe95aa716fb8a3551b0ef3d4be03`. Both confirmed that candidate
+Email projections and incoming behavior compose correctly. The206 focused
+passes/four existing explicit skips are separate from native acceptance.
+
+The readonly source observed at2026-10-15T10:36:53.649516+00:00 bound production
+HEAD7dad before and after SQLite backup. Store19/Email51 declarations, full
+Email source/retained-action fingerprints, ledger, quick_check and integrity
+passed; original FK findings remain one. The immutable484,175,872-byte source
+and its full121-table page/row aggregate are recorded in the7dad source-pages
+artifact. This observation is timestamped, not a claim about later production.
+
+Before any native fixture write, the real paired publication yielded108 tables
+and506,478,592 bytes with zero freelist; the source had45,056 free bytes. Active
+pages therefore grew by22,347,776 bytes. Actions plus Email13 source table/index
+pages were111,792,128/19,824,640 bytes; target actions were127,578,112/26,238,976.
+The7dad capacity artifact records this same-input pre-fixture measurement. No
+capacity reduction, VACUUM or final11-table acceptance is established.
+
+The first fresh generic approve case at1a8 failed:9 genuine CLI invocations,
+zero provider calls/verification, task left pending. Audit returned revisions0,
+1 and2 because the service-appended signature was judged unsupported; native
+Audit inputs did contain the existing service-postfix explanation. Revision3
+then encountered an invalid Audit output contract and a failed native artifact
+read on technical retry. This is not a successful approval/receipt chain.
+All103 original pre-native relevant tables remained unchanged and FK findings
+did not increase; the source hash stayed equal. Aggregate evidence is in the
+native7dad-failed artifact. Native trajectories remain only in Codex storage.
+
+A distinct fixture isolation defect was reproduced deterministically: copies
+and production can allocate the same Task ID and initial generation, while
+artifact paths and terminal cleanup use the shared Task ID root. Production
+and the failed copy both had Task405049; the production task was done and its
+global directory absent. This proves collision exposure, not which process
+deleted that historical directory. Test-only62de3cae reserves an isolated high
+Task allocator range in the candidate, keeps real public Task creation and
+all original native/Audit/receipt assertions, and passed sequential SPEC and
+QUALITY. Its cross-DB regression was RED then GREEN; seven focused checks
+passed, including an independent QUALITY run. It changes no app code, prompt
+or Audit policy and does not resolve the independent signature judgment.
+
+After source hash verification and no-open-handle checks, the single source
+was moved to a new owned native root without duplication. The failed raw
+root/private working databases/baseline were removed (1,013,119,423 bytes);
+only concise aggregates and native references are retained. A fresh same-source
+A/B invocation after the fixture fix is in progress. Final-head CI, publication,
+capacity recovery, remaining consolidation and full10-core-plus-ledger completion
+remain outstanding. No main merge, deploy, restart or real test send occurred.
