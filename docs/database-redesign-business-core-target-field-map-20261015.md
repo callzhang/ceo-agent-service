@@ -353,33 +353,68 @@ its disabled retained-business FK conversion must later be composed once, not
 implemented a second time or described as published. Other child conversions are
 separate finite units, with complete current declarations required at release.
 
-## 5. Smallest implementable storage unit and bounded alternatives
+## 5. Next coherent storage unit and bounded alternatives
 
-Recommend next: **unselected Business anchor declaration and source-shaped read
-projection only**, covering six existing columns. It has no outgoing FK, no body
-or mixed context, four exact CHECKs, two unique indexes and one independent native
-public-ID stream (actual water 50; fresh absent). Define only the Business skeleton
-needed by that kind and the six mappings above, compare both captured variants in
-native in-memory SQLite, including BINARY uniqueness, all actual omitted/default/
-NULL/affinity behavior and explicit negative/zero IDs. Exercise target declaration
-with synthetic values; do not create a DB source copy, touch constructors, add a
-flag/version, write migration/caller code or claim storage writers are complete.
-Allocator representation and deterministic public/physical identity encoding must
-be settled in that declaration review; no activation depends on this preparation.
+Recommend next: **one unselected four-kind Business storage unit: Task (19),
+Project (12), Anchor (6) and Project context revision (5), totaling 42 existing
+columns**. Include finite declarations, source-shaped reads **and writes**, native
+public-ID allocator parity and focused source-versus-target comparison in that
+unit. Do not split an anchor declaration, anchor writer and Project support into
+successive deliverables: a six-field anchor scaffold has no usable Project
+registration path and does not close an existing business operation.
 
-This is implementable without fetching any missing source. It is deliberately a
-small structural anchor for the accepted business table, not a six-column runtime
-migration: Projects and two external child families already depend on anchors,
-so activating it alone would break the existing storage closure. The following
-bounded unit can add source-shaped anchor writes/allocator parity, then the Project
-kind and exact typed composite FK. Full target SQL for the other 78 columns must
-not be declared solved by this document.
+This boundary follows actual callers. `register_source_project` creates/reuses
+Anchor and official Project in one caller transaction
+(`app/task_business_resolution.py:178-205`); splitting their writers would leave
+that registration incomplete. `apply_task_agent_decision` then applies Project
+registration, CRM, context and Task decisions/links within the same supplied
+transaction (`app/task_agent.py:1713-1812,2532-2536`). Candidate confirmation also
+resolves Project/Anchor and changes linked Task relevance/evidence in one
+transaction (`app/task_business_resolution.py:326-421`). Four kinds support that
+current-state boundary together, while Signal, document, evidence, date and event
+storage remains its existing separately owned boundary.
 
-| Alternative | Benefit | Concrete cost / blocker |
+The storage unit has **23 source CHECKs, seven indexes, zero owned triggers and
+four independent AUTOINCREMENT streams** (Task594, Project50, Anchor50,
+revision6; fresh all absent). Its internal typed FK closure is three groups/four
+rows: Task self-merge, Project's composite Anchor edge, and revision→Project.
+Settle deterministic public/physical identities, exact native value/NULL/default/
+affinity encoding and allocator state representation, then implement the finite
+source-shaped mutations under caller-owned transactions. Compare both captured
+actual/fresh variants, including public-ID ordering, omitted timestamps, native
+conflict behavior and rollback of rows plus allocator waters after a late FK
+failure. Synthetic native SQLite tests are sufficient for this **unselected
+storage** deliverable; it changes no live constructor, caller, schema version,
+activation flag or migration.
+
+Keep existing Signal/document/evidence/date/event tables and their endpoints
+untouched during this unselected preparation; do not create duplicate body
+storage or a second runtime business writer. A later partial Business release
+would have to convert actual callers and remap every affected retained child FK
+in the same release. There are **19 incoming FK groups** into the four Business
+families from outside that unit: four in retained Task evidence/date/event and
+Project evidence families, plus 15 of section4's external groups. The other eight
+section4 groups target Signals and remain unchanged for that partial boundary.
+Those child columns can retain their meaning and source-shaped public projection
+while their real physical FK points to the typed Business parent. They cannot
+continue pointing to an obsolete physical table after that parent moves. This is
+a future endpoint/caller conversion requirement, not permission to implement it
+inside the proposed unselected storage unit.
+
+| Alternative | Actual operation / dependency closure | Tradeoff |
 | --- | --- | --- |
-| Anchor declaration/projection first (recommended) | Independent finite native constraints; establishes Business identity/value representation without any source retirement | No runtime/table-count reduction; writes, Projects and incoming endpoints remain future work |
-| Four Business kinds together (Task, Project, Anchor, context revision; 42 columns) | More useful shared declaration and internal FK coverage; adopted facts need no body deletion | Larger type/allocator/JSON/typed FK comparison; retains Signal/source endpoints until separate conversion; still cannot activate without children/actions/callers |
-| Full ten-family target and release | Closes Task/Project atomic boundary and source retirement in one release | Blocked by 158 unproved bodies, mixed context/phrase readers, final inline/shared identity binding, all child remaps and actual published predecessor; cannot fabricate final DDL or source availability |
+| Four Business kinds, 42 columns (recommended) | Supports shared Task/Project current-state operations; three internal FK groups; 19 incoming groups need later release remapping | Larger finite native comparison than Project-only, but one coherent read/write/allocator deliverable; no source-body deletion needed |
+| Project+Anchor+context revision, 23 columns | Closes registration/context current-state storage; two internal FK groups/three rows, ten CHECKs/four indexes/three allocators; six incoming groups from five retained children | Coherent if a Project-only path is the immediate product goal; shared Task decisions and candidate confirmation still span retained Task storage, so it does not close the observed combined Task Agent current-state path |
+| Anchor alone, six columns | No outgoing FK, but registration immediately needs Project and context follows it | Easy declaration proof, no useful end-to-end registration; unnecessary fragmentation of this task |
+| Full ten-family target and release, 84 columns | Moves current Business plus all adopted action/source facts and their child/caller closure | Full-body retirement blocked by 158 unproved bodies, mixed context/phrase readers, inline/shared source binding and actual published predecessor; final DDL/source availability remain unproved |
+
+The **158-body gap blocks final body retirement and full ten-family activation**;
+it does not by itself prevent a later partial release moving current Business
+facts while the existing exact-source store remains authoritative. Such a partial
+release still requires complete affected child FK/caller conversion, source-shaped
+identity and transaction proof, inverse/reopen evidence and a newly bound actual
+published predecessor. Neither partial release nor a migration is designed or
+authorized by this storage proposal.
 
 Any later writer/migration must preserve the **existing caller-owned transaction**:
 Task path writes document, Signal, Task, evidence, date facts and events together;
@@ -388,15 +423,11 @@ transaction (`app/task_agent.py:1713,2532-2536`, `app/task_semantic_service.py:4
 `app/project_context_service.py:58`). A late FK failure must roll back all changed
 rows and allocators. Replays require the exact persisted Signal payload and latest
 original event public ID, even after merge copies evidence. Project context
-validation and evidence insertion run in that same transaction. This introduces
-no policy/review gate; these are current storage and caller contracts.
-
-Before release: settle the finite target SQL/codec; implement tested source-shaped
-writes and exact event ordering; prove source ownership/locator and body/phrase
-recovery; remap all 12 internal groups and the 23 incoming groups; convert callers
-without a duplicate writer/cache; bind the actual published predecessor and only
-then design coupled migration/inverse/constructor selection. No new migration
-number or speculative published successor is assigned here.
+validation and evidence insertion run in that same transaction. These are current
+storage/caller contracts; no new policy/review gate is proposed. Full ten-family
+release additionally requires source ownership/locator and body/phrase recovery
+and all 12 internal plus 23 external FK groups. No new migration number or
+speculative published successor is assigned here.
 
 ## 6. Self-review boundary
 
