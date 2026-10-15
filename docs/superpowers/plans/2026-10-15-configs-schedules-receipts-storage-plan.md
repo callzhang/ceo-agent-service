@@ -543,6 +543,16 @@ if kind == SCHEDULE_REF[0]:
     ).fetchone() else 0
 ```
 
+For `managed_skill_revisions.parent_revision_id` and
+`runtime_skill_configs.parent_id`, a native SQLite `INSERT` can point at its
+own source ID. After `_stored` resolves ordinary parents, compare the child key
+under SQLite INTEGER affinity with the new source identity. For a self match,
+the physical FK value in the same target `INSERT` is a scalar expression for
+the next `configs.id` (using `sqlite_sequence` and the current maximum); the
+implicit `AUTOINCREMENT` allocator still assigns that ID. The integrated patch
+below contains this exact implementation. Do not pre-lookup a row that has not
+yet been inserted, relax the FK, or update an immutable revision after insert.
+
 The scalar source ID is implicit in `complete` only after identity is chosen: add `values = {**values, SCALAR_KEY[kind]: identity}` for numeric scalar kinds immediately before `_completed`; for `runtime_feedback_iteration_capabilities.config_id`, the alias is simultaneously the source FK. An omitted key uses native rowid allocation and succeeds only if that generated key already names a runtime config parent. `scheduled_task_config_versions.id` may also be omitted. For numeric typed FK lookup, bind the raw source value against `numeric_public_key` INTEGER affinity; `_parent_id` against TEXT `public_key` remains for the original seven Email kinds. Python `str(key)` loses native FK matches for `"01"`, `"1.0"`, and `1.0`, and must not be used here. A missing non-null parent becomes ref `0` and fails the declared composite FK. Source `NULL` optional parent stays `NULL`.
 
 `_next_source_rowid` currently computes max+1 and handles max-int with an owned scratch SQLite table; preserve that for the five non-auto new kinds. For new composite-key kinds, include all key fields in the payload and use `legacy_key` as the signed source hidden ROWID. Preserve mutable rekey for `managed_skills.id` and `scheduled_task_config_versions.id`; reject changes to immutable aliases through source triggers. When `update_config` changes a numeric scalar ID, recompute both `source_key` and `legacy_key` from the new alias; use the exact replacement below after `current.update(values)` and before `_stored`. When it changes a referenced parent key, physicalid+kind+publickey FKs must return native NO ACTION. No silent reparenting.
@@ -1118,7 +1128,7 @@ diff --git a/app/configs_definitions.py b/app/configs_definitions.py
 +AUTOINCREMENT_KINDS = frozenset({
 +    "managed_skills", "managed_skill_revisions", "runtime_skill_configs",
 +})
-
+ 
  def config_column(kind: str, field: str) -> str:
 +    if (kind, field) == ("runtime_skill_configs", "status"):
 +        return "runtime_config_status"
@@ -1126,8 +1136,8 @@ diff --git a/app/configs_definitions.py b/app/configs_definitions.py
 -        return "public_key"
 +        return "numeric_public_key" if kind in NUMERIC_SCALAR_KINDS else "public_key"
      return PREFIX[kind] + "_" + field
-
-
+ 
+ 
 @@ -179,6 +261,30 @@
          "snapshot_important_label_watermark>=0",
      ),
@@ -1156,7 +1166,7 @@ diff --git a/app/configs_definitions.py b/app/configs_definitions.py
 +    ("scheduled_task_skill_refs", "managed_revision_id", "schedule_skill_ref_revision_ref", "managed_skill_revisions", "no action"),
 +)
 +SCHEDULE_REF = ("scheduled_task_skill_refs", "scheduled_task_id", "schedule_skill_ref_schedule_ref")
-
+ 
  def _affinity(kind: str, field: str) -> str:
      if field in INTEGERS.get(kind, ()):
 @@ -205,6 +311,11 @@
@@ -1284,15 +1294,15 @@ diff --git a/app/configs_definitions.py b/app/configs_definitions.py
 +            f"where name='{name}'; end"
 +        )
      return table, indexes, tuple(triggers)
-
-
+ 
+ 
 diff --git a/app/configs_storage.py b/app/configs_storage.py
 --- a/app/configs_storage.py
 +++ b/app/configs_storage.py
 @@ -6,10 +6,11 @@
  import math
  import sqlite3
-
+ 
 -from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key
 +from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full
  from app.configs_definitions import (
@@ -1301,9 +1311,35 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
 +    AUTOINCREMENT_KINDS, CONFIG_REFS, DEFAULTS, NUMERIC_SCALAR_KINDS,
 +    ROWID_KINDS, SCALAR_KEY, SCHEDULE_REF, config_column, config_payload_fields,
  )
-
-
-@@ -72,6 +73,47 @@
+ 
+ 
+@@ -20,6 +21,11 @@
+ 
+ 
+ _UNSET = object()
++_SELF_REF = object()
++_NEXT_PHYSICAL_ID = (
++    "(select max(coalesce((select seq from sqlite_sequence where name='configs'),0),"
++    "coalesce((select max(id) from configs),0))+1)"
++)
+ 
+ 
+ def create_configs_schema(db: sqlite3.Connection) -> None:
+@@ -48,6 +54,13 @@
+ def _text_affinity(value):
+     with closing(sqlite3.connect(":memory:")) as scratch:
+         scratch.execute("create table source_key(value text)")
++        scratch.execute("insert into source_key(value) values(?)", (value,))
++        return scratch.execute("select value from source_key").fetchone()[0]
++
++
++def _integer_affinity(value):
++    with closing(sqlite3.connect(":memory:")) as scratch:
++        scratch.execute("create table source_key(value integer)")
+         scratch.execute("insert into source_key(value) values(?)", (value,))
+         return scratch.execute("select value from source_key").fetchone()[0]
+ 
+@@ -72,6 +85,47 @@
              (kind,),
          ))
          return scratch.execute("insert into source_rows default values").lastrowid
@@ -1348,10 +1384,10 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
 +        (kind, raw_key),
 +    ).fetchone()
 +    return row[0] if row else 0
-
-
+ 
+ 
  def _completed(db: sqlite3.Connection, kind: str, supplied: dict) -> dict:
-@@ -121,6 +163,19 @@
+@@ -121,6 +175,19 @@
      if kind == "email_training_snapshots":
          data["snapshot_snapshot_digest"] = complete["snapshot_digest"]
          data["snapshot_frozen"] = complete["frozen"]
@@ -1369,9 +1405,9 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
 +            "select 1 from schedules where id=?", (key,)
 +        ).fetchone() else 0
      return data
-
-
-@@ -134,11 +189,16 @@
+ 
+ 
+@@ -134,11 +201,16 @@
                    source_rowid=_UNSET, ignore=False) -> ConfigWriteResult:
      _check(kind, values)
      _lock(db)
@@ -1391,16 +1427,27 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
      else:
          if source_rowid is not _UNSET:
              raise ValueError("WITHOUT ROWID config has no source rowid")
-@@ -149,6 +209,8 @@
+@@ -146,9 +218,17 @@
+         identity = None
+     complete = _completed(db, kind, values)
+     data = _stored(db, kind, complete, legacy_key)
++    for child, field, ref, parent, _ in CONFIG_REFS:
++        if child == parent == kind and complete[field] is not None:
++            if _integer_affinity(complete[field]) == identity:
++                data[ref] = _SELF_REF
      sql = ("insert " + ("or ignore " if ignore else "") + "into configs(" +
-            ",".join(data) + ") values(" + ",".join("?" for _ in data) + ")")
-     cursor = db.execute(sql, tuple(data.values()))
+-           ",".join(data) + ") values(" + ",".join("?" for _ in data) + ")")
+-    cursor = db.execute(sql, tuple(data.values()))
++           ",".join(data) + ") values(" + ",".join(
++               _NEXT_PHYSICAL_ID if value is _SELF_REF else "?"
++               for value in data.values()) + ")")
++    cursor = db.execute(sql, tuple(value for value in data.values() if value is not _SELF_REF))
 +    if kind in AUTOINCREMENT_KINDS and cursor.rowcount:
 +        _reserve_auto(db, kind, identity)
      return ConfigWriteResult(identity if cursor.rowcount else None, cursor.rowcount)
-
-
-@@ -176,6 +238,13 @@
+ 
+ 
+@@ -176,6 +256,13 @@
      if kind in ROWID_KINDS:
          legacy = (key if new_source_rowid is _UNSET else
                    str(_native_integer_primary_key(new_source_rowid, update=True)))
@@ -1420,15 +1467,15 @@ diff --git a/app/action_storage.py b/app/action_storage.py
 @@ -13,6 +13,7 @@
  import sqlite3
  from string import ascii_lowercase, ascii_uppercase
-
+ 
 +from app.action_skill_config_definitions import SKILL_RECEIPT_KINDS, skill_receipt_schema_parts
  from app.action_followup_sync_definitions import (
      SYNC_ACTION_PROJECTIONS as SYNC_ACTION_PROJECTIONS,
      SYNC_DEFAULTS, SYNC_FIELDS, SYNC_TYPES_ORDER, sync_action_projection,
 @@ -277,7 +278,9 @@
      return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
-
-
+ 
+ 
 -def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False):
 +def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False):
 +    if include_skill_config_receipts and not include_followup_sync:
@@ -1482,12 +1529,12 @@ diff --git a/app/action_storage.py b/app/action_storage.py
 +    if include_skill_config_receipts:
 +        triggers += skill_triggers
      return table, indexes, triggers
-
-
+ 
+ 
 @@ -614,24 +630,24 @@
  SENT_REPLY_OBSERVER_SQL = ACTION_PROJECTIONS["sent_reply_observers"]
-
-
+ 
+ 
 -def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False) -> None:
 +def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False) -> None:
      """Create the declared schema, or repair only its missing auxiliary objects."""
@@ -1525,8 +1572,8 @@ diff --git a/app/action_storage.py b/app/action_storage.py
 +    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts)
      for sql in (table, *indexes, *triggers):
          db.execute(sql)
-
-
+ 
+ 
  @lru_cache(maxsize=16)
 -def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False):
 +def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False):
@@ -1534,12 +1581,12 @@ diff --git a/app/action_storage.py b/app/action_storage.py
 -        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync)
 +        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts)
          return _objects(db, "actions")
-
-
+ 
+ 
 @@ -668,16 +684,18 @@
      return all(actual.get(name) == obj for name, obj in expected.items())
-
-
+ 
+ 
 -def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False) -> bool:
 +def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False) -> bool:
      kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
@@ -1858,14 +1905,14 @@ diff --git a/tests/test_configs_storage.py b/tests/test_configs_storage.py
 +++ b/tests/test_configs_storage.py
 @@ -4,6 +4,7 @@
  import pytest
-
+ 
  from app.action_storage import create_action_schema, insert_email_action
 +from app.schedules_storage import create_schedules_schema
  from app.configs_definitions import (
      CONFIG_FIELDS, CONFIG_FRESH_PROJECTIONS, CONFIG_PROJECTIONS,
  )
 @@ -18,9 +19,14 @@
-
+ 
  def test_seven_declared_fields_and_order():
      actual = capture()["actual"]["tables"]
 -    assert len(CONFIG_FIELDS) == 7
@@ -1923,8 +1970,8 @@ diff --git a/tests/test_email_action_writes.py b/tests/test_email_action_writes.
 +++ b/tests/test_email_action_writes.py
 @@ -13,7 +13,7 @@
  from tests.test_email_action_storage import _cases, _source_tables
-
-
+ 
+ 
 -def _databases():
 +def _databases(*, include_skill_config_receipts=False):
      source = sqlite3.connect(":memory:")
@@ -1947,21 +1994,21 @@ diff --git a/tests/test_email_action_writes.py b/tests/test_email_action_writes.
 +    else:
 +        create_action_schema(target, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
      return source, target
-
-
+ 
+ 
 diff --git a/tests/test_configs_account_source.py b/tests/test_configs_account_source.py
 --- a/tests/test_configs_account_source.py
 +++ b/tests/test_configs_account_source.py
 @@ -5,6 +5,7 @@
-
+ 
  import pytest
-
+ 
 +from app.schedules_storage import create_schedules_schema
  from app.configs_definitions import config_projection
  from app.configs_storage import (
      create_configs_schema, delete_config, insert_config, update_config,
 @@ -78,7 +79,7 @@
-
+ 
  def test_published_fresh_account_update_and_delete_cascade(old_email_copy):
      _, source_path = old_email_copy
 -    old_stub, target = _databases()
@@ -1972,7 +2019,7 @@ diff --git a/tests/test_configs_account_source.py b/tests/test_configs_account_s
 @@ -95,6 +96,7 @@
              "and tbl_name='email_accounts' and name like '%blocks_account_%'"
          ).fetchall()) == 6
-
+ 
 +        create_schedules_schema(target)
          create_configs_schema(target)
          target.commit()
@@ -2075,7 +2122,7 @@ diff --git a/tests/test_configs_target_integrated.py b/tests/test_configs_target
 new file mode 100644
 --- /dev/null
 +++ b/tests/test_configs_target_integrated.py
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,334 @@
 +from contextlib import closing
 +import json
 +import sqlite3
@@ -2087,8 +2134,8 @@ new file mode 100644
 +    insert_skill_receipt, load_receipt_projection, export_receipt_projection,
 +    list_skill_load_receipts, latest_skill_load_receipt_for_pid,
 +)
-+from app.configs_storage import create_configs_schema, insert_config, update_config
-+from app.configs_definitions import config_projection
++from app.configs_storage import create_configs_schema, delete_config, insert_config, update_config
++from app.configs_definitions import CONFIG_FIELDS, config_projection
 +from app.schedules_storage import create_schedules_schema, insert_schedule, delete_schedule
 +from app.schedules_definitions import schedule_projection, SCHEDULE_FIELDS
 +from tests.configs_source_fixtures import ROOT, source_db, insert as source_insert
@@ -2120,6 +2167,58 @@ new file mode 100644
 +
 +def runtime(db,id=30):
 +    insert_config(db,'runtime_skill_configs',{'id':id,'status':'pending_restart','created_at':'t'})
++
++@pytest.mark.parametrize('variant',('actual','fresh'))
++@pytest.mark.parametrize('kind,parent_field,physical_ref',(
++    ('managed_skill_revisions','parent_revision_id','skill_revision_parent_ref'),
++    ('runtime_skill_configs','parent_id','runtime_config_parent_ref'),
++))
++def test_native_self_reference_insert_and_parent_affinity(target,variant,kind,parent_field,physical_ref):
++    with source_db(variant) as source:
++        if kind == 'managed_skill_revisions':
++            parent_skill={'id':1,'name':'s-1','display_name':'Skill','created_at':'t'}
++            source_insert(source,'managed_skills',parent_skill)
++            insert_config(target,'managed_skills',parent_skill)
++
++        # A deleted physical row leaves sqlite_sequence ahead of max(id).
++        insert_config(target,'managed_skills',
++                      {'id':99,'name':'gap','display_name':'Gap','created_at':'t'})
++        assert delete_config(target,'managed_skills',99) == 1
++        physical_seq=target.execute(
++            "select seq from sqlite_sequence where name='configs'").fetchone()[0]
++        physical_max=target.execute('select coalesce(max(id),0) from configs').fetchone()[0]
++        assert physical_seq > physical_max
++
++        def row(row_id,parent):
++            if kind == 'managed_skill_revisions':
++                return {'id':row_id,'skill_id':1,'revision_number':row_id,
++                        'content':'body','sha256':f'sha-{row_id}','source':'test',
++                        parent_field:parent,'created_at':'t'}
++            return {'id':row_id,parent_field:parent,'status':'pending_restart','created_at':'t'}
++
++        self_row=row(2,2)
++        source_insert(source,kind,self_row)
++        insert_config(target,kind,self_row)
++        fields=','.join(CONFIG_FIELDS[kind])
++        assert target.execute(config_projection(kind)).fetchone() == source.execute(
++            f'select {fields} from {kind}').fetchone()
++        physical=target.execute(
++            f'select id,{physical_ref} from configs where record_type=?',(kind,)
++        ).fetchone()
++        assert physical[0] == physical[1]
++        assert target.execute('pragma foreign_key_check').fetchall() == []
++
++        for candidate in (row(3,999),row(4,b'4')):
++            with pytest.raises(sqlite3.IntegrityError):
++                source_insert(source,kind,candidate)
++            with pytest.raises(sqlite3.IntegrityError):
++                insert_config(target,kind,candidate)
++
++        null_row=row(5,None)
++        source_insert(source,kind,null_row)
++        insert_config(target,kind,null_row)
++        assert target.execute(config_projection(kind)).fetchall() == source.execute(
++            f'select {fields} from {kind} order by id').fetchall()
 +
 +@pytest.mark.parametrize('raw', ('01','1.0',1.0))
 +@pytest.mark.parametrize('variant', ('actual','fresh'))
@@ -2360,4 +2459,4 @@ new file mode 100644
 +        assert errors==[(13,'SQLITE_FULL',False,0)]*2
 ```
 
-The focused verification command after application is `python -m pytest -q tests/test_configs_target_integrated.py tests/test_configs_skill_storage.py tests/test_configs_storage.py tests/test_configs_account_source.py tests/test_configs_load_receipt_source.py`; run `ruff check` on the twelve patched Python files, `python -m compileall -q` on the seven application modules and new tests, and `git diff --check`. The account positive fixture uses a historical Git archive in a disposable copy; the plan prototype locally adapted only that fixture’s repository root to point back to this worktree. Do not copy that temporary hardcoded path into the implementation. The four accepted receipt source-oracle cases establish source behavior, while the 31 integrated cases and three eight-kind cases exercise the target. The new actual/fresh controls call the Store public receipt row hydrators directly and compare BLOB-to-`str()` DTO values; five auto streams each compare native and target `SQLITE_FULL` code/name, caller transaction rollback, pending marker removal, and nested savepoint loss after a committed MAXID seed. No real data copy or caller selection is claimed.
+The focused verification command after application is `python -m pytest -q tests/test_configs_target_integrated.py tests/test_configs_skill_storage.py tests/test_configs_storage.py tests/test_configs_account_source.py tests/test_configs_load_receipt_source.py`; run `ruff check` on the twelve patched Python files, `python -m compileall -q` on the seven application modules and new tests, and `git diff --check`. The account positive fixture uses a historical Git archive in a disposable copy; the plan prototype locally adapted only that fixture’s repository root to point back to this worktree. Do not copy that temporary hardcoded path into the implementation. The four accepted receipt source-oracle cases establish source behavior, while the 35 integrated cases (including four native self-reference cases) and three eight-kind cases exercise the target. The new actual/fresh controls call the Store public receipt row hydrators directly and compare BLOB-to-`str()` DTO values; five auto streams each compare native and target `SQLITE_FULL` code/name, caller transaction rollback, pending marker removal, and nested savepoint loss after a committed MAXID seed. No real data copy or caller selection is claimed.

@@ -606,3 +606,34 @@ Normal 700/901/901 stream boundaries stayed green. Only native `SQLITE_FULL`
 rolls back caller-owned transactions here, mirroring source plain INSERT;
 ordinary source-shaped writes retain the caller transaction. This adds no new
 review, safety or authorization behavior.
+
+### Native self-reference correction in unselected prototype (2026-10-15)
+
+Fresh QUALITY review found that the native actual and published-fresh source
+schemas accept a plain `INSERT` whose `managed_skill_revisions.parent_revision_id`
+or `runtime_skill_configs.parent_id` equals the row's own source ID. The first
+target prototype looked up that parent before inserting the row and rejected
+all four family/variant cases with a foreign-key error. Four new differential
+tests failed on that prototype and passed after the repair. Each test also
+checks a missing parent remains rejected, numeric-looking BLOB child keys are
+rejected, a NULL parent remains accepted, the full source projection matches,
+and `pragma foreign_key_check` is empty. A deleted physical row leaves
+`sqlite_sequence` ahead of `max(configs.id)` before each self-insert, so the
+physical pointer follows the AUTOINCREMENT high-water mark.
+
+For this self-reference only, the helper now applies SQLite INTEGER affinity
+to the child key and supplies the next physical `configs.id` as a scalar
+expression in the same `INSERT`. SQLite still assigns the implicit
+`AUTOINCREMENT` row ID and enforces the typed immediate FK. The full focused
+five-file target/config run passed 118 cases, including the prior 109 target
+cases, four new self-reference cases, and five accepted adjacent source cases.
+The refreshed twelve-file patch passed `git apply --check` and Ruff on the
+changed helper and test. Its SHA-256 is
+`516bd969601a9b6b0134e96a59648e660ce420b7ce030ee7429d80916c05e99f`;
+the twelve prototype Python files, hashed as ordered `path\0content\0`
+pairs, have SHA-256
+`a0b9c22055399ff832159da4e0ac710811f5e6ee84697b01c216175343753d7c`.
+The plan's authoritative embedded patch has been refreshed to those bytes.
+This remains a retained, unselected prototype and documentation input; no
+repository application or test files, caller, migration, real database,
+provider, native CLI, main, push, or deploy were changed.
