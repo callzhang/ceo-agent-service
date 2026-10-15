@@ -357,3 +357,26 @@ transactions. This review executed no new DML, target schema, migration,
 production reads/writes, native CLI or provider calls, and adds no expiry or
 30-day history policy. It is not evidence that sixteen families have already
 been removed.
+
+#### Positive Email account mutation against published fresh source
+
+The earlier config-only fresh fixture cannot establish positive account
+deletion: inserting a valid account and deleting it raised
+`OperationalError: no such table: main.email_unsubscribe_claims`. The new
+`tests/test_configs_account_source.py` instead uses a temporary SQLite
+database constructed by the archived published `7dadc492` AutoReplyStore and
+EmailStore. It asserts that the three predecessor action tables and six
+account blocker triggers exist before testing the synthetic account.
+
+The test passed a nonidentity account update, rejected a linked account-key
+update by native `NO ACTION` on both source and typed target with both rows
+unchanged, unlinked the binding, updated the account key, recreated the
+binding under the new key, and deleted the account with the binding cascading
+on both sides. At each step it compared source/target rowcounts, the complete
+fresh account projection and SQLite storage classes, and account/binding
+counts. The focused run of the new case plus the 75 storage cases, 19 source
+oracle cases and adjacent native/action cases passed `127` tests; Ruff,
+compileall and diff checks passed. This is a synthetic published-fresh
+constructor proof, not an actual production database copy or a runtime
+selection. Actual/fresh config declarations were reviewed separately. No
+app/schema/migration/default-caller or source fixture changed.
