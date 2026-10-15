@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "scope": "Local single-field mutations of existing anonymous native result48; no model request or runtime change",
+  "scope": "Local focused mutations of existing anonymous native result48; no model request or runtime change",
   "native_source": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T03-06-37-01a13f07-2ea4-7c52-9e69-94ca307880c5.jsonl",
   "native_result_line": 48,
   "baseline_schema_and_pydantic_valid": true,

@@ -1,0 +1,149 @@
+{
+  "version": 4,
+  "target_ref": "fac6d0fe + eval-only suggestion schema alternatives",
+  "route": "configured codex_oauth",
+  "scope": "Anonymous owned Store/full current-main Task pipeline; readonly native CLI/MCP-free; existing full CI Skill unchanged.",
+  "cases": [
+    {
+      "phase": "cold",
+      "work_item": {
+        "source": {
+          "type": "ai_minutes",
+          "ref": "meeting:synthetic-catalog-project",
+          "title": "匿名项目周会",
+          "conversation_id": "",
+          "conversation_title": "",
+          "created_at": "2026-10-12T09:00:00Z"
+        },
+        "summary": "会议决定启动星桥交付项目，目标是完成客户验收和回款。陈明总负责交付，赵华负责客户回款排期。当前验收按计划推进，未报告风险，没有新的独立行动项。",
+        "context": {
+          "sender": "",
+          "sender_user_id": "",
+          "owner_identity": {},
+          "assignment_authorized": false,
+          "external_task_id": "",
+          "reply_to_source_ref": "",
+          "participants": [],
+          "source_conversation_kind": "minutes",
+          "source_conversation_title": ""
+        },
+        "task_signals": {
+          "possible_task_update": false,
+          "mentions_follow_up": false,
+          "progress_claim": false,
+          "owner_correction": false,
+          "complaint_about_followup": false,
+          "signal_reason": ""
+        },
+        "scheduled_consumer": {}
+      }
+    },
+    {
+      "phase": "risk",
+      "work_item": {
+        "source": {
+          "type": "ai_minutes",
+          "ref": "meeting:synthetic-catalog-risk",
+          "title": "匿名项目风险续会",
+          "conversation_id": "",
+          "conversation_title": "",
+          "created_at": "2026-10-13T09:00:00Z"
+        },
+        "summary": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。",
+        "context": {
+          "sender": "",
+          "sender_user_id": "",
+          "owner_identity": {},
+          "assignment_authorized": false,
+          "external_task_id": "",
+          "reply_to_source_ref": "",
+          "participants": [],
+          "source_conversation_kind": "minutes",
+          "source_conversation_title": ""
+        },
+        "task_signals": {
+          "possible_task_update": false,
+          "mentions_follow_up": false,
+          "progress_claim": false,
+          "owner_correction": false,
+          "complaint_about_followup": false,
+          "signal_reason": ""
+        },
+        "scheduled_consumer": {}
+      }
+    }
+  ],
+  "comparison": {
+    "baseline": "v3 exact granular short entry, native schema05b8c4e..., risk needs correction",
+    "candidate": "Same entry/linked details/anonymous facts/clocks/current runtime; only --output-schema points to structural suggestion/source alternatives. Production schema and Pydantic unchanged."
+  },
+  "acceptance": [
+    "same native session cold/risk per arm",
+    "full native output and unchanged business checks",
+    "source facts/Project roles/risk preserved",
+    "current actual checked-in native schema path matches selected arm",
+    "input/semantic context comparison, not process success only",
+    "Strict schema accepted by actual native provider; source/suggestion forms retain values; first-pass actual Pydantic and business result; exact input equality after only owned paths.",
+    "Does not certify progressive relevant-reading, compaction or all-provider delivery."
+  ],
+  "workspace": "/private/tmp/ceo-task-suggestion-contract.v3fnytao",
+  "source_manifest": {
+    "SKILL.md": {
+      "sha256": "0622b65da52447ec4223826b4ba79bfaedbc91c729b59a1723b24247728770a6",
+      "chars": 2909
+    },
+    "references/assessment.md": {
+      "sha256": "afd7a13670e57bcaaab93b48be89886cbbaef4a99052eb4c351f8888edcd2fce",
+      "chars": 6877
+    },
+    "references/assignment.md": {
+      "sha256": "9a654e943fcd729b0fa7ddec6ea5b21b539de2809676fcfbaa1ae63f3cc1abd4",
+      "chars": 3595
+    },
+    "references/evidence.md": {
+      "sha256": "09282b81847c1322a50adc1e4f10d5327398691a4524da54603ae0b7444c26fb",
+      "chars": 1803
+    },
+    "references/project-context.md": {
+      "sha256": "a7f4fabd5c1b8fbc0686a485352d74f8f08dd14d0bd1d2fa9d76370454f27e10",
+      "chars": 2505
+    },
+    "references/project-links.md": {
+      "sha256": "f0277172455bb1ad6d9e39424a526306f9997a263bfffd55fc3a55bed2de6dbb",
+      "chars": 465
+    },
+    "references/project-registration.md": {
+      "sha256": "414ffe7a48dc503f5678425617fc1b040fc25a398744821546f91ec50b2c3cc9",
+      "chars": 3307
+    },
+    "references/result.md": {
+      "sha256": "d1f2ec3a6d2e6e7a8f03d1367ea10ecf143646579e55074db38a6bef3a0997e5",
+      "chars": 1244
+    },
+    "references/service.md": {
+      "sha256": "bd2cdd25fc8079bc9fc86a338fc9a2c0d789c99b26bc76306530c335a040de07",
+      "chars": 1047
+    },
+    "references/suggestions.md": {
+      "sha256": "705f9bcb17ecd2cb8fed82370c0fa7aa3352d68dcae5f419f245c39a6154ce89",
+      "chars": 2672
+    },
+    "references/task-updates.md": {
+      "sha256": "5e629ff21dc16a45779f78b03160490aa5002af902a3c28e54bc0e6682863c69",
+      "chars": 1285
+    }
+  },
+  "source_freshness": "Five full detailed reference sections concatenate byte-exactly to current main CI detailed sections. Added Result section and richer intro originate in existing current Task frame, not a different business protocol.",
+  "remaining_gate": "No production adoption; exact reference delivery, compaction, changed reference versions, other task scenarios and configured routes require separate acceptance.",
+  "source_fixture_commit": "be4b6494",
+  "source_fixture_path": "evals/trajectory_optimization/task-progressive-skill",
+  "driver": "task_schema_titles_runner.py actual transformations: cold summary padded110 lines each side, anonymous-full-runner source refs, fixed clocks override seed source dates; actual input SHA checked against v1 after Skill/path replacement.",
+  "schema": {
+    "path": "/private/tmp/ceo-task-suggestion-contract.v3fnytao/task-suggestion.schema.json",
+    "sha256": "1bd5210eadad50ba0fff71863584735532e61b8410761fb9f7c5c54685729380",
+    "chars": 36718,
+    "baseline_pretty_file_chars": 45529,
+    "baseline_compact_chars": 26637,
+    "compact_char_increase": 10081
+  }
+}

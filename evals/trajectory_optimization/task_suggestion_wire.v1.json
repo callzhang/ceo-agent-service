@@ -1,0 +1,71 @@
+{
+  "action": "record_candidate",
+  "transition": "none",
+  "skip_reason": null,
+  "task_id": null,
+  "target_task_id": null,
+  "source_excerpt": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。",
+  "source_ref": "meeting:anonymous-full-runner-risk",
+  "source_link": null,
+  "source_description": "匿名项目风险续会",
+  "source_group": null,
+  "source_person": null,
+  "evidence_origin": "current",
+  "title": "确认客户验收材料并落实回款日期",
+  "description": "推动完成客户验收材料确认，使客户能够安排付款日期并解除当前回款时间无法落实的阻塞。该候选行动是基于项目风险推导的下一步，当前来源未明确指派人员。",
+  "formal_basis": null,
+  "acceptance_polarity": null,
+  "acceptance_target_signal_id": null,
+  "status": null,
+  "business_relevance": null,
+  "owner_user_id": "",
+  "owner_name": "",
+  "owner_evidence": null,
+  "owner_kind": null,
+  "owner_relation": null,
+  "date_evidence": [],
+  "missing_evidence": [
+    "客户验收材料的具体缺项、确认标准和预计完成时间尚未提供。"
+  ],
+  "identity_proposal": null,
+  "relation_proposals": [],
+  "cluster_proposal": null,
+  "anchor_match_proposals": [],
+  "project_candidate_proposal": null,
+  "project": {
+    "anchor_id": 1,
+    "project_decision_index": null
+  },
+  "project_link_evidence": [
+    {
+      "signal_id": null,
+      "source_ref": "meeting:anonymous-full-runner-risk",
+      "source_excerpt": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。"
+    }
+  ],
+  "suggestion": {
+    "reason": "客户验收材料未齐是安排付款日期的前置阻塞；项目已明确由陈明负责交付，因此建议由该责任人推动验收材料确认。",
+    "suggested_owner_user_id": "",
+    "suggested_owner_name": "陈明",
+    "responsibility_evidence": [
+      {
+        "signal_id": 1,
+        "source_ref": "meeting:anonymous-full-runner-cold",
+        "source_excerpt": "陈明总负责交付"
+      }
+    ],
+    "basis_evidence": [
+      {
+        "signal_id": null,
+        "source_ref": "meeting:anonymous-full-runner-risk",
+        "source_excerpt": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。"
+      }
+    ]
+  },
+  "update_summary": null,
+  "memory_recall_used": false,
+  "risk": "high",
+  "confidence": 0.98,
+  "rule_coverage": 0.99,
+  "information_completeness": 0.82
+}
