@@ -1,6 +1,6 @@
 # Email Configs Storage Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add an unselected, source-shaped `configs` declaration and storage API for exactly seven existing Email configuration kinds and their 73 source fields.
 
@@ -46,8 +46,8 @@ For ordinary rowid kinds, `legacy_key` is the exact signed decimal source rowid,
 
 **Files:** Create `app/configs_definitions.py`; test in `tests/test_configs_storage.py`.
 
-- [ ] **Step 1: Claim exactly the files in the file map** with one own row in `docs/agent-claims.md`. Read the frozen actual/fresh SQL again and use its `columns` order, `indexes`, `foreign_keys` and `triggers` as the acceptance source.
-- [ ] **Step 2: Write RED declaration/projection tests first.** Create `tests/test_configs_storage.py` with the following first test; run `python -m pytest -q tests/test_configs_storage.py::test_seven_declared_fields_and_order`. Expected: import/attribute failure because `app.configs_definitions` does not exist.
+- [x] **Step 1: Claim exactly the files in the file map** with one own row in `docs/agent-claims.md`. Read the frozen actual/fresh SQL again and use its `columns` order, `indexes`, `foreign_keys` and `triggers` as the acceptance source.
+- [x] **Step 2: Write RED declaration/projection tests first.** Create `tests/test_configs_storage.py` with the following first test; run `python -m pytest -q tests/test_configs_storage.py::test_seven_declared_fields_and_order`. Expected: import/attribute failure because `app.configs_definitions` does not exist.
 
 ```python
 from contextlib import closing
@@ -72,7 +72,7 @@ def test_seven_declared_fields_and_order():
         assert db.execute("pragma quick_check").fetchone() == ("ok",)
 ```
 
-- [ ] **Step 3: Implement the finite metadata and declaration.** The code in the next three blocks is the complete `app/configs_definitions.py`. It deliberately uses literal field/check sets; no SQL parsing, regex-derived DDL, source JSON load or open-ended kind registration occurs in runtime.
+- [x] **Step 3: Implement the finite metadata and declaration.** The code in the next three blocks is the complete `app/configs_definitions.py`. It deliberately uses literal field/check sets; no SQL parsing, regex-derived DDL, source JSON load or open-ended kind registration occurs in runtime.
 
 ```python
 """Unselected seven-kind Email configs declaration and source projections."""
@@ -442,7 +442,7 @@ CONFIG_FRESH_PROJECTIONS = {
 }
 ```
 
-- [ ] **Step 4: Add only the declaration installer in `app/configs_storage.py` and run GREEN.** Use this exact initial content; Task 2 extends this same file:
+- [x] **Step 4: Add only the declaration installer in `app/configs_storage.py` and run GREEN.** Use this exact initial content; Task 2 extends this same file:
 
 ```python
 """Unselected caller-transactional Email configs storage."""
@@ -464,7 +464,7 @@ Run `python -m pytest -q tests/test_configs_storage.py::test_seven_declared_fiel
 
 **Files:** Extend `app/configs_storage.py`; extend `tests/test_configs_storage.py`. No caller or release selection.
 
-- [ ] **Step 1: Add the first RED API test.** In `tests/test_configs_storage.py`, add `from app.configs_storage import insert_config, update_config, delete_config` and this test. Run `python -m pytest -q tests/test_configs_storage.py::test_signed_rowids_and_reuse`. Expected: import failure for the three APIs.
+- [x] **Step 1: Add the first RED API test.** In `tests/test_configs_storage.py`, add `from app.configs_storage import insert_config, update_config, delete_config` and this test. Run `python -m pytest -q tests/test_configs_storage.py::test_signed_rowids_and_reuse`. Expected: import failure for the three APIs.
 
 ```python
 from app.action_storage import create_action_schema
@@ -508,7 +508,7 @@ def test_signed_rowids_and_reuse():
         )] == [-7, 0, 1, 2]
 ```
 
-- [ ] **Step 2: Replace the initial `app/configs_storage.py` with this complete content.** Its only identity encoders are the existing tagged SQLite value codec and a scratch SQLite TEXT-affinity/rowid allocator. It does not parse source DDL. Each write requires an existing caller transaction; neither writes nor declarations call `commit`. Four ordinary kinds use source rowid as the locator; three `WITHOUT ROWID` kinds use the source public TEXT PK. `lastrowid` is source rowid only for an inserted ordinary row; on ignored insert or `WITHOUT ROWID` insert it is `None` because no current caller requires SQLite's connection-level stale-lastrowid behavior.
+- [x] **Step 2: Replace the initial `app/configs_storage.py` with this complete content.** Its only identity encoders are the existing tagged SQLite value codec and a scratch SQLite TEXT-affinity/rowid allocator. It does not parse source DDL. Each write requires an existing caller transaction; neither writes nor declarations call `commit`. Four ordinary kinds use source rowid as the locator; three `WITHOUT ROWID` kinds use the source public TEXT PK. `lastrowid` is source rowid only for an inserted ordinary row; on ignored insert or `WITHOUT ROWID` insert it is `None` because no current caller requires SQLite's connection-level stale-lastrowid behavior.
 
 ```python
 """Unselected caller-transactional Email configs storage."""
@@ -710,13 +710,13 @@ def delete_config(db: sqlite3.Connection, kind: str, identity) -> int:
     ).rowcount
 ```
 
-- [ ] **Step 3: Run GREEN.** Run `python -m pytest -q tests/test_configs_storage.py::test_signed_rowids_and_reuse`. Expected: one pass. Run `ruff check app/configs_storage.py tests/test_configs_storage.py` and `python -m compileall -q app/configs_definitions.py app/configs_storage.py`. Task 3 adds the differential cases before the next commit.
+- [x] **Step 3: Run GREEN.** Run `python -m pytest -q tests/test_configs_storage.py::test_signed_rowids_and_reuse`. Expected: one pass. Run `ruff check app/configs_storage.py tests/test_configs_storage.py` and `python -m compileall -q app/configs_definitions.py app/configs_storage.py`. Task 3 adds the differential cases before the next commit.
 
 ### Task 3: Bounded native parity for all seven kinds
 
 **Files:** Extend `tests/test_configs_storage.py`. Keep `tests/configs_source_fixtures.py` unchanged.
 
-- [ ] **Step 1: Add exact synthetic values and differential helper.** Append this code to `tests/test_configs_storage.py` after the first two tests. Add the shown imports at the top, without duplicating existing imports. The helper uses only the accepted literal source fixture and the new unselected target declaration. It does not read actual database rows.
+- [x] **Step 1: Add exact synthetic values and differential helper.** Append this code to `tests/test_configs_storage.py` after the first two tests. Add the shown imports at the top, without duplicating existing imports. The helper uses only the accepted literal source fixture and the new unselected target declaration. It does not read actual database rows.
 
 ```python
 from contextlib import contextmanager
@@ -808,7 +808,7 @@ def insert_both(source, target, kind, values, *, source_rowid=None):
     return stored
 ```
 
-- [ ] **Step 2: Add source-shaped projection, affinity and raw TEXT checks.** The test covers all 73 values and their SQLite storage classes in exact actual/fresh order, including source JSON text whitespace, default values, and secret references. Run `python -m pytest -q tests/test_configs_storage.py::test_all_seven_source_projections`. Expected: 2 parameterized passes.
+- [x] **Step 2: Add source-shaped projection, affinity and raw TEXT checks.** The test covers all 73 values and their SQLite storage classes in exact actual/fresh order, including source JSON text whitespace, default values, and secret references. Run `python -m pytest -q tests/test_configs_storage.py::test_all_seven_source_projections`. Expected: 2 parameterized passes.
 
 ```python
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
@@ -865,7 +865,7 @@ def test_source_affinity_nullable_keys_and_no_invented_rules(variant):
 
 Add `CONFIG_FRESH_PROJECTIONS` to the definitions import at the top. Keep the test's two source `email_address` values deliberately equal: neither the database nor this target adds a uniqueness or lowercase rule. Add a second category `config_version` with the same `category_key=NULL`; no category-version uniqueness is invented.
 
-- [ ] **Step 3: Add the complete representative seven-kind rejection matrix.** Every row names the source field and the actual native constraint it challenges. Seed only the exact parent kinds needed by the two dependent kinds. Run `python -m pytest -q tests/test_configs_storage.py::test_each_email_kind_native_rejection`. Expected: all parameterized cases pass on both variants.
+- [x] **Step 3: Add the complete representative seven-kind rejection matrix.** Every row names the source field and the actual native constraint it challenges. Seed only the exact parent kinds needed by the two dependent kinds. Run `python -m pytest -q tests/test_configs_storage.py::test_each_email_kind_native_rejection`. Expected: all parameterized cases pass on both variants.
 
 ```python
 BAD = (
@@ -916,7 +916,7 @@ def test_each_email_kind_native_rejection(variant, kind, change):
             insert_config(target, kind, candidate)
 ```
 
-- [ ] **Step 4: Add identity, relation and immutability proofs.** Run the named test functions below and the source oracle `tests/test_configs_source_contract.py` together. The identity test checks stored TEXT affinity before tagged encoding; the negative-only rowid test checks native advance from `-7` to `-6`, reuse after deletion and the empty-table start at `1` before inserting any zero rowid; the max-rowid test keeps the native overflow allocator. The relation test checks **category deletion cascading to its binding in both the source and target**, plus a category-key update block; the snapshot test checks source-shaped 0→1 equality rather than freezing every field by policy. This test does not delete or update the account parent.
+- [x] **Step 4: Add identity, relation and immutability proofs.** Run the named test functions below and the source oracle `tests/test_configs_source_contract.py` together. The identity test checks stored TEXT affinity before tagged encoding; the negative-only rowid test checks native advance from `-7` to `-6`, reuse after deletion and the empty-table start at `1` before inserting any zero rowid; the max-rowid test keeps the native overflow allocator. The relation test checks **category deletion cascading to its binding in both the source and target**, plus a category-key update block; the snapshot test checks source-shaped 0→1 equality rather than freezing every field by policy. This test does not delete or update the account parent.
 
 ```python
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
@@ -1096,7 +1096,7 @@ def test_max_rowid_uses_native_overflow_allocator(variant):
 
 For the native `WITHOUT ROWID` probe, the source raises `OperationalError` when selecting `rowid`. The target UPDATE probe must use `update_config`, which raises the same immutable-history `IntegrityError` the source raises for UPDATE. Keep those assertions separate if a local SQLite version reports a different exception subclass for the missing `rowid` name.
 
-- [ ] **Step 5: Add the six current-action account blockers in a focused typed-action predicate fixture.** Reuse the exact synthetic `_databases` and `_cases` from `tests/test_email_action_writes.py` / `tests/test_email_action_storage.py`. `_databases` calls the real current `create_action_schema(... include_email=True)` but uses narrow classification/task/run stubs; it is not a full EmailStore constructor. The source-side old-table blocker comparison already lives in `tests/test_configs_source_contract.py::test_six_account_blockers_have_distinct_old_and_current_action_owners` and `tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`. This new test proves only that each target trigger blocks UPDATE and DELETE for its corresponding typed in-flight action row.
+- [x] **Step 5: Add the six current-action account blockers in a focused typed-action predicate fixture.** Reuse the exact synthetic `_databases` and `_cases` from `tests/test_email_action_writes.py` / `tests/test_email_action_storage.py`. `_databases` calls the real current `create_action_schema(... include_email=True)` but uses narrow classification/task/run stubs; it is not a full EmailStore constructor. The source-side old-table blocker comparison already lives in `tests/test_configs_source_contract.py::test_six_account_blockers_have_distinct_old_and_current_action_owners` and `tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`. This new test proves only that each target trigger blocks UPDATE and DELETE for its corresponding typed in-flight action row.
 
 ```python
 from app.action_storage import insert_email_action
@@ -1131,7 +1131,7 @@ def test_account_blockers_use_current_typed_action_predicate_fixture(kind, statu
 
 The captured actual/fresh `email_accounts` triggers refer to predecessor action children that `tests/configs_source_fixtures.py` intentionally does not create. Under that config-only fixture, source account DELETE raises `OperationalError` for a missing `email_unsubscribe_claims` table; it is not evidence of cascade parity or a successful native account mutation. Before selecting this storage path, prove positive account DELETE→binding cascade and account UPDATE/DELETE behavior against genuine predecessor action declarations or a full published constructor, then compare with the typed target. Do not add a fake action table to this fixture or count a caught missing-table error as parity success. Keep the target account FK `ON DELETE CASCADE` declaration in Task 1.
 
-- [ ] **Step 6: Consolidate the final test imports at the top.** The successive code blocks above add imports when first needed; the final `tests/test_configs_storage.py` header is exactly:
+- [x] **Step 6: Consolidate the final test imports at the top.** The successive code blocks above add imports when first needed; the final `tests/test_configs_storage.py` header is exactly:
 
 ```python
 from contextlib import closing, contextmanager
@@ -1155,15 +1155,15 @@ from tests.test_email_action_writes import _databases
 
 Replace earlier import lines with this header, preserving the test bodies. Run `ruff check app/configs_definitions.py app/configs_storage.py tests/test_configs_storage.py`. Expected: all checks pass.
 
-- [ ] **Step 7: Run the focused suite and commit only the owned code.** Run `python -m pytest -q tests/test_configs_storage.py tests/test_configs_source_contract.py tests/test_config_state_native_source.py tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`. Expected: all cases pass; the existing source oracle still reports its accepted 19 cases. Run `ruff check app/configs_definitions.py app/configs_storage.py tests/test_configs_storage.py`, `python -m compileall -q app/configs_definitions.py app/configs_storage.py tests/test_configs_storage.py` and `git diff --check`. If any matrix case fails, compare exact frozen native SQL and the failing source/target `typeof` and constraint; fix only the target declaration/storage. No test expectation is weakened to manufacture parity. Commit with `git add app/configs_storage.py tests/test_configs_storage.py` then `git commit -m "feat: add unselected Email configs source-shaped writes"`.
+- [x] **Step 7: Run the focused suite and commit only the owned code.** Run `python -m pytest -q tests/test_configs_storage.py tests/test_configs_source_contract.py tests/test_config_state_native_source.py tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`. Expected: all cases pass; the existing source oracle still reports its accepted 19 cases. Run `ruff check app/configs_definitions.py app/configs_storage.py tests/test_configs_storage.py`, `python -m compileall -q app/configs_definitions.py app/configs_storage.py tests/test_configs_storage.py` and `git diff --check`. If any matrix case fails, compare exact frozen native SQL and the failing source/target `typeof` and constraint; fix only the target declaration/storage. No test expectation is weakened to manufacture parity. Commit with `git add app/configs_storage.py tests/test_configs_storage.py` then `git commit -m "feat: add unselected Email configs source-shaped writes"`.
 
 ### Task 4: Record the storage result without claiming selection
 
 **Files:** Append `docs/database-redesign-config-state-source-preparation.md` and update the implementer's row in `docs/agent-claims.md`.
 
-- [ ] **Step 1: Append only observed focused-test results.** State exact commit, test command and counts, Ruff/compile/diff outcome, and any still-open source/target mismatch. Use this wording only if the Task 3 gate actually passes: “The seven-kind Email `configs` declaration and storage API passed synthetic actual/fresh differential checks. This is unselected local storage; the final 15-kind target, caller conversion, actual copy, native execution, production publication and source retirement remain separate gates.” Do not edit `docs/architecture.md` or `docs/runtime-mechanism.md` here because no runtime path changed.
-- [ ] **Step 2: Final self-review.** Compare each of the seven captured `sql` definitions, each named index and trigger, source `columns` type/default/order, and the accepted 19 source cases against the target code/tests. Confirm that every source field appears once in `CONFIG_FIELDS` and exactly once in its projection, and that the inactive seven-kind payload cannot take an eighth kind. Inspect `git diff -- app/configs_definitions.py app/configs_storage.py tests/test_configs_storage.py docs/database-redesign-config-state-source-preparation.md docs/agent-claims.md` and `git diff --check`. Run `python -c 'from pathlib import Path; p=Path("docs/superpowers/plans/2026-10-15-configs-email-storage-plan.md").read_text(); terms=("T"+"BD","TO"+"DO","implement "+"later","similar to "+"Task"); print([s for s in terms if s in p])'`; expected `[]`.
-- [ ] **Step 3: Commit only Task 4's own documentation hunks.** Use `git add docs/database-redesign-config-state-source-preparation.md docs/agent-claims.md` and `git commit -m "docs: record unselected Email configs storage evidence"`. Do not stage another agent's appendix or any provider/native acceptance file.
+- [x] **Step 1: Append only observed focused-test results.** State exact commit, test command and counts, Ruff/compile/diff outcome, and any still-open source/target mismatch. Use this wording only if the Task 3 gate actually passes: “The seven-kind Email `configs` declaration and storage API passed synthetic actual/fresh differential checks. This is unselected local storage; the final 15-kind target, caller conversion, actual copy, native execution, production publication and source retirement remain separate gates.” Do not edit `docs/architecture.md` or `docs/runtime-mechanism.md` here because no runtime path changed.
+- [x] **Step 2: Final self-review.** Compare each of the seven captured `sql` definitions, each named index and trigger, source `columns` type/default/order, and the accepted 19 source cases against the target code/tests. Confirm that every source field appears once in `CONFIG_FIELDS` and exactly once in its projection, and that the inactive seven-kind payload cannot take an eighth kind. Inspect `git diff -- app/configs_definitions.py app/configs_storage.py tests/test_configs_storage.py docs/database-redesign-config-state-source-preparation.md docs/agent-claims.md` and `git diff --check`. Run `python -c 'from pathlib import Path; p=Path("docs/superpowers/plans/2026-10-15-configs-email-storage-plan.md").read_text(); terms=("T"+"BD","TO"+"DO","implement "+"later","similar to "+"Task"); print([s for s in terms if s in p])'`; expected `[]`.
+- [x] **Step 3: Commit only Task 4's own documentation hunks.** Use `git add docs/database-redesign-config-state-source-preparation.md docs/agent-claims.md` and `git commit -m "docs: record unselected Email configs storage evidence"`. Do not stage another agent's appendix or any provider/native acceptance file.
 
 ## Release boundary after this plan
 

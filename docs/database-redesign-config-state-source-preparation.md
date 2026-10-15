@@ -380,3 +380,63 @@ compileall and diff checks passed. This is a synthetic published-fresh
 constructor proof, not an actual production database copy or a runtime
 selection. Actual/fresh config declarations were reviewed separately. No
 app/schema/migration/default-caller or source fixture changed.
+
+#### Root acceptance and current production boundary
+
+Fresh independent SPEC followed by QUALITY accepts the unselected seven-kind
+implementation `dc15505d`: both independently ran 94 storage/source cases and
+Ruff without a finding. They also accept the genuine published-fresh account
+closure `9f695659`; SPEC ran 76 cases, QUALITY ran the one new constructor
+case. Root separately ran 100 storage/source/native-metadata cases in 32.45s
+and the new constructor case in 6.96s. This completes the seven-kind local
+storage unit, not all fifteen kinds, caller selection or migration.
+
+Two current production query-only read transactions at 20:07 and 20:09 UTC
+on 2026-10-15 expose **121 tables**, Store `2026-10-13.5`, Email51 and logical
+size **486,330,368 bytes**. Production checkout HEAD before/after is
+`35d1636fd0b7ce83b77642120b62127fe0a3cb5e`; other work has advanced it from
+the frozen 7dad predecessor. No deployment was performed by this redesign
+task. The latest observations and all 121 per-table data/index totals are in
+`superpowers/specs/2026-10-15-production-table-size-readback.json`. The first
+observation had 4,096 free bytes and a 4,148,872-byte WAL; the second had zero
+free bytes. These are distinct live observations, not an immutable combined
+image. At the second observation email_accounts held **two rows/8,192 bytes
+including its index**; provider observations held **72,147 rows/24,956,928
+bytes including indexes**. Provider account configuration is small; inventory
+facts are a separate storage responsibility. The 104-table paired candidate
+and its capacity increase remain frozen-copy evidence, not production facts.
+
+#### Load receipt duplicate-body probe and explicit exception
+
+On the unchanged frozen source SHA256 `970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320`,
+all **4,105** load receipts are successful; their raw TEXT bodies contain
+**3,678,270 UTF-8 bytes** and 17 distinct body hashes. Every body exactly
+matches the existing public writer's `json.dumps` of the integer Skill-ID to
+revision-SHA map for the config's enabled bindings, with `sort_keys=True`
+and the original serializer defaults. No body or personal values are
+exported. Literal schema/trigger/FK metadata for the two Skill receipt
+families and the count/byte receipt are in
+`superpowers/specs/2026-10-15-configs-load-receipt-dedup-probe.json`.
+The source hash was checked unchanged after the probe. This is not a current
+production receipt scan, target compression or a file-space reclaim result.
+
+The approved duplicate-removal rule can use the referenced config's existing
+binding/revision data as the single source, reconstructing successful receipt
+JSON in Python and public failures as literal `'{}'`; no additional config
+body field is needed. Keep integer keys until the original serialization:
+integer IDs 2 and 10 sort differently from their string representations.
+DTO/API and inverse bytes must be compared, not just parsed JSON equality.
+The current CSV's per-receipt loaded_json disposition needs an explicit
+correction in the next bounded compression plan before implementation.
+
+This intentionally cannot claim arbitrary native-SQL history parity. Source
+SQL accepts noncanonical or BLOB bodies and permits a late INSERT of another
+binding after a receipt, despite prohibiting binding UPDATE/DELETE. Original
+receipt bytes stay unchanged in that history, while naive current-map
+derivation would change them. Current app writers create the complete config
+and bindings together, and no late app binding writer was found. The next
+source oracle must preserve that counterexample explicitly. A release-copy
+gate must verify exact reconstructability of every receipt and stop on any
+gap; do not silently rewrite unmatched bodies or add a new late-insert policy.
+Target/inverse, public failure, activation and consumer/console tests remain
+open. Neither a fallback body archive nor receipt deletion is implemented.

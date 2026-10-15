@@ -1,0 +1,754 @@
+{
+  "observed_utc": "2026-10-15T20:09:56.632921+00:00",
+  "mode": "ro/query_only/single_read_transaction",
+  "tables": [
+    {
+      "table": "runs",
+      "table_bytes": 76488704,
+      "index_bytes": 49049600,
+      "total_bytes": 125538304
+    },
+    {
+      "table": "actions",
+      "table_bytes": 80781312,
+      "index_bytes": 11227136,
+      "total_bytes": 92008448
+    },
+    {
+      "table": "tasks",
+      "table_bytes": 43290624,
+      "index_bytes": 6299648,
+      "total_bytes": 49590272
+    },
+    {
+      "table": "email_classifications",
+      "table_bytes": 36597760,
+      "index_bytes": 3256320,
+      "total_bytes": 39854080
+    },
+    {
+      "table": "email_messages",
+      "table_bytes": 33992704,
+      "index_bytes": 1552384,
+      "total_bytes": 35545088
+    },
+    {
+      "table": "email_provider_observations",
+      "table_bytes": 13328384,
+      "index_bytes": 11628544,
+      "total_bytes": 24956928
+    },
+    {
+      "table": "email_action_plans",
+      "table_bytes": 13778944,
+      "index_bytes": 1302528,
+      "total_bytes": 15081472
+    },
+    {
+      "table": "email_actions",
+      "table_bytes": 9060352,
+      "index_bytes": 4833280,
+      "total_bytes": 13893632
+    },
+    {
+      "table": "work_updates",
+      "table_bytes": 12115968,
+      "index_bytes": 249856,
+      "total_bytes": 12365824
+    },
+    {
+      "table": "follow_up_drafts",
+      "table_bytes": 10596352,
+      "index_bytes": 610304,
+      "total_bytes": 11206656
+    },
+    {
+      "table": "errors",
+      "table_bytes": 7585792,
+      "index_bytes": 966656,
+      "total_bytes": 8552448
+    },
+    {
+      "table": "work_projects",
+      "table_bytes": 6643712,
+      "index_bytes": 40960,
+      "total_bytes": 6684672
+    },
+    {
+      "table": "business_source_documents",
+      "table_bytes": 6356992,
+      "index_bytes": 20480,
+      "total_bytes": 6377472
+    },
+    {
+      "table": "email_action_attempts",
+      "table_bytes": 4124672,
+      "index_bytes": 1298432,
+      "total_bytes": 5423104
+    },
+    {
+      "table": "managed_skill_revisions",
+      "table_bytes": 4861952,
+      "index_bytes": 28672,
+      "total_bytes": 4890624
+    },
+    {
+      "table": "runtime_skill_load_receipts",
+      "table_bytes": 4452352,
+      "index_bytes": 53248,
+      "total_bytes": 4505600
+    },
+    {
+      "table": "email_agent_classification_tasks",
+      "table_bytes": 2732032,
+      "index_bytes": 483328,
+      "total_bytes": 3215360
+    },
+    {
+      "table": "work_todos",
+      "table_bytes": 2420736,
+      "index_bytes": 188416,
+      "total_bytes": 2609152
+    },
+    {
+      "table": "work_todo_dingtalk_links",
+      "table_bytes": 2510848,
+      "index_bytes": 61440,
+      "total_bytes": 2572288
+    },
+    {
+      "table": "email_unsubscribe_receipts",
+      "table_bytes": 2125824,
+      "index_bytes": 253952,
+      "total_bytes": 2379776
+    },
+    {
+      "table": "business_object_tasks",
+      "table_bytes": 1077248,
+      "index_bytes": 856064,
+      "total_bytes": 1933312
+    },
+    {
+      "table": "dispatcher_claim_leases",
+      "table_bytes": 966656,
+      "index_bytes": 921600,
+      "total_bytes": 1888256
+    },
+    {
+      "table": "business_task_events",
+      "table_bytes": 1671168,
+      "index_bytes": 36864,
+      "total_bytes": 1708032
+    },
+    {
+      "table": "email_unsubscribe_claims",
+      "table_bytes": 1159168,
+      "index_bytes": 258048,
+      "total_bytes": 1417216
+    },
+    {
+      "table": "business_task_signals",
+      "table_bytes": 626688,
+      "index_bytes": 389120,
+      "total_bytes": 1015808
+    },
+    {
+      "table": "seen_messages",
+      "table_bytes": 696320,
+      "index_bytes": 315392,
+      "total_bytes": 1011712
+    },
+    {
+      "table": "okr_review_items",
+      "table_bytes": 937984,
+      "index_bytes": 0,
+      "total_bytes": 937984
+    },
+    {
+      "table": "daily_scan_state",
+      "table_bytes": 868352,
+      "index_bytes": 4096,
+      "total_bytes": 872448
+    },
+    {
+      "table": "email_historical_candidates",
+      "table_bytes": 692224,
+      "index_bytes": 172032,
+      "total_bytes": 864256
+    },
+    {
+      "table": "email_unsubscribe_effects",
+      "table_bytes": 581632,
+      "index_bytes": 237568,
+      "total_bytes": 819200
+    },
+    {
+      "table": "conversation_runtime_sessions",
+      "table_bytes": 524288,
+      "index_bytes": 180224,
+      "total_bytes": 704512
+    },
+    {
+      "table": "email_feedback_requests",
+      "table_bytes": 368640,
+      "index_bytes": 323584,
+      "total_bytes": 692224
+    },
+    {
+      "table": "business_tasks",
+      "table_bytes": 442368,
+      "index_bytes": 102400,
+      "total_bytes": 544768
+    },
+    {
+      "table": "email_classifier_runtime_samples",
+      "table_bytes": 299008,
+      "index_bytes": 126976,
+      "total_bytes": 425984
+    },
+    {
+      "table": "email_unsubscribe_steps",
+      "table_bytes": 245760,
+      "index_bytes": 94208,
+      "total_bytes": 339968
+    },
+    {
+      "table": "managed_skill_export_receipts",
+      "table_bytes": 290816,
+      "index_bytes": 28672,
+      "total_bytes": 319488
+    },
+    {
+      "table": "scheduled_task_config_versions",
+      "table_bytes": 102400,
+      "index_bytes": 204800,
+      "total_bytes": 307200
+    },
+    {
+      "table": "follow_up_send_attempts",
+      "table_bytes": 249856,
+      "index_bytes": 12288,
+      "total_bytes": 262144
+    },
+    {
+      "table": "email_training_snapshots",
+      "table_bytes": 167936,
+      "index_bytes": 32768,
+      "total_bytes": 200704
+    },
+    {
+      "table": "oa_notification_events",
+      "table_bytes": 172032,
+      "index_bytes": 12288,
+      "total_bytes": 184320
+    },
+    {
+      "table": "codex_session_search_index",
+      "table_bytes": 102400,
+      "index_bytes": 69632,
+      "total_bytes": 172032
+    },
+    {
+      "table": "wechat_deliveries",
+      "table_bytes": 131072,
+      "index_bytes": 12288,
+      "total_bytes": 143360
+    },
+    {
+      "table": "meeting_memory_write_events",
+      "table_bytes": 90112,
+      "index_bytes": 45056,
+      "total_bytes": 135168
+    },
+    {
+      "table": "task_memory_write_events",
+      "table_bytes": 69632,
+      "index_bytes": 53248,
+      "total_bytes": 122880
+    },
+    {
+      "table": "conversations",
+      "table_bytes": 81920,
+      "index_bytes": 36864,
+      "total_bytes": 118784
+    },
+    {
+      "table": "business_task_evidence",
+      "table_bytes": 45056,
+      "index_bytes": 65536,
+      "total_bytes": 110592
+    },
+    {
+      "table": "task_todo_sync_outbox",
+      "table_bytes": 81920,
+      "index_bytes": 28672,
+      "total_bytes": 110592
+    },
+    {
+      "table": "feedback_events",
+      "table_bytes": 90112,
+      "index_bytes": 8192,
+      "total_bytes": 98304
+    },
+    {
+      "table": "service_state",
+      "table_bytes": 69632,
+      "index_bytes": 28672,
+      "total_bytes": 98304
+    },
+    {
+      "table": "email_historical_classification_history",
+      "table_bytes": 65536,
+      "index_bytes": 20480,
+      "total_bytes": 86016
+    },
+    {
+      "table": "business_attention_events",
+      "table_bytes": 57344,
+      "index_bytes": 4096,
+      "total_bytes": 61440
+    },
+    {
+      "table": "todo_evidence_candidates",
+      "table_bytes": 24576,
+      "index_bytes": 20480,
+      "total_bytes": 45056
+    },
+    {
+      "table": "workbench_confirmations",
+      "table_bytes": 4096,
+      "index_bytes": 40960,
+      "total_bytes": 45056
+    },
+    {
+      "table": "org_user_profiles",
+      "table_bytes": 24576,
+      "index_bytes": 12288,
+      "total_bytes": 36864
+    },
+    {
+      "table": "business_anchors",
+      "table_bytes": 12288,
+      "index_bytes": 16384,
+      "total_bytes": 28672
+    },
+    {
+      "table": "business_attention_items",
+      "table_bytes": 20480,
+      "index_bytes": 8192,
+      "total_bytes": 28672
+    },
+    {
+      "table": "business_project_context_revisions",
+      "table_bytes": 24576,
+      "index_bytes": 4096,
+      "total_bytes": 28672
+    },
+    {
+      "table": "business_task_anchor_links",
+      "table_bytes": 20480,
+      "index_bytes": 8192,
+      "total_bytes": 28672
+    },
+    {
+      "table": "codex_session_search_fts_data",
+      "table_bytes": 24576,
+      "index_bytes": 0,
+      "total_bytes": 24576
+    },
+    {
+      "table": "feedback_processing_items",
+      "table_bytes": 12288,
+      "index_bytes": 12288,
+      "total_bytes": 24576
+    },
+    {
+      "table": "runtime_skill_bindings",
+      "table_bytes": 12288,
+      "index_bytes": 12288,
+      "total_bytes": 24576
+    },
+    {
+      "table": "scheduled_tasks",
+      "table_bytes": 16384,
+      "index_bytes": 8192,
+      "total_bytes": 24576
+    },
+    {
+      "table": "business_legacy_links",
+      "table_bytes": 4096,
+      "index_bytes": 16384,
+      "total_bytes": 20480
+    },
+    {
+      "table": "email_category_description_revisions",
+      "table_bytes": 20480,
+      "index_bytes": 0,
+      "total_bytes": 20480
+    },
+    {
+      "table": "feedback_processing_rounds",
+      "table_bytes": 4096,
+      "index_bytes": 16384,
+      "total_bytes": 20480
+    },
+    {
+      "table": "business_projects",
+      "table_bytes": 12288,
+      "index_bytes": 4096,
+      "total_bytes": 16384
+    },
+    {
+      "table": "business_task_relations",
+      "table_bytes": 4096,
+      "index_bytes": 12288,
+      "total_bytes": 16384
+    },
+    {
+      "table": "email_category_configs",
+      "table_bytes": 12288,
+      "index_bytes": 4096,
+      "total_bytes": 16384
+    },
+    {
+      "table": "email_reply_dispatch_claims",
+      "table_bytes": 4096,
+      "index_bytes": 12288,
+      "total_bytes": 16384
+    },
+    {
+      "table": "email_training_snapshot_observations",
+      "table_bytes": 4096,
+      "index_bytes": 12288,
+      "total_bytes": 16384
+    },
+    {
+      "table": "feedback_processing_transitions",
+      "table_bytes": 4096,
+      "index_bytes": 12288,
+      "total_bytes": 16384
+    },
+    {
+      "table": "setup_wizard_events",
+      "table_bytes": 12288,
+      "index_bytes": 4096,
+      "total_bytes": 16384
+    },
+    {
+      "table": "workbench_artifacts",
+      "table_bytes": 4096,
+      "index_bytes": 12288,
+      "total_bytes": 16384
+    },
+    {
+      "table": "workbench_attachments",
+      "table_bytes": 4096,
+      "index_bytes": 12288,
+      "total_bytes": 16384
+    },
+    {
+      "table": "business_attention_proposal_tasks",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "business_attention_tasks",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "business_task_dingtalk_links",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "business_task_follow_up_send_attempts",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "business_task_follow_ups",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "business_task_todo_sync_outbox",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "business_work_cluster_tasks",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "codex_session_search_fts_docsize",
+      "table_bytes": 12288,
+      "index_bytes": 0,
+      "total_bytes": 12288
+    },
+    {
+      "table": "email_category_folder_bindings",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "email_historical_operations",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "email_reply_receipts",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "feedback_iteration_decision_items",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "scheduled_task_skill_refs",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "service_bugfix_candidates",
+      "table_bytes": 4096,
+      "index_bytes": 8192,
+      "total_bytes": 12288
+    },
+    {
+      "table": "business_project_candidates",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "business_project_evidence",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "business_task_date_evidence",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "channel_login_reservations",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "codex_session_locks",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "corpus_sources",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "email_accounts",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "email_direct_retry_requests",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "email_historical_traversals",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "email_provider_folder_observation_generations",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "email_scan_cursors",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "email_unsubscribe_cancellations",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "email_unsubscribe_continuations",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "feedback_iteration_decisions",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "feedback_processing_batches",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "managed_skills",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "org_cache_metadata",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "runtime_route_pauses",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "setup_wizard_steps",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "wechat_memory_candidates",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "wechat_memory_import_jobs",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "wechat_read_state",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "wechat_reply_scopes",
+      "table_bytes": 4096,
+      "index_bytes": 4096,
+      "total_bytes": 8192
+    },
+    {
+      "table": "business_work_clusters",
+      "table_bytes": 4096,
+      "index_bytes": 0,
+      "total_bytes": 4096
+    },
+    {
+      "table": "codex_session_search_fts_config",
+      "table_bytes": 4096,
+      "index_bytes": 0,
+      "total_bytes": 4096
+    },
+    {
+      "table": "codex_session_search_fts_idx",
+      "table_bytes": 4096,
+      "index_bytes": 0,
+      "total_bytes": 4096
+    },
+    {
+      "table": "email_model_mode_transitions",
+      "table_bytes": 4096,
+      "index_bytes": 0,
+      "total_bytes": 4096
+    },
+    {
+      "table": "email_model_promotion_configs",
+      "table_bytes": 4096,
+      "index_bytes": 0,
+      "total_bytes": 4096
+    },
+    {
+      "table": "email_schema_migrations",
+      "table_bytes": 4096,
+      "index_bytes": 0,
+      "total_bytes": 4096
+    },
+    {
+      "table": "meeting_alignment_delivery_claims",
+      "table_bytes": 4096,
+      "index_bytes": 0,
+      "total_bytes": 4096
+    },
+    {
+      "table": "runtime_feedback_iteration_capabilities",
+      "table_bytes": 4096,
+      "index_bytes": 0,
+      "total_bytes": 4096
+    },
+    {
+      "table": "runtime_skill_configs",
+      "table_bytes": 4096,
+      "index_bytes": 0,
+      "total_bytes": 4096
+    },
+    {
+      "table": "codex_session_search_fts",
+      "table_bytes": 0,
+      "index_bytes": 0,
+      "total_bytes": 0
+    }
+  ],
+  "table_count": 121,
+  "logical_bytes": 486330368,
+  "free_bytes": 0,
+  "provider_observation_rows": 72147,
+  "account_rows": 2,
+  "store_schema": "2026-10-13.5",
+  "email_schema": 51,
+  "production_head_before_after": "35d1636fd0b7ce83b77642120b62127fe0a3cb5e",
+  "first_file_observation": {
+    "head": "35d1636fd0b7ce83b77642120b62127fe0a3cb5e",
+    "observed_utc": "2026-10-15T20:07:30.474187+00:00",
+    "tables": 121,
+    "page_bytes": 486330368,
+    "free_bytes": 4096,
+    "file_bytes": 486330368,
+    "wal_bytes": 4148872,
+    "store_schema": "2026-10-13.5",
+    "email_schema": 51,
+    "email_accounts": 2,
+    "scope": "read-only live snapshot; no deploy by this task; largest-object list contains indexes separately, not per-table totals"
+  },
+  "scope": "Live readonly metadata only. No migration, writes, restart or deployment by this task. Table totals include their indexes; no source row bodies exported."
+}
