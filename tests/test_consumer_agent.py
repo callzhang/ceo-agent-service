@@ -947,11 +947,22 @@ def test_consumer_oa_contract_never_requires_fields_absent_from_current_stage():
 
 
 def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate():
-    instructions = consumer_developer_instructions("Verify supported facts.") + _CONSUMER_AGENT_RULES
+    from app.prompt_composition import PromptConfiguration
+
+    configuration = PromptConfiguration("", "", "{{task_context}}", "")
+    instructions = " ".join(
+        (
+            consumer_developer_instructions(
+                "Verify supported facts.", prompt_configuration=configuration
+            )
+            + _CONSUMER_AGENT_RULES
+        ).split()
+    )
 
     assert "stardust-oa-finance-review" not in instructions
     assert "finance registry" not in instructions
-    assert "current-instance business choice" in instructions
+    assert "A current-instance choice is a needs_human candidate only when" in instructions
+    assert "Missing facts, even facts only Derek can provide" in instructions
 
 
 def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
@@ -982,7 +993,10 @@ def test_consumer_prompt_declares_common_quality_fields_and_priority(monkeypatch
 
     for field in ("risk", "confidence", "rule_coverage", "information_completeness"):
         assert field in instructions
-    assert "Scores do not automatically create a human question" in instructions
+    assert "apply this outcome gate in order" in instructions
+    assert "information_completeness < 0.5 means ask one focused factual question in a normal proposal" in instructions
+    assert "needs_human is allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5" in instructions
+    assert "otherwise do not return needs_human" in instructions
     assert "Technical/provider, authentication-route, schema, model-output and retry failures are failed" in instructions
     assert "complete current-instance plans" in instructions
     assert "requested_input with zero options" in instructions
@@ -1011,13 +1025,19 @@ def test_consumer_instructions_allow_bounded_fact_finding_without_purchase_commi
 
 
 def test_consumer_instructions_reserve_human_for_unsupported_skill_only():
+    from app.prompt_composition import PromptConfiguration
+
+    configuration = PromptConfiguration("", "", "{{task_context}}", "")
     instructions = " ".join(
-        consumer_developer_instructions("Verify every supported fact.").split()
+        consumer_developer_instructions(
+            "Verify every supported fact.", prompt_configuration=configuration
+        ).split()
     )
 
     assert "Use the applicable application behavior, business Skills" in instructions
     assert "needs_human" in instructions
-    assert "current-instance business choice" in instructions
+    assert "A current-instance choice is a needs_human candidate only when" in instructions
+    assert "not by themselves a needs_human policy choice" in instructions
 
 
 def test_consumer_instructions_use_reply_fallback_when_okr_write_is_unsupported():
@@ -3626,6 +3646,62 @@ def test_decision_quality_gate_defines_how_to_score_the_coverage_fields():
 
     # The scores must agree with the summary that accompanies them.
     assert "must agree with your own summary" in text
+
+
+def test_decision_quality_gate_requires_independent_judgment_of_removal_requests():
+    text = " ".join(consumer_agent.DECISION_QUALITY_GATE_INSTRUCTIONS.split())
+
+    assert "the request itself is not authorization" in text
+    assert "You must independently assess the content, exact scope, authority, and consequences" in text
+    assert "Do not perform a destructive removal solely because its requester asked" in text
+    assert "A missing removal capability is an execution limitation, not a reusable rule gap" in text
+    assert "even facts only Derek can provide" in text
+    assert "not by themselves a needs_human policy choice" in text
+    assert "only when the applicable authorization rules make it non-delegable" in text
+
+
+def test_decision_quality_gate_makes_score_thresholds_mandatory_for_consumer_and_audit():
+    from app.prompt_composition import PromptConfiguration
+
+    configuration = PromptConfiguration("", "", "{{task_context}}", "")
+    expected = (
+        "apply this outcome gate in order",
+        "information_completeness < 0.5 means ask one focused factual question in a normal proposal",
+        "needs_human is allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5",
+        "Audit must independently check that the proposed outcome matches these scores",
+        "otherwise do not return needs_human",
+    )
+    consumer = " ".join(
+        consumer_developer_instructions(prompt_configuration=configuration).split()
+    )
+    audit = " ".join(
+        audit_developer_instructions(
+            "Verify the candidate.", prompt_configuration=configuration
+        ).split()
+    )
+
+    for instructions in (consumer, audit):
+        for clause in expected:
+            assert clause in instructions
+
+
+def test_removal_judgment_contract_is_in_both_consumer_and_audit_prompts():
+    from app.prompt_composition import PromptConfiguration
+
+    configuration = PromptConfiguration("", "", "{{task_context}}", "")
+    consumer = " ".join(
+        consumer_developer_instructions(prompt_configuration=configuration).split()
+    )
+    audit = " ".join(
+        audit_developer_instructions(
+            "Verify the candidate.", prompt_configuration=configuration
+        ).split()
+    )
+
+    for instructions in (consumer, audit):
+        assert "the request itself is not authorization" in instructions
+        assert "do not ask Derek to perform that current action for you" in instructions
+        assert "missing removal capability is an execution limitation" in instructions
 
 
 def test_the_protocol_keeps_controlled_actions_as_typed_proposals():

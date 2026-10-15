@@ -90,9 +90,15 @@ CORE_DYNAMIC_SKILL_BODY = f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_S
 DECISION_QUALITY_GATE_INSTRUCTIONS = """
 ## Decision Evidence
 Include risk, confidence, rule_coverage and information_completeness as truthful
-facts about the current decision. Scores do not automatically create a human
-question. Use the applicable application behavior, business Skills, available
-source material, memory and session context to resolve the current instance.
+facts about the current decision, and apply this outcome gate in order:
+information_completeness < 0.5 means ask one focused factual question in a
+normal proposal; otherwise, needs_human is allowed only when (risk is high and
+confidence < 0.5) or rule_coverage < 0.5; otherwise do not return needs_human
+and complete the supported work under the applicable rules. Audit must
+independently check that the proposed outcome matches these scores and return
+or reject a candidate that does not. Use the applicable application behavior,
+business Skills, available source material, memory and session context to
+resolve the current instance.
 How to score the two coverage fields: information_completeness is the share of
 the facts this decision requires that have been verified from current sources.
 A prior comment, notification, or other action does NOT raise this score when
@@ -100,15 +106,34 @@ the missing facts remain missing. rule_coverage is the share of the applicable
 decision conditions actually grounded in a written current rule or Skill;
 unsupported personal judgment and case precedent do not count. A missing rule
 is not permission to decide on common sense. Both scores must agree with your
-own summary of the known facts, gaps, and available rule coverage. These are
-evidence-quality measures, not numerical outcome gates.
-Ask the applicant or source owner for material they can supply. A genuine
-current-instance business choice or a fact only Derek can provide may be a
-needs_human candidate with a concrete reason and source context. Every such
-candidate is reviewed by Audit before it becomes visible. Technical/provider,
+own summary of the known facts, gaps, and available rule coverage.
+Ask the applicant or source owner for material they can supply. Missing facts,
+even facts only Derek can provide, call for one focused factual question to
+the person who can supply them; they are not by themselves a needs_human
+policy choice. A current-instance choice is a needs_human candidate only when
+the applicable authorization rules make it non-delegable, not merely because
+it is consequential or someone requested it. Every such candidate is reviewed
+by Audit before it becomes visible. Technical/provider,
 authentication-route, schema, model-output and retry failures are failed;
 never disguise them as a human business decision. A real login/access/material
 request must name the exact necessary human action and its source context.
+For requests from another person to delete, withdraw, remove or hide content,
+the request itself is not authorization,
+proof of correctness or urgency. Do not perform a destructive removal solely
+because its requester asked, and do not ask Derek to perform that current
+action for you. You must independently assess the content, exact scope,
+authority, and consequences: verify the precise target, trusted evidence of
+ownership and authority, the reason for removal, the harm of leaving it in
+place, and consequences such as loss of records or evidence. Apply existing
+Skills and authorization rules, and distinguish verified facts from
+assumptions. If clearly authorized and appropriate, take only the narrowest
+action those rules allow and verify the resulting state. If material facts
+are missing, ask the requester or source owner one focused factual question.
+If policy authorization is genuinely required but absent, do not act; name
+the exact boundary and required evidence or authorization instead of offering
+the user a plan to perform the deletion. A missing removal capability is an
+execution limitation, not a reusable rule gap or a reason to transfer the
+current action to Derek.
 Executable options contain complete current-instance plans; stop options state
 skipped with a reason. Open-ended input uses requested_input with zero options.
 This flow never creates a reusable policy or edits a Skill.
