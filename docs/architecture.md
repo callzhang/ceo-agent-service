@@ -59,12 +59,14 @@ association: a previously unlinked Project remains unlinked until human
 confirmation, and an existing confirmed association is preserved. Search
 performs no external CRM write.
 
-The offline copied-database harness checks the combined Business/Email paired
-release against the exact published-source declaration binding. Its paired case
-compares the four source-shaped parent families, fifteen retained child tables,
-SQLite value types, hidden ROWIDs, thirteen sequence waters and FK findings
-through publication, public writes, current-fact inverse, genuine cold old-code
-writes and re-publication. Three additional SQL-boundary cases cover Email only.
+The offline copied-database harness checks the combined Provider/Business/Email
+paired release against the exact published-source declaration binding. Its
+paired case compares both Provider source families and all twelve named values
+and SQLite types, the four Business parents, fifteen retained child tables,
+hidden ROWIDs, thirteen sequence waters and FK findings through publication,
+public writes, current-fact inverse, genuine cold old-code writes and
+re-publication. Provider declarations and original rows are checked separately
+from unrelated tables. Three additional SQL-boundary cases cover Email only.
 This is candidate validation, not a production migration or native Agent result.
 
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`

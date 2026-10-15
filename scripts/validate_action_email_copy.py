@@ -1,4 +1,4 @@
-"""Offline combined Business4/Email13 paired proof and Email-only boundary cases."""
+"""Offline combined Provider/Business4/Email13 proof and Email-only boundary cases."""
 
 import argparse
 from collections import Counter
@@ -28,6 +28,11 @@ from app.business_schema_release import (
     AUTOINCREMENT_CHILDREN, RETAINED_CHILD_FKS, SOURCE_PARENTS,
     _child_facts, _child_waters, _parent_facts, _parent_waters,
     _target_parent_facts, business_schema_is_current, capture_business_source,
+)
+from app.provider_state_definitions import GENERATION_FIELDS, OBSERVATION_FIELDS
+from app.provider_state_schema_release import (
+    SOURCE_TABLES as PROVIDER_SOURCE_TABLES,
+    capture_provider_state_source, provider_state_schema_is_current,
 )
 
 PUBLISHED_SCHEMA_REF = "7dadc492c1c62d5b0624f2f97dd0c89f4f358646"
@@ -99,9 +104,9 @@ def _unrelated(db, fixture_ids=None):
 def _paired_unrelated(db, fixture_ids):
     """Keep all other facts; the two changing markers are checked separately."""
     facts = _unrelated(db, fixture_ids)
-    # Four moved parents, fifteen rebuilt children and the target physical
-    # Business table are checked by _business_*_image, never by name here.
-    for name in (*SOURCE_PARENTS.values(), *RETAINED_CHILD_FKS, "business"):
+    # Moved families have independent source-shaped image comparisons.
+    for name in (*SOURCE_PARENTS.values(), *RETAINED_CHILD_FKS, "business",
+                 *PROVIDER_SOURCE_TABLES, "provider_state"):
         facts.pop(name, None)
     del facts["service_state"]
     del facts["email_schema_migrations"]
@@ -588,6 +593,40 @@ elif mode == 'business_read_write':
         'project_id':project_id, 'context_id':context_id,
         'email_cold_read':True, 'preexisting_tasks':existing,
     }))
+elif mode == 'provider_write':
+    classification_id=int(sys.argv[3])
+    identity='copy-only-account:message-id:<copy-' + str(classification_id) + '@example.test>'
+    email.record_current_provider_observations([{
+        'account_id':'copy-only-account', 'stable_message_identity':identity,
+        'provider_folder_id':'Archive', 'provider_folder_name':'Archive',
+        'folder_role':'category', 'bound_category_key':'legal',
+        'folder_binding_status':'active',
+        'important_signals':{'provider_important':False,'raw_signal_names':[]},
+    }], unavailable_folders=(), authoritative_folders=('copy-only-account:Archive',),
+       observed_at='2026-10-14T03:00:00+00:00')
+    with sqlite3.connect(path) as db:
+        before=db.execute('select observed_at from email_provider_observations '
+                          'where account_id=? and stable_message_identity=?',
+                          ('copy-only-account',identity)).fetchone()
+        generation_before=db.execute('select observed_at from '
+            'email_provider_folder_observation_generations '
+            'where account_id=? and provider_folder_id=?',
+            ('copy-only-account','Archive')).fetchone()
+    assert email.record_provider_important_signals('copy-only-account',identity,['\\Flagged'])
+    with sqlite3.connect(path) as db:
+        after=db.execute('select observed_at from email_provider_observations '
+                         'where account_id=? and stable_message_identity=?',
+                         ('copy-only-account',identity)).fetchone()
+        generation_after=db.execute('select observed_at from '
+            'email_provider_folder_observation_generations '
+            'where account_id=? and provider_folder_id=?',
+            ('copy-only-account','Archive')).fetchone()
+    assert before==after==('2026-10-14T03:00:00+00:00',)
+    assert generation_before==generation_after==before
+    state=email.get_provider_classification_state(classification_id)
+    assert state['state']=='categorized' and state['starred'] is True
+    print(json.dumps({'provider_public_scan':True,'provider_public_flag':True,
+                      'provider_public_read':True,'provider_time_unchanged':True}))
 '''
 
 
@@ -1065,6 +1104,136 @@ def _paired_other_sequences(db):
     ))
 
 
+PROVIDER_KINDS = (
+    (PROVIDER_SOURCE_TABLES[0], "observation", OBSERVATION_FIELDS,
+     ("account_id", "stable_message_identity")),
+    (PROVIDER_SOURCE_TABLES[1], "folder_generation", GENERATION_FIELDS,
+     ("account_id", "provider_folder_id")),
+)
+
+
+def _provider_rows(db, table, fields, identity, kind=None):
+    selected = ",".join(map(_quote, fields))
+    storage = ",".join(f"typeof({_quote(field)})" for field in fields)
+    ordering = ",".join(f"{_quote(field)} collate binary" for field in identity)
+    predicate = " where record_type=?" if kind else ""
+    parameters = (kind,) if kind else ()
+    return tuple(db.execute(
+        f"select {selected},{storage} from main.{_quote(table)}{predicate} "
+        f"order by {ordering}", parameters,
+    ))
+
+
+def _provider_source_image(db):
+    captured = capture_provider_state_source(db)
+    return {
+        "variant": captured["variant"],
+        "declarations": captured["tables"],
+        "facts": {
+            name: (fields, _provider_rows(db, name, fields, identity))
+            for name, _, fields, identity in PROVIDER_KINDS
+        },
+    }
+
+
+def _provider_target_image(db, variant):
+    assert provider_state_schema_is_current(db)
+    return {
+        "variant": variant,
+        "facts": {
+            name: (fields, _provider_rows(db, "provider_state", fields, identity, kind))
+            for name, kind, fields, identity in PROVIDER_KINDS
+        },
+    }
+
+
+def _assert_provider_facts_equal(source, target):
+    assert target["variant"] == source["variant"]
+    assert target["facts"] == source["facts"]
+
+
+def _assert_original_provider_rows_preserved(original, current):
+    for name in PROVIDER_SOURCE_TABLES:
+        before_fields, before_rows = original["facts"][name]
+        after_fields, after_rows = current["facts"][name]
+        assert after_fields == before_fields
+        assert not Counter(before_rows) - Counter(after_rows), name
+
+
+def _provider_image_summary(image):
+    facts = (image["variant"], image["facts"])
+    summary = {
+        "variant": image["variant"],
+        "counts": {name: len(image["facts"][name][1]) for name in PROVIDER_SOURCE_TABLES},
+        "facts_sha256": hashlib.sha256(pickle.dumps(facts, protocol=4)).hexdigest(),
+    }
+    if "declarations" in image:
+        summary["declarations_sha256"] = _fingerprint(image["declarations"])
+    return summary
+
+
+def _current_provider_public_writes(path, seeded):
+    from app.email_store import EmailStore
+
+    email = EmailStore(path)
+    account = "copy-only-account"
+    first_id = seeded["classification_id"]
+    second_id = seeded["receipt_classification_id"]
+    first = f"{account}:message-id:<copy-{first_id}@example.test>"
+    second = f"{account}:message-id:<copy-{second_id}@example.test>"
+
+    def observation(identity, folder):
+        return {
+            "account_id": account, "stable_message_identity": identity,
+            "provider_folder_id": folder, "provider_folder_name": folder,
+            "folder_role": "category", "bound_category_key": "legal",
+            "folder_binding_status": "active",
+            "important_signals": {"provider_important": False, "raw_signal_names": []},
+        }
+
+    email.record_current_provider_observations(
+        [observation(first, "INBOX"), observation(second, "INBOX")],
+        unavailable_folders=(), authoritative_folders=(f"{account}:INBOX",),
+        observed_at="2026-10-14T02:00:00+00:00",
+    )
+    email.record_current_provider_observations(
+        [observation(first, "Archive")], unavailable_folders=(),
+        authoritative_folders=(f"{account}:INBOX", f"{account}:Archive"),
+        observed_at="2026-10-14T02:02:00+00:00",
+    )
+    with closing(sqlite3.connect(path)) as db:
+        before = db.execute(
+            "select observed_at,important_signals_json from main.provider_state "
+            "where record_type='observation' and account_id=? and stable_message_identity=?",
+            (account, first),
+        ).fetchone()
+        generation_before = tuple(db.execute(
+            "select provider_folder_id,observed_at from main.provider_state "
+            "where record_type='folder_generation' and account_id=? order by provider_folder_id",
+            (account,),
+        ))
+    assert before == ("2026-10-14T02:02:00+00:00", "[]")
+    assert email.record_provider_important_signals(account, first, ["\\Flagged"])
+    assert email.get_provider_classification_state(first_id)["starred"] is True
+    assert email.get_provider_classification_state(second_id)["state"] == "unavailable"
+    with closing(sqlite3.connect(path)) as db:
+        after = db.execute(
+            "select observed_at,important_signals_json from main.provider_state "
+            "where record_type='observation' and account_id=? and stable_message_identity=?",
+            (account, first),
+        ).fetchone()
+        generation_after = tuple(db.execute(
+            "select provider_folder_id,observed_at from main.provider_state "
+            "where record_type='folder_generation' and account_id=? order by provider_folder_id",
+            (account,),
+        ))
+    assert after == (before[0], '["\\\\Flagged"]')
+    assert generation_after == generation_before
+    return {"scan_move": True, "authoritative_missing": True,
+            "direct_signals": True, "observation_time_unchanged": True,
+            "generation_times_unchanged": True}
+
+
 def _business_source_image(db):
     captured = capture_business_source(db)
     return {
@@ -1167,6 +1336,7 @@ def _paired_case(path, oldroot, repo):
     with closing(sqlite3.connect(path)) as db:
         baseline = _source_facts(db)
         baseline_business = _business_source_image(db)
+        baseline_provider = _provider_source_image(db)
         original_unrelated = _paired_unrelated(db, ())
         original_actions = _actions(db, _columns(db, "actions"))
         action_columns = _columns(db, "actions")
@@ -1188,6 +1358,8 @@ def _paired_case(path, oldroot, repo):
         seeded_source = _source_facts(db)
         seeded_business = _business_source_image(db)
         assert seeded_business == baseline_business
+        seeded_provider = _provider_source_image(db)
+        assert seeded_provider == baseline_provider
         seeded_fixture = _fixture_rows(db, fixture_ids)
         other_sequences = _paired_other_sequences(db)
         seeded_waters = _source_waters(db)
@@ -1215,6 +1387,8 @@ def _paired_case(path, oldroot, repo):
         _assert_business_facts_equal(
             seeded_business, _business_target_image(db, state["business"]["variant"])
         )
+        initial_provider_target = _provider_target_image(db, state["provider"]["variant"])
+        _assert_provider_facts_equal(seeded_provider, initial_provider_target)
         for name in SOURCE_TABLES:
             assert initial_target[name] == (
                 (("rowid",) if name in EMAIL_ROWID_TYPES else ()) + _columns_from_state(state, name),
@@ -1226,8 +1400,8 @@ def _paired_case(path, oldroot, repo):
         assert _actions(db, action_columns) == original_actions
         assert db.execute(
             "select count(*) from main.sqlite_schema where type='table' and name not like 'sqlite_%'"
-        ).fetchone() == (initial_tables - 16,)
-        assert not set(SOURCE_TABLES).intersection(
+        ).fetchone() == (initial_tables - 17,)
+        assert not set((*SOURCE_TABLES, *PROVIDER_SOURCE_TABLES)).intersection(
             name for (name,) in db.execute("select name from main.sqlite_schema where type='table'")
         )
         _consistency(db, original_fk)
@@ -1235,6 +1409,7 @@ def _paired_case(path, oldroot, repo):
 
     writes = _current_public_writes(path, seeded)
     business_writes = _current_business_public_writes(path)
+    provider_writes = _current_provider_public_writes(path, seeded)
     assert all(writes.get(name) is True for name in (
         "receipt_enriched", "direct_completed", "failed_visible", "attempt_water_advanced",
         "unsubscribe_terminal", "unsubscribe_step", "explicit_retry", "history_source_id",
@@ -1243,6 +1418,15 @@ def _paired_case(path, oldroot, repo):
         current = _target_facts(db, state["email_variant"])
         current_business = _business_target_image(db, state["business"]["variant"])
         _assert_original_business_rows_preserved(seeded_business, current_business)
+        current_provider = _provider_target_image(db, state["provider"]["variant"])
+        _assert_original_provider_rows_preserved(seeded_provider, current_provider)
+        assert current_provider != initial_provider_target
+        assert len(current_provider["facts"][PROVIDER_SOURCE_TABLES[0]][1]) == (
+            len(seeded_provider["facts"][PROVIDER_SOURCE_TABLES[0]][1]) + 2
+        )
+        assert len(current_provider["facts"][PROVIDER_SOURCE_TABLES[1]][1]) == (
+            len(seeded_provider["facts"][PROVIDER_SOURCE_TABLES[1]][1]) + 2
+        )
         for kind, public_id in business_writes.items():
             assert any(row[0] == public_id for row in current_business["parents"][kind]["rows"])
             assert len(current_business["parents"][kind]["rows"]) == (
@@ -1275,6 +1459,10 @@ def _paired_case(path, oldroot, repo):
         assert inverse_business["declarations"] == {
             key: state["business"][key] for key in ("parents", "children")
         }
+        inverse_provider = _provider_source_image(db)
+        _assert_provider_facts_equal(current_provider, inverse_provider)
+        assert inverse_provider["declarations"] == state["provider"]["tables"]
+        _assert_original_provider_rows_preserved(baseline_provider, inverse_provider)
         assert _paired_other_sequences(db) == other_sequences
         assert _paired_unrelated(db, fixture_ids) == original_unrelated
         assert _fixture_rows(db, fixture_ids) == seeded_fixture
@@ -1294,6 +1482,10 @@ def _paired_case(path, oldroot, repo):
     old_business_write = _old_process_genuine(
         oldroot, path, "business_read_write", seeded["classification_id"]
     )
+    old_provider_write = _old_process_genuine(
+        oldroot, path, "provider_write", seeded["classification_id"]
+    )
+    assert all(old_provider_write.values())
     feedback_started = datetime.now(timezone.utc)
     donor_write = _old_process_genuine(oldroot, donor, "write", seeded["classification_id"],
                                        "copy-only-reply", seeded["retry_action_id"])
@@ -1311,6 +1503,9 @@ def _paired_case(path, oldroot, repo):
         after_old = _source_facts(db)
         after_old_business = _business_source_image(db)
         _assert_original_business_rows_preserved(seeded_business, after_old_business)
+        after_old_provider = _provider_source_image(db)
+        assert after_old_provider != inverse_provider
+        _assert_original_provider_rows_preserved(baseline_provider, after_old_provider)
         for kind, key in (("task", "task_id"), ("anchor", "anchor_id"),
                           ("project", "project_id"),
                           ("project_context_revision", "context_id")):
@@ -1349,14 +1544,20 @@ def _paired_case(path, oldroot, repo):
         _assert_business_facts_equal(
             after_old_business, _business_target_image(db, state["business"]["variant"])
         )
+        _assert_provider_facts_equal(
+            after_old_provider, _provider_target_image(db, state["provider"]["variant"])
+        )
         final_business_summary = _business_image_summary(
             _business_target_image(db, state["business"]["variant"])
+        )
+        final_provider_summary = _provider_image_summary(
+            _provider_target_image(db, state["provider"]["variant"])
         )
         assert _paired_other_sequences(db) == other_sequences
         assert _paired_unrelated(db, fixture_ids) == original_unrelated
         assert _actions(db, action_columns) == original_actions
         assert _fixture_rows(db, fixture_ids) == after_old_fixture
-        assert not set(SOURCE_TABLES).intersection(
+        assert not set((*SOURCE_TABLES, *PROVIDER_SOURCE_TABLES)).intersection(
             name for (name,) in db.execute("select name from main.sqlite_schema where type='table'")
         )
         _consistency(db, original_fk)
@@ -1364,11 +1565,15 @@ def _paired_case(path, oldroot, repo):
     return {"paired_default_constructors":True, "target_public_writes":True,
             "old_public_cold_writes":True, "current_fact_inverse":True,
             "reforward_current_facts":True, "source_tables":initial_tables,
-            "target_tables":initial_tables - 16, "preserved_fk_findings":len(original_fk),
+            "target_tables":initial_tables - 17, "preserved_fk_findings":len(original_fk),
             "business_current_public_ids":business_writes,
             "business_old_public_ids":old_business_write,
             "business_source_summary":_business_image_summary(baseline_business),
-            "business_final_summary":final_business_summary}
+            "business_final_summary":final_business_summary,
+            "provider_current_public_writes":provider_writes,
+            "provider_old_public_writes":old_provider_write,
+            "provider_source_summary":_provider_image_summary(baseline_provider),
+            "provider_final_summary":final_provider_summary}
 
 
 def run(source, source_ref, repo):
@@ -1380,17 +1585,24 @@ def run(source, source_ref, repo):
     assert production_before == source_ref
     candidate_commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     proof_paths = ("scripts/validate_action_email_copy.py", "tests/test_email_action_copy_proof.py",
-                   "tests/test_business_copy_proof.py", "tests/test_business_schema_release.py",
+                   "tests/test_business_copy_proof.py", "tests/test_provider_state_copy_proof.py",
+                   "tests/test_business_schema_release.py", "tests/test_provider_state_schema_release.py",
+                   "scripts/validate_native_copy_lifecycle.py",
+                   "tests/test_native_copy_lifecycle_harness.py",
                    "app/action_storage.py", "app/action_email_storage.py",
                    "app/action_email_definitions.py", "app/action_email_schema_release.py",
                    "app/store_schema_release.py", "app/business_definitions.py",
                    "app/business_storage.py", "app/business_schema_release.py",
+                   "app/provider_state_definitions.py", "app/provider_state_storage.py",
+                   "app/provider_state_schema_release.py",
                    BINDING_RELATIVE)
     module_paths = ("app/store.py", "app/email_store.py", "app/action_storage.py",
                     "app/action_email_storage.py", "app/action_email_definitions.py",
                     "app/action_email_schema_release.py", "app/store_schema_release.py",
                     "app/business_definitions.py", "app/business_storage.py",
                     "app/business_schema_release.py", "app/project_context_service.py",
+                    "app/provider_state_definitions.py", "app/provider_state_storage.py",
+                    "app/provider_state_schema_release.py",
                     "app/task_semantic_models.py", "app/email_classifier_contracts.py",
                     "app/email_unsubscribe.py", "app/audit_web.py")
     # Git sees both tracked edits and untracked files under the whole imported app tree.
@@ -1436,6 +1648,9 @@ def run(source, source_ref, repo):
             assert _fingerprint(business_source["children"]) == binding["business"][
                 "child_declaration_fingerprint_sha256"
             ], "published Business source declaration: children"
+            assert capture_provider_state_source(db)["variant"] == "actual", (
+                "published Provider source variant"
+            )
             assert db.execute("select count(*) from sqlite_schema where type='table' "
                               "and name not like 'sqlite_%'").fetchone() == (binding["schema_user_table_count"],)
             assert _consistency(db) == tuple(
@@ -1461,7 +1676,7 @@ def run(source, source_ref, repo):
         fresh_application_case = _case(fresh_application, oldroot, fresh=True, null_plans=False)
     production_after = subprocess.check_output(["git", "-C", str(PRODUCTION_ROOT), "rev-parse", "HEAD"], text=True).strip()
     return {"status":"passed" if production_after == production_before else "production_changed",
-            "scope":"combined Business4/Email13 paired copy and three Email-only SQL-boundary cases",
+            "scope":"combined Provider2/Business4/Email13 paired copy and three Email-only SQL-boundary cases",
             "observed_at_utc":datetime.now(timezone.utc).isoformat(),
             "published_source_ref":source_ref,"schema_binding_ref":PUBLISHED_SCHEMA_REF,
             "executed_candidate_commit":candidate_commit,"candidate_module_sha256":candidate_hashes,
@@ -1478,7 +1693,7 @@ def run(source, source_ref, repo):
                      "published_old_fresh_application":fresh_application_case},
             "checks":{"temporary_copies_cleaned":True,"production_mutations":0,
                       "provider_calls":0,"native_cli_calls":0},
-            "limit":"Offline owned copies only; paired Business/Email target constructor and public-DAO proof is not native role, CI, production publication or live provider acceptance. The three independent SQL-boundary cases cover Email only."}
+            "limit":"Offline owned copies only; paired Provider/Business/Email target constructor and public-DAO proof is not native role, CI, production publication or live provider acceptance. The three independent SQL-boundary cases cover Email only."}
 
 
 def main(argv=None):

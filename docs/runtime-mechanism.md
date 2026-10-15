@@ -56,16 +56,19 @@ previously unlinked Project unlinked and preserves any existing confirmed CRM
 association; the endpoint does not write back to CRM. The writer's
 active-transaction requirement remains unchanged.
 
-`scripts/validate_action_email_copy.py` has one combined Business/Email paired
-case. It binds the source to the published `7dadc492` Store19/Email51 marker,
-ledger and Email/Business declaration fingerprints before operating on owned
-SQLite copies. In that case, moved Business parents and rebuilt children are
-compared as source-shaped facts instead of unchanged tables; all other ordinary
-tables retain the unchanged-row proof. A cold subprocess imports the published
-old code for Task, Anchor, Project, context and Email writes after inverse.
-The three separate SQL-boundary cases remain Email-only. The native copied-DB
-harness checks the combined target Business declaration before taking its
-immutable pre-native baseline.
+`scripts/validate_action_email_copy.py` has one combined Provider/Business/Email
+paired case. It binds the source to the published `7dadc492` Store19/Email51
+marker, ledger and Email/Business declarations, and requires the accepted
+actual Provider source declarations, before operating on owned SQLite copies.
+Moved Provider rows and Business parents/rebuilt children have separate
+source-shaped value/type proofs; all other ordinary tables retain the
+unchanged-row proof. Current Provider scan, flag and generation writes are
+restricted to synthetic fixture identities while original Provider rows remain
+intact. After current-fact inverse, a cold subprocess imports the published old
+code for Provider, Task, Anchor, Project, context and Email writes. The three
+separate SQL-boundary cases remain Email-only. The native copied-DB harness
+requires the exact combined Provider and Business target declarations before
+taking its immutable pre-native baseline.
 
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
 can reconstruct an exact historical source body from already recorded Codex or

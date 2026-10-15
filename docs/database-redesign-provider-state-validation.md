@@ -193,3 +193,34 @@ conversion, current-fact inverse, genuine published7dad cold Provider writes
 and reforward, real CLI/provider doubles, replacement CI and final production
 approval remain separate outstanding gates. No production migration, main
 merge, push, restart, deploy or real outbound test action occurred here.
+
+## Copied-database Provider harness unit, 2026-10-15
+
+The unpublished paired proof now carries Provider's two frozen source tables
+and exact `provider_state` target beside Email13 and Business4. It compares all
+nine observation and three generation fields by named source order, SQLite
+`typeof`, binary composite identity ordering, exact actual/fresh source
+declarations and the accepted target predicate. It retains original Provider
+rows through synthetic public scan, move, authoritative missing, direct signal
+and generation writes; inverse checks the source DDL and current facts. A cold
+subprocess then runs archived `7dadc492` public Provider scan, flag and read
+methods against the restored source, with observation and generation timestamps
+checked before and after the direct flag write. Reforward compares the resulting
+facts. Receipt summaries contain derived counts and digests, not Provider rows.
+
+The paired ordinary-table comparison excludes exactly the two Provider source
+tables and their one target after moving them to the separate image proof. The
+three independent SQL-boundary cases remain Email-only. The native lifecycle
+fixture now requires the exact Provider target and absence of both old names
+before its ordinary-table baseline. Its real CLI cases were not invoked here.
+The synthetic paired fixture passed after these changes; a regression test
+mutating an original Provider row fails the image proof. Direct actual/fresh
+image cases passed six tests, the paired success and negative cases passed two,
+the native baseline and current Email public case passed two, and seven focused
+report/clean-guard assertions passed. Ruff and `git diff --check` passed.
+
+This unit does not establish the actual 121-to-104 copied-database result,
+whole-source Provider row counts, genuine old-code writes on the actual source,
+native CLI/provider-double behavior, replacement CI, publication or live
+readback. No actual database, real Provider, network, production checkout,
+push, PR, main branch or deployment was touched.

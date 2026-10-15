@@ -307,7 +307,12 @@ def test_latest_paired_publication_current_public_inverse_and_reforward(latest_f
     assert result["old_public_cold_writes"]
     assert result["current_fact_inverse"]
     assert result["reforward_current_facts"]
-    assert result["source_tables"] - result["target_tables"] == 16
+    assert result["source_tables"] - result["target_tables"] == 17
+    assert all(result["provider_current_public_writes"].values())
+    assert all(result["provider_old_public_writes"].values())
+    assert result["provider_final_summary"]["counts"]["email_provider_observations"] == (
+        result["provider_source_summary"]["counts"]["email_provider_observations"] + 2
+    )
     assert set(result["business_current_public_ids"]) == {
         "task", "anchor", "project", "project_context_revision",
     }
@@ -361,6 +366,34 @@ def test_latest_paired_copy_rejects_rollback_fact_loss(latest_fresh, monkeypatch
             db.commit()
 
     monkeypatch.setattr(ActionEmailSchemaRelease, "rollback", corrupt_after_rollback)
+    with pytest.raises(AssertionError):
+        proof._paired_case(path, old, repo)
+
+
+def test_latest_paired_copy_rejects_original_provider_fact_change(latest_fresh, monkeypatch):
+    old, path, repo = latest_fresh
+    with closing(sqlite3.connect(path)) as db:
+        db.execute(
+            "insert into email_provider_observations "
+            "(account_id,stable_message_identity,state,provider_folder_id,"
+            "provider_folder_name,category_key,important,observed_at,important_signals_json) "
+            "values('baseline-provider','original-message','available','INBOX',"
+            "'Inbox',NULL,0,'2026-10-14T00:00:00+00:00','[]')"
+        )
+        db.commit()
+    original = proof._current_provider_public_writes
+
+    def corrupt_original(candidate, seeded):
+        result = original(candidate, seeded)
+        with closing(sqlite3.connect(candidate)) as db:
+            db.execute(
+                "update provider_state set observed_at='changed' "
+                "where record_type='observation' and account_id='baseline-provider'"
+            )
+            db.commit()
+        return result
+
+    monkeypatch.setattr(proof, "_current_provider_public_writes", corrupt_original)
     with pytest.raises(AssertionError):
         proof._paired_case(path, old, repo)
 
@@ -440,6 +473,9 @@ def bounded_run(tmp_path, monkeypatch):
     monkeypatch.setattr(proof, "capture_business_source", lambda db: {
         "variant": "actual", "parents": {}, "children": {}, "fk_findings": (),
     })
+    monkeypatch.setattr(proof, "capture_provider_state_source", lambda db: {
+        "variant": "actual", "tables": {},
+    })
     monkeypatch.setattr(proof, "_fingerprint", lambda value: "fingerprint")
     monkeypatch.setattr(proof, "_consistency", lambda db: ())
     monkeypatch.setattr(proof, "_copy", lambda origin, target: shutil.copyfile(origin, target))
@@ -485,15 +521,15 @@ def test_final_production_head_change_keeps_all_completed_case_evidence(bounded_
     assert report["production_head_after"] == "published-next"
     assert report["published_source_ref"] == source_ref
     assert report["executed_candidate_commit"] == "candidate-commit"
-    assert len(report["candidate_module_sha256"]) == 15
+    assert len(report["candidate_module_sha256"]) == 18
     assert {"app/email_classifier_contracts.py", "app/email_unsubscribe.py",
             "app/audit_web.py"}.issubset(report["candidate_module_sha256"])
     assert "app/process_runner.py" not in report["candidate_module_sha256"]
     assert "finite" in report["candidate_module_hash_scope"].lower()
     assert "app/" in report["candidate_module_hash_scope"]
-    assert len(report["candidate_proof_sha256"]) == 13
+    assert len(report["candidate_proof_sha256"]) == 20
     assert proof.BINDING_RELATIVE in report["candidate_proof_sha256"]
-    assert report["scope"] == "combined Business4/Email13 paired copy and three Email-only SQL-boundary cases"
+    assert report["scope"] == "combined Provider2/Business4/Email13 paired copy and three Email-only SQL-boundary cases"
     assert len(report["published_old_module_sha256"]) == 10
     assert report["cases"] == {
         "paired_actual_online_backup": {"paired": True},
@@ -551,7 +587,8 @@ def test_latest_copy_rejects_published_marker_or_fk_drift(bounded_run, field):
 
 @pytest.mark.parametrize("path", (
     "app/store.py", "app/email_store.py", "app/project_context_service.py",
-    "app/task_semantic_models.py",
+    "app/task_semantic_models.py", "app/provider_state_schema_release.py",
+    "tests/test_provider_state_copy_proof.py",
     "docs/superpowers/specs/2026-10-15-database-redesign-business-email-published-source.json",
 ))
 def test_latest_copy_rejects_dirty_executed_module_or_binding(bounded_run, monkeypatch, path):
