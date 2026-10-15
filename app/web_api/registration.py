@@ -602,7 +602,7 @@ def register_console_routes(
             }
             for item in lookup.candidates
         ]
-        with store._connect() as db:
+        with store.business_task_transaction() as db:
             store.update_business_project_crm_customer_lookup_in_transaction(
                 project_id=project_id,
                 label=label,

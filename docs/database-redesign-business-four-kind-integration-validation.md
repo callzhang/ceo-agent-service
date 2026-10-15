@@ -17,6 +17,10 @@ Evidence from the scoped local runs:
 
 Task 4's native copied-production validation, copy-harness assertions and real deployment CLI rehearsal remain separate work. No production database, provider, deployed checkout or service was touched by these local tests.
 
+## Current CRM caller transaction regression
+
+The current Console CRM search regression first failed with `Business writes require a caller transaction` in `update_business`. The endpoint had opened a bare connection, and the adjacent confirmation and clearing methods used the same bare-connection pattern. All three now use the existing Business writer transaction. The exact end-to-end test passed after the change: search saved candidates without linking or writing CRM, an unseen customer remained rejected, the selected customer could be confirmed, and the link could be cleared. The typed writer retains its strict caller-transaction requirement.
+
 
 ## Independent Task2+3 acceptance
 

@@ -41,6 +41,12 @@ restores the exact source marker values and timestamps. Current Store and Email
 constructors require the new Business declaration; a marker-correct malformed
 target is refused without repair. No deployed path uses this candidate yet.
 
+Project CRM search, confirmation and link clearing acquire the existing
+`business_task_transaction()` writer before calling typed Business updates.
+Lookup candidates stay local until explicit confirmation; the endpoint does
+not write back to CRM. The writer's active-transaction requirement remains
+unchanged.
+
 `scripts/validate_action_email_copy.py` has one combined Business/Email paired
 case. It binds the source to the published `7dadc492` Store19/Email51 marker,
 ledger and Email/Business declaration fingerprints before operating on owned

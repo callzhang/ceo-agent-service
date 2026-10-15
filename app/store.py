@@ -6342,7 +6342,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> bool:
         if not customer_id.strip():
             return False
-        with self._connect() as db:
+        with self.business_task_transaction() as db:
             row = db.execute(
                 "select crm_customer_id, crm_customer_name, crm_customer_candidates_json "
                 f'from ({BUSINESS_PROJECTIONS["project"]}) where id=?',
@@ -6371,7 +6371,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return True
 
     def clear_business_project_crm_customer(self, *, project_id: int) -> bool:
-        with self._connect() as db:
+        with self.business_task_transaction() as db:
             return update_business(db, "project", project_id, {
                 "crm_customer_id": "",
                 "crm_customer_name": "",

@@ -40,6 +40,12 @@ require the target Business declaration and reject malformed marker-correct
 targets without repairing them. This candidate has not been published. See
 `docs/database-redesign-business-four-kind-migration-validation.md`.
 
+The Console Project CRM search saves its local lookup candidates inside the
+existing Business write transaction. Candidate confirmation and explicit link
+clearing use that same transaction boundary; the typed writer requires an
+active caller transaction. Search still leaves the CRM association empty until
+human confirmation and performs no external CRM write.
+
 The offline copied-database harness checks the combined Business/Email paired
 release against the exact published-source declaration binding. Its paired case
 compares the four source-shaped parent families, fifteen retained child tables,
