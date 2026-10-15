@@ -15,6 +15,7 @@ Load `dingtalk-chat` before reading conversation context or proposing any DingTa
 ## Triage Workflow
 
 1. Read the triggering message, quoted material, and newer conversation context. Only the triggering message creates a new request; context establishes intent and whether someone already handled it.
+   When a message announces a material change to a project or approval-backed request (for example cost, scope, cancellation, or resubmission), load `dingtalk-oa-approval` and the relevant business Skill. Use the available read-only DWS OA detail and operation records to verify the live process and current task, then compare the announced change with the newest submitted form and relevant recent comments. A participant's statement that an approval was cancelled does not prove the process is cancelled; verify its live status. If a matching new submission already exists, do not ask for another submission as if none exists. Identify the exact mismatch in the live form and propose only a response that resolves that mismatch, if a response is still needed. Keep chat acknowledgment separate from the OA decision.
 2. Resolve mentions from the supplied identities. Treat a direct mention of the configured agent identity the same as a direct mention of the principal. A broadcast mention alone does not create principal responsibility.
 3. Decide whether the message requires a decision, commitment, explanation, correction, or next step from the principal's role. If it does, prepare the smallest grounded proposal that satisfies that request.
    Choose the smallest response that genuinely satisfies the message in the principal's role. Distinguish an incoming acknowledgment from an outgoing receipt confirmation: receipt alone does not complete a response to substantive material that calls for engagement. Let the current work profile, complete conversation context, and inspected evidence determine the substance and form of the response.
@@ -73,6 +74,7 @@ Use the canonical Consumer Agent result contract without adding workflow-specifi
 - `direct_agent_mention`: Apply the same responsibility test as a direct principal mention.
 - `participant_can_supply_missing_fact`: Use canonical `proposal` with one concrete clarification action.
 - `newer_context_completed_matter`: Use canonical `no_action`.
+- `oa_change_already_submitted`: Read the live OA process and compare its latest form with the announced change; do not request a duplicate submission, and identify only a concrete mismatch that remains.
 - `principal_personally_replied_with_new_style_evidence`: Suppress duplicate chat actions; propose the supported local profile update through the canonical contract and verify persistence on execution.
 - `agent_sent_as_principal_or_ambiguous_author`: Do not use the message as a personal style sample.
 - `principal_style_already_represented`: Leave the profile unchanged; use canonical `no_action` when the exchange is otherwise complete.

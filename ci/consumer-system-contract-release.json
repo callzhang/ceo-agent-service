@@ -39,7 +39,7 @@
       "source": "ci/shared-skills/ceo-message-triage/SKILL.md",
       "target": "skills/ceo-message-triage/SKILL.md",
       "old_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd",
-      "new_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd",
+      "new_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
       "old_managed_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd"
     },
     {
@@ -65,7 +65,7 @@
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
       "old_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
-      "new_sha256": "060ed345fb3b03de26da13a438b7618f8b9d926c40abbe0722e08f3353803467"
+      "new_sha256": "b5bb7100c12bb86af615e7d8df4447ba41c36131f4f344d492b5ffdd6b34830b"
     }
   ]
 }
