@@ -113,3 +113,35 @@ been proved recoverable or retired, and zero date-fact rows do not retire the
 active date path. No target field, version, constructor, writer or runtime policy
 was added. Original replay events and adopted Project context remain necessary
 business facts independent of any later source-body retirement decision.
+
+## Verified native source-body recovery lower bound
+
+A later bounded probe on the same7dad snapshot compared all188 original
+bodies (5,986,326 UTF-8 bytes) with only26 exact candidate native session IDs
+from current source-type/ref → work-summary → Task-run lineage. This join
+generates candidate versions; only complete byte/hash equality proves recovery.
+Metadata-only coordinates are in the business-native-source-recovery JSON.
+No body, quoted excerpt, native prompt or tool output is copied into that file.
+
+Actual runtime-attempt metadata distinguishes25 Codex sessions and1 Claude
+session despite the legacy codex_session_id column name. Two native files
+were present. Seven bodies/173,779 bytes were recovered from Codex, and23
+additional bodies/498,518 bytes from Claude. All30 were independently read
+again by root from raw native line hash, decoded JSON leaf, substring offset
+and literal encoding, then compared byte-for-byte with the source DB value.
+Thus native recovery is verified for30/188 bodies/672,297 bytes; this is not
+30 Codex bodies. A strictly Codex-only count is seven.
+
+The158 remaining bodies/5,314,029 bytes remain unproved. For the24 missing
+Codex UUIDs, root also checked the existing native path inventory: no exact
+filename match, and all24 indexed native paths were absent. This does not
+prove external originals are unavailable or authorize raw-body deletion.
+Current Task prompt generation removes summary and exposes visible source
+ranges, so partial native excerpts cannot replace a complete source version.
+
+The source DB hash stayed equal before/after extraction. All source/native
+handles closed; native inspected prefixes matched on reread. The single source
+subsequently moved between root-owned test directories without duplication.
+No source body was retired and no runtime, field, schema, retention policy,
+provider operation or deployment changed. The ten source-family oracle and
+full10-core-plus-ledger acceptance remain distinct from this recovery probe.
