@@ -2953,3 +2953,27 @@ current function AST preservation checks passed. This is local fixture and
 diagnostic verification only. A new Linux CI run must reveal or clear the
 journal trace; real-copy, native, publication, and full Email13 acceptance
 remain with the root release owner.
+
+### Root acceptance: historical/current CI fixture separation
+
+Root acceptsd91f7c4c after fresh sequential SPEC and QUALITY PASS. Both reviews
+independently checked the five original ASTs, strict12-child archive wiring,
+unchanged unselected functions, current refusal/fingerprint assertions and
+the identical journal permitted-SQL predicate. SPEC separately collected and
+passed the same89 cases in151.56 seconds. QUALITY performed source review
+without a third duplicate run. This accepts fixture preservation and diagnostic
+visibility, not a Linux journal repair or a passing full CI.
+
+SPEC removed its exact owned default pytest root after recording the result;
+archived-source TemporaryDirectory roots self-cleaned. Implementer recorded
+RED root6044 and the failed archive root are absent. Later compact pytest
+output did not establish a separate exact default root for its89-pass run;
+no unrelated numeric pytest directory was attributed or deleted by timestamp.
+Report-repair roots also have no surviving matching cases. Future test runs
+must explicitly use an owned /tmp basetemp rather than rely on default retention.
+
+Next: preserve exact main5aa6909a (meeting runtime131ae6a8 plus publication
+evidence), then push the candidate and obtain fresh CI and actual source-copy/
+native acceptance. Existing capacity increase and full10+1 remaining scope
+remain explicit. No production write, provider operation, main merge or deploy
+is accepted by this local test unit.
