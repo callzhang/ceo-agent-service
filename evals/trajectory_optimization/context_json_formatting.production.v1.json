@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "production_ref": "91cfb8e470680a61aa37991257128f48a6f20384",
+  "deploy_result": "deployed bdc98bb3 -> 91cfb8e4",
+  "supervisor_pid": 33961,
+  "service_pid": 33966,
+  "web_pid": 33967,
+  "email_pid": 33968,
+  "source_sha256": "52ab7fc2385bf7287317651053f6ab87bc2565fc6c42ac24212934bfb94bf3bf",
+  "source_matches_reviewed": true,
+  "health": {
+    "http": 200,
+    "ok": true,
+    "seconds": 0.02
+  },
+  "attention_first_read": {
+    "http": 200,
+    "seconds": 6.89,
+    "items": 15
+  },
+  "history_first_read": "15 second timeout",
+  "readback": [
+    {
+      "path": "/api/console/status",
+      "http": 200,
+      "seconds": 10.71,
+      "summary": {
+        "queue_count": 13,
+        "pending": 3,
+        "processing": 0,
+        "failed": 23,
+        "retryable": 0,
+        "attention": 17
+      },
+      "pid": "33961",
+      "queues": [
+        {
+          "name": "Reply tasks",
+          "pending": 0,
+          "processing": 0,
+          "failed": 10,
+          "retryable": 0
+        },
+        {
+          "name": "Reply attempts",
+          "pending": 0,
+          "processing": 0,
+          "failed": 9,
+          "retryable": 0
+        },
+        {
+          "name": "Work items",
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0
+        },
+        {
+          "name": "Email classifications",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Follow-ups",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting jobs",
+          "pending": 0,
+          "processing": 0,
+          "failed": 2,
+          "retryable": 0
+        },
+        {
+          "name": "OKR reviews",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Memory writes",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting Memory writes",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "DingTalk Todos",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "WeChat deliveries",
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0
+        },
+        {
+          "name": "Email provider actions",
+          "pending": 3,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        }
+      ]
+    },
+    {
+      "path": "/api/console/history?page_size=2&include_chart=false",
+      "error": "TimeoutError",
+      "status": null,
+      "seconds": 45.03
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer&route_name=codex_oauth",
+      "http": 200,
+      "seconds": 0.88,
+      "status": "available",
+      "mode": "current",
+      "role": "consumer",
+      "scope_public": true
+    }
+  ],
+  "boundary": "Formal deploy and source/process/API readback, not a new native business task outcome or proof all existing queue failures resolved. Public Settings preview only. Wrong pre-read /api/status,/api/attention,/api/history routes returned HTTP errors before correct console API readback."
+}
