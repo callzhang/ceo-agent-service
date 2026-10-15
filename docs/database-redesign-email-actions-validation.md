@@ -2638,3 +2638,31 @@ the final empty-claims precondition was checked by one selected passing case.
 Scoped Ruff, diff, and AST comparisons of every selected business assertion
 and nonselected test function passed. This is local test-fixture evidence only;
 Task7, CI, deployment and full10+1 remain open.
+
+### Task7 coherent current caller fixture: independent acceptance
+
+Root accepts097f12ef after fresh sequential SPEC/QUALITY PASS. All16 selected
+current cases passed, including three fresh controls and both malformed-source
+variants. Independent AST normalization of479 caller functions confirmed only
+authorized fixture plumbing changed; every original business assertion stayed.
+The fixed published-source fixture and historical wrappers remain unchanged.
+Native Email51 initialization precedes source13 row insertion, archived Store
+supplies only auxiliary declarations, genuine historical transitions and a
+separate archived cold process establish19/51, then exact actual/actual capture
+and official publication establish20/52 before current API observations.
+The intentional orphan is preserved. The native WITHOUT ROWID/PK-order helper
+was independently probed alongside ordinary rowid ordering. No redundant16-case
+rerun was necessary for review. Owned working roots were cleaned.
+
+Root's separate old-owner probe confirmed genuine0441 EmailStore alone creates
+Email51 and no tasks/runs/service_state/scheduled_tasks/workbench_tasks; native
+pre-seeding therefore avoids copying ledger/seed/index data. Its owned database
+root was removed and the archived fixture context closed normally.
+
+The latest origin/main refresh is nowff4d36234a05f33bd9f68119f886b68e1b2b84fd,
+with59 changed files since d06: newer Console query/cache removal, delivery
+repair, input formatting and related evidence. Read-only production checkout
+was5e52cafc8f209986868454d25ea5ba77a6be782c, clean. This supersedes the earlier
+023188/d06 assumption for future integration. No merge or deploy has occurred
+yet. Preserve the new increments, bind the actual immediate predecessor and
+revalidate affected code/proofs before CI/publication. Full10+1 remains open.
