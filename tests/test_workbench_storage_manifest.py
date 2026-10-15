@@ -9,6 +9,26 @@ from tests.test_sent_delivery_source import SOURCE as SENT_SOURCE
 from tests.workbench_schema_fixtures import full_source_database, fingerprint, SOURCE
 
 
+def test_source13_auxiliary_copy_preserves_fresh_business_declarations(
+    tmp_path, published_source,
+):
+    from app.action_reply_storage import _fingerprint
+    from app.business_schema_release import (
+        PARENT_HASHES, SOURCE_CHILD_FULL_HASHES, SOURCE_PARENTS,
+        capture_business_source,
+    )
+
+    with full_source_database(
+        tmp_path / "source.db", tmp_path / "auxiliary.db", published_source,
+    ) as db:
+        captured = capture_business_source(db)
+        assert captured["variant"] == "fresh"
+        assert len(captured["parents"]) == 4
+        assert len(captured["children"]) == 15
+        assert tuple(_fingerprint(captured["parents"][name]) for name in SOURCE_PARENTS.values()) == PARENT_HASHES["fresh"]
+        assert _fingerprint(captured["children"]) == SOURCE_CHILD_FULL_HASHES["fresh"]
+
+
 def test_actual_source_declarations_initialize_transactionally_and_idempotently(
     tmp_path, published_source,
 ):

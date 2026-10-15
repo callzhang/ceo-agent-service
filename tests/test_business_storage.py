@@ -191,6 +191,7 @@ def test_every_native_not_null_and_ignore(pair, kind, field, ignore):
     ("task", {"description": 1.25, "owner_name": b"\x00\xff", "deadline_at": float("inf")}),
     ("task", {"description": True, "owner_user_id": memoryview(b"A"), "deadline_at": float("-inf")}),
     ("task", {"description": " a\n\u0000b ", "owner_evidence_json": b'{"x": 1}', "missing_evidence_json": b'[1]'}),
+    ("task", {"owner_evidence_json": b"\xff"}),
     ("project", {"crm_customer_id": b"\x00\xff", "crm_customer_name": 42, "crm_customer_evidence_json": '{ "b":2, "a":1 }'}),
     ("anchor", {"anchor_ref": bytearray(b"blob"), "active": "1e0"}),
     ("project_context_revision", {"context_json": b"\x00\xff", "evidence_json": float("inf")}),
@@ -198,12 +199,28 @@ def test_every_native_not_null_and_ignore(pair, kind, field, ignore):
 ))
 def test_native_storage_classes_exact_text_and_affinity(pair, kind, overrides):
     seed(pair)
-    both_insert(pair, kind, BASE[kind] | overrides | {"created_at": "stamp", **({"updated_at": "stamp", "last_activity_at": "stamp"} if kind == "task" else {})})
+    values = BASE[kind] | overrides | {"created_at": "stamp", **({"updated_at": "stamp", "last_activity_at": "stamp"} if kind == "task" else {})}
+    def snapshot():
+        return (
+            tuple(rows(pair, target, current_kind) for target in (False, True) for current_kind in KINDS),
+            waters(pair, False), waters(pair, True),
+        )
+
+    before = snapshot()
+    try:
+        native = native_insert(pair[0], kind, values)
+    except sqlite3.IntegrityError as error:
+        assert failure(lambda: insert_business(pair[1], kind, values)) == error.sqlite_errorname
+        assert snapshot() == before
+        return
+    target_result = insert_business(pair[1], kind, values)
+    assert (target_result.lastrowid, target_result.rowcount) == native
     fields, native = rows(pair, False, kind)
     _, target = rows(pair, True, kind)
     assert native[-1] == target[-1]
     for field in overrides:
         assert type(native[-1][fields.index(field)]) is type(target[-1][fields.index(field)])
+    assert waters(pair, False) == waters(pair, True)
 
 
 @pytest.mark.parametrize("kind", KINDS)

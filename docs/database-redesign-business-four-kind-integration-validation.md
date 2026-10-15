@@ -215,3 +215,100 @@ the Workbench build and two browser checks. It is not combined Business coverage
 A new combined CI result, main merge, production migration/deploy and operational
 readback remain separate gates. No production database write, main merge,
 restart, deployment or real test delivery occurred during this acceptance.
+
+### Exact-head combined CI failure, 2026-10-15
+
+Quality CI38769762524 on exact PR92 head
+`ac60db6d4a9d4f01db25a1009a21f384c90378fb` failed its Python test step:
+28 failed,14361 passed,118 skipped,44 deselected,9 errors in4812.79 seconds.
+Lint passed; frontend tests, Workbench build and browser checks did not run
+after the Python failure. Run:
+https://github.com/callzhang/ceo-agent-service/actions/runs/38769762524
+
+The failed-log clusters are native JSON-BLOB fixture acceptance(two), a
+test attention helper entering the explicit Business transaction API without
+starting a transaction(one), historical Store13 fixture declaration closure,
+current suggestion fixtures still querying the retired Business parent table,
+a replay comparison fixture missing the current Business storage, and six
+native additional-harness setup errors from the Mac-only `/private/tmp` path
+on Linux. These are diagnosis categories, not accepted repairs; exact source
+DDL and SQLite native acceptance still need investigation. In particular, do
+not widen runtime source fingerprints or skip negative tests to make CI pass.
+
+The previously recorded real-copy/native/focused results retain their stated
+scope. They do not override this failed combined CI result. No main merge,
+production publication or deployment is authorized by this receipt. Provider
+selection in the separate worktree remains unpushed and is not covered by
+this Business/Email CI run.
+
+### Bounded Business CI fixture repair, 2026-10-15
+
+The source13 auxiliary fixture replayed its archived indexes alphabetically.
+SQLite assigns `pragma index_list` sequence numbers in index creation order,
+so that replay changed the exact Business declaration fingerprint. The fixture
+now copies tables, indexes and triggers in their `sqlite_schema` rowid order
+within each phase. A focused regression was red with the former ordering
+(`unsupported Business source declarations`) and green after the correction.
+The source13 fixture recaptures the accepted **fresh** Business declarations:
+four parent fingerprints and the fifteen-child fingerprint match the fresh
+release constants. It is a historical 0441 fixture; its hashes do not claim to
+match the separately bound published 7dad **actual** source variant.
+
+The native storage affinity test now follows the running SQLite decision for
+JSON BLOB input. On local SQLite 3.53.4 the valid JSON BLOB is accepted, with
+the exact value, Python storage class and allocator waters matching the target.
+A separate invalid BLOB exercises native and target rejection, requiring the
+same SQLite error name and unchanged rows and waters. CI's earlier native
+rejection on its SQLite build was not reproduced locally. The historical
+suggestion-column test now runs genuine Store `2026-10-04.2` code from
+`0bd75f7c` to create candidate, formal and event rows, then its immediate
+`9469363a` successor to upgrade them twice. It verifies default `origin` and
+`suggestion_json`, public IDs, all prior task columns, raw event history and
+foreign keys. This is a separate historical transition, not a claim that this
+old database can open under the current paired release.
+
+Current fixtures now start the Business writer transaction for attention,
+count Task rows through the typed projection while preserving every other
+count key, and install current Business core in the replay comparison fixture
+while intentionally omitting Project evidence and source documents. The replay
+still requires explicit comparison failure, latest public run ID and unchanged
+database bytes. The additional native-copy fixture uses `/tmp`; its existing
+owned-root guard resolves `/tmp` to the host path, which is `/private/tmp` on
+macOS and `/tmp` on Linux. Its published-pair assertion includes the four
+retired Business parents.
+
+Local evidence: 144 historical Workbench, Task storage and meeting tests;
+468 complete Business storage, daily facts, suggestion and replay files; six
+additional-copy harness cases and the separate historical upgrade test; one source13 regression
+red then green. Changed-file Ruff, compileall and diff checks passed. These
+are local fixture/test results only. A replacement exact-head Linux CI run is
+still required; no runtime app module, provider, real database, native CLI,
+production service, push, PR or deployment changed in this repair.
+
+QUALITY follow-up: the rejected native affinity case now snapshots source and
+target rows for all four Business kinds, plus both sets of allocator waters,
+before requiring an unchanged state. A temporary in-process mutant changed an
+Anchor title without advancing a water, then called the real native insert
+with an invalid Task JSON BLOB. The previous Task-only snapshot passed that
+mutant (1/1); the all-kind snapshot failed at the intended unchanged-state
+assertion (1/1). The unmutated sixteen affinity cases passed. The mutant
+wrapper was not retained in test or app code.
+
+### Root CI-closure review acceptance, 2026-10-15
+
+Fresh SPEC accepted790e747c after25 focused cases in33.10s. QUALITY identified
+the Task-only rejected-write snapshot gap; aa109586 extended it to every one
+of the four Business kinds on both sides and both allocator-water sets.
+Sequential SPEC then QUALITY re-review accepted that correction; each
+independently passed16 affected affinity cases. Their diff checks and worktree
+clean checks passed. This accepts the bounded fixture/test/harness repair;
+no application runtime module changed.
+
+The source13 index-creation ordering and genuinely supported historical
+0bd75f7c-to9469363a upgrade remain distinct from current paired publication.
+Local SQLite3.53.4 does not reproduce the ancestor Linux build's valid-JSON-BLOB
+rejection; the test retains native/target outcome parity for either engine.
+Root will push this candidate branch to obtain replacement exact-head CI.
+Failed run38769762524 remains the only completed combined CI result until then.
+This is not main merge, deployment, production schema or real delivery proof;
+the separate Provider candidate remains outside this ancestor branch's scope.
