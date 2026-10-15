@@ -575,3 +575,111 @@ def test_inverse_rejects_tampered_captured_declarations_before_ddl():
         assert business_schema_is_current(db, "fresh")
         db.rollback()
         assert tuple(db.iterdump()) == before
+
+
+def _isolated_parent_source(db):
+    for task_id in (-101, -102, -103):
+        db.execute("insert into business_tasks(id,title,stage) values(?,?,'candidate')",
+                   (task_id, f"task {task_id}"))
+    for anchor_id in (-201, -202, -203, -204):
+        db.execute("insert into business_anchors(id,anchor_type,anchor_ref,title) "
+                   "values(?,'project',?,?)", (anchor_id, f"ref {anchor_id}", f"anchor {anchor_id}"))
+    for project_id, anchor_id in ((-301, -202), (-303, -203)):
+        db.execute("insert into business_projects(id,canonical_anchor_id,title,registry_source) "
+                   "values(?,?,?,'test')", (project_id, anchor_id, f"project {project_id}"))
+    db.commit()
+
+
+def _isolated_child_values(table, column):
+    values = {
+        "business_task_evidence": dict(task_id=-101, signal_id=-31, evidence_role="discovery"),
+        "business_task_date_evidence": dict(task_id=-101, date_type="next_check_at",
+                                            raw_phrase="tomorrow", source_signal_id=-31,
+                                            actor_kind="unknown"),
+        "business_task_events": dict(task_id=-101, event_type="created", before_json="{}",
+                                     after_json="{}", reason="test"),
+        "business_project_evidence": dict(project_id=-301, signal_id=-31),
+        "business_task_dingtalk_links": dict(business_task_id=-101, status="creating"),
+        "business_task_follow_ups": dict(business_task_id=-101, source_signal_id=-31,
+                                         target_conversation_id="conversation", target_kind="direct",
+                                         question_text="question", scheduled_at="now",
+                                         dedupe_key="isolated"),
+        "business_task_todo_sync_outbox": dict(operation_key="isolated",
+                                               business_task_id=-101, operation="create"),
+        "business_task_relations": dict(from_task_id=-101, to_task_id=-102,
+                                        relation_type="related_to", supporting_signal_id=-31),
+        "business_work_cluster_tasks": dict(cluster_id=-31, task_id=-101),
+        "business_task_anchor_links": dict(task_id=-101, anchor_id=-201,
+                                           evidence_signal_id=-31),
+        "business_project_candidates": dict(cluster_id=-31, title="candidate", reason="reason",
+                                            status="confirmed", confirmed_project_id=-301,
+                                            confirmation_signal_id=-31),
+        "business_attention_items": dict(id=-41, stable_key="isolated", category="fyi",
+                                         title="attention", why_attention="why",
+                                         current_state="state", ceo_action="action",
+                                         anchor_id=-201, evidence_signal_id=-31),
+        "business_attention_tasks": dict(attention_item_id=-41, task_id=-101),
+        "business_attention_proposal_tasks": dict(attention_item_id=-41, task_id=-101),
+    }
+    if table == "business_legacy_links":
+        return {column: {"task_id": -101, "anchor_id": -201, "project_id": -301}[column],
+                "work_project_id": -31}
+    return values[table]
+
+
+def _insert_isolated_child(db, table, column):
+    if table in ("business_attention_tasks", "business_attention_proposal_tasks"):
+        _insert_isolated_child(db, "business_attention_items", "anchor_id")
+    values = _isolated_child_values(table, column)
+    db.execute(
+        f"insert into {table}({','.join(values)}) values({','.join('?' for _ in values)})",
+        tuple(values.values()),
+    )
+
+
+def _isolated_endpoint_db(variant, table, column):
+    from app.business_schema_release import migrate_business_schema
+
+    db = _source_db(variant)
+    _isolated_parent_source(db)
+    db.execute("begin immediate")
+    migrate_business_schema(db)
+    db.commit()
+    db.execute("pragma foreign_keys=on")
+    _insert_isolated_child(db, table, column)
+    return db
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+def test_each_isolated_endpoint_blocks_its_own_parent_delete_and_public_id_update(variant):
+    from app.business_schema_release import RETAINED_CHILD_FKS
+
+    parent_id = {"task": -101, "project": -301, "anchor": -201}
+    spare_id = {"task": -103, "project": -303, "anchor": -204}
+    checked = 0
+    for table, endpoints in RETAINED_CHILD_FKS.items():
+        for column, kind in endpoints.items():
+            targeted_id = -102 if (table, column) == ("business_task_relations", "to_task_id") else parent_id[kind]
+            with closing(_isolated_endpoint_db(variant, table, column)) as db:
+                referencing_rows = sum(
+                    db.execute(f"select count(*) from {child} where {field}=?",
+                               (targeted_id,)).fetchone()[0]
+                    for child, fields in RETAINED_CHILD_FKS.items()
+                    for field, parent_kind in fields.items() if parent_kind == kind
+                )
+                assert referencing_rows == 1, (variant, table, column)
+                with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+                    db.execute("delete from business where record_type=? and public_id=?",
+                               (kind, targeted_id))
+                with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+                    db.execute("update business set legacy_key='-901' "
+                               "where record_type=? and public_id=?", (kind, targeted_id))
+                assert db.execute("update business set legacy_key='-902' "
+                                  "where record_type=? and public_id=?",
+                                  (kind, spare_id[kind])).rowcount == 1
+                assert db.execute("delete from business where record_type=? and public_id=-902",
+                                  (kind,)).rowcount == 1
+                assert db.execute("pragma foreign_key_check").fetchall() == []
+                db.rollback()
+            checked += 1
+    assert checked == 19

@@ -32,6 +32,19 @@ FK finding remains identical. Malformed source/target declarations, broken moved
 references, tampered inverse metadata and injected DDL failure are refused or
 rolled back without a committed schema change.
 
+Each of the nineteen endpoint groups also has an isolated native FK control
+under both actual and fresh declarations. The test inserts only the intended
+child reference to its target parent, counts exactly one incoming reference to
+that parent, and verifies both parent DELETE and public-ID UPDATE fail. A
+same-kind parent with no child reference accepts both mutations. The Task
+relation's two endpoints use different Task parents; the immutable date child
+is tested by insertion. A process-local negative control removed only the
+`business_task_evidence.task_id` target FK from translated DDL. Its isolated
+parent DELETE and public-ID UPDATE then succeeded, and the isolation assertion
+went RED with `DID NOT RAISE sqlite3.IntegrityError`. Restoring the unchanged
+translation made both source variants GREEN. This closes a test gap; no
+application implementation was changed for this review finding.
+
 This is code and local SQLite validation only. Selecting the coupled
 Store/Email release, replacing current callers and bootstrap, copied-database
 proof, CI and deployment are later tasks under the reviewed integration plan.
