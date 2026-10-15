@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "cli_version": "codex-cli 0.154.0",
+  "mode": "Native debug prompt-input only; no model request",
+  "status": "project_doc_budget_does_not_suppress_global_user_bootstrap",
+  "records": [
+    {
+      "project_doc_max_bytes": null,
+      "bootstrap_blocks": 1,
+      "bootstrap_chars": 4380,
+      "bootstrap_hashes": [
+        "6c9c28ea063581ae1eeadf4d132c342f577dc7e5fe584fa3808203842a70b512"
+      ]
+    },
+    {
+      "project_doc_max_bytes": 0,
+      "bootstrap_blocks": 1,
+      "bootstrap_chars": 4380,
+      "bootstrap_hashes": [
+        "6c9c28ea063581ae1eeadf4d132c342f577dc7e5fe584fa3808203842a70b512"
+      ]
+    }
+  ],
+  "limits": "Initial hypothesis rejected. Do not add project_doc_max_bytes=0 as a claimed fix for this observed global bootstrap/read batching issue."
+}
