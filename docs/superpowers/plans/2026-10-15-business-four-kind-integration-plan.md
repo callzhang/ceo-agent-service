@@ -41,6 +41,21 @@ Before implementing, read `docs/agent-claims.md`, claim only edited files, stage
 - [ ] **Step 1: Write RED structural tests.** Reconstruct actual and fresh native sources with the `CAPTURE` pattern from `tests/test_business_core_source.py`. Assert the target `business` xinfo adds exactly `task_public_id`, `project_public_id` and `anchor_public_id` as VIRTUAL; each new index is full UNIQUE/BINARY. Exercise every 19 child endpoint with valid public parent, wrong-kind-only parent, referenced parent DELETE/public-ID UPDATE, and no-child success control. Require each of 15 child xinfo lists unchanged and all 40 FK groups equal source except those exact 19. Retained `dict(row)`/`extra="forbid"` hydration remains accepted.
 
 ```python
+from contextlib import closing
+import sqlite3
+
+import pytest
+
+from app.business_storage import create_business_schema
+
+@pytest.fixture
+def db():
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.execute("pragma foreign_keys=on")
+        connection.execute("begin")
+        create_business_schema(connection)
+        yield connection
+
 @pytest.mark.parametrize("kind,alias", [
     ("task", "task_public_id"), ("project", "project_public_id"),
     ("anchor", "anchor_public_id"),
@@ -123,6 +138,55 @@ def translated_child_sql(table: str, sql: str, *, inverse: bool = False) -> str:
 
 The map has exactly 19 entries; the other 21 FK groups are never rewritten. Use finite exact literal replacement only after validating the source declaration; no generic DDL parser, regex rewrite or compatibility view. RED command: `pytest -q tests/test_business_schema_release.py -k 'source_capture or exact_19_child_endpoints'`. Expected missing capture/migration failure, then GREEN after Step 4.
 
+Add this declaration test to `tests/test_business_schema_release.py` after the frozen fixture is generated in Step 4. It checks every retained child group, including the 21 untouched references, against SQLite's own FK graph. The source fixture needs no body rows.
+
+```python
+from app.business_schema_release import (
+    PUBLIC_ALIAS, RETAINED_CHILD_FKS, SOURCE_PARENTS,
+    _recreate_source, migrate_business_schema,
+)
+
+def test_exact_19_child_endpoints_and_21_untouched_groups():
+    source = json.loads(FRESH_DECLARATIONS.read_text())
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("pragma foreign_keys=off")
+        _recreate_source(db, source)
+        original = {
+            name: tuple(tuple(row) for row in db.execute(f"pragma foreign_key_list({name})"))
+            for name in RETAINED_CHILD_FKS
+        }
+        before_columns = {
+            name: tuple(tuple(row) for row in db.execute(f"pragma table_xinfo({name})"))
+            for name in RETAINED_CHILD_FKS
+        }
+        db.execute("begin immediate")
+        migrate_business_schema(db)
+        translated_count = 0
+        untouched_count = 0
+        for name, endpoints in RETAINED_CHILD_FKS.items():
+            actual = tuple(tuple(row) for row in db.execute(
+                f"pragma foreign_key_list({name})"
+            ))
+            expected = []
+            for row in original[name]:
+                old = tuple(row)
+                if old[3] in endpoints and old[2] == SOURCE_PARENTS[endpoints[old[3]]]:
+                    changed = list(old)
+                    changed[2] = "business"
+                    changed[4] = PUBLIC_ALIAS[endpoints[old[3]]]
+                    expected.append(tuple(changed))
+                    translated_count += 1
+                else:
+                    expected.append(old)
+                    untouched_count += 1
+            assert actual == tuple(expected), name
+            assert tuple(tuple(row) for row in db.execute(
+                f"pragma table_xinfo({name})"
+            )) == before_columns[name]
+        assert (translated_count, untouched_count) == (19, 21)
+        db.rollback()
+```
+
 The accepted parent declaration fingerprints, computed with `_source_declaration` and `_fingerprint` from the oracle, are:
 
 | Variant | Task | Project | Anchor | Context revision |
@@ -132,7 +196,7 @@ The accepted parent declaration fingerprints, computed with `_source_declaration
 
 For the 15 children, hash a sorted-key JSON dictionary of each table's `sql`, `columns` and `foreign_keys` in map order. Accepted actual hash is `d59d3ae841b3e410305079267d4c2a12b26103fddc06929cf316ec78ab8e28c1`; fresh is `d4bab7b6cd1e59bbcd2c5154d4b43bfd06196ed5ba15cae5f8149d63aef02719`. These hashes do not replace full live auxiliary capture. Refresh only from a newly verified immediate predecessor.
 
-- [ ] **Step 4: Implement source capture and complete-map forward copy.** `capture_business_source(db)` returns the variant, full 19 declarations, parent/child sequence presence and values, and exact `_foreign_keys(db)` findings; it stores no business rows. Before DDL, reject moved-parent FK findings, mixed existing Business objects or allocator rows, target-name collisions, unsupported external MAIN/TEMP schema references and fingerprint mismatch. Use `app.action_reply_storage._source_declaration` and the finite dependency inspection convention in `app/action_email_storage.py`. The accepted unrelated `runs/tasks` finding may remain only as an identical pre/post finding. The external child oracle has SQL/xinfo/FK but lacks index/trigger SQL; validate the former three, capture the live auxiliary SQL and preserve it.
+- [ ] **Step 4: Implement source capture and complete-map forward copy.** `capture_business_source(db)` returns the variant, full 19 declarations and exact `_foreign_keys(db)` findings; it stores no business rows or waters. `migrate_business_schema` captures parent/child sequence presence and values after its caller holds the write transaction. Before DDL, reject moved-parent FK findings, mixed existing Business objects or allocator rows, target-name collisions, unsupported external MAIN/TEMP schema references and fingerprint mismatch. Use `app.action_reply_storage._source_declaration` and the finite dependency inspection convention in `app/action_email_storage.py`. The accepted unrelated `runs/tasks` finding may remain only as an identical pre/post finding. The external child oracle has SQL/xinfo/FK but lacks index/trigger SQL; validate the former three, capture the live auxiliary SQL and preserve it.
 
 `migrate_business_schema(db)` requires an existing FK-off transaction and recaptures current rows after the write lock. Read all four parent row sets and 15 child row sets with explicit columns, `typeof` tuples, hidden `rowid` for six composite-PK children, and thirteen independent AUTOINCREMENT waters (four parents, nine children). Before inserting anything, assign a positive physical ID to every source kind/public-ID pair and resolve all three internal reference types from that complete map. Higher-ID merges and multirow merge cycles must have real mapped refs. Missing moved parents fail before DDL; do not invoke the runtime `insert_business` physical-zero path for bulk copy.
 
@@ -258,6 +322,14 @@ Use the complete finite module in the same step. Include target writes made **af
 - [ ] **Step 1: RED public behavior.** Build a current-target fixture through Task 1's finite Business migration; exercise four public Store CRUD/projection families, Project context revision, Task merge, Project/Anchor registration, retained child evidence/date/event/link/follow-up writes/reads, Attention resolution and Task Web detail. Assert original model field set and **public** `id`, never physical `business.id`. Include strict `dict(row)` retained-child hydration. Add an SQL trace assertion that current app requests contain no `business_tasks`, `business_projects`, `business_anchors` or `business_project_context_revisions` after initialization, except historical source-only migration/oracle code. Expected RED: current callers still query retired parents.
 
 ```python
+import pytest
+
+from app.store import AutoReplyStore
+
+@pytest.fixture
+def current_business_store(tmp_path):
+    return AutoReplyStore(tmp_path / "business-current.sqlite3")
+
 def test_current_task_api_returns_public_id(current_business_store):
     store = current_business_store
     with store._connect() as db:
@@ -274,49 +346,300 @@ def test_current_task_api_returns_public_id(current_business_store):
             (task_id,),
         ).fetchone()[0]
     assert physical > 0
+
+def test_current_task_transaction_reads_use_the_business_projection(current_business_store):
+    store = current_business_store
+    with store._connect() as db:
+        seen = []
+        db.set_trace_callback(seen.append)
+        db.execute("begin immediate")
+        task_id = store.create_business_task_in_transaction(
+            title="trace", stage="candidate", _db=db
+        )
+        row = store.get_business_task_in_transaction(task_id=task_id, _db=db)
+        db.commit()
+    assert row.id == task_id
+    retired = (
+        "business_tasks", "business_projects", "business_anchors",
+        "business_project_context_revisions",
+    )
+    assert not [sql for sql in seen if any(name in sql.lower() for name in retired)]
 ```
 
-The `current_business_store` fixture belongs in the new test file and constructs the real Store on a target schema; use the existing `tests/test_task_semantic_store.py` Store fixture/transaction conventions. The assertion above is intentionally about the public API, not an assumed inequality between public and physical IDs. Run `pytest -q tests/test_business_integration_callers.py -k current_task_api_returns_public_id`; expect RED while old-parent SQL remains.
+The fixture constructs the real Store and exercises its target bootstrap and paired release guard. The assertion above is intentionally about the public API, not an assumed inequality between public and physical IDs. Run `pytest -q tests/test_business_integration_callers.py -k current_task`; expect RED while old-parent SQL remains.
 
 - [ ] **Step 2: Convert every Store direct parent SQL owner.** In `app/store.py` change: `create_business_task_in_transaction`, `get_business_task_in_transaction`, `update_business_task_in_transaction`, `get_business_task`, `list_business_tasks`, `list_business_tasks_for_projection`; both `list_unmerged_formal_business_task_ids_for_signal_in_transaction` and `list_unmerged_formal_business_task_ids_for_source_in_transaction`; `get_business_anchor_in_transaction`, `get_business_anchor_by_identity_in_transaction`, `create_business_anchor_in_transaction`, `list_business_anchors`; `get_business_project_in_transaction`, `create_business_project_in_transaction`, `list_business_projects` and three CRM mutations (`update_business_project_crm_customer_lookup_in_transaction`, `confirm_business_project_crm_customer`, `clear_business_project_crm_customer`); `get_business_project_context_in_transaction` and `list_business_project_context_revisions_in_transaction`; `list_business_task_ids_for_project`, `list_business_task_project_links`, `derive_business_task_relevance_in_transaction`, `list_business_task_project_customer_names`; `claim_business_task_follow_up_for_send`. Preserve old aliases, filters, public-ID ordering, claim predicates, transaction scopes and return models. Use finite `BUSINESS_PROJECTIONS[kind]` as inline SQL relations, never `business.*` for a source model. Parent mutations use `insert_business`/`update_business`/`delete_business` in existing transactions and return `BusinessWriteResult.lastrowid` on insert. Retained child writes still take public IDs.
 
+The static read relations are replaced by the 69-site script in Step 3. Replace the seven `app/store.py` parent DML statements with these exact statements inside their existing methods and transactions. Add `from app.business_storage import insert_business, update_business` to `app/store.py`. The task model is already fully validated; omit only its synthetic `id=0` for insert. The original update leaves `created_at` immutable. All insert results are public IDs.
+
 ```python
-from app.business_definitions import BUSINESS_PROJECTIONS
-from app.business_storage import insert_business, update_business
+# AutoReplyStore.create_business_task_in_transaction:
+return int(insert_business(
+    _db, "task", task.model_dump(mode="python", exclude={"id"})
+).lastrowid)
 
-# Replace an old business_tasks table under its existing t alias:
-task_relation = "(" + BUSINESS_PROJECTIONS["task"] + ")"
-row = db.execute(
-    "select t.* from " + task_relation + " as t where t.id=?",
-    (task_id,),
-).fetchone()
+# AutoReplyStore.update_business_task_in_transaction:
+update_business(
+    _db, "task", task.id,
+    task.model_dump(mode="python", exclude={"id", "created_at"}),
+)
 
-# Replace old parent DML inside the existing caller transaction:
-created = insert_business(db, "task", source_values)
-public_task_id = created.lastrowid
-changed = update_business(db, "task", task_id, source_patch)
+# AutoReplyStore.create_business_anchor_in_transaction:
+return int(insert_business(_db, "anchor", {
+    "anchor_type": anchor.anchor_type.value,
+    "anchor_ref": anchor.anchor_ref,
+    "title": anchor.title,
+    "active": int(anchor.active),
+}).lastrowid)
+
+# AutoReplyStore.create_business_project_in_transaction:
+return int(insert_business(_db, "project", {
+    "canonical_anchor_id": project.canonical_anchor_id,
+    "title": project.title,
+    "registry_source": project.registry_source,
+}).lastrowid)
+
+# AutoReplyStore.update_business_project_crm_customer_lookup_in_transaction:
+update_business(_db, "project", project_id, {
+    "crm_customer_id": customer_id,
+    "crm_customer_name": customer_name,
+    "crm_customer_lookup_status": selected_status,
+    "crm_customer_candidates_json": json.dumps(
+        [candidate.model_dump(mode="json") for candidate in normalized_candidates],
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ),
+    "crm_customer_label": label,
+    "crm_customer_evidence_json": evidence_json,
+})
+# Keep the method's existing `return True` immediately afterward.
+
+# AutoReplyStore.confirm_business_project_crm_customer:
+update_business(db, "project", project_id, {
+    "crm_customer_id": candidate.customer_id,
+    "crm_customer_name": candidate.name,
+    "crm_customer_lookup_status": "matched",
+    "crm_customer_candidates_json": "[]",
+})
+# Keep the method's existing `return True` immediately afterward.
+
+# AutoReplyStore.clear_business_project_crm_customer:
+return update_business(db, "project", project_id, {
+    "crm_customer_id": "",
+    "crm_customer_name": "",
+    "crm_customer_lookup_status": "not_requested",
+    "crm_customer_candidates_json": "[]",
+    "crm_customer_label": "",
+    "crm_customer_evidence_json": "{}",
+}) == 1
 ```
 
-`source_values` and `source_patch` are the current method's exact values/patch dictionaries; preserve their existing signatures. This code is the finite relation/write substitution used at each listed owner, not a new general SQL translator. For `claim_business_task_follow_up_for_send`, keep the existing `BEGIN IMMEDIATE`/claim update and `f.*` row shape. Run `pytest -q tests/test_business_integration_callers.py tests/test_business_storage.py tests/test_task_semantic_store.py tests/test_project_context_service.py tests/test_follow_up.py`; expect GREEN.
+Keep each existing validation, lookup, method signature, connection and surrounding return path. In `claim_business_task_follow_up_for_send`, the static SQL rewrite keeps `BEGIN IMMEDIATE`, claim predicate and `f.*` shape. Run `pytest -q tests/test_business_integration_callers.py tests/test_business_storage.py tests/test_task_semantic_store.py tests/test_project_context_service.py tests/test_follow_up.py`; expect GREEN.
 
 - [ ] **Step 3: Convert non-Store direct owners without policy change.** `ProjectContextService._require_project` and `.apply` keep latest revision and Project evidence in one transaction. `BusinessResolutionService.register_official_project`, `.register_source_project` and `.confirm_project_candidate` keep official/candidate semantics. `TaskSemanticService.record_suggestion` and `.merge_same_deliverable` keep source identity/merge checks. `app/task_agent.py` ``_confirmed_official_project_anchors`, ``_official_project` and ``_validate_stored_project_assessments` keep registered Project/Anchor validation. `BusinessAttentionProjection._validate_proposal`, `._current_eligible_task_ids` and `.resolve` retain category/status policy. `minutes_owner_backfill.ownerless_candidate_meetings` still joins Signal/document and reads original body. `todo_completion.complete_business_task_from_external_todo` updates Business Task alongside unchanged Signal/evidence/event/follow-up writes. `task_semantic_import` ``_rows`, ``_fingerprint`, ``_plan_items`, ``_existing_link_matches` and ``apply_task_semantic_import_manifest` use source-shaped registry projections for fingerprints and current Business existence; no old-table fallback. `app/web_api/tasks.py` ``_confirmed_project_ids_by_task`, ``_project_summary_context_and_activity`, ``_project_summary_payload` and ``business_project_detail` keep latest public revision CTE, max timestamp, revision count, ordering and response shape.
 
+The one-time read edit below preserves each existing SELECT list, public-ID join, filter and result shape. Two other modules own parent DML. Add `from app.business_storage import insert_business` to `app/project_context_service.py` and replace its revision INSERT expression with the first statement. Add `from app.business_storage import update_business` to `app/todo_completion.py` and replace only its Task UPDATE with the second statement; obtaining `current_timestamp` from SQLite preserves the original timestamp storage class.
+
 ```python
-# Source-shaped inline relation for a direct SQL caller:
-project_relation = "(" + BUSINESS_PROJECTIONS["project"] + ")"
-revision_relation = "(" + BUSINESS_PROJECTIONS["project_context_revision"] + ")"
-row = db.execute(
-    "select p.id,r.id as revision_id,r.context_json from "
-    + project_relation + " as p left join " + revision_relation
-    + " as r on r.project_id=p.id where p.id=? "
-    "order by r.id desc limit 1",
-    (project_id,),
-).fetchone()
+# ProjectContextService.apply, after current_json/evidence_json are computed:
+return int(insert_business(db, "project_context_revision", {
+    "project_id": project_id,
+    "context_json": current_json,
+    "evidence_json": evidence_json,
+}).lastrowid)
+
+# complete_business_task_from_external_todo, inside the existing transaction:
+update_business(db, "task", business_task_id, {
+    "status": "done",
+    "commitment_status": "completed",
+    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+})
 ```
 
-This shows the exact public-ID join. Apply each original caller's **existing** SQL selection, predicates and result fields around these two relations; do not replace them with the illustrative three-column read. RED/GREEN cases must cover import fingerprint parity, merged Task readback, CRM confirmation, ownerless source body, Attention eligibility, Task Web detail and Project revision count. Run `pytest -q tests/test_task_business_resolution.py tests/test_task_semantic_service.py tests/test_task_semantic_import.py tests/test_task_attention_projection.py tests/test_task_attention_multisource.py tests/test_minutes_owner_backfill.py tests/test_todo_completion.py tests/test_web_api_task_project_summary.py tests/test_task_agent.py`; expect current app SQL trace free of old-parent access and all assertions GREEN.
+RED/GREEN cases must cover import fingerprint parity, merged Task readback, CRM confirmation, ownerless source body, Attention eligibility, Task Web detail and Project revision count. Run `pytest -q tests/test_task_business_resolution.py tests/test_task_semantic_service.py tests/test_task_semantic_import.py tests/test_task_attention_projection.py tests/test_task_attention_multisource.py tests/test_minutes_owner_backfill.py tests/test_todo_completion.py tests/test_web_api_task_project_summary.py tests/test_task_agent.py`; expect current app SQL trace free of old-parent access and all assertions GREEN.
 
-- [ ] **Step 4: Replace current bootstrap and metadata together.** Remove four old parents from `STORE_SCHEMA_REQUIRED_TABLES`/`COLUMNS` and their seven parent indexes from `STORE_SCHEMA_REQUIRED_INDEXES`. Require `business`, exact table/alias/index/four-trigger declaration fingerprint and 15 rebuilt child xinfo/FK/index/trigger sets; markers alone are insufficient. Use `PRAGMA table_xinfo` for VIRTUAL aliases, not only `table_info`. In `store.py::_initialize` remove the four old parent CREATE/ALTER current paths at approximately lines 3332, 3555, 3585, 3610, 4014 and 4408; create Business before the retained children and select the exact finite child target SQL. Preserve unchanged Signal/document/other child declarations and non-Business bootstrap. Change `_migrate_project_attention_evidence` to join source-shaped Project during initialization. A fresh Store-first construction must create all target objects without running source migration; EmailStore-first still calls the real Store constructor outside Email's schema lock. Test both fresh orders, both reopen orders and cached-path reopen.
+For the static read SQL in Steps 2–3 and Step 5, run the following one-time, finite source edit **after** the RED tests and before the writer/bootstrap replacements. It converts exactly 69 literal `FROM`/`JOIN` references in the twelve named files to source-shaped inline relations. It rejects an unexpected source count before writing any file, preserves every original SELECT list/filter/alias, inserts the concrete projection import, and parses all resulting Python. It does not change runtime SQL dynamically, touch DML or rewrite historical migration files. Review the generated diff before committing. The `list_business_tasks` f-string and dynamic-table callers are handled by the explicit blocks below.
+
+```python
+# Run as: python - <<'PY' (paste this entire block) from repository root.
+import ast
+import io
+from pathlib import Path
+import re
+import tokenize
+
+COUNTS = {
+    "app/store.py": 23,
+    "app/project_context_service.py": 2,
+    "app/task_business_resolution.py": 5,
+    "app/task_semantic_service.py": 4,
+    "app/task_agent.py": 6,
+    "app/task_attention_projection.py": 5,
+    "app/minutes_owner_backfill.py": 1,
+    "app/task_semantic_import.py": 7,
+    "app/web_api/tasks.py": 7,
+    "scripts/inspect_task_attention.py": 3,
+    "scripts/replay_task_attention.py": 5,
+    "scripts/validate_native_copy_additional.py": 1,
+}
+KINDS = {
+    "business_tasks": "task",
+    "business_projects": "project",
+    "business_anchors": "anchor",
+    "business_project_context_revisions": "project_context_revision",
+}
+PATTERN = re.compile(
+    r"\b(from|join)\s+(business_tasks|business_projects|"
+    r"business_anchors|business_project_context_revisions)\b", re.I
+)
+IMPORT = "from app.business_definitions import BUSINESS_PROJECTIONS\n"
+
+def source_with_import(source):
+    module = ast.parse(source)
+    if IMPORT.strip() in source:
+        return source
+    future = [node.end_lineno for node in module.body
+              if isinstance(node, ast.ImportFrom) and node.module == "__future__"]
+    if future:
+        after = max(future)
+    elif module.body and isinstance(module.body[0], ast.Expr) and isinstance(
+        module.body[0].value, ast.Constant
+    ) and isinstance(module.body[0].value.value, str):
+        after = module.body[0].end_lineno
+    else:
+        after = 0
+    lines = source.splitlines(keepends=True)
+    lines.insert(after, IMPORT)
+    result = "".join(lines)
+    ast.parse(result)
+    return result
+
+pending = {}
+for filename, expected in COUNTS.items():
+    path = Path(filename)
+    source = path.read_text()
+    output = []
+    changed = 0
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.STRING:
+            try:
+                literal = ast.literal_eval(token.string)
+            except (SyntaxError, ValueError):
+                literal = None
+            if isinstance(literal, str):
+                escaped = literal.replace("{", "{{").replace("}", "}}")
+                def relation(match):
+                    kind = KINDS[match.group(2).lower()]
+                    return match.group(1) + ' ({BUSINESS_PROJECTIONS["' + kind + '"]})'
+                rewritten, count = PATTERN.subn(relation, escaped)
+                if count:
+                    token = token._replace(string="f" + repr(rewritten))
+                    changed += count
+        output.append(token)
+    if changed != expected:
+        raise ValueError(f"{filename}: expected {expected} static relations, found {changed}")
+    result = source_with_import(tokenize.untokenize(output))
+    ast.parse(result)
+    pending[path] = result
+assert sum(COUNTS.values()) == 69
+for path, result in pending.items():
+    path.write_text(result)
+```
+
+Run `python -m compileall -q app/store.py app/project_context_service.py app/task_business_resolution.py app/task_semantic_service.py app/task_agent.py app/task_attention_projection.py app/minutes_owner_backfill.py app/task_semantic_import.py app/web_api/tasks.py scripts/inspect_task_attention.py scripts/replay_task_attention.py scripts/validate_native_copy_additional.py`. Expected: no syntax errors. The script is deliberately single-use; its 69-count precondition prevents replay.
+
+Replace the four dynamic query sites that are outside literal `FROM`/`JOIN` tokens with the following exact code. The first belongs in `AutoReplyStore.list_business_tasks`; keep its existing `clause` construction and parameter tuple. The next two replace `task_semantic_import._rows` and the `official` expression's trailing condition. The final two replace the named replay functions. The one-time script above supplies `BUSINESS_PROJECTIONS` imports.
+
+```python
+# AutoReplyStore.list_business_tasks: replace only the SQL expression.
+f"select * from ({BUSINESS_PROJECTIONS['task']}){clause} "
+"order by updated_at, id limit ? offset ?"
+
+# app/task_semantic_import.py: replace _rows in full.
+def _rows(db: sqlite3.Connection, table: str) -> list[dict[str, object]]:
+    registry = {
+        "business_anchors": "anchor",
+        "business_projects": "project",
+    }
+    if table in registry:
+        sql = BUSINESS_PROJECTIONS[registry[table]]
+        return [dict(row) for row in db.execute(f"select * from ({sql}) order by id")]
+    if table not in LEGACY_TABLES:
+        raise ValueError("unsupported import source table")
+    return [dict(row) for row in db.execute(f"select * from {table} order by id")]
+
+# app/task_semantic_import.py: replace the official expression in _plan_items.
+official = {
+    str(row["anchor_ref"]): int(row["project_id"])
+    for row in db.execute(
+        "select anchor.anchor_ref, project.id as project_id "
+        f"from ({BUSINESS_PROJECTIONS['project']}) as project "
+        f"join ({BUSINESS_PROJECTIONS['anchor']}) as anchor "
+        "on anchor.id=project.canonical_anchor_id "
+        "where anchor.anchor_type='project' and anchor.active=1"
+    )
+} if _table_exists(db, "business") else {}
+
+# scripts/replay_task_attention.py: replace comparison_capabilities in full.
+def comparison_capabilities(store):
+    with store._connect() as db:
+        tables = {
+            row[0] for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            )
+        }
+    required = {"business", "business_project_evidence", "business_source_documents"}
+    return {"missing_tables": sorted(required - tables)}
+
+# scripts/replay_task_attention.py: replace read_domain in full.
+def read_domain(store):
+    with store._connect() as db:
+        result = {
+            name: [dict(row) for row in db.execute(f"select * from {table} order by id")]
+            for name, table in (
+                ("attention", "business_attention_items"),
+                ("attention_events", "business_attention_events"),
+                ("task_events", "business_task_events"),
+            )
+        }
+        for name, kind in (("tasks", "task"), ("projects", "project")):
+            result[name] = [dict(row) for row in db.execute(
+                f"select * from ({BUSINESS_PROJECTIONS[kind]}) order by id"
+            )]
+        return result
+```
+
+Replace `scripts/replay_task_attention.py::domain_snapshot` too. It must keep the exact retained-table JSON representation, include physical `business`, and expose the four public source-shaped parent names so existing fixed expectations retain their keys:
+
+```python
+def domain_snapshot(store) -> dict[str, tuple[str, ...]]:
+    with store._connect() as db:
+        tables = [
+            row[0] for row in db.execute(
+                "select name from sqlite_master where type='table' "
+                "and (name='business' or name glob 'business_*') order by name"
+            )
+        ]
+        result = {
+            table: tuple(sorted(
+                json.dumps(dict(row), ensure_ascii=False, sort_keys=True)
+                for row in db.execute(f"select * from {table}")
+            ))
+            for table in tables
+        }
+        for table, kind in (
+            ("business_tasks", "task"),
+            ("business_projects", "project"),
+            ("business_anchors", "anchor"),
+            ("business_project_context_revisions", "project_context_revision"),
+        ):
+            result[table] = tuple(sorted(
+                json.dumps(dict(row), ensure_ascii=False, sort_keys=True)
+                for row in db.execute(f"select * from ({BUSINESS_PROJECTIONS[kind]})")
+            ))
+        return result
+```
+
+- [ ] **Step 4: Replace current bootstrap and metadata together.** Remove four old parents from `STORE_SCHEMA_REQUIRED_TABLES`/`COLUMNS` and their four explicit parent indexes (`idx_business_tasks_updated_id`, `idx_business_tasks_list`, `idx_business_tasks_relevance`, `idx_business_project_context_revisions_project`) from `STORE_SCHEMA_REQUIRED_INDEXES`. Require `business`, exact table/alias/index/four-trigger declaration fingerprint and 15 rebuilt child xinfo/FK/index/trigger sets; markers alone are insufficient. Use `PRAGMA table_xinfo` for VIRTUAL aliases, not only `table_info`. In `store.py::_initialize` remove the four old parent CREATE/ALTER current paths at approximately lines 3332, 3555, 3585, 3610, 4014 and 4408; create Business before the retained children and select the exact finite child target SQL. Preserve unchanged Signal/document/other child declarations and non-Business bootstrap. Change `_migrate_project_attention_evidence` to join source-shaped Project during initialization. A fresh Store-first construction must create all target objects without running source migration; EmailStore-first still calls the real Store constructor outside Email's schema lock. Test both fresh orders, both reopen orders and cached-path reopen.
 
 ```python
 # Current manifest's Business branch, added to its existing conjunction:
@@ -329,9 +652,189 @@ required_columns_present = all(
 )
 ```
 
+The following complete, single-use bootstrap edit applies the four-parent removal and the 19 precise child FK substitutions to the existing SQL text. It also removes three obsolete parent ALTER/event-recovery blocks, updates the exact Store manifest sets, switches required Business alias inspection to `table_xinfo`, and requires `business_schema_is_current(db)` in the normal manifest. Its exact-count assertions abort on a source drift; review the diff and run fresh/reopen tests immediately. Before running, change the `app/store.py` imports to these exact lines (merging with existing import lines):
+
+```python
+from app.business_storage import create_business_schema, insert_business, update_business
+from app.business_schema_release import business_schema_is_current
+```
+
+```python
+# Run as: python - <<'PY' (paste this entire block) from repository root.
+from pathlib import Path
+import ast
+
+path = Path('app/store.py')
+source = path.read_text()
+parents = ('business_tasks', 'business_projects', 'business_anchors', 'business_project_context_revisions')
+parent_indexes = ('idx_business_tasks_updated_id', 'idx_business_tasks_list', 'idx_business_tasks_relevance', 'idx_business_project_context_revisions_project')
+children = {
+    'business_task_evidence': {'task_id': 'task'},
+    'business_task_date_evidence': {'task_id': 'task'},
+    'business_task_events': {'task_id': 'task'},
+    'business_project_evidence': {'project_id': 'project'},
+    'business_task_dingtalk_links': {'business_task_id': 'task'},
+    'business_task_follow_ups': {'business_task_id': 'task'},
+    'business_task_todo_sync_outbox': {'business_task_id': 'task'},
+    'business_task_relations': {'from_task_id': 'task', 'to_task_id': 'task'},
+    'business_work_cluster_tasks': {'task_id': 'task'},
+    'business_task_anchor_links': {'task_id': 'task', 'anchor_id': 'anchor'},
+    'business_project_candidates': {'confirmed_project_id': 'project'},
+    'business_attention_items': {'anchor_id': 'anchor'},
+    'business_attention_tasks': {'task_id': 'task'},
+    'business_attention_proposal_tasks': {'task_id': 'task'},
+    'business_legacy_links': {'task_id': 'task', 'anchor_id': 'anchor', 'project_id': 'project'},
+}
+parent_table = {'task': 'business_tasks', 'project': 'business_projects', 'anchor': 'business_anchors'}
+
+
+def end_of_sql_statement(text, start):
+    depth = 0
+    quote = None
+    index = start
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == quote:
+                if index + 1 < len(text) and text[index + 1] == quote:
+                    index += 2
+                    continue
+                quote = None
+        elif char in "'\"":
+            quote = char
+        elif char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+        elif char == ';' and depth == 0:
+            return index + 1
+        index += 1
+    raise ValueError('unterminated source SQL statement')
+
+
+def exact_statement(text, prefix):
+    if text.count(prefix) != 1:
+        raise ValueError(f'expected one bootstrap statement {prefix!r}')
+    start = text.index(prefix)
+    return start, end_of_sql_statement(text, start)
+
+
+for table in parents:
+    start, end = exact_statement(source, f'create table if not exists {table} (')
+    source = source[:start] + source[end:]
+for name in parent_indexes:
+    start, end = exact_statement(source, f'create index if not exists {name}')
+    source = source[:start] + source[end:]
+
+translated = 0
+for table, refs in children.items():
+    start, end = exact_statement(source, f'create table if not exists {table} (')
+    statement = source[start:end]
+    for column, kind in refs.items():
+        old = f'foreign key({column}) references {parent_table[kind]}(id)'
+        new = f'foreign key({column}) references business({kind}_public_id)'
+        if statement.count(old) != 1:
+            raise ValueError(f'expected one {table}.{column} endpoint')
+        statement = statement.replace(old, new, 1)
+        translated += 1
+    source = source[:start] + statement + source[end:]
+assert translated == 19
+
+
+def remove_block(text, begin, following):
+    if text.count(begin) != 1 or text.count(following) != 1:
+        raise ValueError(f'unsupported bootstrap block {begin!r}')
+    start = text.index(begin)
+    end = text.index(following, start)
+    return text[:start] + text[end:]
+
+source = remove_block(source, '            project_columns = {\n', '            stranded_event_table = db.execute(\n')
+source = remove_block(source, '            stranded_event_table = db.execute(\n', '            delivery_columns = {\n')
+source = remove_block(source, '            business_task_columns = {\n', '            work_todo_columns = {\n')
+
+old = '            self._migrate_business_task_source_documents(db)\n            db.executescript(\n'
+new = ('            self._migrate_business_task_source_documents(db)\n'
+       '            if db.execute("select 1 from sqlite_schema where type=\'table\' "\n'
+       '                          "and name=\'business\'").fetchone() is None:\n'
+       '                create_business_schema(db)\n'
+       '            db.executescript(\n')
+assert source.count(old) == 1
+source = source.replace(old, new, 1)
+
+begin = source.index('STORE_SCHEMA_REQUIRED_TABLES = (\n')
+end = source.index('\nSTORE_SCHEMA_REQUIRED_INDEXES = (\n', begin)
+section = source[begin:end]
+for table in parents:
+    needle = f'    "{table}",\n'
+    assert section.count(needle) == 1
+    section = section.replace(needle, '', 1)
+assert section.count('    "business_source_documents",\n') == 1
+section = section.replace('    "business_source_documents",\n', '    "business",\n    "business_source_documents",\n', 1)
+source = source[:begin] + section + source[end:]
+
+begin = source.index('STORE_SCHEMA_REQUIRED_INDEXES = (\n')
+end = source.index('\nSTORE_SCHEMA_REMOVED_TABLES = (\n', begin)
+section = source[begin:end]
+for name in parent_indexes:
+    needle = f'    "{name}",\n'
+    assert section.count(needle) == 1
+    section = section.replace(needle, '', 1)
+business_indexes = ('idx_business_public_id', 'idx_business_typed_id', 'idx_business_typed_anchor',
+                    'idx_business_task_relevance', 'idx_business_task_stage', 'idx_business_task_updated',
+                    'idx_business_project_anchor', 'idx_business_anchor_identity', 'idx_business_anchor_public_type',
+                    'idx_business_context_project', 'idx_business_task_public_id', 'idx_business_project_public_id',
+                    'idx_business_anchor_public_id')
+assert section.count('    "idx_business_task_signals_source",\n') == 1
+section = section.replace('    "idx_business_task_signals_source",\n', ''.join(f'    "{name}",\n' for name in business_indexes) + '    "idx_business_task_signals_source",\n', 1)
+source = source[:begin] + section + source[end:]
+
+begin = source.index('STORE_SCHEMA_REMOVED_TABLES = (\n')
+source = source[:begin] + source[begin:].replace('STORE_SCHEMA_REMOVED_TABLES = (\n', 'STORE_SCHEMA_REMOVED_TABLES = (\n' + ''.join(f'    "{name}",\n' for name in parents), 1)
+
+begin = source.index('STORE_SCHEMA_REQUIRED_COLUMNS = {\n')
+end = source.index('\nSTORE_SCHEMA_REQUIRED_TRIGGERS = (\n', begin)
+section = source[begin:end]
+for table in parents:
+    start = section.index(f'    "{table}": (\n')
+    finish = section.index('    ),\n', start) + len('    ),\n')
+    section = section[:start] + section[finish:]
+section = section.replace('    "business_source_documents":',
+    '    "business": ("id", "record_type", "public_id", "task_public_id",\n'
+    '                 "project_public_id", "anchor_public_id"),\n'
+    '    "business_source_documents":', 1)
+source = source[:begin] + section + source[end:]
+
+needle = 'for item in db.execute(f"pragma table_info({table_name})")'
+assert source.count(needle) == 2
+source = source.replace(needle, 'for item in db.execute(f"pragma table_xinfo({table_name})")', 1)
+needle = '            and workbench_schema_is_current(db)\n'
+assert source.count(needle) == 1
+source = source.replace(needle, needle + '            and business_schema_is_current(db)\n', 1)
+
+needle = 'healthy = self._feedback_processing_round_guard_state_is_valid(db) and any('
+assert source.count(needle) == 1
+source = source.replace(
+    needle,
+    'healthy = self._feedback_processing_round_guard_state_is_valid(db) '
+    'and business_schema_is_current(db) and any(',
+    1,
+)
+needle = '                and not set(REPLY_ACTION_TYPES).intersection(tables)\n'
+assert source.count(needle) == 1
+source = source.replace(
+    needle, needle + '                and business_schema_is_current(db)\n', 1
+)
+ast.parse(source)
+path.write_text(source)
+print('bootstrap transform parsed; 19 child endpoints; remaining old-parent CREATE count', sum(source.count('create table if not exists '+t+' (') for t in parents))
+print('remaining old-parent ALTER count',sum(source.count('alter table '+t+' add column') for t in parents))
+```
+
+Run `python -m compileall -q app/store.py` and `pytest -q tests/test_business_integration_callers.py tests/test_business_schema_release.py -k "fresh or manifest or cold or bootstrap"`. Expected: no old parent CREATE/ALTER statements, exactly 19 child FK translations, a current Business manifest, and both fresh constructor orders GREEN.
+
 Define `business_schema_is_current(db)` in Task 1's module using exact finite target declaration comparison and no read-path repair. RED/GREEN marker-correct malformed alias/index/child FK/date trigger tests must fail schema acceptance; stale bootstrap must never recreate an obsolete parent. Keep historical old-source SQL bound to its historical source module/test, not as a current fallback.
 
-- [ ] **Step 5: Convert maintained diagnostics/evals after the independent current-pair harness repair lands.** Use the same projections in `scripts/inspect_task_attention.py` `inspect_run`; `scripts/replay_task_attention.py` `comparison_capabilities`, `read_project_centered_expectations`, `read_domain`, `readback` and `domain_snapshot`; and `scripts/validate_native_copy_additional.py` `work_summary`. The snapshot enumerator currently uses `business_*` and misses `business`; explicitly include it. Root separately owns the additional harness's current Email pair publication, target baseline/hash, original-row comparison and candidate-only high Task-ID reservation. Reuse that accepted repair, then change only its future Business projection/comparison: migrated four parents are absent, so compare them through source-shaped target projections; leave unchanged tables under literal comparison. Do not edit this script concurrently with that repair. Run the updated additional harness offline with an in-memory provider substitute; record work summary/scheduled/workbench separately only after their own checks pass and clean task-owned temp.
+- [ ] **Step 5: Convert maintained diagnostics/evals after the independent current-pair harness repair lands.** Use the same projections in `scripts/inspect_task_attention.py` `inspect_run`; `scripts/replay_task_attention.py` `comparison_capabilities`, `read_project_centered_expectations`, `read_domain`, `readback` and `domain_snapshot`; and `scripts/validate_native_copy_additional.py` `work_summary`. The snapshot enumerator currently uses `business_*` and misses `business`; explicitly include it. The accepted additional harness already publishes the current pair, reserves candidate-only high Task IDs, captures a **post-publication target baseline**, and compares that target baseline against postnative target rows. Preserve those exact mechanics: no source-versus-target comparison belongs in `original_rows_unchanged`. Change its one work-summary read through the 69-site script; the separate paired-copy proof in Task 4 compares the four retired source parents against source-shaped target projections. Run the updated additional harness offline with an in-memory provider substitute; record work summary/scheduled/workbench separately only after their own checks pass and clean task-owned temp.
 
 Run the complete selected Task/Project/Anchor/Context focused app and diagnostic files, scoped Ruff and `git diff --check`. Commit Task 2 with behavior docs only after every named caller and bootstrap path is covered; there must be no current direct old-parent SQL reference outside historical source/migration/oracle code.
 
@@ -361,7 +864,95 @@ def test_paired_publication_contains_email_and_business(source_with_business):
         ).fetchone()
 ```
 
-The `source_with_business` fixture must extend the existing `tests/test_email_action_schema_release.py::source` actual/fresh source with the accepted four-parent/fifteen-child source fixture and realistic rows. Do not synthesize a fake intermediate marker.
+Add this independent fresh/cold constructor test to `tests/test_business_integration_callers.py`. It verifies both entry orders, a cached Store path reopen and a marker-correct malformed Business index. Use the same target test database only after Task 2 changes the fresh Store initializer.
+
+```python
+from contextlib import closing
+import sqlite3
+
+import pytest
+
+from app.business_schema_release import business_schema_is_current
+from app.email_store import EmailStore
+from app.store import AutoReplyStore
+
+@pytest.mark.parametrize("first", ("store", "email"))
+def test_fresh_and_cold_constructor_orders_create_business(tmp_path, first):
+    path = tmp_path / (first + ".sqlite3")
+    if first == "store":
+        AutoReplyStore(path)
+        EmailStore(path)
+    else:
+        EmailStore(path)
+        AutoReplyStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        assert business_schema_is_current(db)
+        assert db.execute(
+            "select value from service_state where key='store_schema_version'"
+        ).fetchone() == ("2026-10-14.1",)
+        assert db.execute(
+            "select max(version) from email_schema_migrations"
+        ).fetchone() == (52,)
+    EmailStore(path)
+    AutoReplyStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        assert business_schema_is_current(db)
+        db.execute("drop index idx_business_task_public_id")
+        db.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source"):
+        AutoReplyStore(path)
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source"):
+        EmailStore(path)
+```
+
+Define `source_with_business` in `tests/test_email_action_schema_release.py` with this complete fixture. It extends the existing Email `source` fixture with the accepted fresh Business source declarations, the two retained supporting tables and representative rows. The Email fixture still parametrizes its actual/fresh source; Task 1's independent Business tests cover both Business source variants. No intermediate marker is synthesized.
+
+```python
+import json
+
+from app.business_schema_release import _recreate_source, capture_business_source
+from tests.test_business_core_source import CAPTURE as BUSINESS_CAPTURE
+
+BUSINESS_FRESH_DECLARATIONS = (
+    Path(__file__).parent / "fixtures/business_four_kind_fresh_declarations.json"
+)
+
+@pytest.fixture
+def source_with_business(source):
+    frozen = json.loads(BUSINESS_FRESH_DECLARATIONS.read_text())
+    with closing(sqlite3.connect(source)) as db:
+        db.execute("pragma foreign_keys=off")
+        for name in ("business_source_documents", "business_task_signals"):
+            definition = BUSINESS_CAPTURE["fresh"]["tables"][name]
+            db.execute(definition["sql"])
+            for index in reversed(definition["indexes"]):
+                if index["sql"] is not None:
+                    db.execute(index["sql"])
+            for trigger in definition["triggers"]:
+                db.execute(trigger["sql"])
+        _recreate_source(db, frozen)
+        db.execute(
+            "insert into business_tasks(id,title,stage) "
+            "values(-11,'paired source task','candidate')"
+        )
+        db.execute(
+            "insert into business_anchors(id,anchor_type,anchor_ref,title) "
+            "values(-14,'project','paired','paired anchor')"
+        )
+        db.execute(
+            "insert into business_projects(id,canonical_anchor_id,title,registry_source) "
+            "values(-15,-14,'paired project','synthetic')"
+        )
+        db.execute(
+            "insert into business_project_context_revisions("
+            "id,project_id,context_json,evidence_json) values(-16,-15,'{}','[]')"
+        )
+        assert capture_business_source(db)["variant"] == "fresh"
+        db.commit()
+    return source
+```
+
+Run `pytest -q tests/test_email_action_schema_release.py::test_paired_publication_contains_email_and_business` before the combined release implementation. Expected: RED at Business target selection, with fixture capture passing first. This test stays GREEN after Task 3.
 
 - [ ] **Step 2: Carry metadata through the existing paired object/subprocess.** Keep `SOURCE_STORE_VERSION='2026-10-13.5'`, `SOURCE_EMAIL_VERSION=51`, `TARGET_STORE_VERSION='2026-10-14.1'`, `TARGET_EMAIL_VERSION=52`. In `prepare_action_email_schema_release`, under one read snapshot capture Email with existing `capture_email_action_source(db)`, then Business with Task 1's `capture_business_source(db)` before DDL. Extend the dataclass's source metadata with a Business key, and extend `_inverse_metadata`/`_migrate_pair`/`_paired_initializer` to serialize exact declarations and original marker timestamps, not business rows. `_verify_source` recaptures both under the write transaction and compares metadata; `_verify_target` requires Email29 **and** `business_schema_is_current(db)` plus original FK findings. Keep `source_fk` as `PRAGMA foreign_key_check` findings; never reinterpret it as the schema FK graph. The known unrelated `runs/tasks` finding survives exactly; unsupported broken moved-parent findings are rejected.
 
@@ -420,6 +1011,114 @@ if not business_schema_is_current(
 
 `capture_business_source` returns `fk_findings` in addition to declarations; `business_inverse_metadata` intentionally retains only variant and declarations. `source_fk` remains the original `_foreign_keys` findings and is checked after conversion/inverse. The original marker/ledger readback remains byte-for-byte exact.
 
+Replace the four paired-release methods with these complete bodies inside `ActionEmailSchemaRelease`. They retain the existing transaction and marker protocol, capture both sources before DDL, and leave the Email source fingerprints unchanged. Add the five Task 1 imports named above. The existing `_migrate_pair` and `_paired_initializer` continue carrying `_inverse_metadata(source_schema)`; that value now includes the exact Business declarations.
+
+```python
+def _verify_source(self, db):
+    if _markers(db) != (self.original_version, self.versions):
+        raise ValueError("paired source markers changed")
+    current = capture_email_action_source(db)
+    current["business"] = capture_business_source(db)
+    if _inverse_metadata(current) != _inverse_metadata(self.source_schema):
+        raise ValueError("paired Email/Business source declaration changed")
+    self._verify_integrity(db)
+
+def _verify_target(self, db):
+    marker, versions = _markers(db)
+    if (marker is None or marker[0] != self.target_store_version
+            or versions[:-1] != self.versions or not versions
+            or versions[-1] != (self.target_email_version, marker[1])):
+        raise ValueError("paired target markers mismatch")
+    if (not action_schema_is_current(
+            db, include_reply=True,
+            reply_variant=self.source_schema["action_variant"], include_email=True
+        ) or db.execute(
+            "select 1 from main.sqlite_schema where name in ("
+            + ",".join("?" for _ in SOURCE_TABLES) + ") limit 1", SOURCE_TABLES
+        ).fetchone()):
+        raise ValueError("paired Email target declaration mismatch")
+    if not business_schema_is_current(
+        db, self.source_schema["business"]["variant"]
+    ):
+        raise ValueError("paired Business target declaration mismatch")
+    expected = _target_external_sql()
+    triggers = tuple(db.execute(
+        "select name,sql from main.sqlite_schema where type='trigger' and name in ("
+        + ",".join("?" for _ in EXTERNAL_TRIGGER_NAMES) + ") order by name",
+        EXTERNAL_TRIGGER_NAMES,
+    ))
+    if triggers != tuple(sorted(expected.items())):
+        raise ValueError("paired Email external trigger mismatch")
+    self._verify_integrity(db)
+
+def apply(self):
+    with closing(sqlite3.connect(self.database_path, isolation_level=None)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        try:
+            self._verify_source(db)
+            email_inverse = migrate_email_action_schema(db)
+            business_inverse = migrate_business_schema(db)
+            if email_inverse != email_inverse_metadata(self.source_schema):
+                raise ValueError("Email captured inverse declaration mismatch")
+            if business_inverse != business_inverse_metadata(
+                self.source_schema["business"]
+            ):
+                raise ValueError("Business captured inverse declaration mismatch")
+            now = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                "update main.service_state set value=?,updated_at=? where key=?",
+                (self.target_store_version, now, VERSION_KEY),
+            )
+            db.execute(
+                "insert into main.email_schema_migrations(version,applied_at) values(?,?)",
+                (self.target_email_version, now),
+            )
+            self._verify_target(db)
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+    self.verify_loaded()
+
+def rollback(self):
+    with closing(sqlite3.connect(self.database_path, isolation_level=None)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        try:
+            if _markers(db) == (self.original_version, self.versions):
+                self._verify_source(db)
+                db.commit()
+                return
+            self._verify_target(db)
+            restore_business_schema(db, self.source_schema["business"])
+            restore_email_action_schema(db, email_inverse_metadata(self.source_schema))
+            db.execute(
+                "update main.service_state set value=?,updated_at=? where key=?",
+                (*self.original_version, VERSION_KEY),
+            )
+            db.execute(
+                "delete from main.email_schema_migrations where version=?",
+                (self.target_email_version,),
+            )
+            self._verify_source(db)
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+```
+
+In `prepare_action_email_schema_release`, replace its two-line source capture with this exact three-line capture inside the same read transaction; retain every surrounding marker check and constructor argument:
+
+```python
+source = capture_email_action_source(db)
+source["business"] = capture_business_source(db)
+release = ActionEmailSchemaRelease(
+    root, path, version, versions, source, _foreign_keys(db),
+    target_store_version, target_email_version,
+)
+```
+
 - [ ] **Step 3: Inverse current Business facts before current Email facts.** In the existing `rollback` FK-off `BEGIN IMMEDIATE` block, verify complete combined target, run `restore_business_schema(db, original_business_declarations)` first, then existing `restore_email_action_schema(db, original_email_declarations)`. Restore the original Store value **and updated_at**, remove only inserted Email52 ledger row, require exact original Email ledger versions/**applied_at** values, verify both source declaration sets and original FK findings, then commit. If rollback is called twice, verify unchanged original and return. A failure at any point rolls back the entire inverse, preserving complete target.
 
 ```python
@@ -441,6 +1140,127 @@ db.commit()
 
 Test postpublication Business and Email writes **after preparation** before inverse; inverse and genuine old-code cold constructors must see the new current facts and preserve all public IDs/waters/child ROWIDs. Then reforward those old-code writes into the same target without duplicate/omitted facts. Inject failures before DDL, after Email conversion, during Business child rebuild, after first marker, after target verification and at each inverse stage; fingerprint entire database/markers/facts to prove rollback. Unsupported current Business state must refuse inverse with target intact.
 
+Add these complete paired failure tests to `tests/test_email_action_schema_release.py`. The fixture and `release_module` import are defined above and in that existing test file. `_database_image` compares schema, facts, allocator rows and markers through SQLite's own dump; target writes are added before inverse in Task 4.
+
+```python
+def _database_image(path):
+    with closing(sqlite3.connect(path)) as db:
+        return tuple(db.iterdump())
+
+def test_email_then_business_failure_rolls_back_entire_pair(
+    monkeypatch, source_with_business
+):
+    release = _prepare(source_with_business)
+    original = _database_image(source_with_business)
+    def fail_after_email(_db):
+        raise RuntimeError("business injection after Email conversion")
+    monkeypatch.setattr(release_module, "migrate_business_schema", fail_after_email)
+    with pytest.raises(RuntimeError, match="after Email conversion"):
+        release.apply()
+    assert _database_image(source_with_business) == original
+
+def test_inverse_email_failure_rolls_back_business_inverse(
+    monkeypatch, source_with_business
+):
+    release = _prepare(source_with_business)
+    release.apply()
+    target = _database_image(source_with_business)
+    def fail_after_business(_db, _metadata):
+        raise RuntimeError("Email inverse injection")
+    monkeypatch.setattr(release_module, "restore_email_action_schema", fail_after_business)
+    with pytest.raises(RuntimeError, match="Email inverse injection"):
+        release.rollback()
+    assert _database_image(source_with_business) == target
+
+def test_marker_correct_business_index_damage_is_rejected(source_with_business):
+    release = _prepare(source_with_business)
+    release.apply()
+    with closing(sqlite3.connect(source_with_business)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("drop index idx_business_task_public_id")
+        db.commit()
+    with pytest.raises(ValueError, match="Business target declaration"):
+        release.verify_loaded()
+```
+
+Add the remaining boundaries with these concrete tests. The marker trigger causes failure on target Email ledger insertion **after** the Store marker UPDATE in the same transaction; it is installed on the test copy after preparation, and its own declaration is part of the before/after image. The `_verify_target` injection runs its genuine validator before raising, so it tests rollback after complete verification. No production failure hook is added.
+
+```python
+from app import business_schema_release as business_module
+
+def test_business_source_preflight_failure_is_readonly(
+    monkeypatch, source_with_business
+):
+    release = _prepare(source_with_business)
+    original = _database_image(source_with_business)
+    def fail_preflight(_db):
+        raise RuntimeError("Business pre-DDL injection")
+    monkeypatch.setattr(release_module, "capture_business_source", fail_preflight)
+    with pytest.raises(RuntimeError, match="pre-DDL injection"):
+        release.apply()
+    assert _database_image(source_with_business) == original
+
+def test_first_child_rebuild_failure_rolls_back_both_migrations(
+    monkeypatch, source_with_business
+):
+    release = _prepare(source_with_business)
+    original = _database_image(source_with_business)
+    create = business_module._create_children
+    def fail_after_one_child(db, declarations, *, target):
+        if target:
+            name = next(iter(declarations))
+            create(db, {name: declarations[name]}, target=True)
+            raise RuntimeError("Business first-child injection")
+        return create(db, declarations, target=False)
+    monkeypatch.setattr(business_module, "_create_children", fail_after_one_child)
+    with pytest.raises(RuntimeError, match="first-child injection"):
+        release.apply()
+    assert _database_image(source_with_business) == original
+
+def test_first_marker_then_second_marker_failure_is_atomic(source_with_business):
+    release = _prepare(source_with_business)
+    with closing(sqlite3.connect(source_with_business)) as db:
+        db.execute(
+            "create trigger fail_email_target before insert on email_schema_migrations "
+            f"when new.version={release.target_email_version} begin "
+            "select raise(abort,'Email target marker injection'); end"
+        )
+        db.commit()
+    original = _database_image(source_with_business)
+    with pytest.raises(sqlite3.IntegrityError, match="marker injection"):
+        release.apply()
+    assert _database_image(source_with_business) == original
+
+def test_failure_after_genuine_target_verification_rolls_back(
+    source_with_business
+):
+    release = _prepare(source_with_business)
+    original = _database_image(source_with_business)
+    verify = release._verify_target
+    def verified_then_fail(db):
+        verify(db)
+        raise RuntimeError("after target verification")
+    release._verify_target = verified_then_fail
+    with pytest.raises(RuntimeError, match="after target verification"):
+        release.apply()
+    assert _database_image(source_with_business) == original
+
+def test_first_business_inverse_ddl_failure_keeps_target(
+    monkeypatch, source_with_business
+):
+    release = _prepare(source_with_business)
+    release.apply()
+    target = _database_image(source_with_business)
+    def fail_source_rebuild(_db, _source):
+        raise RuntimeError("Business inverse DDL injection")
+    monkeypatch.setattr(business_module, "_recreate_source", fail_source_rebuild)
+    with pytest.raises(RuntimeError, match="inverse DDL injection"):
+        release.rollback()
+    assert _database_image(source_with_business) == target
+```
+
+Run `pytest -q tests/test_email_action_schema_release.py -k 'business or inverse or pair'`; expected GREEN after each injected failure leaves the exact original or target database image. Do not accept a marker-only assertion as transaction proof.
+
 - [ ] **Step 4: Bind current constructors and fingerprints.** `app/store.py` current manifest/initializer from Task 2 must require exact Business target; `app/email_store.py` opens Store before Email lock and must reject a marker-correct malformed Business target through that manifest, including cached-path reopen. `require_current_email_pair` preserves the current fresh Store-first temporary state rule while refusing a source/mixed pair before either constructor caches it. Do not add a second constructor migration, old parent bootstrap fallback or compatibility view. Both fresh orders should make exactly one Business table and one Email29 action schema; old published pair opens only through the deploy coordinator. Keep original `EMAIL_SCHEMA_VERSION=52` and `STORE_SCHEMA_VERSION='2026-10-14.1'` constants.
 
 Run `pytest -q tests/test_business_schema_release.py tests/test_email_action_schema_release.py tests/test_business_integration_callers.py tests/test_email_action_callers.py tests/test_email_current_schema.py tests/test_store_schema_release.py tests/test_email_store_startup_validation.py` after confirming paths exist. Expected GREEN, paired failure injection leaves no half-converted state, and both target constructors are cold-reopen clean. Commit Task 3 with architecture/runtime behavior docs.
@@ -452,39 +1272,161 @@ Run `pytest -q tests/test_business_schema_release.py tests/test_email_action_sch
 - [ ] **Step 1: Write RED copy proof tests before using a real copy.** Extend the existing `scripts/validate_action_email_copy.py` protocol to capture Business source facts/schema/waters/ROWIDs alongside Email before the combined pair. Its source oracle must distinguish unchanged tables from four moved parents and 15 rebuilt children: compare unchanged rows literally; compare moved parents through actual/fresh `BUSINESS_PROJECTIONS` with source column order and `typeof`; compare children values and hidden ROWIDs literally despite FK DDL translation. Capture source and candidate `quick_check`, `integrity_check`, FK findings, marker/ledger timestamps and allocator streams separately. Do not compare an old physical parent table against target by name after it has been removed. The RED test inserts a higher-ID Task merge, cyclic merge, public ID collision across kinds, child hidden ROWID gap, independently advanced allocator water and one unrelated `runs/tasks` FK finding, then requires forward→current write→inverse→old-code write→reforward equality. Expected RED until the full paired implementation is selected.
 
 ```python
+from contextlib import closing
+from pathlib import Path
+import sqlite3
+
+from app.business_storage import insert_business
+from app.business_schema_release import (
+    _child_facts, _child_waters, _parent_facts, _parent_waters,
+    _target_parent_facts, business_schema_is_current, capture_business_source,
+)
+from app.store_schema_release import prepare_database_schema_release
+from tests.test_email_action_schema_release import source, source_with_business
+
+ROOT = Path(__file__).resolve().parents[1]
+
+def _source_business_image(db):
+    captured = capture_business_source(db)
+    return {
+        "variant": captured["variant"],
+        "parents": _parent_facts(db),
+        "children": _child_facts(db),
+        "parent_waters": _parent_waters(db, target=False),
+        "child_waters": _child_waters(db),
+        "fk_findings": captured["fk_findings"],
+        "declarations": {
+            "parents": captured["parents"], "children": captured["children"],
+        },
+    }
+
+def _target_business_image(db, source_image):
+    assert business_schema_is_current(db, source_image["variant"])
+    return {
+        "parents": _target_parent_facts(db, source_image["variant"]),
+        "children": _child_facts(db),
+        "parent_waters": _parent_waters(db, target=True),
+        "child_waters": _child_waters(db),
+    }
+
+def _same_business_facts(expected, observed):
+    assert {key: observed[key] for key in
+            ("parents", "children", "parent_waters", "child_waters")} == {
+                key: expected[key] for key in
+                ("parents", "children", "parent_waters", "child_waters")
+            }
+
 def test_business_copy_is_current_fact_reversible(tmp_path, source_with_business):
     candidate = tmp_path / "candidate.sqlite3"
     with closing(sqlite3.connect(source_with_business)) as old, closing(
         sqlite3.connect(candidate)
     ) as target:
         old.backup(target)
+    with closing(sqlite3.connect(candidate)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        db.execute(
+            "insert into business_tasks(id,title,stage,status,merged_into_task_id) "
+            "values(102,'higher merge','candidate','merged',103)"
+        )
+        db.execute(
+            "insert into business_tasks(id,title,stage,status,merged_into_task_id) "
+            "values(103,'cycle peer','candidate','merged',102)"
+        )
+        db.execute(
+            "insert into business_anchors(id,anchor_type,anchor_ref,title) "
+            "values(102,'project','collision','collision')"
+        )
+        db.execute("update sqlite_sequence set seq=150 where name='business_tasks'")
+        db.commit()
+        db.execute("pragma foreign_keys=on")
+        before = _source_business_image(db)
     release = prepare_database_schema_release(ROOT, candidate)
     release.apply()
     with closing(sqlite3.connect(candidate)) as db:
+        _same_business_facts(before, _target_business_image(db, before))
+        assert db.execute("pragma quick_check").fetchone() == ("ok",)
         db.execute("pragma foreign_keys=on")
         db.execute("begin immediate")
-        insert_business(db, "task", {
+        inserted = insert_business(db, "task", {
             "title": "post-publication", "stage": "candidate",
         })
+        assert inserted.lastrowid == 151
         db.commit()
+        current = _target_business_image(db, before)
     release.rollback()
     with closing(sqlite3.connect(candidate)) as db:
         assert db.execute(
             "select 1 from business_tasks where title='post-publication'"
         ).fetchone()
+        reverted = _source_business_image(db)
+        _same_business_facts(current, reverted)
+        assert reverted["declarations"] == before["declarations"]
+        assert reverted["fk_findings"] == before["fk_findings"]
     prepare_database_schema_release(ROOT, candidate).apply()
     with closing(sqlite3.connect(candidate)) as db:
         assert db.execute(
             "select 1 from business where record_type='task' "
             "and title='post-publication'"
         ).fetchone()
+        _same_business_facts(reverted, _target_business_image(db, reverted))
+        assert db.execute("pragma integrity_check").fetchone() == ("ok",)
 ```
 
-The new test imports `ROOT`, `source_with_business`, `prepare_database_schema_release` and `insert_business` from its own explicit fixture/imports; the source fixture is the one defined in Task 3 tests. Add byte/storage-class/ROWID/sequence assertions and meaningful failure-injection in the same test file. A status or row count alone does not prove current-fact inverse.
+The imported `source` fixture satisfies `source_with_business`'s dependency in this test file. The `_source_business_image`/`_target_business_image` equality covers values, storage classes, hidden child ROWIDs and thirteen waters; Task 3 supplies transaction-stage failure injection. A status or row count alone does not prove current-fact inverse.
 
 - [ ] **Step 2: Run bounded latest-copy proof on root-owned input.** Root obtains a consistent read-only production SQLite backup and an immutable SHA/bytes/source commit/Store marker/Email ledger receipt; this plan execution must not assume the historical `7dad` snapshot is still current. Prepare only if the captured live predecessor is the accepted exact pair and the source declaration fingerprints match. Use `sqlite3.Connection.backup` into a task-specific `mktemp -d /tmp/ceo-business-copy.XXXXXX` directory, never mutate the production checkout/database. On the copy, run the actual `prepare_database_schema_release` → `publish/apply` path and independently read Business/Email target fingerprints, 42-field projections, 15 child rows, 19 translated/21 untouched FK groups, 29 child indexes/three triggers, all thirteen waters/six ROWIDs, full FK findings, `quick_check` and `integrity_check`. Record measured table count and Business index pages/bytes; do not promise space recovery or VACUUM. Inject a copy-only failure into each transaction stage and prove complete rollback.
 
 - [ ] **Step 3: Prove genuine published-old-code cold behavior.** Use the exact published predecessor Git archive in an isolated temp directory and subprocess/PYTHONPATH, as the existing Email copy script does. After inverse, cold-open both `AutoReplyStore` and `EmailStore` from that archive, read Task/Project/Anchor/revision plus representative child and Email facts, make one source-valid Task/Project/context/Email write in an isolated copy, close both, then reforward with current code. Compare all current facts, native storage classes, public IDs, source rows, waters and receipt links. If an arbitrary source SQL value is legal but old application validation rejects it, separate SQL-boundary losslessness from the strict old-app-valid case; never claim a cold app write passed from a direct SQL insert. The old archive must not import current modules.
+
+Append this exact independent mode branch inside the existing `OLD_PROGRAM` string in `scripts/validate_action_email_copy.py`, immediately before the closing triple quote. That string runs only from `_old_process_genuine(oldroot, path, ...)` with `cwd=oldroot` and `PYTHONPATH=oldroot`; the top of the existing program already cold-constructs both old `AutoReplyStore` and old `EmailStore`. The prior `seed`/`read`/`write` Email modes remain intact.
+
+```python
+if mode == 'business_read_write':
+    from app.project_context_service import ProjectContextService
+    from app.task_semantic_models import ProjectContext
+    with store._connect() as db:
+        db.execute('begin immediate')
+        existing = db.execute(
+            "select count(*) from business_tasks"
+        ).fetchone()[0]
+        assert existing >= 0
+        task_id = store.create_business_task_in_transaction(
+            title='old-code task', stage='candidate', _db=db
+        )
+        anchor_id = store.create_business_anchor_in_transaction(
+            anchor_type='project', anchor_ref='old-code-anchor:' + str(task_id),
+            title='old-code anchor', _db=db
+        )
+        project_id = store.create_business_project_in_transaction(
+            canonical_anchor_id=anchor_id, title='old-code project',
+            registry_source='synthetic', _db=db
+        )
+        context_id = ProjectContextService(store).apply(
+            project_id=project_id,
+            context=ProjectContext.model_validate({
+                'goal':'old-code goal', 'scope':'old-code scope',
+                'overall_owner':None, 'responsibilities':[], 'facts':[],
+            }),
+            signal_ids=(), db=db,
+        )
+        assert context_id is not None
+        assert store.get_business_task_in_transaction(task_id=task_id, _db=db).id == task_id
+        assert store.get_business_anchor_in_transaction(anchor_id=anchor_id, _db=db).id == anchor_id
+        assert store.get_business_project_in_transaction(project_id=project_id, _db=db).id == project_id
+        assert store.list_business_project_context_revisions_in_transaction(
+            project_id=project_id, _db=db
+        )[0].id == context_id
+        db.commit()
+    assert email.get_classification(int(sys.argv[3])) is not None
+    print(json.dumps({
+        'task_id':task_id, 'anchor_id':anchor_id,
+        'project_id':project_id, 'context_id':context_id,
+        'email_cold_read':True, 'preexisting_tasks':existing,
+    }))
+```
+
+In `_paired_case`, immediately after `release.rollback()` and the existing source-declaration/FK assertions, call `_old_process_genuine(oldroot, path, "business_read_write", seeded["classification_id"])`; save its returned four IDs. Keep the existing Email `write` cold process on the same `path` so the old executable performs both Business and Email writes. Before `prepare_database_schema_release(repo, path).publish()` for reforward, capture `_parent_facts`, `_child_facts`, `_parent_waters(target=False)` and `_child_waters`; after reforward assert these equal `_target_parent_facts(db, state["business"]["variant"])`, `_child_facts`, `_parent_waters(target=True)` and `_child_waters`. Assert all four returned IDs resolve in source and target projections. The exact source/target snapshot function and comparison above in Step 1 are reused as a finite copy-proof helper; the old process itself imports no current Business module.
 
 - [ ] **Step 4: Verify whole app and real native lifecycle on a copied database.** Run selected focused Task/Project/Anchor/context Store APIs; Task semantic import hash; merge/official Project/CRM; ownerless meeting evidence; Attention; Task Web Project summary/detail; retained child follow-up claim; Email action/worker/History; scheduled, work summary and Workbench paths after their own scripts are Business-aware. Update `scripts/validate_native_copy_lifecycle.py::_publish_email_pair` to invoke the same actual combined coordinator, keeping its accepted candidate-only high JavaScript-safe Task-ID reservation and target-baseline hashing. Run one **real Codex** Consumer→Audit approval plus one revision/correction case against the owned copy, with the existing `InMemoryProvider` only and exact native artifact/receipt/readback assertions. Do not contact DingTalk, Email or another real provider. Check source SHA and original source rows unchanged; compare target baseline to postnative copy with the harness's existing table-row proof plus new source-shaped Business projection. Record provider substitute call count, native outcome and cleanup of all task-owned temporary directories. A synthetic model output is not a native acceptance substitute.
 
