@@ -25208,7 +25208,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
-                        and attempt_run.execution_generation<>current_task.execution_generation
+                        and (
+                            attempt_run.execution_generation<>current_task.execution_generation
+                            or current_task.status in ('done', 'skipped')
+                        )
                   )
                   and not exists (
                       select 1
@@ -25334,7 +25337,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
-                        and attempt_run.execution_generation<>current_task.execution_generation
+                        and (
+                            attempt_run.execution_generation<>current_task.execution_generation
+                            or current_task.status in ('done', 'skipped')
+                        )
                   )
                   and not exists (
                       select 1
@@ -25445,7 +25451,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({REPLY_TASK_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
-                        and attempt_run.execution_generation<>current_task.execution_generation
+                        and (
+                            attempt_run.execution_generation<>current_task.execution_generation
+                            or current_task.status in ('done', 'skipped')
+                        )
                   )
                   and not exists (
                       select 1
