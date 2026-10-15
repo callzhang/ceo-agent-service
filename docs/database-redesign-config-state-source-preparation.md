@@ -440,3 +440,53 @@ gate must verify exact reconstructability of every receipt and stop on any
 gap; do not silently rewrite unmatched bodies or add a new late-insert policy.
 Target/inverse, public failure, activation and consumer/console tests remain
 open. Neither a fallback body archive nor receipt deletion is implemented.
+
+#### Published receipt source oracle, 2026-10-15
+
+`tests/test_configs_load_receipt_source.py` executes the genuine archived
+`7dadc492` AutoReplyStore/EmailStore constructor in owned temporary SQLite
+files. The two receipt tables' complete table/index/trigger SQL, column and
+outgoing FK metadata equal the frozen **actual** metadata in the probe JSON;
+their AUTOINCREMENT sequences advance independently under explicit high-ID
+native inserts. This is an actual-to-published-fresh declaration comparison,
+not a read of current production rows. The probe's actual sequences and row
+counts remain frozen observations, not expected values for the empty fresh DB.
+
+The archived public writer accepts an empty enabled map as literal `'{}'`.
+For a synthetic complete config with enabled Skill IDs 20 and 100, its
+integer-key `sort_keys=True` serialization yields `"20"` before `"100"`;
+string-key sorting would reverse them. A Unicode digest seeded by explicit
+native SQL demonstrates the original `json.dumps` escaping and exact UTF-8
+body. That setup SQL does not claim genuine public revision validation. The
+public config writer creates all bindings together; a disabled binding is
+excluded. Repeated successful loads append distinct receipts; list and latest
+PID readers return those identities and unchanged TEXT bodies. Missing,
+extra and wrong-digest public loads reject without a receipt or status
+mutation. A public failed load writes TEXT `'{}'` with the exact error and
+PID, changes the config to `load_failed`, and is returned by list/latest.
+An invalid public config binding leaves config count unchanged.
+
+Native SQL has a deliberately wider source contract. It accepts a valid but
+noncanonical `' { } '` body and can activate its empty config; it also stores
+malformed TEXT and BLOB receipt bodies. An activation attempt over malformed
+body raises SQLite `malformed JSON` and leaves the config pending. After an
+empty public success, native SQL can INSERT a new enabled binding into the
+active config. The original receipt body remains `'{}'` while the current
+binding-derived map becomes nonempty. The source's UPDATE/DELETE binding
+guards do not close that INSERT path. This is an explicit future native-SQL
+parity exception: the 4,105 frozen successful production rows were separately
+read back as byte-exact derivable, but the schema alone does not establish
+that property for every possible or future row. This test adds no target
+constraint, fallback body, late-insert restriction or runtime policy.
+
+Development REDs exposed a bad fresh-seed assumption and a malformed embedded
+Skill body; the latter was corrected to use the archived public revision
+validator. Another RED exposed native activation's SQLite `malformed JSON`
+exception, rather than an integrity-trigger error, for the stored malformed
+body. The test asserts integer-key output differs from string-key sorting,
+preventing that byte-incompatible reconstruction. The final focused run
+passed **4 cases in 26.86 seconds**; new plus adjacent config source/storage
+and account tests passed **99 cases in 49.50 seconds** before the final
+failure-identity assertion was added. The final assertion's focused rerun
+passed; Ruff, Python compilation and diff check passed. Target declaration,
+migration, inverse and release-copy gating remain separate decisions.
