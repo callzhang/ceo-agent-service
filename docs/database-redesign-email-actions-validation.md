@@ -2483,3 +2483,32 @@ Only imports made unused by the removals were dropped. Scoped Ruff and
 `git diff --check` passed. Both task-owned pytest temporary roots were removed
 and their absence verified. This is local test binding only; Task7 CI,
 publication and the full10+1 redesign remain open.
+
+### Task7 historical-owner independent acceptance and next fixture evidence
+
+Root accepts34a50f13 plus wording correction36dbd78e after fresh sequential
+SPEC and QUALITY PASS. The original13 historical functions remain exact in
+fixed0441; five new groups enforce16 children with no failures/errors/skips.
+Existing eight groups/105 children and their shared runner/source paths remain
+unchanged. All44 current tests and16 helpers keep their original function ASTs;
+only orphaned imports were removed. The five current modules passed117 cases
+once. No repeated run was needed for the documentation-only count correction.
+
+A separate root baseline of five current bootstrap/reader cases failed only
+on the old Store19 marker expectation (5failed2.53s). The actual constructors
+selected Store20. Its owned temporary directory was removed and absence checked;
+these tests have not yet been corrected or accepted.
+
+A bounded synthetic research proof established a coherent current caller
+fixture route. Genuine0441 source13→16→17→18, complete native Email51, then
+genuine Store18→19 succeeded. With the empty claims table asserted empty, its
+frozen actual declaration/index replaced the fresh declaration without changing
+external triggers. A separate old process accepted19/51; current capture
+recognized exactly actual_no_memory_fk/actual. Official paired publication and
+a separate current cold open accepted20/52, with quick_check ok and no FK
+findings. The proof archive contained only app/tests/pyproject and six exact
+phase4/5A/5B/5C/5D/5E metadata dependencies. Its owned root was removed and
+absence verified. No repository/runtime code changed in this research. This
+empty synthetic proof does not verify the populated14 current caller cases.
+The runtime accepted-pair set was not expanded; production and providers were
+untouched. Task7 fixture implementation, CI/publication and full10+1 remain open.
