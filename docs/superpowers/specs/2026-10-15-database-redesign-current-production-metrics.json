@@ -1,0 +1,41 @@
+{
+  "scope": "read-only live observations; not an immutable migration input or backup",
+  "production_head_observed": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "database_measurement": {
+    "measured_at_utc": "2026-10-15T11:50:04.858811+00:00",
+    "physical_noninternal_tables": 121,
+    "logical_page_bytes": 484941824,
+    "free_page_bytes": 151552,
+    "main_file_bytes": 484941824,
+    "wal_file_bytes": 0,
+    "read_only": true
+  },
+  "provider_measurement": {
+    "measured_at_utc": "2026-10-15T11:52:18.019821+00:00",
+    "read_only": true,
+    "email_accounts": {
+      "rows": 2,
+      "table_and_index_bytes": 8192,
+      "pages_by_object": {
+        "email_accounts": 4096,
+        "sqlite_autoindex_email_accounts_1": 4096
+      }
+    },
+    "email_provider_observations": {
+      "rows": 72137,
+      "table_and_index_bytes": 24940544,
+      "pages_by_object": {
+        "email_provider_observations": 13328384,
+        "idx_email_provider_observations_folder": 2297856,
+        "sqlite_autoindex_email_provider_observations_1": 9314304
+      }
+    }
+  },
+  "limits": [
+    "The two measurements used separate read transactions and timestamps.",
+    "File stat values were observed after the corresponding read transaction; production continues running.",
+    "No raw row content, secret or account identifier is included.",
+    "No database mutation, checkpoint, VACUUM, backup, provider operation, merge or deployment was performed.",
+    "The approved final target of ten core tables plus one migration ledger is not implemented in production."
+  ]
+}
