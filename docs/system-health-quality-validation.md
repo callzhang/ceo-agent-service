@@ -191,3 +191,16 @@ operator's old saved prompt was isolated as configuration pollution and is not
 counted as CI evidence. Ruff and diff checks passed, and independent review
 accepted the test-only change. Lifecycle, delivery, receipt, retry and side-effect
 assertions remain; no validator, timeout, skip or expected business result changed.
+
+## Subsequent inline-Skill adapter fixture
+
+Both27575931 and92420eb0 complete Quality runs passed all steps:13237 Python
+tests,729 frontend tests, production frontend build and2 browser tests. A
+concurrent subsequent release633f5e59 exposed six new failures. Four semantic
+repair cases stopped at their stale FakeAdapter signature after native
+inlined_skill_names composition was added. The adapter now explicitly accepts
+that published keyword, and RecordingAdapter asserts the exact Task Skill
+tuple. All four original repair/replay scenarios passed on the real shared
+633 HEAD in7.73s; strict lifecycle, bounded repair and receipt assertions remain.
+Independent review accepted the two-line test-only change. The other two
+failures concern redaction normalization and are repaired separately.
