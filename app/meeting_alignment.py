@@ -19,7 +19,6 @@ from app.codex_capacity import (
 from app.codex_failure import CODEX_PROCESS_FAILED, classify_codex_process_failure
 from app.config import codex_capacity_retry_duration, principal_display_name
 from app.decision_quality import DecisionQuality, DecisionRisk, classify_decision_quality
-from app.dingtalk_models import DingTalkConversation
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.dispatcher.models import ClaimGuard
 from app.external_retry import is_external_dependency_error, retry_delay_seconds
@@ -31,7 +30,7 @@ from app.group_discovery import (
     GroupDiscoveryService,
     GroupMessage,
     MemberRef,
-    ParticipantCoverageEvidence,
+    MemberPrecisionEvidence,
     ProviderScope,
     RetryableProviderError,
 )
@@ -870,14 +869,13 @@ class _MeetingGroupDiscoveryPolicy:
             )
         )
 
-    def participant_coverage(
+    def member_precision(
         self, request: GroupDiscoveryRequest, members: list[MemberRef] | tuple[MemberRef, ...]
-    ) -> ParticipantCoverageEvidence:
+    ) -> MemberPrecisionEvidence:
         expected = {member.scoped_key for member in request.audience}
         actual = {member.scoped_key for member in members}
         matched = len(expected & actual)
-        eligible = matched >= 2 and matched * 5 >= len(expected) * 3
-        return ParticipantCoverageEvidence(matched, len(expected), "eligible" if eligible else "ineligible")
+        return MemberPrecisionEvidence(matched, len(actual), "observed")
 
     def title_score(self, request: GroupDiscoveryRequest, title: str) -> float:
         return float(len(self.topic_terms & set(_meeting_topic_terms(title))))
@@ -904,163 +902,6 @@ class _MeetingGroupDiscoveryPolicy:
         # The meeting Agent receives all hard-filtered candidates, including a
         # candidate without discussion evidence, and makes the business choice.
         return True
-
-
-def _search_meeting_group_candidates_legacy(
-    dws: Any, source: MeetingSource, store: AutoReplyStore
-) -> list[dict[str, Any]]:
-    title_terms = _meeting_topic_terms(source.title)
-    participant_names = {
-        participant.name.casefold()
-        for participant in source.participants
-        if participant.name
-    }
-    summary_text = "\n".join(
-        line for line in source.summary.splitlines()
-        if not line.lstrip().startswith((">", "![")) and "http" not in line
-    )[:2000]
-    summary_terms = [
-        term
-        for term in _meeting_topic_terms(summary_text)
-        if term.isascii() and term.isalpha()
-        and term.casefold() not in participant_names
-        and term.casefold() not in {value.casefold() for value in title_terms}
-    ]
-    queries = list(dict.fromkeys([*summary_terms[:2], *title_terms[:3]]))
-    candidates: dict[str, dict[str, Any]] = {}
-    for query in queries:
-        for conversation in dws.search_conversations(query):
-            candidates.setdefault(
-                conversation.open_conversation_id,
-                {
-                    "conversation_id": conversation.open_conversation_id,
-                    "title": conversation.title,
-                    "search_query": query,
-                },
-            )
-    topic_terms = set(_meeting_topic_terms(summary_text)) | set(title_terms)
-    for candidate in candidates.values():
-        candidate["summary_title_overlap"] = len(
-            topic_terms & set(_meeting_topic_terms(candidate["title"]))
-        )
-
-    # Compute the title signal up front. Complete calendar rosters are used
-    # first below to remove groups without attendee coverage; the title signal
-    # then narrows the surviving groups before any recent-message reads.
-    title_candidates = [
-        candidate
-        for candidate in candidates.values()
-        if candidate["summary_title_overlap"] > 0
-        or candidate.get("verified_recurring_group") is True
-    ]
-    if not title_candidates:
-        # A zero title hit is still a live discovery result, not proof that
-        # the search failed. Keep it for the roster check so a provider error
-        # remains retryable and a generic group title is not silently skipped.
-        title_candidates = list(candidates.values())
-    title_candidates.sort(
-        key=lambda candidate: (
-            -candidate["summary_title_overlap"],
-            -candidate.get("prior_sent_count", 0),
-        )
-    )
-
-    if source.attendee_evidence == "calendar" and source.attendee_roster_complete:
-        attendees = {
-            participant.open_dingtalk_id
-            for participant in source.participants
-            if participant.open_dingtalk_id
-        }
-        if len(attendees) >= 2:
-            recurring_targets = store.recurring_meeting_group_targets(source.title)
-            recurring_by_id = {
-                group_id: (group_title, sent_count)
-                for group_id, group_title, sent_count in recurring_targets
-            }
-            for group_id, (group_title, sent_count) in recurring_by_id.items():
-                if group_id not in candidates:
-                    for conversation in dws.search_conversations(group_title):
-                        if conversation.open_conversation_id == group_id:
-                            candidates[group_id] = {
-                                "conversation_id": group_id,
-                                "title": conversation.title,
-                                "search_query": group_title,
-                                "summary_title_overlap": len(
-                                    topic_terms
-                                    & set(_meeting_topic_terms(conversation.title))
-                                ),
-                            }
-                            title_candidates.append(candidates[group_id])
-                            break
-
-            qualified_candidates: list[dict[str, Any]] = []
-            for candidate in candidates.values():
-                group_id = candidate["conversation_id"]
-                members = set(dws.list_group_member_open_dingtalk_ids(group_id))
-                overlap = len(attendees & members)
-                candidate.update(
-                    attendee_overlap=overlap,
-                    member_count=len(members),
-                    participant_coverage=f"{overlap}/{len(attendees)}",
-                )
-                if overlap >= 2 and overlap * 5 >= len(attendees) * 3:
-                    qualified_candidates.append(candidate)
-                    if group_id in recurring_by_id:
-                        group_title, sent_count = recurring_by_id[group_id]
-                        candidate.update(
-                            verified_recurring_group=True,
-                            prior_sent_count=sent_count,
-                        )
-            title_candidates = [
-                candidate
-                for candidate in qualified_candidates
-                if candidate["summary_title_overlap"] > 0
-                or candidate.get("verified_recurring_group") is True
-            ]
-            if not title_candidates:
-                title_candidates = qualified_candidates
-
-    # Only the attendee- and title-qualified candidates reach message reads.
-    # A unique candidate still gets one live message check; multiple candidates
-    # get the full evidence comparison below.
-    for candidate in title_candidates:
-        conversation = DingTalkConversation(
-            open_conversation_id=candidate["conversation_id"],
-            title=candidate["title"],
-            single_chat=False,
-            unread_point=0,
-        )
-        matches = []
-        for message in dws.read_recent_messages(conversation, limit=30):
-            message_terms = set(_meeting_topic_terms(message.content[:1200]))
-            overlap = len(topic_terms & message_terms)
-            if overlap >= 3:
-                matches.append((overlap * overlap / len(message_terms), overlap, message))
-        matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        if matches:
-            candidate["topic_discussion_evidence"] = [
-                {
-                    "create_time": message.create_time,
-                    "text": message.content[:500],
-                    "shared_topic_terms": overlap,
-                    "topic_match_score": round(score, 3),
-                }
-                for score, overlap, message in matches[:2]
-            ]
-    return sorted(
-        candidates.values(),
-        key=lambda item: (
-            -item.get("summary_title_overlap", 0),
-            -max(
-                (evidence["topic_match_score"] for evidence in item.get("topic_discussion_evidence", [])),
-                default=0,
-            ),
-            not item.get("verified_recurring_group", False),
-            -item.get("prior_sent_count", 0),
-            -item.get("attendee_overlap", 0),
-            item.get("member_count", 0),
-        ),
-    )
 
 
 def _search_meeting_group_candidates(
@@ -1117,10 +958,14 @@ def _search_meeting_group_candidates(
             "member_count": len(evidence.members) if evidence.members is not None else None,
             "member_open_dingtalk_ids": sorted({member.external_user_id for member in evidence.members}) if evidence.members is not None else None,
             "member_roster_complete": evidence.members is not None,
+            "reference_audience_complete": request.audience_is_complete,
             "history_read_status": "denied" if evidence.history_read_denial else "read" if provider.capabilities.message_history else "unavailable",
             "audience_verification_required": (
                 "Before selecting effects, verify live full relevant discussion, full group roster, "
-                "and stable recipient identities and titles. Candidate excerpts and prior deliveries "
+                "and each member's actual authorization for this exact content. Layoff and workforce "
+                "reduction plans are sensitive even without names or counts. Business relevance, "
+                "matching attendees, member precision and titles never establish permission. "
+                "Candidate excerpts and prior deliveries "
                 "do not verify the audience. Denied history is unresolved access evidence, not empty "
                 "discussion, no-group evidence, or permission to send; never use a self fallback."
             ),
@@ -1130,11 +975,12 @@ def _search_meeting_group_candidates(
                 history_read_code=evidence.history_read_denial.code,
                 history_read_reason=evidence.history_read_denial.reason,
             )
-        coverage = evidence.participant_coverage
-        if coverage is not None:
+        precision = evidence.member_precision
+        if precision is not None:
             candidate.update(
-                attendee_overlap=coverage.matched or 0,
-                participant_coverage=f"{coverage.matched}/{coverage.total}",
+                matched_member_count=precision.matched,
+                member_precision=f"{precision.matched}/{precision.total}",
+                member_precision_ratio=precision.ratio,
             )
         discussion = evidence.discussion
         if discussion and discussion.excerpts:
@@ -1149,7 +995,7 @@ def _search_meeting_group_candidates(
             ]
         if evidence.history_read_denial is None and item.group.external_group_id in recurring_by_id:
             _group_title, sent_count = recurring_by_id[item.group.external_group_id]
-            candidate.update(verified_recurring_group=True, prior_sent_count=sent_count)
+            candidate.update(prior_sent_count=sent_count)
         candidates.append(candidate)
     return candidates
 

@@ -2217,9 +2217,9 @@ def test_recurring_group_candidate_requires_sent_history_and_live_roster(tmp_pat
     )
 
     assert candidates[0]["conversation_id"] == "cid-project"
-    assert candidates[0]["verified_recurring_group"] is True
+    assert "verified_recurring_group" not in candidates[0]
     assert candidates[0]["prior_sent_count"] == 2
-    assert candidates[0]["participant_coverage"] == "3/3"
+    assert candidates[0]["member_precision"] == "3/4"
 
 
 def test_meeting_group_candidates_prioritize_topic_discussion_over_roster(tmp_path):
@@ -2270,8 +2270,8 @@ def test_meeting_group_candidates_prioritize_topic_discussion_over_roster(tmp_pa
     assert candidates[0]["summary_title_overlap"] >= 1
     assert candidates[1]["summary_title_overlap"] == 1
     assert candidates[0]["topic_discussion_evidence"]
-    assert candidates[0]["participant_coverage"] == "2/3"
-    assert candidates[1]["participant_coverage"] == "3/3"
+    assert candidates[0]["member_precision"] == "2/3"
+    assert candidates[1]["member_precision"] == "3/4"
 
 
 def test_meeting_group_candidates_check_discussion_after_raw_search_page(tmp_path):

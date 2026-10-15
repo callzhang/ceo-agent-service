@@ -47,6 +47,11 @@ def score(case, result):
         return False
     if any(target.get(k) != v for k, v in case["expected_target"].items()):
         return False
+    body = result.get("final_message", "")
+    if case.get("public_forbidden_marker") and case["public_forbidden_marker"] in body:
+        return False
+    if case.get("public_required_marker") and case["public_required_marker"] not in body:
+        return False
     expected_private = case["expected_private_user_id"]
     if expected_private is None:
         return private is None

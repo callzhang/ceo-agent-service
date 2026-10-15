@@ -558,7 +558,7 @@ def test_agent_does_not_force_recurring_group_over_explicit_verified_recipient()
                 "title": "项目群",
                 "verified_recurring_group": True,
                 "prior_sent_count": 3,
-                "participant_coverage": "2/2",
+                "member_precision": "2/2",
             }
         ],
     )
@@ -578,7 +578,7 @@ def test_agent_does_not_force_a_group_based_only_on_attendee_coverage():
         source(),
         group_candidates=[{
             "conversation_id": "cid-project", "title": "项目群",
-            "verified_attendee_coverage": True, "participant_coverage": "3/3",
+            "member_precision": "3/4",
             "member_count": 4,
         }],
     )
@@ -598,7 +598,7 @@ def test_agent_allows_direct_fallback_when_group_roster_does_not_match():
         source(),
         group_candidates=[{
             "conversation_id": "cid-unrelated", "title": "项目群",
-            "participant_coverage": "1/3", "member_count": 8,
+            "member_precision": "1/8", "member_count": 8,
         }],
     )
     assert decision.target is not None

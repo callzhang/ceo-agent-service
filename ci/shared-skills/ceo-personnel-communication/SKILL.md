@@ -54,6 +54,18 @@ them.
 
 ## Classification Boundary
 
+Layoffs, workforce reductions and personnel optimization plans are sensitive
+personnel information even without a named individual, a list or a headcount.
+The existence, progress and implementation of such plans are not ordinary business
+coordination. Before group disclosure, verify every member's actual authorization
+against the exact content and the complete current roster, including nonparticipants.
+Relevant business discussion, attendee overlap and job titles do not authorize
+personnel disclosure. Compare matched reference participants / complete group
+members (3/N), never attendee recall; no percentage substitutes for permission.
+If authorization is absent or unknown, remove the sensitive section and indirect
+hints from the business message; use a separate recipient only when independently
+authorized, otherwise leave the personnel follow-up unresolved.
+
 A person's name alone does not make a business fact personnel information.
 Ownership, delivery, revenue, customer progress, project risk, and similar
 work facts remain ordinary business facts unless the requested judgment is
