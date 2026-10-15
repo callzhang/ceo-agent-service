@@ -3261,6 +3261,9 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         send_error=error,
         channel="email",
     )
+    from app.task_artifacts import cleanup_terminal_task_artifacts
+
+    cleanup_terminal_task_artifacts(store, task.id)
 
 
 def _email_worker_health_recorder(

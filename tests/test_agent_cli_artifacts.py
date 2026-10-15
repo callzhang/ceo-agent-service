@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from app.agent_cli import MAX_CLI_OUTPUT_BYTES, build_role_server
+from app import task_artifacts
 from app.task_storage import create_task_schema, insert_task
 
 
@@ -32,10 +33,17 @@ def _tool(role, name, db):
     return build_role_server(role, task_id=7, db_path=db)._tool_manager.get_tool(name).fn
 
 
+def _patch_artifact_root(tmp_path, monkeypatch):
+    root = tmp_path / "task-artifacts-tmp"
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", root)
+    return root
+
+
 def test_consumer_writes_and_reads_back_only_its_task_generation(tmp_path, monkeypatch):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
+    task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
 
     write = _tool("consumer", "consumer_artifact_write", db)
     read = _tool("consumer", "read_task_artifact", db)
@@ -46,7 +54,8 @@ def test_consumer_writes_and_reads_back_only_its_task_generation(tmp_path, monke
     assert written["sha256"] == read("analysis.py")["sha256"]
     assert read("analysis.py")["content"] == written["content"]
     assert list_files()["files"] == [{"name": "analysis.py", "sha256": written["sha256"]}]
-    assert (tmp_path / "workspace/consumer-artifacts/7/first/analysis.py").read_text() == written["content"]
+    assert (task_artifact_root / "7/first/analysis.py").read_text() == written["content"]
+    assert not (tmp_path / "workspace/consumer-artifacts").exists()
 
     with sqlite3.connect(db) as connection:
         connection.execute("update tasks set execution_generation='second' where record_type='reply_tasks' and id=7")
@@ -57,13 +66,31 @@ def test_consumer_writes_and_reads_back_only_its_task_generation(tmp_path, monke
     assert _tool("consumer", "list_task_artifacts", db)()["files"] == []
     new_write = _tool("consumer", "consumer_artifact_write", db)
     assert new_write("new.md", "current")["content"] == "current"
-    assert (tmp_path / "workspace/consumer-artifacts/7/second/new.md").read_text() == "current"
-    assert not (tmp_path / "workspace/consumer-artifacts/7/second/analysis.py").exists()
+    assert (task_artifact_root / "7/second/new.md").read_text() == "current"
+    assert not (task_artifact_root / "7/second/analysis.py").exists()
+
+
+def test_legacy_task_artifacts_move_to_tmp_before_role_read(tmp_path, monkeypatch):
+    db = tmp_path / "service.sqlite3"
+    _task_db(db)
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr("app.config.workspace_path", lambda: workspace)
+    task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
+    legacy = workspace / "consumer-artifacts/7/first"
+    legacy.mkdir(parents=True)
+    (legacy / "notes.md").write_text("existing task evidence")
+
+    result = _tool("audit", "read_task_artifact", db)("notes.md")
+
+    assert result["content"] == "existing task evidence"
+    assert (task_artifact_root / "7/first/notes.md").read_text() == result["content"]
+    assert not (workspace / "consumer-artifacts/7").exists()
 
 
 def test_audit_can_read_and_list_but_cannot_write_task_files(tmp_path, monkeypatch):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
+    _patch_artifact_root(tmp_path, monkeypatch)
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
     _tool("consumer", "consumer_artifact_write", db)("notes.md", "facts\n")
 
@@ -76,6 +103,7 @@ def test_audit_can_read_and_list_but_cannot_write_task_files(tmp_path, monkeypat
 def test_task_files_reject_unbound_and_escaping_paths(tmp_path, monkeypatch):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
+    _patch_artifact_root(tmp_path, monkeypatch)
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
     write = _tool("consumer", "consumer_artifact_write", db)
 
@@ -92,6 +120,7 @@ def test_task_artifacts_do_not_cross_task_or_follow_file_links(tmp_path, monkeyp
     _task_db(db)
     with sqlite3.connect(db) as connection:
         _insert_task(connection, 8, "first")
+    task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
     _tool("consumer", "consumer_artifact_write", db)("own.md", "task seven")
     other = build_role_server("consumer", task_id=8, db_path=db)
@@ -101,7 +130,7 @@ def test_task_artifacts_do_not_cross_task_or_follow_file_links(tmp_path, monkeyp
 
     outside = tmp_path / "outside.md"
     outside.write_text("untouched")
-    artifact_dir = tmp_path / "workspace/consumer-artifacts/7/first"
+    artifact_dir = task_artifact_root / "7/first"
     (artifact_dir / "linked.md").symlink_to(outside)
     with pytest.raises(ValueError, match="linked"):
         _tool("consumer", "read_task_artifact", db)("linked.md")
@@ -113,10 +142,11 @@ def test_task_artifacts_do_not_cross_task_or_follow_file_links(tmp_path, monkeyp
 def test_task_artifact_list_omits_atomic_write_temporary_files(tmp_path, monkeypatch):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
+    task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
     server = build_role_server("consumer", task_id=7, db_path=db)
     server._tool_manager.get_tool("consumer_artifact_write").fn("ready.md", "complete")
-    artifact_dir = tmp_path / "workspace/consumer-artifacts/7/first"
+    artifact_dir = task_artifact_root / "7/first"
     (artifact_dir / ".task-artifact-incomplete").write_text("partial")
     assert [item["name"] for item in server._tool_manager.get_tool("list_task_artifacts").fn()["files"]] == ["ready.md"]
 
@@ -151,12 +181,13 @@ def test_task_artifact_rejects_content_that_cannot_fit_complete_tool_output(
 ):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
+    task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
     server = build_role_server("consumer", task_id=7, db_path=db)
     write = server._tool_manager.get_tool("consumer_artifact_write").fn
     with pytest.raises(ValueError, match="too large"):
         write("large.md", content)
-    assert not (tmp_path / "workspace/consumer-artifacts/7/first/large.md").exists()
+    assert not (task_artifact_root / "7/first/large.md").exists()
 
 
 def test_task_artifact_read_rejects_external_file_whose_escaped_content_exceeds_budget(
@@ -164,8 +195,7 @@ def test_task_artifact_read_rejects_external_file_whose_escaped_content_exceeds_
 ):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
-    monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
-    root = tmp_path / "workspace/consumer-artifacts/7/first"
+    root = _patch_artifact_root(tmp_path, monkeypatch) / "7/first"
     root.mkdir(parents=True)
     (root / "large.md").write_text("\n" * (MAX_CLI_OUTPUT_BYTES // 2))
     read = _tool("audit", "read_task_artifact", db)

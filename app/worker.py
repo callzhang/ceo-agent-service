@@ -2398,19 +2398,27 @@ class DingTalkAutoReplyWorker:
     def _process_queued_task(
         self, conversation: DingTalkConversation, task: ReplyTask
     ) -> bool:
-        terminal = self._agent_orchestrator().persisted_terminal_result(task)
-        if terminal is not None:
-            return self._apply_orchestration_result(task, terminal)
-        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-        _context_messages, prompt_context_messages = (
-            self._queued_task_prompt_context_messages(conversation, trigger)
-        )
-        return self._process_agent_queued_task(
-            conversation,
-            task,
-            trigger,
-            prompt_context_messages,
-        )
+        try:
+            terminal = self._agent_orchestrator().persisted_terminal_result(task)
+            if terminal is not None:
+                return self._apply_orchestration_result(task, terminal)
+            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+            _context_messages, prompt_context_messages = (
+                self._queued_task_prompt_context_messages(conversation, trigger)
+            )
+            return self._process_agent_queued_task(
+                conversation,
+                task,
+                trigger,
+                prompt_context_messages,
+            )
+        finally:
+            self._cleanup_task_artifacts_if_terminal(task.id)
+
+    def _cleanup_task_artifacts_if_terminal(self, task_id: int) -> None:
+        from app.task_artifacts import cleanup_terminal_task_artifacts
+
+        cleanup_terminal_task_artifacts(self.store, task_id)
 
     def process_claimed_reply_task(
         self, task: ReplyTask, *, claim_guard: ClaimGuard | None = None

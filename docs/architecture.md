@@ -1163,8 +1163,13 @@ Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，�
 
 Consumer 可以直接使用普通工作工具，写入并读回本任务本代次的材料，或通过既有绑定的
 日报/周报接口操作文档。普通写入不因为有副作用而被一律改成待审核系统动作；其事实证据是
-真实工具结果与读回。`consumer_artifact_write` 写入任务工作目录，`read_task_artifact` 与
-`list_task_artifacts` 为两角色提供只读材料；Audit 没有对应写入工具。系统已注册且需要审核的
+真实工具结果与读回。`consumer_artifact_write` 将本任务材料写入
+`/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>`，`read_task_artifact` 与
+`list_task_artifacts` 为两角色提供当前代的只读材料；Audit 没有对应写入工具。任务仍为
+`pending` 或 `processing` 时保留文件供恢复和审核；进入 `done`、`failed`、`needs_human` 或
+`skipped` 后，服务清理该任务的全部代次目录。部署前遗留的 workspace 工件会在任务下次读写时迁入
+`/tmp`，终态清理也会清除尚未访问的旧位置。Consumer 与 Audit 的运行指令同时明确 memory 是耐久
+参考区、临时工件只能使用 task-bound `/tmp` 工作区。系统已注册且需要审核的
 动作仍必须完整提案 → Audit → SystemExecutor → 真实回执。Consumer 解析器不扫描整个候选的
 自然语言完成短语，也不把摘要转换成执行事实。是否引用历史完成、是否还需要业务动作，由
 完整候选、来源及实际回执判断；风险拒绝、授权缺失与历史拒绝不可重放的机制保留。
@@ -1225,7 +1230,7 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`，直接向模型声明具名任务工具。已验证的成功 MCP 读取使用原生直接调用；Agent 仍可能先尝试 CodeMode，再从错误中恢复，不能把声明方式等同于模型必定采用的调用过程。其他工具保留原生 CodeMode 路径；已有角色工具列表、functions 排除、沙箱、会话和路线保持不变。直接调用不能保证超长工具结果不被原生运行时截断，完整事实仍需按实际 trajectory 验证。
 
-Audit 使用实际只读工具接口审核候选，没有受控发送、审批或命令执行能力。Consumer 保留任务绑定的文档和报告操作；Codex Consumer 使用原生 shell、unified execution、补丁和 V8 host 在当前 task/generation 的 consumer-artifacts 目录执行普通本地代码。原生 workspace-write 沙箱允许任务目录及原生临时目录写入，命令网络关闭；MCP 进程仍从服务源码目录启动，受控发送、OA 等注册操作仍只由 System 执行。Audit 排除内建 functions namespace 并保留 read-only 沙箱。两种角色均不开放 browser、image generation、委派、自动 Skill 安装、记忆写入或未登记 MCP 操作。Claude 仍只有受限内建读取与角色 MCP 工件工具，没有 shell 代码执行；Friday 不能承担这两个角色。原生执行验证必须保留实际命令结果和文件回读，写出代码文件不等于执行代码。
+Audit 使用实际只读工具接口审核候选，没有受控发送、审批或命令执行能力。Consumer 保留任务绑定的文档和报告操作；Codex Consumer 使用原生 shell、unified execution、补丁和 V8 host 在当前 task/generation 的 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>` 目录执行普通本地代码。该 task-bound 目录与 durable workspace 分离，原生 workspace-write 沙箱只为当前任务打开它及原生临时目录，命令网络关闭；MCP 进程仍从服务源码目录启动。任务终态清理所有代次的本地工件，pending/processing 期间保留以支持恢复和 Audit 读回。受控发送、OA 等注册操作仍只由 System 执行。Audit 排除内建 functions namespace 并保留 read-only 沙箱。两种角色均不开放 browser、image generation、委派、自动 Skill 安装、记忆写入或未登记 MCP 操作。Claude 仍只有受限内建读取与角色 MCP 工件工具，没有 shell 代码执行；Friday 不能承担这两个角色。原生执行验证必须保留实际命令结果和文件回读，写出代码文件不等于执行代码。
 
 ## 会话与反馈周期
 

@@ -53,6 +53,10 @@ def native_executor_records(tmp_path, monkeypatch):
     install_protocol_native_trajectories(
         tmp_path, monkeypatch, CapturingExecutor, allow_nonprotocol_output=True,
     )
+    from app import task_artifacts
+
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "task-artifacts")
+    monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
 
 
 def test_consumer_records_specific_missing_agent_cli_receipt(
@@ -188,6 +192,26 @@ class CapturingExecutor:
         for line in self.stdout.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(0, self.stdout, "")
+
+
+def test_consumer_and_audit_receive_durable_memory_and_temporary_work_rules():
+    from app.prompt_composition import PromptConfiguration
+
+    rule = "Never store temporary work in memory or its subfolders."
+    temporary_workspace = "Use the task-bound /tmp workspace for temporary files"
+    configuration = PromptConfiguration("", "", "{{task_context}}", "")
+    consumer = " ".join(
+        consumer_developer_instructions(prompt_configuration=configuration).split()
+    )
+    audit = " ".join(audit_developer_instructions(
+        "Verify supported facts.", prompt_configuration=configuration
+    ).split())
+
+    for instructions in (consumer, audit):
+        assert rule in instructions
+        assert temporary_workspace in instructions
+        assert "in its existing matching subject folder" in instructions
+        assert "one authoritative original plus concise conclusions or evidence" in instructions
 
 
 def test_consumer_uses_scheduled_prompt_and_targeted_skill_protocol(

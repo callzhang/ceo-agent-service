@@ -36,9 +36,15 @@ def test_current_preview_separates_frozen_current_configuration_from_saved_task_
 
 
 def test_current_preview_renders_full_role_without_creating_profile_or_rule_files(monkeypatch, tmp_path):
+    from app.prompt_composition import PromptConfiguration
+
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(tmp_path / "missing-profile.md"))
     monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(tmp_path / "missing-rules.md"))
     monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "materials"))
+    monkeypatch.setattr(
+        "app.prompt_preview.load_prompt_configuration",
+        lambda **kwargs: PromptConfiguration("", "", "{{task_context}}", ""),
+    )
     config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_oauth"})
     store = AutoReplyStore(tmp_path / "preview.sqlite3")
     consumer = current_prompt_preview(store, role="consumer", config=config, route_name="codex_oauth", current_time="2026-10-05T18:00:00-07:00")
@@ -147,7 +153,15 @@ def test_settings_full_preview_endpoint_is_read_only_and_role_specific(tmp_path,
 
 
 def test_current_task_preview_preserves_original_source_binding(tmp_path, monkeypatch):
+    from app.prompt_composition import PromptConfiguration
+
     monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "materials"))
+    monkeypatch.setattr(
+        "app.prompt_preview.load_prompt_configuration",
+        lambda **kwargs: PromptConfiguration("", "", "{{task_context}}", ""),
+    )
+    task_artifact_root = tmp_path / "task-artifacts-tmp"
+    monkeypatch.setattr("app.task_artifacts.TASK_ARTIFACT_ROOT", task_artifact_root)
     store = AutoReplyStore(tmp_path / "preview.sqlite3")
     task, run = task_and_run(store)
     store.append_agent_run_event(run.id, {"type": "runtime.prompt", "role": "consumer", "rendered_at": "2026-10-05T10:00:00+00:00",
@@ -158,7 +172,7 @@ def test_current_task_preview_preserves_original_source_binding(tmp_path, monkey
     assert "Original request" in result["task_prompt"]
     assert '"message_id": "m"' in result["task_prompt"]
     assert result["task_id"] == task.id
-    assert str(tmp_path / "materials" / "consumer-artifacts" / str(task.id) / "g1") in result["runtime_context"]
+    assert str(task_artifact_root / str(task.id) / "g1") in result["runtime_context"]
     assert "Full materials, receipts and Audit feedback" in result["task_prompt"]
     assert "Pinned source Skill" in result["task_prompt"]
     assert "Pinned source Skill" not in result["developer_instructions"]

@@ -621,11 +621,16 @@ Workbench 领取轮询先只读检查是否存在 queued 或租约已过期的 r
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
 Consumer 的普通工具工作不因写入而自动进入系统动作审核。任务绑定的本地文件由
-`consumer_artifact_write` 写入 `CEO_WORKSPACE/consumer-artifacts/<task_id>/<execution_generation>`，
-Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取该代次材料；Audit 没有写工具。
+`consumer_artifact_write` 写入 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<execution_generation>`，
+Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取当前代材料；Audit 没有写工具。
+任务处于 `pending` 或 `processing` 时保留文件供恢复和审核；进入 `done`、`failed`、`needs_human`
+或 `skipped` 后，服务清理该任务全部代次的工件目录。Consumer 与 Audit 运行指令均要求把 memory
+作为耐久参考区、禁止把临时代码、测试、数据库、日志、下载、截图、缓存、草稿、中间结果或单次运行
+工件存入 memory，临时文件只使用 task-bound `/tmp` 工作区；有价值的最终材料仅在已有授权目的地按主题
+归档。部署前遗留的 workspace 工件会在任务下次读写时迁入 `/tmp`，终态清理也会清除尚未访问的旧位置。
 原 `consumer_document_write` 继续只处理绑定的日报/周报文档。工具返回的实际内容读回及 SHA
 证明普通材料写入，不是已审核消息或 OA 动作的 System 回执。原生 V8 可调用具名工具和计算，
-Codex Consumer 可在绑定工作区进行原生代码执行；Audit 只读。实际不可用的工具应如实报告，不能伪造执行。
+Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audit 只读。实际不可用的工具应如实报告，不能伪造执行。
 系统注册且需要审核的动作仍只由 SystemExecutor 执行。Consumer 的结果解析只验证严格 wire，
 不再对整份文字扫描“已发送”等完成短语；历史事实和本轮工作由完整来源及真实回执支撑，
 摘要不会生成 candidate execution、外部动作回执或 sent_replies。此规则不改变已有运行时风险拒绝、
@@ -1247,7 +1252,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 参数、命令、工具输出和从原生记录提取的结果均按需读取。中断运行按原生 `task_started` / `task_complete`
 边界恢复证据，既有投递核对和恢复契约保持不变。
 
-Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点，返回受限正文和当前 MCP 进程临时目录路径；扫描 PDF 的无文本页通过已配置的 Stardust OCR 客户端直接读取正文，保留原始页序、页数、下载文件摘要和 OCR 置信度；读取失败返回技术错误，不能解释为申请人未提供材料。MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
+Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>` 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。任务终态清理该任务全部代次目录；未到终态时保留工件供恢复及 Audit 读取。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点，返回受限正文和当前 MCP 进程临时目录路径；扫描 PDF 的无文本页通过已配置的 Stardust OCR 客户端直接读取正文，保留原始页序、页数、下载文件摘要和 OCR 置信度；读取失败返回技术错误，不能解释为申请人未提供材料。MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`。任务工具直接向模型声明；已验证的成功读取使用具名直接调用，但 Agent 仍可能尝试 CodeMode 并在调用错误后恢复，声明方式不保证没有额外步骤。其他工具继续使用 CodeMode；既有角色工具选择、functions 排除、沙箱、会话和路线不变。超长直接调用结果仍可能被原生运行时截断，不能以完整原始回执替代模型实际可见内容的验证。
 
