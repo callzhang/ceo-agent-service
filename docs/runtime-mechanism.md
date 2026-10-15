@@ -43,9 +43,10 @@ target is refused without repair. No deployed path uses this candidate yet.
 
 Project CRM search, confirmation and link clearing acquire the existing
 `business_task_transaction()` writer before calling typed Business updates.
-Lookup candidates stay local until explicit confirmation; the endpoint does
-not write back to CRM. The writer's active-transaction requirement remains
-unchanged.
+Lookup candidates stay local until explicit confirmation. Search leaves a
+previously unlinked Project unlinked and preserves any existing confirmed CRM
+association; the endpoint does not write back to CRM. The writer's
+active-transaction requirement remains unchanged.
 
 `scripts/validate_action_email_copy.py` has one combined Business/Email paired
 case. It binds the source to the published `7dadc492` Store19/Email51 marker,

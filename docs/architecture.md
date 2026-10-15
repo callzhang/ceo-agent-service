@@ -43,8 +43,10 @@ targets without repairing them. This candidate has not been published. See
 The Console Project CRM search saves its local lookup candidates inside the
 existing Business write transaction. Candidate confirmation and explicit link
 clearing use that same transaction boundary; the typed writer requires an
-active caller transaction. Search still leaves the CRM association empty until
-human confirmation and performs no external CRM write.
+active caller transaction. Search does not create or replace a confirmed CRM
+association: a previously unlinked Project remains unlinked until human
+confirmation, and an existing confirmed association is preserved. Search
+performs no external CRM write.
 
 The offline copied-database harness checks the combined Business/Email paired
 release against the exact published-source declaration binding. Its paired case
