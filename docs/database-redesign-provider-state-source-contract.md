@@ -116,11 +116,13 @@ then makes observation upserts, reconciliation, and generation upserts inside
 one existing `BEGIN IMMEDIATE` transaction. A synthetic failure in the
 generation update rolls back an earlier observation change in that call.
 
-The application signal projection is stricter than the native
-`json_valid` CHECK: JSON must decode to a list of nonblank strings, or it
-raises `EmailPersistenceCorruption`. An available row projects as
-`junk`, `categorized`, or `unclassified` from `category_key`;
-unavailable/excluded rows return their provider-truth reason and time.
+For an **available** row, the application signal projection is stricter than
+the native `json_valid` CHECK: JSON must decode to a list of nonblank
+strings, or it raises `EmailPersistenceCorruption`. An available row projects
+as `junk`, `categorized`, or `unclassified` from `category_key`.
+Unavailable/excluded rows return their provider-truth reason and time before
+signal JSON decoding; a native-valid scalar in those rows is not shape-checked
+on that projection path.
 Star/Important flags derive from recognized signal names, while
 `important` also remains a separate boolean field. A Star/Flag write
 does not create a provider observation and cannot change a nonavailable row.
@@ -133,7 +135,7 @@ transaction failure. They do not show current production row counts, a
 copied production migration, a provider response, or target behavior.
 The target design must still decide how to preserve the two independent
 composite identities, folder-generation timestamp overlay, authoritative
-versus partial membership, and stricter signal-list projection. The hidden
+versus partial membership, and available-row signal-list projection. The hidden
 ROWIDs and historical lookup index have no observed provider caller
 contract, but retiring any implementation detail belongs to the later
 target/release proof.

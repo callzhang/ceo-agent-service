@@ -390,3 +390,29 @@ def test_application_signals_shape_and_transaction_rollback(tmp_path):
         assert tuple(db.execute(f"select * from {OBS}").fetchone()) == before
         assert db.execute(f"select observed_at from {GEN} "
                           "where provider_folder_id='inbox'").fetchone()[0] == generation_before
+
+
+@pytest.mark.parametrize("state", ("unavailable", "excluded"))
+def test_nonavailable_projection_returns_before_signal_shape_validation(tmp_path, state):
+    store = EmailStore(tmp_path / f"{state}.sqlite3")
+    publish(store, [observation()], accounts=("account-a",))
+    store.upsert_classification(
+        classification(), sender="synthetic@example.invalid",
+        subject="Synthetic", preview="Synthetic", model_text="Synthetic"
+    )
+    with store._connect() as db:
+        db.execute(
+            f"update {OBS} set state=?, important_signals_json='42'",
+            (state,),
+        )
+    expected = {
+        "state": state,
+        "reason": "provider_truth_" + state,
+        "observed_at": T1,
+    }
+    assert store.get_provider_classification_state(101) == expected
+    assert store.get_provider_classification_states((101,))[101] == expected
+    with store._connect() as db:
+        db.execute(f"update {OBS} set state='available'")
+    with pytest.raises(EmailPersistenceCorruption, match="invalid shape"):
+        store.get_provider_classification_state(101)
