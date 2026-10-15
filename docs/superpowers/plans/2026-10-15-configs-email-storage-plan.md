@@ -916,7 +916,7 @@ def test_each_email_kind_native_rejection(variant, kind, change):
             insert_config(target, kind, candidate)
 ```
 
-- [ ] **Step 4: Add identity, relation and immutability proofs.** Run the named test functions below and the source oracle `tests/test_configs_source_contract.py` together. The identity test checks stored TEXT affinity before tagged encoding; the relation test checks both native cascades and a parent-key update block; the snapshot test checks source-shaped 0→1 equality rather than freezing every field by policy.
+- [ ] **Step 4: Add identity, relation and immutability proofs.** Run the named test functions below and the source oracle `tests/test_configs_source_contract.py` together. The identity test checks stored TEXT affinity before tagged encoding; the relation test checks **category deletion cascading to its binding in both the source and target**, plus a category-key update block; the snapshot test checks source-shaped 0→1 equality rather than freezing every field by policy. This test does not delete or update the account parent.
 
 ```python
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
@@ -1072,7 +1072,7 @@ def test_max_rowid_uses_native_overflow_allocator(variant):
 
 For the native `WITHOUT ROWID` probe, the source raises `OperationalError` when selecting `rowid`. The target UPDATE probe must use `update_config`, which raises the same immutable-history `IntegrityError` the source raises for UPDATE. Keep those assertions separate if a local SQLite version reports a different exception subclass for the missing `rowid` name.
 
-- [ ] **Step 5: Add the six current-action account blockers using genuine current `actions`.** Reuse the exact synthetic `_databases` and `_cases` from `tests/test_email_action_writes.py` / `tests/test_email_action_storage.py`. `_databases` calls the real `create_action_schema(... include_email=True)`; it does not fabricate an action table. The source-side old-table blocker comparison already lives in `tests/test_configs_source_contract.py::test_six_account_blockers_have_distinct_old_and_current_action_owners` and `tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`. This new test proves the target trigger fires for the corresponding typed action row and account.
+- [ ] **Step 5: Add the six current-action account blockers in a focused typed-action predicate fixture.** Reuse the exact synthetic `_databases` and `_cases` from `tests/test_email_action_writes.py` / `tests/test_email_action_storage.py`. `_databases` calls the real current `create_action_schema(... include_email=True)` but uses narrow classification/task/run stubs; it is not a full EmailStore constructor. The source-side old-table blocker comparison already lives in `tests/test_configs_source_contract.py::test_six_account_blockers_have_distinct_old_and_current_action_owners` and `tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`. This new test proves only that each target trigger blocks UPDATE and DELETE for its corresponding typed in-flight action row.
 
 ```python
 from app.action_storage import insert_email_action
@@ -1087,7 +1087,7 @@ from tests.test_email_action_writes import _databases
     ("email_unsubscribe_claims", "dispatching",
      "email_unsubscribe_write_in_flight"),
 ))
-def test_account_blockers_use_genuine_current_typed_actions(kind, status, error):
+def test_account_blockers_use_current_typed_action_predicate_fixture(kind, status, error):
     old_email, current = _databases()
     with closing(old_email), closing(current):
         create_configs_schema(current)
@@ -1104,6 +1104,8 @@ def test_account_blockers_use_genuine_current_typed_actions(kind, status, error)
         with pytest.raises(sqlite3.IntegrityError, match=error):
             delete_config(current, "email_accounts", 1)
 ```
+
+The captured actual/fresh `email_accounts` triggers refer to predecessor action children that `tests/configs_source_fixtures.py` intentionally does not create. Under that config-only fixture, source account DELETE raises `OperationalError` for a missing `email_unsubscribe_claims` table; it is not evidence of cascade parity or a successful native account mutation. Before selecting this storage path, prove positive account DELETE→binding cascade and account UPDATE/DELETE behavior against genuine predecessor action declarations or a full published constructor, then compare with the typed target. Do not add a fake action table to this fixture or count a caught missing-table error as parity success. Keep the target account FK `ON DELETE CASCADE` declaration in Task 1.
 
 - [ ] **Step 6: Consolidate the final test imports at the top.** The successive code blocks above add imports when first needed; the final `tests/test_configs_storage.py` header is exactly:
 

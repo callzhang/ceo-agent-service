@@ -252,3 +252,20 @@ still requires complete 15-kind closure plus schedules/runs, the two receipt
 families, empty training-observation disposition, actual-copy and native
 acceptance. No schema version, production write, provider call, push or
 deployment is selected by this plan.
+
+#### Plan evidence-scope correction
+
+The planned relation test deletes a category and observes its binding cascade
+in both literal source variants and the unselected target. It does not delete
+an account, so the 73-case plan-code self-check does not prove positive
+account→binding cascade. The config-only source fixture omits predecessor
+action children referenced by the account's native blockers; source account
+DELETE under that fixture raises `OperationalError` for missing
+`email_unsubscribe_claims`. Positive source account UPDATE/DELETE and cascade
+parity therefore need genuine predecessor action declarations or the full
+published constructor and complete reference closure before selection. The
+target account FK still declares `ON DELETE CASCADE`. The planned blocker test
+uses exact current typed `actions` DDL with narrow classification/task/run
+stubs and proves only the six in-flight predicates; it is a focused predicate
+fixture, not a full EmailStore constructor. No missing-table exception is
+counted as parity success.
