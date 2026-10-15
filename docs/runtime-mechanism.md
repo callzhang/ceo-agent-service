@@ -2169,12 +2169,20 @@ the action plan and browser effect authorization remain unchanged.
 
 Status queue statistics rank compact Attempt IDs by trigger before reading
 the current Attempt state and failure detail, keeping historical error bodies
-out of the latest-row window.
+out of the latest-row window. The reused current-Attempt CTE is materialized
+once per statement. Attention computes its latest public Attempt IDs once per
+message key, rather than rescanning all historical Attempts for each problem
+candidate; cross-channel grouping and existing result ordering are unchanged.
+Email provider-action aggregation scans actions before seeking their exact
+classification primary keys, retaining the same processed/current-plan filter.
 
 Audit web startup does not scan and cache History lists or charts. History
 pages are computed when requested. The list counts and sorts compact source
 keys, then hydrates only the requested page in the same read snapshot; it does
-not materialize every historical display body to compute the total. The reply-attempt History branch computes each task's latest associated public Attempt ID once per query and applies the separate current-generation exclusion; source-specific list, count, chart, and page hydration use that same branch. Attempt detail loads tool events in one
+not materialize every historical display body to compute the total. Its union
+is an inline subquery so SQLite does not repeatedly expand a named CTE. No
+page-result cache or background page refresh can reuse another page size or
+hide a just-committed record. The reply-attempt History branch computes each task's latest associated public Attempt ID once per query and applies the separate current-generation exclusion; source-specific list, count, chart, and page hydration use that same branch. Attempt detail loads tool events in one
 batched read for the historical generation shown on the page. If the task has
 since moved to a newer execution generation, its runs are read without event
 payloads because only their status is needed for the current projection. The
@@ -2187,6 +2195,12 @@ recursively walking the historical session trees. This does not alter persisted
 business results or audit evidence. The
 History chart projects lifecycle status only for reply
 attempts in the requested time window, avoiding a full-history status scan.
+The later-terminal Attempt predicate uses a materialized maximum public ID per
+channel/message key inside the status expression; key-only pagination does not
+evaluate that expression. Each chart uses one read snapshot and reads a failed
+message's current task and WeChat delivery once within that request. Chart
+counts, lifecycle labels, recovered meeting handling and time buckets remain
+unchanged. Performance evidence is in `docs/console-query-performance.md`.
 Health readiness is not evidence that History requests or business actions
 have completed; their APIs and provider receipts must still be read back.
 
