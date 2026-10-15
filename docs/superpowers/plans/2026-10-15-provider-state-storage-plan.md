@@ -238,3 +238,15 @@ For a later classification read, join classification identity to an observation 
 ## Later boundaries, outside this unit
 
 The next separate task is a pure forward/inverse migration of **current facts** for both actual and fresh source declarations. It must bind rows by names, preserve every valid observation/generation independent of classification or age, prove the inverse including source-affinity classes and identity, and account for the actual/fresh signal/time ordinal difference. A later current-caller task converts the five Store methods and paired release wiring, then proves genuine `7dadc492` cold-source writes, reforward/inverse, and the exact Store/Email pair in the same transaction with its marker. The current source-method AST equality assertion is temporary pre-rewrite evidence; replace its role with behavior oracle/caller equivalence after the intended SQL change rather than weakening the source checks. No permanent old-table views or backups, automatic release selection, provider calls, or space-savings claim belongs in this plan. Root-owned independent SPEC then QUALITY review precedes implementation.
+
+
+## Root acceptance, 2026-10-15
+
+Sequential fresh SPEC and QUALITY accept docs-only101c121e. SPEC independently
+expanded and executed the draft DDL/UPSERT, checked19 affinity cases against
+both literal source variants, and ran11 source tests; QUALITY independently
+checked the complete plan/source/codec/caller boundary and ran11 source tests.
+The next implementation unit is the unselected declaration/storage/oracle only.
+Later caller integration must preserve the existing reconciliation order:
+authoritative folders, inactive accounts, then unavailable folders, including
+overlapping inputs. No target schema or migration has been selected or run.

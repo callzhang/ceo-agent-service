@@ -8,8 +8,9 @@ fields against frozen actual/fresh declarations from published7dad, Store
 `2026-10-13.5` and Email51. Corrections preserve available-only signal shape decoding and direct
 Star/Flag writes that leave both observation and generation times unchanged.
 This is source evidence, not target storage, migration, provider or production
-verification. The exact unselected single-table plan101c121e is under review;
-no old table has been removed by this Provider unit. Full10+1 remains open.
+verification. Sequential fresh SPEC and QUALITY also accept the exact
+unselected single-table plan101c121e; declaration/storage/oracle implementation
+is next. No old table has been removed by this Provider unit. Full10+1 remains open.
 
 ## Latest unpublished Business/Email acceptance, 2026-10-15
 
