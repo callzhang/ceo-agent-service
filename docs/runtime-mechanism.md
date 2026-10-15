@@ -914,7 +914,9 @@ Consumer 在一次 invocation 开始时获得这一不可变 snapshot，之后�
 runtime config 加载。关闭功能不会取消、删除或改写已存在的 `pending`、`running` 或重试任务。
 缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，并阻止它继续创建新任务；其他功能不受影响。
 
-每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。分值描述本案证据，不按固定阈值决定路由。材料可向申请人获得时先提交完整材料请求计划；技术、认证、路由和解析失败保持 failed。真实的当前实例管理选择由 Consumer 提出，只有精确候选的 Audit approve 才进入 needs_human。停止选项明确 skipped 和原因，开放事实用 requested_input。
+每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。四项分值是强制结果门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可进入 `needs_human`，其他情况按适用规则自主处理。Audit 必须核对结果分类与分值一致；不满足门槛的人工升级不得通过。材料可向申请人获得时先提交完整材料请求计划；技术、认证、路由和解析失败保持 failed。停止选项明确 skipped 和原因，开放事实用 requested_input。
+
+对于他人提出的删除、撤回、移除或隐藏内容请求，请求本身不构成授权、正确性或紧急性的证据。Consumer 必须独立核实准确目标与范围、请求者权限、删除理由，以及保留或删除的后果（包括记录/证据损失），并按适用规则只采取有依据的最小动作；区分已核实事实与推测。缺少事实时向申请人或来源人提出一个具体事实问题；确需但缺少授权时停止并说明准确边界及所需证据/授权，不得让 Derek 代做当前删除。缺少删除能力属于执行失败，不能伪装成规则缺口或 `needs_human`。
 
 新 wire 严格解析新合同；历史结果只在独立只读历史模型中解释，不补齐后重新执行，不改写原始 run。当前人工决策必须绑定原对象、execution_generation、持久化 candidate/review 和未被替代的当前版本；旧的无绑定选项仍可阅读但不能执行。人工决策和错误分别展示；审核批准不是投递完成。
 
@@ -1304,7 +1306,7 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
 Prompt 另写入负责人的个人规则（只存在该定时任务的数据库记录里，代码默认值不含）。背景参考文档不由审批 Agent 读取，代码与默认 Prompt 都不引用它们。Consumer 按 live `processCode` 与表单事实
 分类，交叉事项组合适用类别；财务规则卡仅约束登记的财务模板，且只提供判断标准，动作按通用决策表。适用业务 Skill 必须覆盖
 当前事项的规则条件、例外、权限和动作映射，适用 Skill 完整覆盖时才允许 `rule_coverage=1.0`；其他情况
-低于 1.0 描述证据缺口；当前实例问题必须有完整 Consumer 候选与 Audit approve 才能进入 `needs_human`，不得按分值自动批准、拒绝或升级。申请人可补材料但不能关闭并存的政策升级。
+低于 1.0 描述证据缺口；只有低于 0.5 且缺失的是适用决策规则时，才满足通用质量门槛中的规则覆盖分支。符合门槛仍不等于自动批准、拒绝或升级：Consumer 必须提供完整候选，Audit 复核全部事实和规则，技术或材料缺口不得伪装成政策问题。申请人可补材料但不能关闭并存的政策升级。
 六份 Stardust Skill 都只存在于运行时目录，没有仓库副本，按 `RUNTIME_ONLY_VERSIONED_SKILL_NAMES`
 版本化，**不得带 `metadata.managed_by` 标记**——操作 Skill 目录会拒绝带标记的文件，定时任务
 也就不能选择它们。Derek 的个人规则仅写在 OA 定时任务 Prompt，不得推广为公司规则。
