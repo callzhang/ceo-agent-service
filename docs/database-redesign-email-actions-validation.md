@@ -2468,3 +2468,18 @@ stale History evidence sentences in architecture/runtime documentation to reflec
 the already completed Task6 whole-copy and isolated UI acceptance. No runtime,
 schema, provider or production change occurred. Historical owners, other shared
 fixtures, CI/publication and full10+1 remain open.
+
+### Task7 historical Email schema owners, 2026-10-14
+
+Thirteen historical functions whose fixtures construct Email schemas 33, 45,
+46, 47, 48, 49 or 50 now run in five explicit groups through the fixed
+`0441cf15fafe800f9ca4d67f667e87062ca62109` published-source harness.
+The JUnit gate requires the exact named functions and sixteen parameter cases,
+with zero failures, errors or skips. The five new wrappers passed (16 nested
+cases); the five current test modules passed 117/117 once. AST comparison
+confirmed all thirteen removed function definitions match the fixed source
+exactly, and all 60 remaining current test function definitions are unchanged.
+Only imports made unused by the removals were dropped. Scoped Ruff and
+`git diff --check` passed. Both task-owned pytest temporary roots were removed
+and their absence verified. This is local test binding only; Task7 CI,
+publication and the full10+1 redesign remain open.

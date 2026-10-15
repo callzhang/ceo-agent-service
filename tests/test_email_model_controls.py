@@ -8,10 +8,8 @@ from uuid import UUID
 import pytest
 
 from app.action_storage import email_action_projection, insert_action, insert_email_action, update_email_action
-from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 
 from app.email_store import (
-    EMAIL_SCHEMA_VERSION,
     EmailFolderBindingConflict,
     EmailPersistenceCorruption,
     EmailStore,
@@ -190,46 +188,6 @@ def test_config_cas_serializes_competing_writers(tmp_path):
         results = list(pool.map(lambda _: create(), range(2)))
     assert sum(result is not None for result in results) == 1
     assert len(store.list_model_promotion_configs()) == 2
-
-
-def test_v33_migration_backup_and_restart(tmp_path):
-    path = tmp_path / "email.sqlite3"
-    initial_store = EmailStore(path)
-    category = initial_store.update_category_descriptions(
-        "work",
-        core_description="Existing custom description",
-        include=["customers"],
-        exclude=["personal"],
-        threshold=0.96,
-        enabled=True,
-        description_version="custom-desc",
-        config_version="custom-config",
-    )
-    with sqlite3.connect(path) as db:
-        db.execute("drop table email_model_mode_transitions")
-        db.execute("drop table email_model_promotion_configs")
-        db.execute("drop table email_category_description_revisions")
-        restore_action_plan_snapshot_column(db)
-        db.execute("delete from email_schema_migrations")
-        db.execute("insert into email_schema_migrations values (33, 'before')")
-        with sqlite3.connect(tmp_path / "before.sqlite3") as backup:
-            db.commit()
-            db.backup(backup)
-    store = EmailStore(path)
-    initial = store.current_model_promotion_config()
-    assert EmailStore(path).list_model_promotion_configs() == [initial]
-    assert store.list_category_description_revisions("work")[0]["config"] == category
-    with sqlite3.connect(path) as db:
-        assert db.execute(
-            "select version from email_schema_migrations order by version"
-        ).fetchall() == [(version,) for version in range(33, EMAIL_SCHEMA_VERSION + 1)]
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-    with sqlite3.connect(tmp_path / "before.sqlite3") as db:
-        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
-        assert (
-            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 33
-        )
 
 
 @pytest.mark.parametrize(

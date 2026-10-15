@@ -90,6 +90,27 @@ TASK_ADAPTER_TESTS = (
     "test_v25_migration_classifies_shared_sensitive_parameter_families",
     "test_v25_migration_structurally_redacts_unicode_url_and_token_everywhere",
 )
+CLASSIFICATION_LOCATOR_INDEX_TESTS = (
+    "test_uid_locator_query_uses_covering_folder_and_epoch_index",
+    "test_locator_migration_preserves_business_rows_uid_metadata_and_existing_order",
+    "test_locator_migration_validation_failure_rolls_back_index_and_version",
+)
+PROVIDER_LOOKUP_INDEX_TESTS = (
+    "test_v47_migration_preserves_business_rows_and_reopens_idempotently",
+    "test_failed_migration_restores_lookup_version_and_rows",
+)
+MODEL_CONTROLS_TESTS = ("test_v33_migration_backup_and_restart",)
+TRAINING_STORAGE_TESTS = (
+    "test_training_storage_migrates_latest_complete_legacy_snapshot",
+    "test_training_migration_retains_latest_complete_snapshot_per_type",
+)
+SCHEMA_RELEASE_TESTS = (
+    "test_schema50_publication_has_verified_inverse_for_empty_cancellation_relation",
+    "test_schema50_rollback_refuses_new_human_decision_or_unknown_effect",
+    "test_plan_inverse_preserves_new_classification_and_canonical_versions",
+    "test_plan_inverse_failure_is_atomic",
+    "test_plan_inverse_preserves_original_legacy_snapshot_byte_form",
+)
 
 
 @pytest.fixture(scope="module")
@@ -265,4 +286,67 @@ def test_published_email_task_adapter_migrations(published_source: Path) -> None
         },
         expected_functions=6,
         expected_cases=51,
+    )
+
+
+def test_published_email_classification_locator_index(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="classification-locator-index",
+        module="test_email_classification_locator_index",
+        names=CLASSIFICATION_LOCATOR_INDEX_TESTS,
+        extra_cases={},
+        expected_functions=3,
+        expected_cases=3,
+    )
+
+
+def test_published_email_provider_lookup_index(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="provider-lookup-index",
+        module="test_email_provider_lookup_index",
+        names=PROVIDER_LOOKUP_INDEX_TESTS,
+        extra_cases={},
+        expected_functions=2,
+        expected_cases=2,
+    )
+
+
+def test_published_email_model_controls(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="model-controls",
+        module="test_email_model_controls",
+        names=MODEL_CONTROLS_TESTS,
+        extra_cases={},
+        expected_functions=1,
+        expected_cases=1,
+    )
+
+
+def test_published_email_training_storage(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="training-storage",
+        module="test_email_training_storage",
+        names=TRAINING_STORAGE_TESTS,
+        extra_cases={"test_training_storage_migrates_latest_complete_legacy_snapshot": 2},
+        expected_functions=2,
+        expected_cases=3,
+    )
+
+
+def test_published_email_schema_release(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="schema-release",
+        module="test_email_schema_release",
+        names=SCHEMA_RELEASE_TESTS,
+        extra_cases={
+            "test_schema50_rollback_refuses_new_human_decision_or_unknown_effect": 2,
+            "test_plan_inverse_preserves_original_legacy_snapshot_byte_form": 2,
+        },
+        expected_functions=5,
+        expected_cases=7,
     )

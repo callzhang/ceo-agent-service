@@ -5,7 +5,7 @@ from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 import pytest
 
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
-from app.email_store import EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore
+from app.email_store import EmailPersistenceCorruption, EmailStore
 from tests.test_email_store import _classification, _persist_scan
 
 
@@ -47,72 +47,6 @@ def legacy_v46(tmp_path):
         db.execute("delete from email_schema_migrations where version>46")
         db.execute("insert or ignore into email_schema_migrations values(46, 'legacy-fixture')")
     return path, store
-
-
-def test_uid_locator_query_uses_covering_folder_and_epoch_index(tmp_path):
-    path, _ = legacy_v46(tmp_path)
-    EmailStore(path)
-    with sqlite3.connect(path) as db:
-        plan = db.execute("explain query plan " + UID_SQL,
-                          ("dingtalk-account", "INBOX", 42)).fetchall()
-    details = "\n".join(row[3] for row in plan)
-    assert f"USING COVERING INDEX {INDEX}" in details
-    assert "account_id=? AND folder=? AND uidvalidity=?" in details
-
-
-def test_locator_migration_preserves_business_rows_uid_metadata_and_existing_order(tmp_path):
-    path, legacy = legacy_v46(tmp_path)
-    groups = (("INBOX", 42), ("Archive", 42), ("INBOX", 43), ("Missing", 42))
-    before = [(
-        legacy.stable_classification_uids(account_id="dingtalk-account", folder=f, uidvalidity=v),
-        legacy.classified_provider_uids(account_id="dingtalk-account", folder=f, uidvalidity=v),
-    ) for f, v in groups]
-    original_rows = business_rows(path)
-    migrated = EmailStore(path)
-    after = [(
-        migrated.stable_classification_uids(account_id="dingtalk-account", folder=f, uidvalidity=v),
-        migrated.classified_provider_uids(account_id="dingtalk-account", folder=f, uidvalidity=v),
-    ) for f, v in groups]
-    assert after == before
-    assert business_rows(path) == original_rows
-    with sqlite3.connect(path) as db:
-        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,), (50,), (51,)]
-        assert db.execute("select count(*) from email_direct_retry_requests").fetchone()[0] == 0
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-        indexed = db.execute(f"pragma index_xinfo({INDEX})").fetchall()
-    assert [row[2] for row in indexed if row[5]] == [
-        "account_id", "folder", "uidvalidity", "status", "updated_at", "uid",
-    ]
-    assert indexed[4][3] == 1
-    EmailStore(path)
-    with sqlite3.connect(path) as db:
-        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,), (50,), (51,)]
-
-
-def test_locator_migration_validation_failure_rolls_back_index_and_version(tmp_path, monkeypatch):
-    path, _ = legacy_v46(tmp_path)
-    original_rows = business_rows(path)
-    with sqlite3.connect(path) as db:
-        cached_before = db.execute("select id, action_plan_json from email_classifications order by id").fetchall()
-        ddl_before = db.execute("select sql from sqlite_master where name='email_classifications'").fetchone()
-    validate = EmailStore._validate_durable_state
-
-    def fail_after_migration(self, db):
-        if db.execute("select max(version) from email_schema_migrations").fetchone()[0] == EMAIL_SCHEMA_VERSION:
-            raise RuntimeError("injected locator migration failure")
-        return validate(self, db)
-
-    monkeypatch.setattr(EmailStore, "_validate_durable_state", fail_after_migration)
-    with pytest.raises(RuntimeError, match="injected locator migration failure"):
-        EmailStore(path)
-    assert business_rows(path) == original_rows
-    with sqlite3.connect(path) as db:
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 46
-        assert db.execute("select name from sqlite_master where type='index' and name=?", (INDEX,)).fetchone() is None
-
-    with sqlite3.connect(path) as db:
-        assert db.execute("select id, action_plan_json from email_classifications order by id").fetchall() == cached_before
-        assert db.execute("select sql from sqlite_master where name='email_classifications'").fetchone() == ddl_before
 
 
 def test_current_schema_missing_locator_index_is_not_silently_repaired(tmp_path):
