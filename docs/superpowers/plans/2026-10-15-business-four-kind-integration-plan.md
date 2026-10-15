@@ -36,7 +36,7 @@ Before implementing, read `docs/agent-claims.md`, claim only edited files, stage
 
 ## Task 1: Exact Business declaration and finite migration
 
-**Files:** modify `app/business_definitions.py`; create `app/business_schema_release.py` and `tests/test_business_schema_release.py`; update same-commit behavior docs when selected.
+**Files:** modify `app/business_definitions.py`; create `app/business_schema_release.py`, `tests/test_business_schema_release.py` and `tests/fixtures/business_four_kind_fresh_declarations.json`; update same-commit behavior docs when selected.
 
 - [ ] **Step 1: Write RED structural tests.** Reconstruct actual and fresh native sources with the `CAPTURE` pattern from `tests/test_business_core_source.py`. Assert the target `business` xinfo adds exactly `task_public_id`, `project_public_id` and `anchor_public_id` as VIRTUAL; each new index is full UNIQUE/BINARY. Exercise every 19 child endpoint with valid public parent, wrong-kind-only parent, referenced parent DELETE/public-ID UPDATE, and no-child success control. Require each of 15 child xinfo lists unchanged and all 40 FK groups equal source except those exact 19. Retained `dict(row)`/`extra="forbid"` hydration remains accepted.
 
@@ -140,11 +140,112 @@ Then drop owned child objects/tables and four parents, create Business, insert e
 
 The complete `migrate_business_schema` body and every called helper are in the normative Task 1 module below.
 
+Before Task 2 retires old Store bootstrap, freeze a *fresh* source fixture from the still-current source constructor. The fixture contains declarations only, never production rows. Run this one-time generator after `capture_business_source` is GREEN and commit its JSON with Task 1. This captures all 19 native declarations and auxiliary SQL; the accepted oracle remains the authority for actual/fresh shape and hashes.
+
+```python
+# Run as: python - <<'PY' (paste this entire block), before changing Store bootstrap.
+from contextlib import closing
+import json
+from pathlib import Path
+import sqlite3
+from tempfile import TemporaryDirectory
+
+from app.business_schema_release import business_inverse_metadata, capture_business_source
+from app.store import AutoReplyStore
+
+out = Path("tests/fixtures/business_four_kind_fresh_declarations.json")
+out.parent.mkdir(parents=True, exist_ok=True)
+with TemporaryDirectory(prefix="business-source-fixture-") as dirname:
+    path = Path(dirname) / "fresh.sqlite3"
+    AutoReplyStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        source = capture_business_source(db)
+        assert source["variant"] == "fresh"
+        assert source["fk_findings"] == ()
+        out.write_text(
+            json.dumps(business_inverse_metadata(source), sort_keys=True, indent=2) + "\n"
+        )
+```
+
+Run `pytest -q tests/test_business_schema_release.py -k 'source_capture or exact_19_child_endpoints'` and verify fixture generation succeeds. Expected: GREEN and a declarations-only JSON fixture; it must remain stable after Task 2.
+
 Install the complete finite module in this step. Reuse existing `app.action_email_storage._quote`/`_set_sequence`, `app.business_storage.create_business_schema` and accepted projections/codec. Only this bulk transaction may disable FK enforcement; ordinary `insert_business` retains immediate native behavior and whole-transaction `SQLITE_FULL` handling. Native `PRAGMA foreign_key_check` must equal the source **findings**; never compare it to a captured schema FK graph.
 
 Tests must include signed public IDs colliding across kinds, higher-ID merge and two-row cycle, Project/Anchor/revision refs, nullable candidate/legacy edges, legal BLOB/infinity/NULL classes, deleted-high waters, all 19 wrong-kind/parent mutation controls, all rows/waters/ROWIDs/indexes/triggers, unrelated FK finding unchanged and failure after one child drop with whole-transaction rollback. Run `pytest -q tests/test_business_schema_release.py tests/test_business_storage.py tests/test_business_core_source.py`; expected GREEN and `quick_check='ok'`.
 
-- [ ] **Step 5: Implement current-fact inverse before selecting the release.** `restore_business_schema(db, captured_declarations)` first validates current Business and translated-child declarations, then reads **current** Business source-shaped projections, children, ROWIDs and waters. It drops owned target objects inside caller's FK-off transaction, recreates exact captured original parent/child DDL and auxiliary SQL, inserts current facts in captured actual/fresh source column order, restores current public waters under original parent names and verifies source declarations/facts/FK findings. Unsupported current declarations/facts fail without changing the target; any later exception rolls back the entire transaction. Restore marker timestamps only in Task 3 after Email inverse also succeeds.
+- [ ] **Step 5: RED then implement current-fact inverse before selecting the release.** `restore_business_schema(db, captured_declarations)` first validates current Business and translated-child declarations, then reads **current** Business source-shaped projections, children, ROWIDs and waters. It drops owned target objects inside caller's FK-off transaction, deletes **only** the four manually named `business:kind` allocator aliases (SQLite's `DROP TABLE business` does not remove them), recreates exact captured original parent/child DDL and auxiliary SQL, inserts current facts in captured actual/fresh source column order, restores current public waters under original parent names and verifies source declarations/facts/FK findings. Unsupported current declarations/facts fail without changing the target; any later exception rolls back the entire transaction. Restore marker timestamps only in Task 3 after Email inverse also succeeds.
+
+Add this complete preflight to `tests/test_business_schema_release.py` before implementing the inverse. It uses the frozen fixture generated in Step 4; it proves all four populated kinds, deleted-high waters, alias cleanup, current-fact inverse and reforward in one ordinary SQLite memory database. The initial RED is the alias-survival source recapture failure.
+
+```python
+from contextlib import closing
+import json
+from pathlib import Path
+import sqlite3
+
+from app.business_schema_release import (
+    SOURCE_PARENTS, _parent_waters, _recreate_source,
+    business_schema_is_current, capture_business_source,
+    migrate_business_schema, restore_business_schema,
+)
+
+FRESH_DECLARATIONS = Path(__file__).parent / "fixtures/business_four_kind_fresh_declarations.json"
+
+def test_four_kind_deleted_high_waters_inverse_and_reforward():
+    source = json.loads(FRESH_DECLARATIONS.read_text())
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("pragma foreign_keys=off")
+        _recreate_source(db, source)
+        db.execute("insert into business_tasks(id,title,stage) values(-11,'kept task','candidate')")
+        db.execute("insert into business_anchors(id,anchor_type,anchor_ref,title) "
+                   "values(-14,'project','kept','kept anchor')")
+        db.execute("insert into business_projects(id,canonical_anchor_id,title,registry_source) "
+                   "values(-15,-14,'kept project','synthetic')")
+        db.execute("insert into business_project_context_revisions("
+                   "id,project_id,context_json,evidence_json) values(-16,-15,'{}','[]')")
+        db.execute("insert into business_tasks(id,title,stage) values(111,'high','candidate')")
+        db.execute("insert into business_anchors(id,anchor_type,anchor_ref,title) "
+                   "values(114,'project','high','high')")
+        db.execute("insert into business_projects(id,canonical_anchor_id,title,registry_source) "
+                   "values(115,-14,'high','synthetic')")
+        db.execute("insert into business_project_context_revisions("
+                   "id,project_id,context_json,evidence_json) values(116,-15,'{}','[]')")
+        for kind, table in reversed(tuple(SOURCE_PARENTS.items())):
+            db.execute(f"delete from {table} where id=?", ({
+                "task": 111, "anchor": 114, "project": 115,
+                "project_context_revision": 116,
+            }[kind],))
+        source_waters = _parent_waters(db, target=False)
+        assert source_waters == {
+            "task": 111, "project": 115,
+            "anchor": 114, "project_context_revision": 116,
+        }
+        db.commit()
+        db.execute("begin immediate")
+        inverse = migrate_business_schema(db)
+        assert business_schema_is_current(db, "fresh")
+        assert _parent_waters(db, target=True) == source_waters
+        db.commit()
+        db.execute("begin immediate")
+        restore_business_schema(db, inverse)
+        assert not db.execute(
+            "select 1 from sqlite_sequence where name like 'business:%'"
+        ).fetchone()
+        assert _parent_waters(db, target=False) == source_waters
+        assert capture_business_source(db)["variant"] == "fresh"
+        db.commit()
+        db.execute("begin immediate")
+        migrate_business_schema(db)
+        assert business_schema_is_current(db, "fresh")
+        assert _parent_waters(db, target=True) == source_waters
+        assert db.execute(
+            "select count(*) from business where record_type in "
+            "('task','project','anchor','project_context_revision')"
+        ).fetchone() == (4,)
+        db.commit()
+```
+
+Run `pytest -q tests/test_business_schema_release.py::test_four_kind_deleted_high_waters_inverse_and_reforward` before the inverse fix. Expected: RED because `capture_business_source` finds a surviving `business:%` alias after inverse. After the four explicit alias deletes shown in the normative module, run it again; expected GREEN. Also run the same source/target/inverse roundtrip with no source sequence rows and with a deliberately advanced child water, preserving `None` versus integer presence exactly.
 
 The complete `restore_business_schema` body and every called helper are in the normative Task 1 module below.
 
@@ -788,6 +889,10 @@ def restore_business_schema(db: sqlite3.Connection, source: dict) -> None:
     for name in RETAINED_CHILD_FKS:
         db.execute(f"drop table main.{_quote(name)}")
     db.execute("drop table main.business")
+    # DROP TABLE removes sqlite_sequence['business'], but the four public-ID
+    # allocator aliases are manually named rows and survive that DROP.
+    for kind in SOURCE_PARENTS:
+        _set_sequence(db, "business:" + kind, None)
     _recreate_source(db, source)
     for kind, snap in parents.items():
         _restore_rows(db, SOURCE_PARENTS[kind], snap)
