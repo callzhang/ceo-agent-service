@@ -712,8 +712,13 @@ def build_attempt_detail(
             agent_runs = store.list_agent_runs_for_task_generation(
                 terminal_run.reply_task_id, terminal_run.execution_generation
             )
-    reply_task = store.get_reply_task_for_message(
-        attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel
+    # A run owns a stable task ID even when a newer input changes the OA scan key.
+    reply_task = (
+        store.get_reply_task(terminal_run.reply_task_id)
+        if terminal_run is not None and terminal_run.reply_task_id is not None
+        else store.get_reply_task_for_message(
+            attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel
+        )
     )
     current_reviewed = (
         store.current_reviewed_candidate(reply_task.id, reply_task.execution_generation)
