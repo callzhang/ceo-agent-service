@@ -1,0 +1,140 @@
+{
+  "version": 3,
+  "status": "held_cold_delivery_complete_risk_does_not_read_new_relevant_reference",
+  "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T03-19-05-01a13f12-980c-7071-a85a-7b67f693bd40.jsonl",
+  "native_sha256": "5a83fa5c7042b8dbedb98a80191dc903aed7eb7461b18643f325ece6dd5e07e1",
+  "local_package_tests": {
+    "passed": 2,
+    "seconds": 0.69
+  },
+  "phases": [
+    {
+      "phase": "cold",
+      "session_id": "01a13f12-980c-7071-a85a-7b67f693bd40",
+      "submissions": 1,
+      "input_chars": [
+        17157
+      ],
+      "counts": {
+        "projects": 1,
+        "tasks": 0,
+        "attention": 0,
+        "quick_check": "ok"
+      },
+      "ranges": [
+        [
+          0,
+          22
+        ]
+      ],
+      "outputs": [
+        {
+          "line": 19,
+          "sha256": "18cb47f5c7a1600b34be7a33ad73c443de81f9fdc1b5d9c226518b2883238c4b",
+          "native_schema_valid": true,
+          "pydantic_valid": true
+        }
+      ],
+      "tools": [
+        {
+          "line": 11,
+          "name": "exec",
+          "arguments": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md && sed -n '1,260p' .agents/skills/ceo-work-tracking/SKILL.md && sed -n '1,220p' .agents/skills/ceo-work-tracking/references/project-registration.md && sed -n '1,220p' .agents/skills/ceo-work-tracking/references/project-context.md && sed -n '1,220p' .agents/skills/ceo-work-tracking/references/assessment.md && sed -n '1,180p' .agents/skills/ceo-work-tracking/references/result.md\",\"workdir\":\"/private/tmp/ceo-task-granular.2myfril_/candidate\",\"yield_time_ms\":10000,\"max_output_tokens\":20000}); text(r.output);"
+        }
+      ],
+      "source_returns": [
+        {
+          "line": 14,
+          "chars": 36292,
+          "truncation_markers": [],
+          "complete_files": {
+            "SKILL.md": true,
+            "references/project-context.md": true,
+            "references/assignment.md": false,
+            "references/result.md": true,
+            "references/evidence.md": false,
+            "references/project-registration.md": true,
+            "references/suggestions.md": false,
+            "references/project-links.md": false,
+            "references/assessment.md": true,
+            "references/task-updates.md": false,
+            "references/service.md": false
+          }
+        }
+      ]
+    },
+    {
+      "phase": "risk",
+      "session_id": "01a13f12-980c-7071-a85a-7b67f693bd40",
+      "submissions": 2,
+      "input_chars": [
+        15131,
+        11593
+      ],
+      "counts": {
+        "projects": 1,
+        "tasks": 1,
+        "attention": 1,
+        "quick_check": "ok"
+      },
+      "ranges": [
+        [
+          22,
+          38
+        ],
+        [
+          38,
+          52
+        ]
+      ],
+      "outputs": [
+        {
+          "line": 35,
+          "sha256": "8e7c4898ad189e17ca1ce5c7e06840c2e3aecdbd9f1cad7f838e978280906d1a",
+          "native_schema_valid": true,
+          "pydantic_valid": false,
+          "errors": [
+            {
+              "loc": [
+                "task_decisions",
+                0
+              ],
+              "msg": "Value error, suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+            }
+          ],
+          "candidate_fields": [
+            {
+              "action": "record_candidate",
+              "transition": "none",
+              "owner_kind": "individual",
+              "owner_relation": "unknown",
+              "formal_basis": null,
+              "status": null,
+              "business_relevance": null
+            }
+          ]
+        },
+        {
+          "line": 49,
+          "sha256": "6481d3aeec0c757a29147d02c61ee605daeb0fb287c7d7b9ab37e1c726c481f5",
+          "native_schema_valid": true,
+          "pydantic_valid": true
+        }
+      ],
+      "tools": []
+    }
+  ],
+  "limits": [
+    "No runtime, installed Skill or native global configuration change.",
+    "Cold source delivery improved, but not universal clipping acceptance.",
+    "Risk does not read newly relevant suggestions.md; existing Pydantic correction still needed.",
+    "Default native tool host and unchanged result schema; no compaction/version/provider or other-case acceptance."
+  ],
+  "cold_input_comparison": {
+    "baseline_short_chars": 16668,
+    "candidate_chars": 17157,
+    "exact_after_only_entry_and_owned_paths": true
+  },
+  "fixture": "evals/trajectory_optimization/task-progressive-granular",
+  "intro_boundary": "Entry intro is inherited unchanged from held v1 fixture (version7); Memory parameters/provenance repeat existing app/task_agent.py frame rather than CI Skill intro. Result reference is also a restatement of current Task frame. Detailed9-reference reconstruction alone does not certify intro byte equality."
+}

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "scope": "Local single-field mutations of existing anonymous native result48; no model request or runtime change",
+  "native_source": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T03-06-37-01a13f07-2ea4-7c52-9e69-94ca307880c5.jsonl",
+  "native_result_line": 48,
+  "baseline_schema_and_pydantic_valid": true,
+  "cases": [
+    {
+      "case": "owner_kind_unknown",
+      "mutation": {
+        "owner_kind": "unknown"
+      },
+      "json_schema_valid": true,
+      "pydantic_valid": false,
+      "errors": [
+        "Value error, suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+      ]
+    },
+    {
+      "case": "owner_relation_unknown",
+      "mutation": {
+        "owner_relation": "unknown"
+      },
+      "json_schema_valid": true,
+      "pydantic_valid": false,
+      "errors": [
+        "Value error, suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+      ]
+    },
+    {
+      "case": "owner_name",
+      "mutation": {
+        "owner_name": "陈明"
+      },
+      "json_schema_valid": true,
+      "pydantic_valid": false,
+      "errors": [
+        "Value error, suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+      ]
+    },
+    {
+      "case": "owner_user_id",
+      "mutation": {
+        "owner_user_id": "anonymous-user"
+      },
+      "json_schema_valid": true,
+      "pydantic_valid": false,
+      "errors": [
+        "Value error, suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+      ]
+    },
+    {
+      "case": "status",
+      "mutation": {
+        "status": "open"
+      },
+      "json_schema_valid": true,
+      "pydantic_valid": false,
+      "errors": [
+        "Value error, suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+      ]
+    },
+    {
+      "case": "business_relevance",
+      "mutation": {
+        "business_relevance": "relevant"
+      },
+      "json_schema_valid": true,
+      "pydantic_valid": false,
+      "errors": [
+        "Value error, suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+      ]
+    },
+    {
+      "case": "no_project",
+      "mutation": {
+        "project": null,
+        "project_link_evidence": []
+      },
+      "json_schema_valid": true,
+      "pydantic_valid": false,
+      "errors": [
+        "Value error, displayed suggestion requires a registered Project selector"
+      ]
+    },
+    {
+      "case": "transition_accept",
+      "mutation": {
+        "transition": "apply_acceptance"
+      },
+      "json_schema_valid": true,
+      "pydantic_valid": false,
+      "errors": [
+        "Value error, suggestion must record or update a candidate, not assign or accept it"
+      ]
+    }
+  ],
+  "boundary": "Existing conditional invariant divergence only; no repair or new business policy."
+}
