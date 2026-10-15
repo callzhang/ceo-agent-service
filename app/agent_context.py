@@ -408,6 +408,14 @@ class AuditTurnContext:
                     include_heading=False,
                     source_reference=source_reference,
                 ),
+                "Service-prepared outbound message postfix\n"
+                "DingTalk message bodies in this candidate are prepared by the service before Audit: "
+                "the service appends its signature and configured feedback callback pair. "
+                "Consumer cannot remove that service-added postfix through a content revision; "
+                "it is reattached during preparation. Review the complete business body and exact target, "
+                "but do not treat the configured service callback pair itself as an authored credential leak. "
+                "This does not exempt other links, credentials or factual/content problems. "
+                "A field assertion must still quote the exact complete candidate value.",
                 "## Candidate Field Facts\n" + _json(candidate_action_field_facts(self.candidate)),
                 "Current candidate scalar field evidence, computed from exact non-source candidate fields\n"
                 + render_candidate_field_evidence({

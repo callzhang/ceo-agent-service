@@ -54,6 +54,33 @@ def validate_audit_candidate_fields(result: AuditAgentResult, candidate: Consume
             raise ResultParseError("Audit candidate field assertion contradicts the bound candidate; correct Audit feedback, not the candidate")
 
 
+def audit_result_contains_sensitive_value(
+    result: AuditAgentResult, candidate: ConsumerAgentResult,
+) -> bool:
+    """Inspect exact bound assertions using the existing prepared-body contract.
+
+    Only the inspection copy loses configured callback pairs. The original
+    assertion and candidate remain byte-for-byte authoritative for review.
+    """
+    from app.agent_turn_runner import _contains_sensitive_value
+    from app.config import feedback_spike_vercel_base_url
+    from app.feedback_spike import sanitize_configured_feedback_links
+
+    validate_audit_candidate_fields(result, candidate)
+    inspected = result.model_dump(mode="json")
+    if result.feedback is not None:
+        for assertion in inspected["feedback"]["candidate_field_assertions"]:
+            try:
+                assertion["value"] = sanitize_configured_feedback_links(
+                    assertion["value"], vercel_base_url=feedback_spike_vercel_base_url(),
+                )
+            except ValueError as exc:
+                if str(exc) != "feedback_callback_pair_invalid":
+                    raise
+                raise ResultParseError("agent_result_contains_sensitive_value") from exc
+    return _contains_sensitive_value(inspected)
+
+
 class AuditAgentRunner:
     """Run an Audit Agent that can inspect, but cannot execute, a candidate."""
 
@@ -363,6 +390,9 @@ class AuditAgentRunner:
                 ),
             ),
             parse_result=parse_result,
+            result_contains_sensitive_value=lambda result: audit_result_contains_sensitive_value(
+                result, context.candidate,
+            ),
             persist_conversation_session=False,
             image_paths=[Path(path) for path in context.task.image_paths],
             required_capabilities=self._required_capabilities(context),
