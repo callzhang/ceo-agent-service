@@ -85,3 +85,57 @@ fixture index-creation order, native JSON-BLOB acceptance parity, missing test
 transaction, retired-table assertions, negative replay fixture shape and Linux
 temporary-directory paths. Fixes and replacement CI remain pending. No current
 Provider code is covered by that ancestor CI result.
+
+
+## Native canonical minutes verification follow-up
+
+The metadata-only receipt
+`superpowers/specs/2026-10-15-business-minutes-canonical-source-probe.json`
+records a real native DWS read of all137 previously unproved minutes sources,
+followed by five narrowly scoped duplicate-row/historical-formatter checks.
+The frozen input is SHA256
+`970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320`;
+its hash and the four executed application modules were unchanged by the
+first pass. The follow-up again confirms the source hash unchanged. The older
+native recovery receipt used a different database snapshot; all188 document
+IDs, full-body hashes and UTF-8 byte lengths were compared equal between the
+snapshots before combining document-content evidence. This is not a claim
+that the two whole databases are identical.
+
+The first pass verified126 exact canonical bodies (4600819 UTF-8 bytes).
+An exact duplicate list row for one source and genuine historical excerpt
+formatters for three sources explain four additional exact reconstructions.
+The combined strict result is130 minutes sources and4637606 UTF-8 bytes;
+source document IDs12,31,46,49,50,51,52 remain unproved under the receipt's
+current checks. IDs49,50,52 already match the whole body and recomputed stored
+signal identity, but their legacy reference suffix is unexplained by the
+inspected producer formulas. That narrower fact is preserved rather than
+calling their content mismatched or inventing a producer formula.
+
+Bodies were reconstructed from native exact-UUID list/TODO/transcription/
+summary reads, with only metadata retained in the receipt. Stored components
+were not reused in the reconstruction. Stored signal metadata supplies the
+identity comparison; human authorship was not independently reverified.
+Two list responses contained repeated identical rows; follow-up records the
+complete-row equality before selecting that one distinct row. The native
+profile inventory contained one current profile/current organization. A
+comparison between differently typed account/organization identifiers was
+not used as an authorization or source-identity conclusion.
+
+These reads establish exact source reconstruction at the time of the probe,
+not perpetual provider availability. Missing or changed sources must remain
+explicit. No body has been retired, no production database has been written,
+and no external send, source edit, permission change or historical-version
+revert was performed. Historical weekly-document verification is a separate
+in-progress probe and is not counted as completed here.
+
+## Harness and replacement CI follow-up
+
+Business CI fixture closure is accepted locally through887cd377 and pushed;
+replacement run38785796782 is still in progress at this recording. The prior
+failed run remains a failed result. Provider source-copy harness commits
+6cdad6f5 and4d3f6927 have fresh SPEC acceptance, including later unchanged
+observation/generation behavior and exact whitespace-bearing typed values.
+Independent QUALITY review and actual copied-database execution are pending.
+No production deployment or final eleven-table acceptance follows from these
+intermediate checks.
