@@ -32,3 +32,34 @@ def test_explicit_no_return_instruction_does_not_waive_handover_evidence() -> No
         assert "Do not treat the instruction as evidence that the handover gap is resolved" in text
         assert "do not approve solely because returning to the named person is prohibited" in text
         assert "Do not ask that person to repeat already verified material" in text
+
+
+def test_substantive_recipient_comments_satisfy_the_corresponding_handover_evidence() -> None:
+    for path in SKILL_PATHS:
+        text = path.read_text(encoding="utf-8")
+        assert "OA comments and linked records are eligible evidence for handover receipt" in text
+        assert "Match each confirmation to its recipient and the specific handover item" in text
+        assert "a later substantive recipient confirmation supersedes an older ‘待确认’ entry" in text
+        assert "Do not ask the applicant to repeat or reformat a confirmation already verified" in text
+        assert "request only the unresolved item or missing detail" in text
+        assert "A generic `AGREE` node alone does not replace item-level evidence" in text
+
+
+def test_no_return_instruction_is_bound_to_the_identity_it_actually_names() -> None:
+    for path in SKILL_PATHS:
+        text = path.read_text(encoding="utf-8")
+        assert "Resolve the commenter and the person referred to by an explicit no-return instruction against OA identities" in text
+        assert "do not infer that ‘me’ means the applicant or initiator" in text
+        assert "The restriction excludes only the identified person" in text
+        assert "If the prohibited person is ambiguous, keep the task pending with `no_action`" in text
+
+
+def test_pending_offboarding_operations_need_a_safe_plan_not_premature_completion() -> None:
+    for path in SKILL_PATHS:
+        text = path.read_text(encoding="utf-8")
+        assert "Account and credential offboarding may be scheduled for the last working day or a controlled post-approval cutover" in text
+        assert "Before approval, verify the responsible owner, timing, and dependencies; do not require a future operation to be complete" in text
+        assert "For active shared or service credentials, use an owner-coordinated rotation and validation plan" in text
+        assert "do not demand immediate revocation that would interrupt active service" in text
+        assert "Do not put credential values in OA records" in text
+        assert "If no safe owner-and-timing plan is documented, identify only that gap" in text
