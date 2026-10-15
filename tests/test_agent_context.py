@@ -589,6 +589,7 @@ def test_oa_complete_form_fields_still_require_live_detail_read():
     assert "dws oa approval detail" in rendered
     assert "dws oa approval tasks --instance-id pid-1 --format json" in rendered
     assert "Raw material references and exact read commands" in rendered
+    assert "never execute local dws commands through shell" in rendered
     assert "do not select by applicant or title similarity" not in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
