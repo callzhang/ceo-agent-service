@@ -2,8 +2,10 @@
 
 from contextlib import closing
 import io
+import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -404,3 +406,114 @@ def test_old_attention_counter_includes_another_accounts_failed_action(latest_fr
 def test_old_history_guard_rejects_wrong_locator_status_or_logical_id(entry):
     with pytest.raises(AssertionError):
         proof._assert_old_failed_history({"native_rowid": 42, "entries": [entry]})
+
+
+@pytest.fixture
+def bounded_run(tmp_path, monkeypatch):
+    """Exercise the real report coordinator without production copies or old CLI calls."""
+    repo = Path(__file__).resolve().parents[1]
+    source = tmp_path / "source.sqlite3"
+    sqlite3.connect(source).close()
+    source_ref = "published-current"
+    heads = [source_ref, "published-next"]
+    binding = {"production_checkout_head_after": proof.PUBLISHED_SCHEMA_REF,
+               "store_marker": {"value": 19}, "email_migration_ledger": [],
+               "actions": {"variant": "old", "declaration_fingerprint_sha256": "fingerprint"},
+               "email_declaration_fingerprint_sha256": "fingerprint", "schema_user_table_count": 0}
+    binding_path = tmp_path / "binding.json"
+    binding_path.write_text(json.dumps(binding))
+    monkeypatch.setattr(proof, "BINDING", binding_path)
+    monkeypatch.setattr(proof, "_marker", lambda db: (19, "now"))
+    monkeypatch.setattr(proof, "_email_ledger", lambda db: ())
+    monkeypatch.setattr(proof, "capture_email_action_source", lambda db: {
+        "action_variant": "old", "source_actions": {}, "source_tables": {}})
+    monkeypatch.setattr(proof, "_fingerprint", lambda value: "fingerprint")
+    monkeypatch.setattr(proof, "_consistency", lambda db: ())
+    monkeypatch.setattr(proof, "_copy", lambda origin, target: shutil.copyfile(origin, target))
+    monkeypatch.setattr(proof, "_paired_case", lambda *args: {"paired": True})
+    case_results = iter(({"case": index} for index in range(3)))
+    monkeypatch.setattr(proof, "_case", lambda *args, **kwargs: next(case_results))
+    archive_bytes = io.BytesIO()
+    with tarfile.open(fileobj=archive_bytes, mode="w") as archive:
+        for name in (*("app/" + p for p in ("store.py", "email_store.py",
+                     "action_storage.py", "action_email_storage.py",
+                     "action_email_definitions.py")), proof.SOURCE_ARCHIVE_PATHS[1]):
+            payload = b"published source"
+            entry = tarfile.TarInfo(name)
+            entry.size = len(payload)
+            archive.addfile(entry, io.BytesIO(payload))
+
+    def check_output(command, **kwargs):
+        if "archive" in command:
+            return archive_bytes.getvalue()
+        if "status" in command:
+            return ""
+        if "merge-base" in command:
+            return proof.PUBLISHED_SCHEMA_REF
+        if "rev-parse" in command and str(proof.PRODUCTION_ROOT) in command:
+            return heads.pop(0)
+        if "rev-parse" in command:
+            return "candidate-commit"
+        raise AssertionError(command)
+
+    def initialize(command, **kwargs):
+        sqlite3.connect(command[-1]).close()
+
+    monkeypatch.setattr(proof.subprocess, "check_output", check_output)
+    monkeypatch.setattr(proof.subprocess, "run", initialize)
+    return source, source_ref, repo, heads
+
+
+def test_final_production_head_change_keeps_all_completed_case_evidence(bounded_run):
+    source, source_ref, repo, heads = bounded_run
+    report = run(source, source_ref, repo)
+    assert report["status"] == "production_changed"
+    assert report["production_head_before"] == source_ref
+    assert report["production_head_after"] == "published-next"
+    assert report["published_source_ref"] == source_ref
+    assert report["executed_candidate_commit"] == "candidate-commit"
+    assert len(report["candidate_module_sha256"]) == 5
+    assert len(report["published_old_module_sha256"]) == 5
+    assert report["cases"] == {
+        "paired_actual_online_backup": {"paired": True},
+        "actual_online_backup_sql_boundary": {"case": 0},
+        "published_old_fresh_sql_legal": {"case": 1},
+        "published_old_fresh_application": {"case": 2},
+    }
+    assert heads == []
+
+
+def test_unchanged_production_head_still_passes(bounded_run):
+    source, source_ref, repo, heads = bounded_run
+    heads[-1] = source_ref
+    report = run(source, source_ref, repo)
+    assert report["status"] == "passed"
+    assert report["production_head_before"] == report["production_head_after"] == source_ref
+
+
+def test_case_failure_still_propagates_without_success_report(bounded_run, monkeypatch):
+    source, source_ref, repo, heads = bounded_run
+
+    def fail_case(*args):
+        raise AssertionError("case failed")
+
+    monkeypatch.setattr(proof, "_paired_case", fail_case)
+    with pytest.raises(AssertionError, match="case failed"):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
+
+
+@pytest.mark.parametrize("status,exit_code", (("production_changed", 1), ("passed", 0)))
+def test_cli_writes_completed_report_before_exit(tmp_path, monkeypatch, capsys, status, exit_code):
+    source = tmp_path / "source.sqlite3"
+    source.touch()
+    evidence = tmp_path / "evidence.json"
+    report = {"status": status, "cases": {"paired_actual_online_backup": {"paired": True}},
+              "production_head_before": "published-current",
+              "production_head_after": "published-next" if status == "production_changed"
+              else "published-current"}
+    monkeypatch.setattr(proof, "run", lambda *args: report)
+    assert proof.main(["--source", str(source), "--source-ref", "published-current",
+                       "--evidence", str(evidence)]) == exit_code
+    assert json.loads(evidence.read_text()) == report
+    assert json.loads(capsys.readouterr().out)["status"] == status

@@ -1237,8 +1237,8 @@ def run(source, source_ref, repo):
             text=True, capture_output=True, check=True, timeout=300)
         fresh_application_case = _case(fresh_application, oldroot, fresh=True, null_plans=False)
     production_after = subprocess.check_output(["git", "-C", str(PRODUCTION_ROOT), "rev-parse", "HEAD"], text=True).strip()
-    assert production_after == production_before
-    return {"status":"passed","scope":"offline Email13 SQL boundary and real paired copy/public APIs",
+    return {"status":"passed" if production_after == production_before else "production_changed",
+            "scope":"offline Email13 SQL boundary and real paired copy/public APIs",
             "observed_at_utc":datetime.now(timezone.utc).isoformat(),
             "published_source_ref":source_ref,"schema_binding_ref":PUBLISHED_SCHEMA_REF,
             "executed_candidate_commit":candidate_commit,"candidate_module_sha256":candidate_hashes,
@@ -1256,12 +1256,17 @@ def run(source, source_ref, repo):
             "limit":"Offline owned copies only; paired target constructor/public-DAO proof is not native role, CI, production publication or live provider acceptance."}
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--source-ref", required=True)
     parser.add_argument("--evidence", required=True, type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     result = run(args.source.resolve(), args.source_ref, Path(__file__).resolve().parents[1])
     args.evidence.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({"status":result["status"],"cases":list(result["cases"])}))
+    return 0 if result["status"] == "passed" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

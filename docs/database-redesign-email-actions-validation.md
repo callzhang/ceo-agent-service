@@ -2864,3 +2864,27 @@ were preserved. `git -c core.whitespace=-blank-at-eof diff --cached --check`
 reported no other merge whitespace issue. Local post-merge working tree was
 clean before this evidence entry. Root-owned fresh SPEC, then QUALITY review,
 copy/native proof, CI and publication remain open.
+
+### Copy report when production HEAD changes after cases complete (2026-10-15)
+
+The copy harness reads the production checkout HEAD before opening the source
+and requires it to equal the requested source ref. After its four case
+functions completed, a changed final HEAD previously raised before `run()`
+returned, so the CLI could not serialize the completed case evidence. The
+coordinator now returns the same report fields, including all four case
+results, candidate and published source hashes, and both HEAD observations,
+with top status `production_changed`. The CLI writes that report and exits 1;
+an unchanged final HEAD retains `passed` and exit 0. Entry mismatch and case
+assertions still raise. The source ref remains a non-atomic checkout-HEAD and
+SQLite-backup observation; a drift report is not latest-source acceptance.
+
+The narrow coordinator regression uses synthetic binding/marker data and
+mocked Git, copy, and case functions. It proves report preservation and CLI
+serialization/exit behavior only; it is not a production copy, migration,
+native CLI, provider, or full Email13 acceptance result.
+Before the fix, the selected RED run had 3 expected failures: drift raised at
+the final assertion, and both CLI serialization cases lacked a callable entry
+point; the other 3 selected controls passed. After the fix and exact four-case
+mapping assertion, those 6 selected tests passed in 0.43 seconds. Seven
+adjacent current-fact loss, target public write, and old History locator
+guards passed in 82.72 seconds. Scoped Ruff and `git diff --check` passed.
