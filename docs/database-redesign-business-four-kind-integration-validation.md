@@ -16,3 +16,32 @@ Evidence from the scoped local runs:
 - Scoped Ruff and Python compilation passed. The current-app SQL-owner search found no direct old-parent DML or FROM/JOIN references in `app/` or `scripts/`; remaining names are source migration/oracle declarations, removed-table manifests, source-shaped import labels and offline diagnostic labels.
 
 Task 4's native copied-production validation, copy-harness assertions and real deployment CLI rehearsal remain separate work. No production database, provider, deployed checkout or service was touched by these local tests.
+
+
+## Independent Task2+3 acceptance
+
+Fresh SPEC accepted947f3518 overfc35e811 after independently running120
+release/constructor/history checks and10 direct caller checks. Fresh subsequent
+QUALITY accepted the same commit after110 constructor/release/import/Web
+checks and the archived historical wrapper. The latter executes exactlynine
+original cases from published7dadc492, with no skips or errors. These are
+independent overlapping focused runs, not a summed unique test count.
+
+The reviews covered current/cached bootstrap, exact Business and retained-child
+declarations, public-ID reads and typed writes, default-list index/public order,
+import/Attention/ownerless/Web callers, and paired source capture, forward,
+current-fact inverse and exact markers/FK findings. No new policy, invented
+business field, old-parent fallback or dual writer was introduced.
+
+QUALITY's273-file temporary pytest root `/private/tmp/business-quality.Xj9m3i`
+remains pending direct user response: automatic approval review rejected its
+`rm -rf` cleanup as requiring approval under AskForApproval Never. Root did
+not retry via another deletion mechanism. Read-only lsof found no open handle;
+metadata traversal reported150695834 file bytes (including symlink targets).
+This is test data, not a production database or retained source backup.
+
+Task4's actual production-source copy, genuine old-code read/write, current-fact
+inverse/reforward, real native CLI with provider substitutes, combined CI and
+production publication remain outstanding. Production121-table observation is
+unchanged by this local acceptance; the complete10-core-plus-ledger goal is
+still incomplete.
