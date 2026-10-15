@@ -441,3 +441,20 @@ Only this document and the author's claim row changed. No runtime tests were
 necessary for a documentation-only proposal; no body/native/DB/provider read,
 implementation, migration, version, push or deploy occurred. Independent SPEC
 then QUALITY review remains root-owned.
+
+## 7. Independent review acceptance
+
+Root accepted the bounded field mapping at `0cb539f9b737330fa330c0edc09f9a498852808d`
+after sequential fresh SPEC and QUALITY reviews. SPEC mechanically matched every
+one of the 84 fields, defaults and actual/fresh ordinals to the accepted metadata
+and CSV, and all 23 external FK groups to their exact captured tuples. It also
+recomputed both candidate unit closures. QUALITY independently checked the actual
+registration, Task Agent apply, candidate confirmation, context and event replay
+callers and found no substantive issue. Both reviews were read-only.
+
+This accepts the mapping and the coherent 42-field next-unit scope. It does not
+accept executable target SQL, a value codec, storage writers, allocator behavior,
+a migration or a release. The next implementation plan must settle and test those
+finite storage contracts together without selecting a production caller or
+retiring source bodies. The original 84 field rows and 23 endpoint rows remain
+unchanged.
