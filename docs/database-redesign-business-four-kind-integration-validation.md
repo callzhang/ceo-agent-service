@@ -293,3 +293,22 @@ with an invalid Task JSON BLOB. The previous Task-only snapshot passed that
 mutant (1/1); the all-kind snapshot failed at the intended unchanged-state
 assertion (1/1). The unmutated sixteen affinity cases passed. The mutant
 wrapper was not retained in test or app code.
+
+### Root CI-closure review acceptance, 2026-10-15
+
+Fresh SPEC accepted790e747c after25 focused cases in33.10s. QUALITY identified
+the Task-only rejected-write snapshot gap; aa109586 extended it to every one
+of the four Business kinds on both sides and both allocator-water sets.
+Sequential SPEC then QUALITY re-review accepted that correction; each
+independently passed16 affected affinity cases. Their diff checks and worktree
+clean checks passed. This accepts the bounded fixture/test/harness repair;
+no application runtime module changed.
+
+The source13 index-creation ordering and genuinely supported historical
+0bd75f7c-to9469363a upgrade remain distinct from current paired publication.
+Local SQLite3.53.4 does not reproduce the ancestor Linux build's valid-JSON-BLOB
+rejection; the test retains native/target outcome parity for either engine.
+Root will push this candidate branch to obtain replacement exact-head CI.
+Failed run38769762524 remains the only completed combined CI result until then.
+This is not main merge, deployment, production schema or real delivery proof;
+the separate Provider candidate remains outside this ancestor branch's scope.
