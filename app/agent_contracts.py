@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from app.agent_result import AgentError
+from app.decision_quality import require_needs_human_decision_quality
 
 
 class RiskLevel(StrEnum):
@@ -515,6 +516,12 @@ class ConsumerAgentResult(BaseModel):
         if (self.outcome is ConsumerOutcome.PROPOSAL) != (self.proposal is not None):
             raise ValueError("proposal is required only for proposal outcome")
         if self.outcome is ConsumerOutcome.NEEDS_HUMAN:
+            require_needs_human_decision_quality(
+                risk=self.risk,
+                confidence=self.confidence,
+                rule_coverage=self.rule_coverage,
+                information_completeness=self.information_completeness,
+            )
             if not ((2 <= len(self.decision_options) <= 4 and self.requested_input is None) or (not self.decision_options and self.requested_input)):
                 raise ValueError("needs_human requires two to four options or requested_input")
             keys = [option.key for option in self.decision_options]

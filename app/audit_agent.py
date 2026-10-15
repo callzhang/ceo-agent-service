@@ -9,7 +9,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
-from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, json_value_type
+from app.agent_contracts import (
+    AuditAgentResult,
+    ConsumerAgentResult,
+    ConsumerOutcome,
+    json_value_type,
+)
 from app.agent_effects import LEASE_SECONDS
 from app.agent_result import ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -26,6 +31,7 @@ from app.audit_rules import render_audit_rules
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
+from app.decision_quality import require_needs_human_decision_quality
 from app.reviewed_candidates import candidate_digest
 from app.runtime_prompt_context import explicit_participant_timezones
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
@@ -36,6 +42,7 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
 
 def validate_audit_candidate_fields(result: AuditAgentResult, candidate: ConsumerAgentResult) -> None:
+    validate_audit_candidate_decision_quality(candidate)
     if result.feedback is None:
         return
     document = candidate.model_dump(mode="json")
@@ -52,6 +59,22 @@ def validate_audit_candidate_fields(result: AuditAgentResult, candidate: Consume
             or json_value_type(assertion.value) != assertion.json_type
             or json.dumps(actual, sort_keys=True, ensure_ascii=False) != json.dumps(assertion.value, sort_keys=True, ensure_ascii=False)):
             raise ResultParseError("Audit candidate field assertion contradicts the bound candidate; correct Audit feedback, not the candidate")
+
+
+def validate_audit_candidate_decision_quality(candidate: ConsumerAgentResult) -> None:
+    """Independently enforce the shared human-escalation gate at Audit entry."""
+
+    if candidate.outcome is not ConsumerOutcome.NEEDS_HUMAN:
+        return
+    try:
+        require_needs_human_decision_quality(
+            risk=candidate.risk,
+            confidence=candidate.confidence,
+            rule_coverage=candidate.rule_coverage,
+            information_completeness=candidate.information_completeness,
+        )
+    except ValueError as exc:
+        raise ResultParseError(str(exc)) from exc
 
 
 def audit_result_contains_sensitive_value(
@@ -138,6 +161,7 @@ class AuditAgentRunner:
     ) -> AgentTurnRunResult[AuditAgentResult]:
         if context.task.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
+        validate_audit_candidate_decision_quality(context.candidate)
         exact_digest = candidate_digest(context.candidate)
         if context.candidate_digest != exact_digest:
             raise ValueError("Audit candidate digest mismatch")

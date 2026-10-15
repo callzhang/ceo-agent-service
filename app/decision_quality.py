@@ -117,6 +117,26 @@ def classify_decision_quality(
     )
 
 
+def require_needs_human_decision_quality(
+    *,
+    risk: DecisionRisk | str,
+    confidence: float,
+    rule_coverage: float,
+    information_completeness: float,
+) -> DecisionQualityResult:
+    """Reject a human escalation unless the shared quality gate permits it."""
+
+    result = classify_decision_quality(
+        risk=risk,
+        confidence=confidence,
+        rule_coverage=rule_coverage,
+        information_completeness=information_completeness,
+    )
+    if result.classification is not DecisionQuality.NEEDS_HUMAN:
+        raise ValueError("needs_human does not satisfy decision quality gate")
+    return result
+
+
 def classify_stored_needs_human_projection(
     result: object,
 ) -> StoredNeedsHumanProjection:

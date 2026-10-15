@@ -1133,7 +1133,7 @@ def test_live_consumer_wire_rejects_old_authorization_plan():
         ConsumerAgentWireResult.model_validate(payload)
 
 
-def test_open_ended_human_input_has_no_false_options_or_quality_gate():
+def test_open_ended_human_input_cannot_bypass_decision_quality_gate():
     payload = {
         "outcome": "needs_human", "summary": "Need an unknown invoice number",
         "proposal": None, "decision_options": [],
@@ -1143,11 +1143,52 @@ def test_open_ended_human_input_has_no_false_options_or_quality_gate():
         "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
         "information_completeness": 1.0, "error": _error(),
     }
+    with pytest.raises(ValidationError, match="does not satisfy decision quality gate"):
+        ConsumerAgentResult.model_validate(payload)
+
+
+def test_needs_human_is_allowed_when_high_risk_confidence_is_low():
+    payload = {
+        "outcome": "needs_human", "summary": "Need a decision",
+        "proposal": None, "decision_options": [],
+        "requested_input": "Which policy should apply?",
+        "needs_human_reason": "The consequence is high and the evidence is uncertain",
+        "decision_basis": _decision_basis(),
+        "risk": "high", "confidence": 0.49, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "error": _error(),
+    }
     assert ConsumerAgentResult.model_validate(payload).requested_input
     with pytest.raises(ValidationError):
         ConsumerAgentResult.model_validate({**payload, "error": {**_error(), "code": "tool_failed"}})
     with pytest.raises(ValidationError):
         ConsumerAgentResult.model_validate({**payload, "proposal": _proposal()})
+
+
+def test_needs_human_is_allowed_when_rule_coverage_is_low():
+    payload = {
+        "outcome": "needs_human", "summary": "Need a rule decision",
+        "proposal": None, "decision_options": [],
+        "requested_input": "Which rule should apply to this task class?",
+        "needs_human_reason": "No applicable rule covers this decision",
+        "decision_basis": _decision_basis(),
+        "risk": "low", "confidence": 0.99, "rule_coverage": 0.49,
+        "information_completeness": 1.0, "error": _error(),
+    }
+    assert ConsumerAgentResult.model_validate(payload).requested_input
+
+
+def test_incomplete_information_prevents_needs_human_even_when_risk_is_high():
+    payload = {
+        "outcome": "needs_human", "summary": "Need a decision",
+        "proposal": None, "decision_options": [],
+        "requested_input": "Which policy should apply?",
+        "needs_human_reason": "The consequence is high and the evidence is uncertain",
+        "decision_basis": _decision_basis(),
+        "risk": "high", "confidence": 0.1, "rule_coverage": 0.1,
+        "information_completeness": 0.49, "error": _error(),
+    }
+    with pytest.raises(ValidationError, match="does not satisfy decision quality gate"):
+        ConsumerAgentResult.model_validate(payload)
 
 
 def test_stage_requires_predecessor_and_immediate_plan_excludes_question():

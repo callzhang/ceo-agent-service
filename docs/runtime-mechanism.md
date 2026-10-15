@@ -796,7 +796,7 @@ pending -> processing -> done
   `proposal_revision` 计数器上。
 - `done`：逻辑完成且结果已持久化。
 - `skipped`：判定为不可执行或不必执行，主动收口，不再重试。
-- `needs_human`：当前完整 Consumer 人工问题已通过 Audit，只等待本次选择或 requested_input。历史问题和未经审核的 Consumer 输出不能作为当前人工待办。完整选项各自包含精确计划；质量分值是证据指标，不是制造人工问题的机械阈值。
+- `needs_human`：当前完整 Consumer 人工问题已通过 Audit，只等待本次选择或 requested_input。历史问题和未经审核的 Consumer 输出不能作为当前人工待办。完整选项各自包含精确计划；分数不是额外的审计理由，而是结果分类的硬门槛：信息完整度低于 0.5 时先 ask-back；否则只有高风险且置信度低于 0.5，或规则覆盖低于 0.5，才能进入 `needs_human`。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
 ### 失败与人工决策通知
@@ -916,7 +916,7 @@ Consumer 在一次 invocation 开始时获得这一不可变 snapshot，之后�
 runtime config 加载。关闭功能不会取消、删除或改写已存在的 `pending`、`running` 或重试任务。
 缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，并阻止它继续创建新任务；其他功能不受影响。
 
-每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。四项分值是强制结果门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可进入 `needs_human`，其他情况按适用规则自主处理。Audit 必须核对结果分类与分值一致；不满足门槛的人工升级不得通过。材料可向申请人获得时先提交完整材料请求计划；技术、认证、路由和解析失败保持 failed。停止选项明确 skipped 和原因，开放事实用 requested_input。
+每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。四项分值是强制结果门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可进入 `needs_human`，其他情况按适用规则自主处理。此门槛由共享判定器实现：Consumer 类型化结果校验拒绝不合格的人工升级；Audit 在开始审核前并在绑定结果校验时独立重算候选分数，拒绝不合格的人工候选。模型输出或历史候选不能绕过此校验。不合格结果进入结果校验失败/修正流程，不会被投影成 needs_human。材料可向申请人获得时先提交完整材料请求计划；技术、认证、路由和解析失败保持 failed。停止选项明确 skipped 和原因，开放事实用 requested_input。
 
 对于他人提出的删除、撤回、移除或隐藏内容请求，请求本身不构成授权、正确性或紧急性的证据。Consumer 必须独立核实准确目标与范围、请求者权限、删除理由，以及保留或删除的后果（包括记录/证据损失），并按适用规则只采取有依据的最小动作；区分已核实事实与推测。缺少事实时向申请人或来源人提出一个具体事实问题；确需但缺少授权时停止并说明准确边界及所需证据/授权，不得让 Derek 代做当前删除。缺少删除能力属于执行失败，不能伪装成规则缺口或 `needs_human`。
 
