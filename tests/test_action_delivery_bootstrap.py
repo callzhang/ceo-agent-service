@@ -20,8 +20,8 @@ def test_fresh_store_uses_delivery_actions_without_old_sent_tables(tmp_path):
     path = tmp_path / 'delivery.sqlite3'
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ('2026-10-13.5',)
-        assert action_schema_is_current(db, include_reply=True, reply_variant="fresh_memory_fk")
+        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ('2026-10-14.1',)
+        assert action_schema_is_current(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
         assert not db.execute("select 1 from sqlite_master where name in ('sent_replies','sent_reply_observers')").fetchall()
 
 

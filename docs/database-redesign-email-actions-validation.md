@@ -2512,3 +2512,14 @@ absence verified. No repository/runtime code changed in this research. This
 empty synthetic proof does not verify the populated14 current caller cases.
 The runtime accepted-pair set was not expanded; production and providers were
 untouched. Task7 fixture implementation, CI/publication and full10+1 remain open.
+
+Task7 current bootstrap marker fixtures: the five selected current tests now
+expect Store `2026-10-14.1`; the fresh delivery and postfix action manifest
+checks include Email in the published 29-type current target. Original source
+IDs, mutations, rows, reopen checks, and absence assertions remain in place.
+The genuine published-source delivery test retains its historical Store19
+binding. Root baseline was five failures out of five, each on the obsolete
+Store19 expectation; the exact five selectors now pass (5 in 2.96s). All 41
+nonselected function ASTs in the four files match HEAD; scoped Ruff and
+`git diff --check` pass. The owned pytest temporary root was removed and
+absence verified. Fresh sequential SPEC and QUALITY review remain pending.
