@@ -2763,3 +2763,22 @@ real native Consumer/Audit approval/revision with in-memory providers are now
 running against this unchanged runtime. Their results, CI, publication and
 production readback remain open. No production schema or real test delivery
 has occurred. The full10+1 target remains incomplete.
+
+### Latest production-main diagnostics integration (fca229bb)
+
+The isolated Email-actions branch normally merged exact production-main
+`fca229bb363e30ab20ff5440b59d2c41e5fc4c24` after accepted `e87fb7d0`.
+The incoming ten-file delta caches identical quality-scan runtime metadata
+predicate results within one scan, logs slow Store contexts that reuse a read
+snapshot, updates the matching runtime/health descriptions, and changes prompt
+tests to inspect parsed JSON fields rather than whitespace. The claim and
+runtime-document conflicts retained both branch and main content. The merge
+changed no Email or Store source constructor, migration, release, binding,
+provider or native lifecycle module.
+
+Local incremental checks passed: the four incoming focused test files had
+33/33 passes; the exact 14 changed worker tests had 14/14 passes. Scoped Ruff
+and merge `git diff --check` passed. The first worker-node invocation selected
+one truncated test name and collected no tests; the corrected invocation above
+is the measured result. The root task owns the broader 29-file matrix,
+fresh-source copy/native proof, independent review, CI and publication.
