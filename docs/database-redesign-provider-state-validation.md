@@ -84,3 +84,24 @@ constructor, version marker, release coordinator, real database, provider call,
 native Agent run, push, main merge or deployment was changed or exercised.
 Copied production data, archived old-code writes, paired Store/Email release
 and space savings remain separate evidence gates.
+
+
+## Root acceptance of pure migration, 2026-10-15
+
+Sequential fresh SPEC then QUALITY accepteda2d10fac. Each inspected the actual
+module, tests, literal source declarations and accepted target; each passed
+34 focused source/storage/migration cases. Additional independent native
+probes covered legal BLOB keys/values, JSON BLOB/scalar values, numeric-string
+and nonfinite/negative-zero affinity, and external MAIN trigger/TEMP view
+dependency rejection on both source variants. No actionable defect remained.
+
+The finite capture/apply/inverse stores schema metadata only, copies all named
+fields and verifies values plus storage classes and counts before dropping a
+source or target. The caller owns transaction control. Current-fact inverse
+preserves post-forward inserts, updates and deletes. No source hidden-ROWID
+catalog, public allocator, old-table view or row snapshot was introduced.
+
+This acceptance is synthetic and unselected. Current callers, fresh schema
+factory, exact schema validators and paired release wiring are next; actual
+source-copy, genuine old-code cold writes/reforward and publication remain
+unverified for this Provider unit. Full10+1 is still incomplete.

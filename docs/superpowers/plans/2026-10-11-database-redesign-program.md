@@ -12,8 +12,10 @@ verification. Sequential fresh SPEC and QUALITY also accept the exact
 unselected single-table plan101c121e and storage3afb1915, with test-only
 connection cleanup8ceaf4b5. The20 focused cases and120 independent value/type
 comparisons pass; evidence is in `../database-redesign-provider-state-validation.md`.
-Pure current-fact forward/inverse is next. No old table has been removed or
-current caller selected by this Provider unit. Full10+1 remains open.
+Sequential fresh SPEC/QUALITY also accept pure current-fact migrationa2d10fac
+with34focused cases. Current caller/fresh factory/validator/paired release
+integration is next. No old production table has been removed or current caller
+selected by this Provider unit. Full10+1 remains open.
 
 ## Latest unpublished Business/Email acceptance, 2026-10-15
 
