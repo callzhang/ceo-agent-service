@@ -162,3 +162,35 @@ No source edit, version revert, permissions change, send, database write or
 body retirement occurred. Current-source matches for four other weekly rows
 are separate root observations and are not counted as historical recovery of
 these fifteen. They cannot justify deleting the unproved originals.
+
+
+## Provenance retirement boundary, read-only contract review
+
+The approved design distinguishes a confirmed original locator from proof that
+its historical bytes can still be retrieved. The15 remaining weekly rows have
+confirmed node identity and old input hashes/lengths;97 exactly bound version
+reads failed to match those bytes in the bounded search. That is not an invalid
+node, permanent source loss or permission to substitute current content. The
+three minutes rows49/50/52 already have exact whole-body and stored identity
+matches; only their legacy suffix formula remains unexplained. The strict
+receipt counts are retained until that reference interpretation is resolved.
+
+Design lines75–99 permit provenance identity/version and require accurate
+source reading. Line132 says completed recoverable bodies retire, unavailable
+sources retain explicit gaps and existing adopted results/actual locators,
+and failed source checks are separately listed in rehearsal rather than
+silently deleting production rows. It does not impose perpetual provider
+availability. The unresolved case is whether confirmed locator plus historical
+input hash/bytes and an honest version-unavailable read satisfies that rehearsal
+check; this review authorizes neither deletion nor blanket indefinite body
+retention. The final concrete rehearsal must list these rows and its proposed
+handling for final approval. No production change has occurred.
+
+Current body consumers still include Store business signal reads, task source
+bundle rendering, Task citation validation and Project citation validation.
+Their exact-source/unavailable replacements are required before retiring the
+source body table. Native trajectory missing/changed errors demonstrate honest
+unavailability but do not prove provider history retrieval. These consumers
+and adopted quote/result evidence must not be conflated with expendable input
+copies. This contract review made no further provider reads; the prior101
+historical fetch accounting correction and stopped-call boundary remain.
