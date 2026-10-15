@@ -218,8 +218,9 @@ def test_adapter_builds_equivalent_route_command_options(adapter, config, tmp_pa
         use_approval_bypass=True,
     )
 
-    assert command[: 3 if session_id else 2] == (
-        ["codex-test", "exec", "resume"] if session_id else ["codex-test", "exec"]
+    assert command[: 5 if session_id else 2] == (
+        ["codex-test", "--cd", str(tmp_path), "exec", "resume"]
+        if session_id else ["codex-test", "exec"]
     )
     assert command[command.index("-m") + 1] == "gpt-5.5"
     assert 'model_provider="ceo_openai_api"' in command

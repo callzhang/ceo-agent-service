@@ -2240,3 +2240,10 @@ Task Agent 当前每轮已经完整提交仓库中的 Work Tracking Skill，Code
 其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
 或共享 AGENTS 配置。该改动消除第二份旧 Skill 的可见入口，尚未把完整正文改成按需读取。
 验证与限制见 `docs/task-inline-skill-once-validation.md`。
+
+Codex continuation commands retain the caller-selected workspace through the native
+global `--cd <workspace>` option before `exec resume`; cold commands are unchanged.
+Continuation no longer inherits the service process directory. Workbench inserts
+its existing model/MCP timeout options after the located exec/resume command so
+global options remain intact. Native session IDs, source, schema, credentials,
+permissions and route policy are unchanged. See `docs/codex-resume-workspace-validation.md`.
