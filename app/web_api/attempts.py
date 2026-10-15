@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
-from app.attempt_what_happened import build_what_happened
+from app.attempt_what_happened import build_what_happened, stopped_because
 from app.web_api.common import json_safe, normalize_display_value
 from app.run_storage import AGENT_RUN_SQL
 
@@ -686,6 +686,7 @@ def build_attempt_detail(
 ) -> tuple[int, dict[str, Any] | None]:
     """Build a rich, JSON-safe Attempt DTO without rendering HTML."""
     attempt = store.get_reply_attempt(attempt_id)
+    historical_attempt = attempt
     if attempt is None:
         return 404, None
 
@@ -724,6 +725,7 @@ def build_attempt_detail(
         store.current_reviewed_candidate(reply_task.id, reply_task.execution_generation)
         if reply_task is not None else None
     )
+    current_task_reviewed = current_reviewed
     history_reviewed = (
         store.reviewed_candidate_for_audit_run(attempt.agent_run_id)
         if attempt.agent_run_id else None
@@ -766,11 +768,6 @@ def build_attempt_detail(
             reply_task.execution_generation,
             load_events=False,
         )
-        if not current_agent_runs:
-            # A manual rerun may close without creating a run.  Keep the
-            # historical Consumer evidence readable, while current state
-            # remains governed by the task itself.
-            current_agent_runs = agent_runs
     # The stored Attempt row is historical.  Render the current projection
     # from the task generation's last effective run so an old pending row
     # cannot mask a later done/skipped result.
@@ -789,13 +786,37 @@ def build_attempt_detail(
             projected_status = "needs_human"
         elif current_reviewed["selection_id"] is not None and reply_task.status in ("pending", "processing"):
             projected_status = reply_task.status
-    attempt = attempt.model_copy(update={"send_status": projected_status})
+    current_generation_changed = (
+        reply_task is not None and terminal_run is not None
+        and reply_task.execution_generation != terminal_run.execution_generation
+    )
+    current_stop_execution = (
+        store.get_candidate_execution(current_task_reviewed["id"])
+        if current_generation_changed and current_task_reviewed is not None else None
+    )
+    if current_stop_execution is not None and current_stop_execution["status"] not in {"failed", "uncertain", "retry"}:
+        current_stop_execution = None
+    display_updates = {"send_status": projected_status}
+    if current_generation_changed:
+        latest = current_agent_runs[-1] if current_agent_runs else None
+        error = _stored_json(latest.structured_error_json, {}) if latest else {}
+        result = _stored_json(latest.adopted_result_json, {}) if latest else {}
+        execution_result = _stored_json(current_stop_execution["result_json"], {}) if current_stop_execution else {}
+        execution_error = execution_result.get("error") or {}
+        display_updates.update({
+            "send_error": execution_error.get("code") or reply_task.error,
+            "codex_reason": execution_error.get("code") or reply_task.error,
+            "audit_summary": str(execution_result.get("summary") or error.get("detail")
+                                 or error.get("reported_summary") or result.get("summary")
+                                 or reply_task.error),
+        })
+    attempt = attempt.model_copy(update=display_updates)
     attention = reply_history_attention(
         attempt,
         task=reply_task,
         decision_options=_needs_human_decision_options(store, attempt),
     )
-    rerun_block_reason = _attempt_rerun_block_reason(attempt, agent_runs)
+    rerun_block_reason = _attempt_rerun_block_reason(historical_attempt, agent_runs)
     runtime_attempts = _runtime_payload(agent_runs, store)
     agent_sessions = _agent_sessions(attempt, agent_runs)
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
@@ -881,13 +902,21 @@ def build_attempt_detail(
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
         audit_explanation = attempt.codex_reason or attempt.send_error
-    stop_reason = None
-    if attempt.send_status == "failed" and (not agent_runs or agent_runs[-1].status != "failed"):
+    stop_reason = stopped_because(current_agent_runs)
+    if reply_task is not None and reply_task.status in {"done", "skipped"}:
+        stop_reason = {"kind": "none", "code": "", "sentence": ""}
+    elif attempt.send_status == "failed" and (not current_agent_runs or current_agent_runs[-1].status != "failed"):
         stop_reason = {
-            "kind": "execution" if system_execution and system_execution["status"] in {"failed", "uncertain", "retry"} else "rule",
+            "kind": "execution" if current_stop_execution is not None or (
+                system_execution and system_execution["is_current"]
+                and system_execution["status"] in {"failed", "uncertain", "retry"}
+            ) else "rule",
             "code": attempt.send_error or attempt.codex_reason,
             "sentence": attempt.audit_summary or audit_explanation,
         }
+    current_failure_reason = _agent_failure_reason_text(attempt, current_agent_runs)
+    if current_generation_changed and not current_agent_runs and attempt.send_status == "failed":
+        current_failure_reason = attempt.audit_summary or attempt.send_error
     what_happened = build_what_happened(agent_runs, store=store, stop_reason=stop_reason)
     action_pills = [{"label": _attempt_action_label_text(attempt), "status": attempt.send_status}]
     if attempt.oa_action.strip():
@@ -987,7 +1016,7 @@ def build_attempt_detail(
         "system_execution": system_execution,
         "audit_summary": normalize_display_value(attempt.audit_summary),
         "draft_reply": normalize_display_value(attempt.draft_reply_text),
-        "failure_reason": normalize_display_value(_agent_failure_reason_text(attempt, agent_runs)),
+        "failure_reason": normalize_display_value(current_failure_reason),
         "recovery_state": normalize_display_value(_route_failure_recovery_state(attempt, reply_task)),
         "action_pills": action_pills,
         "quality_warnings": [normalize_display_value(item) for item in _quality_warnings(attempt)],
