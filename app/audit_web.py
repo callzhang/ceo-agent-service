@@ -136,6 +136,8 @@ from app.feedback_events import (
 )
 from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
+from app.email_publication_sources import current_email_actions_available
+from app.action_storage import email_action_projection
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
     launch_repository_updater,
@@ -2639,9 +2641,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                     "latest_error": _queue_latest_error(db, table, status_column, error_column),
                 }
             )
-        if _sqlite_table_exists(db, "email_actions") and _sqlite_table_exists(
-            db, "email_classifications"
-        ):
+        if current_email_actions_available(db):
             snapshots.append(_read_status_queue(_email_action_queue_snapshot, db))
         if _sqlite_table_exists(db, "tasks"):
             snapshots.append(_read_status_queue(_email_unsubscribe_task_queue_snapshot, db))
@@ -2812,9 +2812,9 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 def _email_action_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Project only actions the worker can still execute for the current plan."""
 
-    current_plan = """
-        from email_actions as a
-        cross join email_classifications as c on c.id=a.classification_id
+    current_plan = f"""
+        from ({email_action_projection('email_actions')}) as a
+         cross join email_classifications as c on c.id=a.classification_id
         where a.action_plan_id=c.current_action_plan_id
           and c.status='processed'
     """
@@ -3242,7 +3242,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _memory_write_queue_snapshot(db: sqlite3.Connection, name: str) -> dict[str, object]:
-    source = reply_action_projection("memory_write_events", validated_reply_variant(db))
+    source = reply_action_projection("memory_write_events", validated_reply_variant(db, include_email=True))
     rows = db.execute(
         f"select lower(coalesce(status,'')) as status,count(*) as count "
         f"from ({source}) group by lower(coalesce(status,'')) order by status"
@@ -3649,14 +3649,13 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
-            _sqlite_table_exists(db, "email_actions")
-            and _sqlite_table_exists(db, "email_classifications")
+            current_email_actions_available(db)
         ):
             # Mirror the status page: a failed action is attention-worthy only
             # once it is outside its retry window, so both surfaces agree.
             # Drive compact failed-row selection before large classification
-            # payloads. rowid preserves legacy nullable action IDs unchanged.
-            email_action_sql = """
+            # payloads. Source rowid preserves nullable public action IDs.
+            email_action_sql = f"""
                 select a.action_id as id, a.status,
                        coalesce(nullif(c.sender, ''), a.account_id) as context,
                        coalesce(
@@ -3665,12 +3664,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                            a.action_type
                        ) as summary,
                        a.updated_at, a.error
-                from email_actions as a
+                from ({email_action_projection('email_actions', include_rowid=True)}) as a
                 cross join email_classifications as c on c.id=a.classification_id
                 where a.action_plan_id=c.current_action_plan_id
                   and c.status='processed'
                   and a.rowid in (
-                      select rowid from email_actions
+                      select rowid from ({email_action_projection('email_actions', include_rowid=True)})
                       where lower(status)='failed'
                   )
                   and not (

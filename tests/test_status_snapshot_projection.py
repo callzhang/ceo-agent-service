@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 from app.audit_web import _email_action_queue_snapshot, _reply_task_queue_snapshot
+from app.action_email_definitions import EMAIL_FIELDS, EMAIL_TYPES
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS
 
 
@@ -21,12 +22,15 @@ def database():
         create table email_classifications (
             id integer primary key, status text, current_action_plan_id text
         );
-        create table email_actions (
-            action_id text primary key, classification_id integer,
-            action_plan_id text, status text, attempt_count integer,
-            next_attempt_at text, updated_at text, error text
-        );
     """)
+    db.execute(
+        "create table actions (record_type text not null, email_action_id text primary key, "
+        + ", ".join(
+            f"email_{field} {EMAIL_TYPES[field]}"
+            for field in EMAIL_FIELDS["email_actions"] if field != "action_id"
+        )
+        + ")"
+    )
     try:
         yield db
     finally:
@@ -77,7 +81,10 @@ def test_email_summary_preserves_plan_retry_and_latest_row_semantics(database):
         [(1, "processed", "current"), (2, "pending", "inactive")],
     )
     database.executemany(
-        "insert into email_actions values(?,?,?,?,?,?,?,?)",
+        "insert into actions (record_type, email_action_id, email_classification_id, "
+        "email_action_plan_id, email_status, email_attempt_count, "
+        "email_next_attempt_at, email_updated_at, email_error) "
+        "values('email_actions',?,?,?,?,?,?,?,?)",
         [
             ("old", 1, "retired", "processing", 0, "", "2026-10-12", "retired error"),
             ("retry", 1, "current", "FAILED", DIRECT_ACTION_MAX_ATTEMPTS - 1,
@@ -106,13 +113,16 @@ def test_email_summary_scans_actions_in_storage_order_for_current_plan(database)
     )
     database.execute(
         "create index idx_email_actions_classification_plan "
-        "on email_actions(classification_id, action_plan_id)"
+        "on actions(email_classification_id, email_action_plan_id)"
     )
     database.execute(
         "insert into email_classifications values(1, 'processed', 'current')"
     )
     database.execute(
-        "insert into email_actions values('one', 1, 'current', 'done', 1, '', '2026-10-14', '')"
+        "insert into actions (record_type, email_action_id, email_classification_id, "
+        "email_action_plan_id, email_status, email_attempt_count, "
+        "email_next_attempt_at, email_updated_at, email_error) "
+        "values('email_actions', 'one', 1, 'current', 'done', 1, '', '2026-10-14', '')"
     )
 
     statements = []

@@ -40,6 +40,8 @@ def publication_receipt_sources(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in RECEIPT_ACTION_TYPES}
     if version == "2026-10-13.5" and reply_schema_is_current(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in RECEIPT_ACTION_TYPES}
+    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True):
+        return {kind: ACTION_PROJECTIONS[kind] for kind in RECEIPT_ACTION_TYPES}
     raise ValueError("unknown or mixed receipt publication source schema")
 
 

@@ -1,5 +1,30 @@
 # CEO Agent Service Architecture
 
+The local History query candidate projects source identity and sort time from
+each selected source before the combined page sort, applies existing filters
+within those source branches, and hydrates only the selected page in one read
+snapshot. Reply Attempt recovery and supersession checks share the maximum
+terminal public Attempt ID per trigger with their original status rules. This is a read-path
+change only. Task6 verified whole-copy plain, matching and no-match public
+History reads and isolated read-only UI clicks; this candidate is not deployed.
+The aggregate evidence is in the Email-actions native-copy acceptance JSON.
+
+Follow-up/Todo-sync action storage Tasks 1A/1B are an unselected candidate. With
+the explicit disabled-by-default `include_followup_sync` flag on the reviewed
+Email29 actual/fresh scaffold, nine finite action types expose the original
+150 fields through source-shaped projections. The business send-attempt draft
+edge uses a typed physical action FK and projects its parent public ID; four
+declared business edges still target their retained business tables. This
+candidate now has source-shaped insert, update and delete operations for the
+nine families. Each kind retains its independent native public-ID sequence;
+omitted defaults are evaluated under the SQLite writer lock and caller-owned
+transactions remain caller-owned. All omitted defaults for one row are read in
+one SQLite statement, so source timestamp pairs remain coherent. Business
+draft parent validation follows native row constraints: ignored NOT NULL,
+CHECK or UNIQUE rows do not attempt FK validation, while a missing non-NULL
+parent remains a failed FK write. This does not select the declaration or
+change runtime task behavior.
+
 Task Agent's native result schema explains that `task_id` identifies the
 existing Task being updated, while `target_task_id` and `identity_proposal`
 describe a merge between two distinct persisted Tasks. Scope/content updates
@@ -17,8 +42,9 @@ latest public Attempt ID set once per message key; the Attempt queue explicitly
 materializes its reused current-row projection once per SQL statement. These
 are equivalent read-plan changes with unchanged lifecycle, counts, filtering,
 ordering and external actions. Status-dependent History reads compute later
-terminal Attempt IDs as a materialized per-message maximum inside the status
-expression, preserving pruning for key-only pagination. Each chart uses one
+terminal Attempt IDs from one grouped maximum per channel, conversation and
+trigger. The status projection looks it up only when needed, so key-only
+pagination prunes it. Each chart uses one
 read snapshot and reuses its current-task/delivery reads for repeated failed
 message keys only within that request. Evidence is in
 `docs/console-query-performance.md`.
@@ -35,29 +61,24 @@ Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整�
 正文、附件、分页与状态信息及原始错误；线程使用 conversationId，单封使用 messageId，
 发送状态使用 internetMessageId。它们不发送邮件、不增加审核规则，也不开放 Audit 命令执行。
 
-Store18 publication readers select exact Store17 native delivery tables or
-Store18 finite action projections during the existing deploy window. Quality,
-deferral and scheduled recovery read the candidate's typed delivery facts;
-their predicates, logical result labels and recovery decisions are unchanged.
-The existing Store release router now selects the verified17→18 paired inverse.
-These integrations remain a development candidate. Real constructor copy,
-current-fact rollback, published-old-code reopen and native substitute execution
-have passed; CI and production acceptance remain pending.
+Store19 (`2026-10-13.5`) is published at5691f6c7, observed on2026-10-14
+with Email51 and121 physical noninternal tables. Its complete sixteen-type
+`actions` declaration matches the actual-no-Memory-FK source variant; physical
+`reply_attempts` and `memory_write_events` are absent. Native public IDs,
+allocation waters, adopted results and receipts remain in finite action
+projections. Existing delivery blockers, recovery predicates, result labels
+and receipt policy remain unchanged.
 
-Store18 delivery integration is an isolated development candidate, not a
-published runtime. Its fresh bootstrap and exact Store17 migration use fourteen
-finite `actions` types and retire physical `sent_replies` and
-`sent_reply_observers`. Sent public IDs and their native allocation watermark
-remain independent; sent `agent_run_id` is the existing scalar field, while
-observer run/task/delivery endpoints remain actual foreign keys. Current-fact
-inverse and published-old-code copy evidence are in the Phase5D validation.
-Store sent delivery writes, feedback/history reads, settlement checks and the
-Audit console sent reader now use the finite action projection. This is caller
-conversion in the development candidate. Recall timestamps are read after the
-ordinary writer lock is acquired, matching the source UPDATE. Integrated release
-acceptance is still pending. Validated nonempty external-key lookups retain a
-key seek through the finite sent index. This is not a production migration or
-the full10+1 goal.
+Phase5D's Store18 delivery publication and E's accepted copy/current-fact
+inverse/old-code/native-substitute proofs remain separately recorded. E's
+first normal deployment timed out without changes; a later independent
+deployment succeeded, and this task's second normal invocation observed that
+publication. `evals/database_redesign/phase5e_publication_status.v1.json`
+retains both receipts. Readonly quick_check passed and the single original
+runs-to-tasks FK violation is unchanged. Live UI/performance acceptance is
+still incomplete: Status eventually rendered but exposed degraded recovery
+health; Status/Attention/History request timeouts remain under investigation.
+This publication does not complete the full10+1 redesign.
 
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
 body-free TSV metadata with separate Root and Relative path columns. Joining
@@ -2141,7 +2162,7 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
-第五期C已通过PR77／46bfdbe0正常发布，生产Store17／Email51及126物理表读回通过；实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
+第五期C曾通过PR77／46bfdbe0正常发布，阶段验收时的Store17／Email51及126物理表读回通过；这是历史发布回执，后续已发布Store18。实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
 
 ### Calendar organizer source projection
 
@@ -2163,6 +2184,48 @@ retry an invalid `null` response through the recent-message fallback; valid but
 unrecognized object envelopes retain the existing fallback behavior. Read-only
 message commands make only the configured bounded retry for JSON `null`; if it
 persists, the typed failure remains visible to normal recovery and Attention.
+
+### Email action storage preparation (opt-in only)
+
+The isolated Email action storage factory accepts `include_email=True` only with
+the sixteen-type reply schema. It adds thirteen finite Email record types and
+generated projections for the 144 frozen source fields. Nine ordinary source
+ROWID families retain their signed locator in `legacy_key` and nullable public
+TEXT key in the payload; two AUTOINCREMENT families retain numeric public IDs;
+effects and retry requests retain two-component keys. Native generated columns,
+CHECKs, unique indexes, parent-key foreign keys, count triggers and immutable
+retry triggers enforce the source declarations. The Email option is disabled in
+all Store/Email constructors and runtime callers. The finite Email writer
+helpers now accept source-shaped inserts, updates and deletes: nine families
+locate by signed source ROWID, two use independent AUTOINCREMENT aliases, and
+two use projected composite keys. They evaluate original source defaults under
+the writer lock and return source identities. Isolated pure migration functions
+now move the exact frozen thirteen-table source into this opt-in declaration
+and reconstruct those tables from current typed facts. They preserve the nine
+source ROWID namespaces, two AUTOINCREMENT waters, existing sixteen action
+types and all thirteen external blockers. The caller owns the foreign-key-off
+transaction; no Store/Email constructor selects these functions. Actual
+published-predecessor binding, paired release and production acceptance remain
+pending. Preflight uses a schema-only SQLite rename/drop probe across MAIN and
+TEMP, refusing dependencies that would be rewritten or silently removed while
+leaving unrelated TEMP objects intact. The focused validation boundary is recorded in
+`docs/database-redesign-email-actions-validation.md`.
+Each generated Email source column returns NULL for all older action types and
+for Email kinds that lack that original field; its finite CASE reads only the
+record types owning the field. The operation-parent discriminator uses the
+approved `email_operation_parent_type` name.
+Email records also require the shared physical task/run/action reference columns
+to remain NULL. The fresh reply variant includes `memory_attempt_ref` in that
+check. Original Email relationships use their separately declared source-key
+foreign keys.
+
+The disabled follow-up/Todo-sync candidate also has paired pure conversion
+functions for the nine captured source families. Forward copies all existing
+fields to typed actions, maps the business send-attempt draft to its physical
+parent and retargets `business_legacy_links.work_update_id` to the physical
+work-update action. Inverse rebuilds literal old declarations from current
+facts and allocator waters. No constructor or published version selects this
+conversion; it is synthetic local preparation only.
 
 Recorded DingTalk delivery recovery (2026-10-14): startup reconciliation, explicit failed-task completion and protection against failed-run projection all honor the receipt verification state. A recorded receipt with verification.state=ambiguous or failed does not prove delivery and cannot restore done. Positive sent receipts and previously recorded legacy readback receipts keep their existing completion behavior.
 
@@ -2202,6 +2265,114 @@ Claude/Friday single-message bridges serialize the complete output schema as com
 Existing current-Project citation validation reports both the expected immutable WorkItem source_ref and the received reference when they differ. The existing repair path receives those known values. Validation conditions, result contract, repair budget, routing and permissions remain unchanged; no additional prompt rule is added. Verification is documented in docs/native-input-evidence-release-validation.md.
 
 
+### Unselected Email13 paired transaction preparation
+
+`app/action_email_schema_release.py` now provides a pure, unselected paired
+transaction protocol for the exact Store19 (`2026-10-13.5`)/Email51 source.
+Preparation captures both the Store value/timestamp and the complete Email
+version/timestamp ledger, thirteen-family and old sixteen-action declarations,
+native allocator metadata, and the existing FK findings in one read snapshot.
+The caller must explicitly supply a target pair; no future version is allocated
+and no active selector or constructor calls this module.
+
+Its local `publish()` converts current source facts and writes both supplied
+markers in the same transaction. Readback checks the complete twenty-nine-type
+actions declaration, absence of the retired thirteen tables, all thirteen
+translated external triggers, both markers, ledger and unchanged FK baseline.
+Rollback reconstructs the original declarations from current target facts and
+allocator waters, restoring the exact original Store timestamp and complete
+Email ledger. It never restores an old database or a backup of business rows.
+Exceptions before commit roll back DDL, both markers and business writes as one
+transaction. This is Task4A preparation only: current constructors, validators,
+DAO, Store19/Email51 markers and default sixteen-action plus thirteen-table
+layout remain selected. Genuine target default constructors, the paired
+subprocess, final coupled activation and Task5/6 acceptance remain open.
+
+
+### Email13 group4B partial DAO integration
+
+The unpublished Email candidate now reads the five plan/direct/attempt/retry/
+feedback families through their finite typed projections and writes through the
+accepted source-shaped helpers. The existing method APIs, original writer
+transactions, current-plan CAS, direct dependency ordering, explicit retry
+records and successful receipt selection remain unchanged. Direct scalar writes
+resolve the original source ROWID with the original status/start/count guards
+inside the caller's writer transaction; the physical `actions.id` is never used
+as a source identity. Attempt insertion returns its independent public
+AUTOINCREMENT ID, including continuity after a deleted high ID.
+
+The confined `ignore_plan_action_conflict` Email-operation helper option uses
+SQLite's exact `(email_action_plan_id,email_action_type)` partial unique conflict
+target. Only that duplicate is ignored; unrelated public-key, CHECK, NOT NULL
+and FK failures remain native errors. This does not broaden existing `ignore`
+behavior or change any declaration. The shared feedback reply-in-flight guard
+and direct-action unsubscribe-receipt dependency read use their existing finite
+projections; all remaining C/D writers are deferred.
+
+This is partial DAO WIP, not a separately runnable default runtime. The converted
+methods require an explicitly prepared Email29 database, while default Store19/
+Email51 constructors, validators and release selectors still select the old
+schema. Remaining unsubscribe/reply methods and mixed observability reads still
+require their planned conversion. Final constructor/validator/DAO/marker
+activation remains coupled, with Task5/6 acceptance separately open.
+
+
+### Email13 group4C partial unsubscribe DAO integration
+
+The unpublished candidate now also reads and writes the six unsubscribe
+families through their accepted finite actions projections and source-shaped
+writers. Claims retain the existing generation/lease and account snapshot
+checks; effects retain their original two-component public key; journal steps
+retain their independent source AUTOINCREMENT namespace. Continuation acceptance,
+failed-operation release, terminated-owner recovery, orphan release, explicit
+retry, journal repair, direct retirement, terminal receipt promotion and
+principal cancellation keep their original predicates, mutation order and
+transaction outcomes. The live lineage helpers and the two mixed observation/
+context reply-receipt reads use finite projections as required by these paths.
+Reply lifecycle writes remain group4D work.
+
+The confined `update_continuation_conflict` insert option expresses only the
+existing continuation public-key UPSERT. It changes effect digest, observation
+reference, controls and update time, preserving original creation time and
+structural source ROWID. Encoded SQLite scalar values are updated inside JSON
+without decode/re-serialization. Other native constraints still apply. Backfill
+validates the supplied URL before acquiring its writer transaction at the
+original conditional mutation point; a competing fill returns false and is
+preserved. No lifecycle, recovery, authorization or retention policy is added.
+
+This supersedes the C-specific deferrals in the historical group4B section.
+These methods still require an explicitly converted Email29 database. Default
+Store19/Email51 constructors, startup validators, migration selectors and action
+flags remain unchanged; their E/F conversion and final paired activation remain
+coupled. Group4C does not establish usable default runtime, Task5 external
+consumer integration, or Task6 native/provider/production acceptance.
+
+
+### Email13 group4D partial reply DAO integration
+
+The unpublished candidate now covers the remaining reply dispatch-claim and
+receipt DAO methods through the accepted finite projections and writers. All
+thirty source fields remain. The eight original mutations retain their existing
+writer transactions, owner/generation/lease predicates, current authorization,
+immutable dispatch binding, account snapshot behavior and native outgoing
+Message-ID uniqueness. A retryable claim may refresh its account snapshot and
+owner exactly as before; uncertain dispatches remain reconciliation-only.
+
+Receipt replay retains the original provider evidence comparison, original
+JSON-text CAS and one-way SMTP acceptance-ID enrichment. Receipt insertion or
+enrichment and claim completion remain one transaction, including rollback on
+owner mismatch or failure. Structural source ROWIDs remain distinct from public
+action identities and physical actions IDs. No helper interface, SMTP enablement,
+recovery, authorization or retry policy changes are included.
+
+This closes the D-specific deferrals in the preceding historical B/C sections
+for current EmailStore DAO SQL. It does not activate a default runtime: source
+metadata, historical/bootstrap dispatch, startup validators, fresh constructors,
+real target markers and coordinator/subprocess remain E/F work. The unsubscribe
+cancellation preview still invokes that deferred startup shape validation.
+External direct consumers remain Task5, and full-copy/native/provider/production
+acceptance remains Task6. Default Store19/Email51 and action flags are unchanged.
+
 History latest-task lookup publication666f4078 passed exact-tree full Quality
 and normal deployment on2026-10-14. Production PID31985 and healthz were read
 back; live History list/chart, type/status controls, pagination and an existing
@@ -2212,6 +2383,169 @@ not proof of all task execution or provider outcomes. See
 `docs/database-redesign-history-query-validation.md` for exact evidence.
 No schema or retention change is part of this History release.
 
+
+### Email current fresh-seed preparation, Task4E1 (unselected)
+
+The unpublished Email candidate factors the existing category conversion and
+model-promotion/initial-description-revision seed loops into private helpers.
+Both historical migration bodies preserve their prior behavior. A separate
+`EmailStore._seed_current_fresh_state` prepares seed facts after the neutral
+retained-table factory, under its caller's transaction. It reuses the existing
+category definitions, thresholds/config versions, promotion values
+0.95/0.95/20/500.0, UUID allocation and revision clock/snapshot helper.
+
+This entry point is currently unselected. F may invoke it only on the new-database
+creation branch; current reopen, verified Email51 migration and read paths must
+not invoke it to populate an existing empty configuration. It creates no schema,
+ledger or action objects, and adds no commit/savepoint/repair policy. Existing
+configured sets, promotion rows and existing category revision history remain
+intact at this helper boundary. E1 tests compare its new-database seed facts
+with genuine archived2773 default initialization through Email51. E2 validators
+and F constructors/locking/markers/coordinator remain pending; defaults are
+still Store19/Email51 and this partial candidate is not runtime-ready.
+
+
+### Email29 current validation preparation, Task4E2 (unpublished)
+
+The Email candidate's single current shape and durable validators now inspect
+29-kind actions and read all thirteen Email families through the accepted finite
+projections. Shape validation accepts either existing reply declaration variant
+by exact action-manifest comparison. Retained validation keeps the original16
+business-table requirements plus the ledger; the three optional historical
+traversal/operation/candidate tables have not become new startup requirements.
+The neutral factory's49 objects remain a separate structural contract/proof.
+Historical `_REQUIRED_*` maps and retained trigger keys remain intact for their
+existing factory/source consumers.
+
+Current shape checks retain19 native nonaction triggers and the exact13 translated
+account/message/classification blockers, preserving changed-value predicates,
+processing/dispatching status, owner names and errors. A finite missing-only
+installer shares the existing declarations with pure conversion and leaves the
+caller in charge of transactions. It never repairs or replaces an existing
+malformed object; the current shape validator refuses it. No blanket receipt
+immutability or account/message foreign key has been added.
+
+Durable policy outside the finite SELECT arguments is unchanged. Native SQL
+NULL allowances and application rules are checked per method: the original
+receipt row validator accepts a nullable receipt identity while the public
+receipt writer rejects NULL input; nullable feedback IDs are rejected by the
+original durable validator. Read validation does not write or commit. The public
+read-only unsubscribe cancellation preview now validates the explicit target
+shape and preserves its existing decision/no-replay checks.
+
+This remains a partial unpublished branch. Current validators target Email29;
+historical cached-plan/source DDL remain native, so the <=48 historical chain is
+not made compatible by an alternate validator. Default Store19/Email51 bootstrap
+and ordinary source constructors are not runnable target proofs. F must select
+the exact supported Store19/Email51 pair before ordinary initialization and
+explicitly refuse unsupported older sources before any mutation, then couple
+constructors/locking/markers/coordinator/default activation. E1 fresh seeds
+still have zero runtime callers. External Task5 and full-copy/native/publication
+acceptance remain separate gates.
+
+
+### Coupled Email29 candidate defaults, Task4F (unpublished)
+
+This local candidate supersedes the E1/E2 staging boundaries above: default
+AutoReplyStore now selects Store `2026-10-14.1` (program Store20), and EmailStore
+selects Email52 with the single29-kind actions schema. This is local candidate
+selection, not publication or a claim that the whole service can be deployed.
+
+The supported predecessor is exactly Store `2026-10-13.5`/Email51. The real
+database release coordinator selects one paired release before either standalone
+preparer. Ordinary target constructors refuse that pair read-only, before cache,
+WAL or schema changes, and repeat source selection under the path lock. Other
+older/newer/missing/mixed markers and genuine old Email-only databases are refused;
+there is no alternate legacy validator or constructor upgrade route.
+
+Fresh Store preserves its existing early bootstrap commits. Its final transaction
+creates the canonical30-column classification parent,29-kind actions and Store20
+marker together, validates the existing Store manifest and commits. Earlier or
+suffix failure may leave the same unversioned core that existing bootstrap rules
+refuse on retry. A completed Store-first state is supported. Fresh Email invokes
+the genuine public AutoReplyStore once outside Email's non-reentrant path lock,
+then creates the retained current nonaction schema, ledger, existing fresh seeds,
+13 translated blockers and Email52 marker in one transaction. Email failure rolls
+back to Store-first and can retry. Store never constructs EmailStore. Current
+reopen and51 migration do not seed existing empty configs/revision histories;
+known coherent-current Store repairs retain their existing route. Email current
+reopen also retains its existing missing `important_signals_json` provider-
+observation column repair before shape validation; this is not a new repair rule.
+
+Paired publication uses a real child process carrying the prepared marker/full
+ledger/declarations/FK binding through stdin, applies the same atomic protocol,
+then cold opens both genuine current default classes. Legal native BLOB marker
+and ledger timestamps use the existing scalar encoding and survive inverse with
+their original values/types. The inverse reconstructs current action facts,
+source identities/ROWIDs/allocator waters and exact source markers/ledger; it does
+not restore an old database snapshot. The source SQL NULL/application policy
+remains method-specific and unchanged.
+
+Task5A converts the active Store unsubscribe receipt/recovery reads, History
+(including the failed-only candidate path), queue/Attention, and deployment
+quiet read to finite source-shaped Email projections. History keeps the signed
+native source ROWID as `email-action:<rowid>`/`source_id`, independently of the
+nullable public action ID; failed Attention keeps current-plan and retry-window
+filters. Publication readers explicitly accept the exact Store20 action shape,
+including valid Store-first databases without an Email ledger. The Email quiet
+reader accepts only the exact Store19/Email51 source or Store20/Email52 target;
+runtime Email availability requires the initialized target pair. Existing audit,
+recovery, outbound and quality policies are unchanged.
+
+Task5A is a bounded local consumer conversion, not final Task5 acceptance.
+Remaining historical/current fixture adaptation, all selected console/worker
+tests and source-copy/native/CI/publication/live readback gates remain open.
+The whole branch is not deployable.
+
+
+### Email metadata refusal boundary, Task5B0 (unpublished)
+
+Current constructors preserve the original Email missing-metadata refusal instead
+of treating it as Store repair. A narrow read-only comparison derives Email's
+32 auxiliary objects from the same-variant29 manifest minus the16 manifest's
+object names, then compares complete canonical type/name/owner/SQL. Both reply
+variants have identical25 index and7 trigger metadata in this difference.
+Shared actions/public-ID metadata stays under the existing Store contract.
+
+Email performs only this comparison after pair selection and before invoking
+the genuine Store, reporting EmailPersistenceCorruption for missing/malformed
+Email auxiliaries. Normal Email construction still invokes Store once outside
+the Email flock. Store's original coherent-current repair permission additionally
+requires these Email objects to be intact, so its generic factory cannot silently
+repair them. The generic factory and existing cache are unchanged. Old Store
+index/route/feedback repairs and Email's existing provider signal-column repair
+remain supported; fresh/Store-first and paired migration behavior stay intact.
+This changes no data, authorization, recovery or business policy. Task5A finite
+readers remain unchanged; broader Task5/6/7 acceptance and deployment remain open.
+
+For the current Email29 candidate, the action-plan, action, attempt and receipt
+columns and the attempt parent key are generated or constrained by the shared
+`actions` table. A malformed one is therefore refused by the Store20 schema
+check that EmailStore invokes before its own validation, including when
+`validate_rows=False`. That path raises SQLite `IntegrityError` and the existing
+Email Web availability mapping reports `sqlite_integrity_error`; the old Email51
+constructor checked its separate native tables and reported
+`email_persistence_corruption`. Both remain unavailable, with no schema repair,
+automatic retry or change to audit, recovery or authorization policy.
+
+The current Store20/Email52 constructor selects the paired schema before
+Email's retained-table validation. A partial database with a malformed or
+future Email ledger therefore raises SQLite `IntegrityError` for an unsupported
+or mixed Store/Email source; a ledger missing its `version` column raises
+SQLite `OperationalError` for that column. The same paired refusal applies to
+an otherwise complete current pair whose Email ledger is advanced beyond52.
+These read-only refusals preserve schema, marker and business facts, schema
+cookie and database bytes. This diagnostic ordering follows the existing
+paired selector; it adds no repair or recovery path.
+
+For a complete Store20 database whose Email ledger is advanced beyond52, a
+local Email route registration can still construct its non-Email FastAPI routes
+and mark Email unavailable with `sqlite_integrity_error`. Constructing the
+whole Audit app first opens AutoReplyStore, so the paired selector refuses
+that unsupported pair before route registration. The older Email51 Audit-app
+isolation assertion is exercised against its genuine published source. Current
+Web API tests use finite Email action projections and typed writers for synthetic
+fixtures; this changes no runtime route, recovery or authorization behavior.
 
 Service context JSON blocks use compact serialization rather than indentation.
 Every original field, nested value, identifier and string whitespace/newline is

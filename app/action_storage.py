@@ -13,6 +13,20 @@ import math
 import sqlite3
 from string import ascii_lowercase, ascii_uppercase
 
+from app.action_followup_sync_definitions import (
+    SYNC_ACTION_PROJECTIONS as SYNC_ACTION_PROJECTIONS,
+    SYNC_DEFAULTS, SYNC_FIELDS, SYNC_TYPES_ORDER, sync_action_projection,
+    sync_schema_parts,
+)
+
+from app.action_email_definitions import (
+    EMAIL_ACTION_PROJECTIONS as EMAIL_ACTION_PROJECTIONS,
+    EMAIL_AUTOINCREMENT_TYPES, EMAIL_COMPOSITE_KEYS, EMAIL_DEFAULTS,
+    EMAIL_FIELDS, EMAIL_ROWID_TYPES, EMAIL_TYPES_ORDER,
+    email_action_projection as email_action_projection,
+    email_schema_parts,
+)
+
 
 _SCHEMA_NAME_CASE = str.maketrans(ascii_uppercase, ascii_lowercase)
 
@@ -263,7 +277,11 @@ def _reply_payload_check(fields):
     return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False):
+    if include_followup_sync and not include_email:
+        raise ValueError("follow-up/Todo action storage requires the Email29 scaffold")
+    if include_email and not include_reply:
+        raise ValueError("Email action storage requires the sixteen-type reply schema")
     if include_reply and reply_variant not in REPLY_VARIANTS:
         raise ValueError("reply storage requires one global source variant")
     if not include_reply and reply_variant is not None:
@@ -272,8 +290,16 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     include_postfix = include_postfix or include_delivery
     include_receipts = include_receipts or include_postfix
     kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else CANDIDATE_ACTION_TYPES
-    references = _references_for(kinds)
-    payload_fields = dict.fromkeys(c for kind in kinds if kind not in REPLY_ACTION_TYPES for c in PAYLOAD_FIELDS[kind] if c not in references and not (include_delivery and c == "channel"))
+    old_kinds = kinds
+    if include_email:
+        kinds += EMAIL_TYPES_ORDER
+        email_generated, email_checks, email_fks, email_indexes, email_triggers = email_schema_parts(_reply_value_check)
+    if include_followup_sync:
+        kinds += SYNC_TYPES_ORDER
+    references = _references_for(old_kinds)
+    if include_followup_sync:
+        sync_generated, sync_checks, sync_fks, sync_indexes, sync_triggers = sync_schema_parts(references, reply_variant)
+    payload_fields = dict.fromkeys(c for kind in old_kinds if kind not in REPLY_ACTION_TYPES for c in PAYLOAD_FIELDS[kind] if c not in references and not (include_delivery and c == "channel"))
     generated = []
     for column in payload_fields:
         expression = f"json_extract(payload_json,'$.{column}')"
@@ -316,15 +342,20 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
                         "and json_array_length(legacy_key)=2 and json_type(legacy_key,'$[0]')='integer' "
                         "and json_type(legacy_key,'$[1]')='integer' else 0 end")
         key_check = f"case when record_type='sent_reply_observers' then ({observer_key}) else ({key_check}) end"
+    if include_email:
+        email_composites = ",".join(repr(kind) for kind in EMAIL_COMPOSITE_KEYS)
+        key_check = f"case when record_type in ({email_composites}) then json_valid(legacy_key) else ({key_check}) end"
     table = (
         "create table actions (id integer primary key, record_type text not null check(record_type in ("
         + ",".join(repr(k) for k in kinds)
         + f")),legacy_key text not null check({key_check}),"
         + ",".join(f"{column} integer references {parent}(id)" for column, (parent, _) in references.items())
         + ("," + ",".join(reply_columns) if reply_columns else "")
+        + ("," + ",".join(email_generated) if include_email else "")
+        + ("," + ",".join(sync_generated) if include_followup_sync else "")
         + ",payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),"
         + ",".join(generated)
-        + "," + ",".join(_payload_check(kind, references) for kind in kinds if kind not in REPLY_ACTION_TYPES)
+        + "," + ",".join(_payload_check(kind, references) for kind in old_kinds if kind not in REPLY_ACTION_TYPES)
         + "," + ",".join(f"check(record_type<>'{kind}' or {field} in ({','.join(repr(v) for v in options)}))"
                           for kind, (field, options) in ENUMS.items() if kind in kinds)
     )
@@ -347,14 +378,26 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         memory_fields = [field for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id" or reply_variant == "actual_no_memory_fk"]
         table += ",check(record_type<>'memory_write_events' or (" + _reply_payload_check(memory_fields) + "))"
         table += ",check(record_type<>'memory_write_events' or (" + " and ".join([f"{memory_parent} is not null"] + [f"memory_{field} is not null" for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id"]) + "))"
+    if include_email:
+        table += "," + ",".join((*email_checks, *email_fks))
+        unused_refs = tuple(references) + (("memory_attempt_ref",) if reply_variant == "fresh_memory_fk" else ())
+        email_scope = ",".join(repr(kind) for kind in EMAIL_TYPES_ORDER)
+        table += ",check(record_type not in (" + email_scope + ") or (" + " and ".join(
+            f"{field} is null" for field in unused_refs
+        ) + "))"
+    if include_followup_sync:
+        table += "," + ",".join((*sync_checks, *sync_fks))
     table += ")"
     numeric_scope = " where record_type<>'external_action_results'" if include_receipts else ""
     if include_postfix:
         numeric_scope += f" and record_type not in ({postfix_scope})"
     if include_delivery:
         numeric_scope += " and record_type<>'sent_reply_observers'"
+    if include_email:
+        numeric_scope += " and record_type not in (" + ",".join(repr(kind) for kind in EMAIL_COMPOSITE_KEYS) + ")"
+    numeric_columns = "record_type,cast(legacy_key as integer)" if include_email else "cast(legacy_key as integer),record_type"
     indexes = (
-        "create unique index idx_actions_public_id on actions(cast(legacy_key as integer),record_type)" + numeric_scope,
+        f"create unique index idx_actions_public_id on actions({numeric_columns})" + numeric_scope,
         "create unique index idx_actions_consumer_run on actions(consumer_run_id) where record_type='review_candidates'",
         "create index idx_actions_candidates_task on actions(task_id,execution_generation,cast(legacy_key as integer)) where record_type='review_candidates'",
         "create unique index idx_actions_audit_run on actions(audit_run_id) where record_type='candidate_reviews'",
@@ -398,6 +441,10 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
             f"create index idx_actions_memory_attempt on actions({memory_parent},cast(legacy_key as integer)) where record_type='memory_write_events'",
             f"create index idx_actions_memory_status on actions(memory_status,{'memory_updated_at' if reply_variant == 'fresh_memory_fk' else 'cast(legacy_key as integer)'}) where record_type='memory_write_events'",
         )
+    if include_email:
+        indexes += tuple(email_indexes)
+    if include_followup_sync:
+        indexes += tuple(sync_indexes)
     triggers = (
         "create trigger trg_actions_record_type_immutable before update of record_type on actions when new.record_type<>old.record_type begin select raise(abort,'action record type is immutable'); end",
         "create trigger trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
@@ -441,6 +488,20 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
                 "create trigger trg_actions_memory_attempt_update before update of memory_attempt_ref on actions when new.record_type='memory_write_events' and new.memory_attempt_ref is not null and not exists(select 1 from actions p where p.id=new.memory_attempt_ref and p.record_type='reply_attempts') begin select raise(abort,'memory attempt type mismatch'); end",
                 "create trigger trg_actions_reply_public_reference_update before update of legacy_key on actions when old.record_type='reply_attempts' and new.legacy_key<>old.legacy_key and exists(select 1 from actions c where c.record_type='memory_write_events' and c.memory_attempt_ref=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
             )
+    if include_email:
+        triggers += tuple(email_triggers)
+        for kind in EMAIL_AUTOINCREMENT_TYPES:
+            name = f"actions:{kind}"
+            triggers += (f"create trigger trg_actions_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
+                         f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
+                         f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
+    if include_followup_sync:
+        triggers += tuple(sync_triggers)
+        for kind in SYNC_TYPES_ORDER:
+            name = f"actions:{kind}"
+            triggers += (f"create trigger trg_actions_sync_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
+                         f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
+                         f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
     return table, indexes, triggers
 
 
@@ -517,13 +578,14 @@ REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL = """
 """
 
 
-def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=False) -> str:
+def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=False,
+                            include_email=False) -> str:
     """Select one complete canonical E declaration, including its FK and indexes."""
     matches = [
         variant for variant in REPLY_VARIANTS
         if action_schema_is_current(
             db, allow_missing_objects=allow_missing_objects,
-            include_reply=True, reply_variant=variant,
+            include_reply=True, reply_variant=variant, include_email=include_email,
         )
     ]
     if len(matches) != 1:
@@ -531,9 +593,10 @@ def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=Fal
     return matches[0]
 
 
-def reply_schema_is_current(db: sqlite3.Connection) -> bool:
-    """Recognize either complete Store19 declaration, without altering the DB."""
-    return any(action_schema_is_current(db, include_reply=True, reply_variant=variant)
+def reply_schema_is_current(db: sqlite3.Connection, *, include_email=False) -> bool:
+    """Recognize the selected complete reply declaration without altering the DB."""
+    return any(action_schema_is_current(db, include_reply=True, reply_variant=variant,
+                                        include_email=include_email)
                for variant in REPLY_VARIANTS)
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
@@ -551,24 +614,24 @@ SENT_REPLY_SQL = ACTION_PROJECTIONS["sent_replies"]
 SENT_REPLY_OBSERVER_SQL = ACTION_PROJECTIONS["sent_reply_observers"]
 
 
-def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None) -> None:
+def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False) -> None:
     """Create the declared schema, or repair only its missing auxiliary objects."""
     existing = db.execute("select 1 from sqlite_master where name='actions' collate nocase").fetchone()
     if existing:
-        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery, include_reply=include_reply, reply_variant=reply_variant):
+        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery, include_reply=include_reply, reply_variant=reply_variant, include_email=include_email, include_followup_sync=include_followup_sync):
             raise ValueError("unsupported current actions schema declaration")
         names = {sqlite_schema_name(obj["name"]) for obj in _objects(db, "actions")}
-        for obj in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant):
+        for obj in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync):
             if sqlite_schema_name(obj["name"]) not in names:
                 db.execute(obj["sql"])
     else:
         if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in ACTION_TYPES):
             capture_action_schema(db)
-        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant))
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant)
+        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync))
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync)
 
 
-def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
+def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False):
     if (include_receipts or include_postfix or include_delivery or include_reply) and not db.execute("select 1 from sqlite_master where type='table' and name='sqlite_sequence'").fetchone():
         # SQLite creates its native sequence metadata on the first declaration
         # of an AUTOINCREMENT table. The initializer has no rows and is removed;
@@ -578,24 +641,43 @@ def _create_action_objects(db, include_receipts=False, include_postfix=False, in
             name += "_"
         db.execute(f'create table "{name}"(id integer primary key autoincrement)')
         db.execute(f'drop table "{name}"')
-    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant)
+    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync)
     for sql in (table, *indexes, *triggers):
         db.execute(sql)
 
 
-@lru_cache(maxsize=12)
-def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None):
+@lru_cache(maxsize=16)
+def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False):
     with closing(sqlite3.connect(":memory:")) as db:
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant)
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync)
         return _objects(db, "actions")
 
 
-def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None) -> bool:
+def email_action_auxiliary_objects_are_current(db: sqlite3.Connection, *, reply_variant: str) -> bool:
+    """Email-only metadata is required, outside the Store's auxiliary repairs."""
+    old_names = {
+        sqlite_schema_name(obj["name"])
+        for obj in _current_objects(include_reply=True, reply_variant=reply_variant)
+    }
+    expected = {
+        sqlite_schema_name(obj["name"]): obj
+        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, include_email=True)
+        if sqlite_schema_name(obj["name"]) not in old_names
+    }
+    actual = {sqlite_schema_name(obj["name"]): obj for obj in _objects(db, "actions")}
+    return all(actual.get(name) == obj for name, obj in expected.items())
+
+
+def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False) -> bool:
     kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
+    if include_email:
+        kinds += EMAIL_TYPES_ORDER
+    if include_followup_sync:
+        kinds += SYNC_TYPES_ORDER
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in kinds):
         return False
     actual = {sqlite_schema_name(o["name"]): o for o in _objects(db, "actions")}
-    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant)}
+    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync)}
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase and tbl_name<>'actions' collate nocase", (name,)).fetchone() for name in expected):
         return False
     return not (actual.keys() - expected.keys()) and all(
@@ -605,7 +687,7 @@ def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=Fa
 
 
 def _require_kind(kind):
-    if kind not in SOURCE_COLUMNS and kind not in REPLY_ACTION_TYPES:
+    if kind not in SOURCE_COLUMNS and kind not in REPLY_ACTION_TYPES and kind not in EMAIL_TYPES_ORDER:
         raise ValueError("unknown action record type")
 
 
@@ -661,6 +743,10 @@ def _parent_id(db, field, public_id):
 
 def _check_fields(kind, values):
     _require_kind(kind)
+    if kind in EMAIL_TYPES_ORDER:
+        if set(values) - set(EMAIL_FIELDS[kind]):
+            raise ValueError(f"unknown {kind} source fields")
+        return
     if kind in REPLY_ACTION_TYPES:
         allowed = set(_REPLY_FIELDS[kind]) | {"id"}
         if kind == "memory_write_events":
@@ -684,11 +770,14 @@ class ActionWriteResult:
 
 
 def _autoincrement_high_water(db, kind):
-    name = REPLY_SEQUENCE_NAMES[kind] if kind in REPLY_ACTION_TYPES else DELIVERY_SEQUENCE_NAME if kind == "sent_replies" else ACTION_SEQUENCE_NAMES[kind]
+    name = (f"actions:{kind}" if kind in EMAIL_AUTOINCREMENT_TYPES or kind in SYNC_TYPES_ORDER else
+            REPLY_SEQUENCE_NAMES[kind] if kind in REPLY_ACTION_TYPES else
+            DELIVERY_SEQUENCE_NAME if kind == "sent_replies" else ACTION_SEQUENCE_NAMES[kind])
     rows = db.execute("select seq from sqlite_sequence where name=?", (name,)).fetchall()
     if len(rows) > 1 or any(type(row[0]) is not int or row[0] < 0 for row in rows):
         raise ValueError(f"invalid {kind} allocator metadata")
-    maximum = db.execute("select max(cast(legacy_key as integer)) from actions where record_type=?", (kind,)).fetchone()[0]
+    maximum = (_email_max_id(db, kind) if kind in EMAIL_AUTOINCREMENT_TYPES or kind in SYNC_TYPES_ORDER else
+               db.execute("select max(cast(legacy_key as integer)) from actions where record_type=?", (kind,)).fetchone()[0])
     return max(rows[0][0] if rows else 0, maximum or 0)
 
 
@@ -777,6 +866,320 @@ def _encoded_sqlite_value(value):
 def _reply_payload(values):
     return json.dumps({field: _encoded_sqlite_value(value) for field, value in values.items()},
                       ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+_EMAIL_ROWID_UNSET = object()
+_EMAIL_NUMERIC_SCOPE = (
+    "record_type<>'external_action_results' "
+    f"and record_type not in ({_POSTFIX_TYPES_SQL}) "
+    "and record_type<>'sent_reply_observers' "
+    "and record_type not in (" + ",".join(repr(item) for item in EMAIL_COMPOSITE_KEYS) + ")"
+)
+
+
+def _email_max_id(db, kind):
+    # Match the existing numeric public-ID index's partial predicate so SQLite
+    # can seek its last entry for this source family instead of scanning it.
+    return db.execute(
+        "select max(cast(legacy_key as integer)) from actions where record_type=? and "
+        + _EMAIL_NUMERIC_SCOPE, (kind,),
+    ).fetchone()[0]
+
+
+def _email_lock(db, bound=()):
+    # Bind first, then acquire SQLite's writer lock before reading a locator or
+    # payload. The no-row UPDATE preserves the caller's transaction boundary.
+    db.execute("update sqlite_sequence set seq=seq where 0" + " and ? is null" * len(bound), bound)
+
+
+def _email_owned(db):
+    return not db.in_transaction and (db.isolation_level is None or getattr(db, "autocommit", None) is True)
+
+
+def _email_unit(db, name, operation):
+    owned = _email_owned(db)
+    if owned:
+        db.execute(f"savepoint {name}")
+    try:
+        result = operation()
+    except BaseException:
+        if owned and db.in_transaction:
+            db.execute(f"rollback to {name}")
+            db.execute(f"release {name}")
+        raise
+    if owned:
+        db.execute(f"release {name}")
+    return result
+
+
+def _email_payload(db, kind, values):
+    data = {}
+    for field in EMAIL_FIELDS[kind]:
+        if (field == "id" and kind in EMAIL_AUTOINCREMENT_TYPES) or field in EMAIL_COMPOSITE_KEYS.get(kind, ()):
+            continue
+        if field in values:
+            data[field] = values[field]
+        else:
+            default = EMAIL_DEFAULTS[kind].get(field)
+            data[field] = db.execute("select " + default).fetchone()[0] if default is not None else None
+    return _reply_payload(data)
+
+
+def _email_rowid_next(db, kind):
+    maximum = _email_max_id(db, kind)
+    if maximum == 2**63 - 1:
+        with closing(sqlite3.connect(":memory:")) as allocator:
+            allocator.execute("create table ids(id integer primary key)")
+            allocator.executemany("insert into ids values(?)", db.execute(
+                "select cast(legacy_key as integer) from actions where record_type=?", (kind,)
+            ))
+            return allocator.execute("insert into ids default values").lastrowid
+    return (maximum or 0) + 1
+
+
+def _email_auto_next(db, kind):
+    high = _autoincrement_high_water(db, kind)
+    if high == 2**63 - 1:
+        if db.in_transaction:
+            db.execute("rollback")
+        _raise_autoincrement_full()
+    return high + 1
+
+
+def _email_identity(kind, identity):
+    if kind in EMAIL_COMPOSITE_KEYS:
+        if not isinstance(identity, tuple) or len(identity) != 2:
+            raise ValueError("Email composite identity requires two components")
+        fields = EMAIL_COMPOSITE_KEYS[kind]
+        return "record_type=? and " + " and ".join(f"email_{field}=?" for field in fields), (kind, *identity)
+    return "record_type=? and " + _EMAIL_NUMERIC_SCOPE + " and cast(legacy_key as integer)=?", (kind, identity)
+
+
+def _insert_email_action(db, kind, values, *, source_rowid=_EMAIL_ROWID_UNSET, ignore=False,
+                         ignore_plan_action_conflict=False, update_continuation_conflict=False):
+    payload = _email_payload(db, kind, values)
+    if kind in EMAIL_ROWID_TYPES:
+        identity = _email_rowid_next(db, kind) if source_rowid is _EMAIL_ROWID_UNSET or _source_bound_null(source_rowid) else _native_integer_primary_key(source_rowid)
+    elif kind in EMAIL_AUTOINCREMENT_TYPES:
+        identity = _email_auto_next(db, kind) if _source_bound_null(values.get("id")) else _native_integer_primary_key(values["id"])
+    else:
+        identity = tuple(values.get(field) for field in EMAIL_COMPOSITE_KEYS[kind])
+    key = (json.dumps([_encoded_sqlite_value(value) for value in identity], ensure_ascii=False,
+                      allow_nan=False, separators=(",", ":")) if kind in EMAIL_COMPOSITE_KEYS else str(identity))
+    returning = (",".join("email_" + field for field in EMAIL_COMPOSITE_KEYS[kind])
+                 if kind in EMAIL_COMPOSITE_KEYS else "legacy_key")
+    conflict = (" on conflict(email_action_plan_id,email_action_type) "
+                "where record_type='email_actions' do nothing" if ignore_plan_action_conflict else "")
+    if update_continuation_conflict:
+        conflict = (
+            " on conflict(record_type,email_public_key) do update set payload_json=json_set(payload_json,"
+            "'$.effect_digest',json_extract(excluded.payload_json,'$.effect_digest'),"
+            "'$.observation_reference',json_extract(excluded.payload_json,'$.observation_reference'),"
+            "'$.controls_json',json_extract(excluded.payload_json,'$.controls_json'),"
+            "'$.updated_at',json_extract(excluded.payload_json,'$.updated_at'))"
+        )
+    cursor = db.execute(
+        f"insert {'or ignore ' if ignore else ''}into actions(record_type,legacy_key,payload_json) values(?,?,?){conflict} returning {returning}",
+        (kind, key, payload),
+    )
+    row = cursor.fetchone()
+    cursor.fetchall()
+    result_identity = (int(row[0]) if update_continuation_conflict and row else identity)
+    return ActionWriteResult((tuple(row) if kind in EMAIL_COMPOSITE_KEYS else result_identity) if row else None,
+                             cursor.rowcount)
+
+
+def insert_email_action(db: sqlite3.Connection, kind: str, values: dict, *, source_rowid=None, ignore=False,
+                        ignore_plan_action_conflict=False, update_continuation_conflict=False) -> ActionWriteResult:
+    if kind not in EMAIL_ROWID_TYPES:
+        raise ValueError("source ROWID is exposed only for the nine rowid families")
+    if ignore_plan_action_conflict and (kind != "email_actions" or ignore):
+        raise ValueError("plan/type conflict handling is only for an Email operation insert")
+    if update_continuation_conflict and (kind != "email_unsubscribe_continuations" or ignore or ignore_plan_action_conflict):
+        raise ValueError("continuation conflict handling is only for an Email continuation insert")
+    _check_fields(kind, values)
+    def operation():
+        _email_lock(db, (*values.values(), source_rowid))
+        return _insert_email_action(db, kind, values, source_rowid=source_rowid, ignore=ignore,
+                                    ignore_plan_action_conflict=ignore_plan_action_conflict,
+                                    update_continuation_conflict=update_continuation_conflict)
+    return _email_unit(db, "action_email_insert", operation)
+
+
+def _update_email_action(db, kind, identity, values, *, new_source_rowid=_EMAIL_ROWID_UNSET,
+                         where_sql="", parameters=()):
+    if not values and new_source_rowid is _EMAIL_ROWID_UNSET:
+        raise ValueError("action update requires fields")
+    predicate, identity_args = _email_identity(kind, identity)
+    bound = (*values.values(), *identity_args, *parameters)
+    if new_source_rowid is not _EMAIL_ROWID_UNSET:
+        bound += (new_source_rowid,)
+    _email_lock(db, bound)
+    if where_sql:
+        projection = email_action_projection(kind, include_rowid=kind in EMAIL_ROWID_TYPES)
+        predicate += " and exists(select 1 from (" + projection + ") where " + " and ".join(
+            f"{field}=?" for field in (EMAIL_COMPOSITE_KEYS[kind] if kind in EMAIL_COMPOSITE_KEYS else
+                                       ("rowid",) if kind in EMAIL_ROWID_TYPES else ("id",))
+        ) + f" and ({where_sql}))"
+        projected_identity = identity if kind in EMAIL_COMPOSITE_KEYS else (identity,)
+        identity_args += (*projected_identity, *parameters)
+    existing = db.execute("select payload_json from actions where " + predicate, identity_args).fetchone()
+    if existing is None:
+        return db.execute("update actions set legacy_key=legacy_key where 0")
+    assignments, args, paths = [], [], []
+    if new_source_rowid is not _EMAIL_ROWID_UNSET:
+        assignments.append("legacy_key=?")
+        args.append(str(_native_integer_primary_key(new_source_rowid, update=True)))
+    if kind in EMAIL_AUTOINCREMENT_TYPES and "id" in values:
+        assignments.append("legacy_key=?")
+        args.append(str(_native_integer_primary_key(values["id"], update=True)))
+    if kind in EMAIL_COMPOSITE_KEYS and any(field in values for field in EMAIL_COMPOSITE_KEYS[kind]):
+        current = db.execute("select " + ",".join(f"email_{field}" for field in EMAIL_COMPOSITE_KEYS[kind]) +
+                             " from actions where " + _email_identity(kind, identity)[0],
+                             _email_identity(kind, identity)[1]).fetchone()
+        pair = tuple(values.get(field, current[index]) for index, field in enumerate(EMAIL_COMPOSITE_KEYS[kind]))
+        assignments.append("legacy_key=?")
+        args.append(json.dumps([_encoded_sqlite_value(value) for value in pair], ensure_ascii=False,
+                               allow_nan=False, separators=(",", ":")))
+    for field, value in values.items():
+        if (field == "id" and kind in EMAIL_AUTOINCREMENT_TYPES) or field in EMAIL_COMPOSITE_KEYS.get(kind, ()):
+            continue
+        paths.extend(("$." + field, json.dumps(_encoded_sqlite_value(value), ensure_ascii=False,
+                                               allow_nan=False, separators=(",", ":"))))
+    if paths:
+        assignments.append("payload_json=json_set(payload_json," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")")
+        args.extend(paths)
+    args.extend(identity_args)
+    return db.execute("update actions set " + ",".join(assignments) + " where " + predicate, args)
+
+
+def update_email_action(db: sqlite3.Connection, kind: str, source_rowid, values: dict, *,
+                        new_source_rowid=_EMAIL_ROWID_UNSET) -> sqlite3.Cursor:
+    if kind not in EMAIL_ROWID_TYPES:
+        raise ValueError("source ROWID is exposed only for the nine rowid families")
+    _check_fields(kind, values)
+    return _email_unit(db, "action_email_update", lambda: _update_email_action(
+        db, kind, source_rowid, values, new_source_rowid=new_source_rowid))
+
+
+def delete_email_action(db: sqlite3.Connection, kind: str, source_rowid) -> sqlite3.Cursor:
+    if kind not in EMAIL_ROWID_TYPES:
+        raise ValueError("source ROWID is exposed only for the nine rowid families")
+    def operation():
+        _email_lock(db, (source_rowid,))
+        predicate, args = _email_identity(kind, source_rowid)
+        return db.execute("delete from actions where " + predicate, args)
+    return _email_unit(db, "action_email_delete", operation)
+
+
+def _sync_fields(kind, values):
+    if kind not in SYNC_TYPES_ORDER:
+        raise ValueError(f"unsupported follow-up/Todo kind: {kind}")
+    if set(values) - set(SYNC_FIELDS[kind]):
+        raise ValueError(f"unknown {kind} source fields")
+
+
+def _sync_variant(db):
+    return "actual" if _reply_variant_for(db) == "actual_no_memory_fk" else "fresh_candidate"
+
+
+def _sync_payload(db, kind, values):
+    defaults = SYNC_DEFAULTS[_sync_variant(db)][kind]
+    missing = tuple(field for field in SYNC_FIELDS[kind] if field in defaults and field not in values)
+    evaluated = (dict(zip(missing, db.execute("select " + ",".join(defaults[field] for field in missing)).fetchone(), strict=True))
+                 if missing else {})
+    return _reply_payload({
+        field: values[field] if field in values else evaluated.get(field)
+        for field in SYNC_FIELDS[kind]
+        if field != "id" and not (kind == "business_task_follow_up_send_attempts" and field == "draft_id")
+    })
+
+
+def _sync_parent(db, value):
+    if _source_bound_null(value):
+        return None
+    row = db.execute(
+        "select id from actions where record_type='business_task_follow_ups' "
+        "and cast(legacy_key as integer)=?", (value,),
+    ).fetchone()
+    # A BLOB cannot identify SQLite's integer rowid. Keep a non-NULL source
+    # reference non-NULL so native CHECK/IGNORE runs before the FK failure.
+    return row[0] if row else b""
+
+
+def insert_sync_action(db: sqlite3.Connection, kind: str, values: dict, *, ignore=False) -> ActionWriteResult:
+    """Insert one source-shaped row into the disabled follow-up/Todo layout."""
+    _sync_fields(kind, values)
+
+    def operation():
+        _email_lock(db, tuple(values.values()))
+        payload = _sync_payload(db, kind, values)
+        public_id = (_email_auto_next(db, kind) if _source_bound_null(values.get("id"))
+                     else _native_integer_primary_key(values["id"]))
+        columns = ["record_type", "legacy_key", "payload_json"]
+        arguments = [kind, str(public_id), payload]
+        if kind == "business_task_follow_up_send_attempts":
+            columns.append("sync_draft_action_id")
+            arguments.append(_sync_parent(db, values.get("draft_id")))
+        cursor = db.execute(
+            f"insert {'or ignore ' if ignore else ''}into actions({','.join(columns)}) "
+            f"values({','.join('?' for _ in arguments)}) returning cast(legacy_key as integer)", arguments,
+        )
+        row = cursor.fetchone()
+        cursor.fetchall()
+        return ActionWriteResult(row[0] if row else None, cursor.rowcount)
+
+    return _email_unit(db, "action_sync_insert", operation)
+
+
+def update_sync_action(db: sqlite3.Connection, kind: str, public_id, values: dict, *,
+                       where_sql="", parameters=()) -> sqlite3.Cursor:
+    """Update literal source fields, optionally guarded by a projected CAS."""
+    _sync_fields(kind, values)
+    if not values:
+        raise ValueError("action update requires fields")
+
+    def operation():
+        _email_lock(db, (*values.values(), public_id, *parameters))
+        predicate = "record_type=? and " + _EMAIL_NUMERIC_SCOPE + " and cast(legacy_key as integer)=?"
+        identity_args = [kind, public_id]
+        if where_sql:
+            projection = sync_action_projection(kind, source_variant=_sync_variant(db))
+            predicate += (" and cast(legacy_key as integer) in "
+                          f"(select id from ({projection}) where id=? and ({where_sql}))")
+            identity_args.extend((public_id, *parameters))
+        if db.execute("select 1 from actions where " + predicate, identity_args).fetchone() is None:
+            return db.execute("update actions set legacy_key=legacy_key where 0")
+        assignments, arguments, paths = [], [], []
+        if "id" in values:
+            assignments.append("legacy_key=?")
+            arguments.append(str(_native_integer_primary_key(values["id"], update=True)))
+        if kind == "business_task_follow_up_send_attempts" and "draft_id" in values:
+            assignments.append("sync_draft_action_id=?")
+            arguments.append(_sync_parent(db, values["draft_id"]))
+        for field, value in values.items():
+            if field == "id" or kind == "business_task_follow_up_send_attempts" and field == "draft_id":
+                continue
+            paths.extend(("$." + field, json.dumps(_encoded_sqlite_value(value), ensure_ascii=False,
+                                                   allow_nan=False, separators=(",", ":"))))
+        if paths:
+            assignments.append("payload_json=json_set(payload_json," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")")
+            arguments.extend(paths)
+        return db.execute("update actions set " + ",".join(assignments) + " where " + predicate,
+                          (*arguments, *identity_args))
+
+    return _email_unit(db, "action_sync_update", operation)
+
+
+def delete_sync_action(db: sqlite3.Connection, kind: str, public_id) -> sqlite3.Cursor:
+    _sync_fields(kind, {})
+
+    def operation():
+        _email_lock(db, (public_id,))
+        return db.execute("delete from actions where record_type=? and " + _EMAIL_NUMERIC_SCOPE +
+                          " and cast(legacy_key as integer)=?", (kind, public_id))
+
+    return _email_unit(db, "action_sync_delete", operation)
 
 
 def _insert_reply_action(db, kind, values, *, ignore=False):
@@ -879,6 +1282,13 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
 def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False) -> ActionWriteResult:
     """Allocate automatic receipt IDs under SQLite's writer lock."""
     _check_fields(record_type, values)
+    if record_type in EMAIL_TYPES_ORDER:
+        if record_type in EMAIL_ROWID_TYPES:
+            raise ValueError("Email ROWID family requires insert_email_action")
+        def operation():
+            _email_lock(db, tuple(values.values()))
+            return _insert_email_action(db, record_type, values, ignore=ignore)
+        return _email_unit(db, "action_email_insert", operation)
     automatic = ((record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies") and values.get("id") is None
                  or record_type in REPLY_ACTION_TYPES and _reply_auto_id(values))
     locked = automatic or (record_type in REPLY_ACTION_TYPES and (ignore or record_type == "memory_write_events"
@@ -964,6 +1374,11 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
 def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIdentity, values: dict, *, where_sql: str = "", parameters=()) -> sqlite3.Cursor:
     """Update explicit source fields; an optional predicate uses the projection."""
     _check_fields(record_type, values)
+    if record_type in EMAIL_TYPES_ORDER:
+        if record_type in EMAIL_ROWID_TYPES:
+            raise ValueError("Email ROWID family requires update_email_action")
+        return _email_unit(db, "action_email_update", lambda: _update_email_action(
+            db, record_type, public_id, values, where_sql=where_sql, parameters=parameters))
     if record_type in REPLY_ACTION_TYPES:
         owned = not db.in_transaction and (
             db.isolation_level is None or getattr(db, "autocommit", None) is True
@@ -1024,6 +1439,14 @@ def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIde
 
 def delete_action(db: sqlite3.Connection, record_type: str, public_id: ActionIdentity) -> sqlite3.Cursor:
     _require_kind(record_type)
+    if record_type in EMAIL_TYPES_ORDER:
+        if record_type in EMAIL_ROWID_TYPES:
+            raise ValueError("Email ROWID family requires delete_email_action")
+        def operation():
+            predicate, args = _email_identity(record_type, public_id)
+            _email_lock(db, args)
+            return db.execute("delete from actions where " + predicate, args)
+        return _email_unit(db, "action_email_delete", operation)
     return db.execute(f"delete from actions where {_identity_predicate(record_type)}", _identity_arguments(record_type, public_id))
 
 
@@ -1033,7 +1456,7 @@ def _no_inbound(db, target_tables):
         if sqlite_schema_name(table) in target_names:
             continue
         quoted = table.replace('"', '""')
-        if any(sqlite_schema_name(fk[2]) in target_names for fk in db.execute(f'pragma foreign_key_list("{quoted}")')):
+        if any(sqlite_schema_name(fk[2]) in target_names for fk in db.execute(f'pragma main.foreign_key_list("{quoted}")')):
             raise ValueError(f"unsupported inbound action source reference from {table}")
 
 

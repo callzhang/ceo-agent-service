@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from app.action_storage import update_action, update_email_action
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -17,7 +18,13 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     build_versioned_email_action_plan,
 )
-from app.email_store import EmailStore, email_action_identity
+from app.email_store import (
+    EMAIL_UNSUBSCRIBE_EFFECT_SQL,
+    EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL,
+    EMAIL_UNSUBSCRIBE_STEP_SQL,
+    EmailStore,
+    email_action_identity,
+)
 from app.email_task_adapter import email_conversation_id
 from app.email_unsubscribe import (
     EmailUnsubscribeEffect,
@@ -498,10 +505,14 @@ def test_an_old_receipt_gets_its_address_back_from_the_link_it_was_earned_agains
     )
     operation.execute(task.id)
     with email_store._connect() as db:
-        db.execute(
-            "update email_unsubscribe_receipts set entry_url='' where action_identity=?",
+        rows = db.execute(
+            f"select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?",
             (ACTION_IDENTITY,),
-        )
+        ).fetchall()
+        for (source_rowid,) in rows:
+            update_email_action(
+                db, "email_unsubscribe_receipts", source_rowid, {"entry_url": ""}
+            )
 
     assert email_store.backfill_email_unsubscribe_entry_url(ACTION_IDENTITY, PRIVATE_URL)
     receipt = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
@@ -617,7 +628,7 @@ def test_an_explicit_retry_promotes_a_previous_unreliable_entry_skip(
     # row, while a retry can perform several browser operations.
     with email_store._connect() as db:
         row = db.execute(
-            "select previous_effect_digest from email_unsubscribe_effects "
+            f"select previous_effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=? and effect_digest=?",
             (ACTION_IDENTITY, current["effect_digest"]),
         ).fetchone()
@@ -810,12 +821,12 @@ def _journal_prefix_violations(store) -> list[tuple]:
             (r["action_identity"], r["effect_digest"]): _json.loads(r["operations_json"])
             for r in db.execute(
                 "select action_identity, effect_digest, operations_json "
-                "from email_unsubscribe_effects"
+                f"from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL})"
             )
         }
         bad = []
         for row in db.execute(
-            "select * from email_unsubscribe_steps order by action_identity, sequence"
+            f"select * from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) order by action_identity, sequence"
         ):
             ops = effects.get((row["action_identity"], row["effect_digest"]))
             if ops is None:
@@ -887,7 +898,7 @@ def test_the_effect_records_every_operation_the_run_performed(
 
     with email_store._connect() as db:
         rows = db.execute(
-            "select operations_json from email_unsubscribe_effects "
+            f"select operations_json from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=?",
             (ACTION_IDENTITY,),
         ).fetchall()
@@ -924,15 +935,16 @@ def test_an_effect_that_underdeclares_its_journal_can_be_repaired(
     # operation the broken code declared, keeping its digest.
     with email_store._connect() as db:
         row = db.execute(
-            "select effect_digest, operations_json from email_unsubscribe_effects "
+            f"select effect_digest, operations_json from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=?",
             (ACTION_IDENTITY,),
         ).fetchone()
         shrunk = json.dumps(json.loads(row["operations_json"])[:1])
-        db.execute(
-            "update email_unsubscribe_effects set operations_json=? "
-            "where action_identity=? and effect_digest=?",
-            (shrunk, ACTION_IDENTITY, row["effect_digest"]),
+        update_action(
+            db,
+            "email_unsubscribe_effects",
+            (ACTION_IDENTITY, row["effect_digest"]),
+            {"operations_json": shrunk},
         )
     assert _journal_prefix_violations(email_store) != []
 
@@ -1068,49 +1080,8 @@ def test_principal_cancellation_rejects_changed_or_active_identity(tmp_path, cha
     assert browser.calls == []
 
 
-def test_cancellation_storage_migrates_schema49_without_changing_plan_or_receipt(tmp_path):
-    database = tmp_path / "schema49.sqlite3"
-    store = _seed(database)
-    original = store.get_classification(CLASSIFICATION_ID)
-    with sqlite3.connect(database) as db:
-        db.execute("drop table email_direct_retry_requests")
-        db.execute("drop table email_unsubscribe_cancellations")
-        db.execute("delete from email_schema_migrations where version>=50")
-        db.execute("insert into email_schema_migrations(version,applied_at) values (49,'2026-10-11T00:00:00Z')")
-    migrated = EmailStore(database)
-    assert migrated.get_classification(CLASSIFICATION_ID) == original
-    assert migrated.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
-    assert migrated.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
-    with sqlite3.connect(database) as db:
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 51
-        assert db.execute("select count(*) from email_direct_retry_requests").fetchone()[0] == 0
-        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
 
 
-def test_cancellation_cli_preview_refuses_schema49_without_store_initialization(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from app import email_worker
-    from app.email_store import EmailPersistenceCorruption
-
-    operation, task, email_store, _browser = _operation(tmp_path, [])
-    database = tmp_path / "direct-unsubscribe.sqlite3"
-    with sqlite3.connect(database) as db:
-        db.execute("drop table email_unsubscribe_cancellations")
-        db.execute("delete from email_schema_migrations where version>=50")
-        db.execute("insert or ignore into email_schema_migrations(version,applied_at) values (49,'2026-10-11T00:00:00Z')")
-        before = db.execute("select type,name,sql from sqlite_master order by name").fetchall()
-    def forbidden(_settings):
-        raise AssertionError("preview initialized writable stores")
-    monkeypatch.setattr(email_worker, "_build_email_unsubscribe_context", forbidden)
-    with pytest.raises(EmailPersistenceCorruption, match="requires deployed email schema"):
-        email_worker.cancel_failed_email_unsubscribe(
-            SimpleNamespace(db_path=database), task_id=task.id, action_identity=ACTION_IDENTITY,
-            execution_generation=task.execution_generation, input_version=task.input_version,
-            reason="Retain subscription.",
-        )
-    with sqlite3.connect(database) as db:
-        assert db.execute("select type,name,sql from sqlite_master order by name").fetchall() == before
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 49
 
 
 @pytest.mark.parametrize("adapter", ["reply", "scheduled_execution", "meeting"])

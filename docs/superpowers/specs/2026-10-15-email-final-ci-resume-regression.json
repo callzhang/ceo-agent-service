@@ -1,0 +1,42 @@
+{
+  "failed_ci": {
+    "run_id": 38727017901,
+    "url": "https://github.com/callzhang/ceo-agent-service/actions/runs/38727017901",
+    "submitted_head": "3f82e1be8dc0251be6baca5c3b8664453c198c16",
+    "conclusion": "failure",
+    "failed": 3,
+    "passed": 13793,
+    "skipped": 118,
+    "deselected": 44,
+    "warnings": 40,
+    "pytest_seconds": 3669.93,
+    "failed_tests": [
+      "tests/test_codex_decision.py::test_invalid_json_retries_once",
+      "tests/test_codex_decision.py::test_first_turn_invalid_json_retries_with_extracted_session_id",
+      "tests/test_codex_decision.py::test_first_turn_invalid_json_retries_with_thread_started_id"
+    ]
+  },
+  "cause": {
+    "runtime_change": "1279f4ed948d97abe1447f3a1e26ab2262aabd09",
+    "actual_resume_prefix": ["codex", "--cd", "<selected workspace>", "exec", "resume", "--json"],
+    "stale_test_prefix": ["codex", "exec", "resume", "--json"],
+    "layer": "four outdated assertions in three tests; no runtime repair"
+  },
+  "test_only_repair": {
+    "commit": "69dfaa5d153db7e346a5f69278c3ccd10deecc1c",
+    "root_red": {"failed": 3, "seconds": 45.33, "exit_code": 1},
+    "implementer_green": {"passed": 3, "seconds": 45.41},
+    "adjacent_workspace": {"passed": 3, "seconds": 0.13},
+    "adjacent_runner_resume": {"passed": 4, "deselected": 35, "seconds": 0.14},
+    "spec_review": "passed",
+    "quality_review": "passed",
+    "nonselected_test_functions_ast_unchanged": true,
+    "runtime_unchanged": true,
+    "storage_unchanged": true
+  },
+  "limits": [
+    "The failed CI remains a failure; passing selected tests does not turn it green.",
+    "A replacement submitted-head CI run is still required.",
+    "No real CLI, provider send, production mutation, main merge or deployment was performed."
+  ]
+}

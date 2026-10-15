@@ -67,6 +67,10 @@ def publication_scheduled_source(db: sqlite3.Connection) -> str:
         }.intersection(tables)
     ):
         return SCHEDULED_RUN_SQL
+    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True)
+            and {"tasks", "runs"} <= tables
+            and not {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}.intersection(tables)):
+        return SCHEDULED_RUN_SQL
     if version in ("2026-10-11.2", "2026-10-11.3") and "scheduled_task_runs" in tables:
         # The C run declaration includes its scheduled parent scalar even when
         # it holds no scheduled facts. An old marker cannot make it a source.

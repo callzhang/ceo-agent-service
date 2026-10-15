@@ -32,6 +32,9 @@ from app.reviewed_candidate_store import (
     ReviewedCandidateStoreMixin,
 )
 from app.sqlite_schema_lock import schema_initialize_lock
+from app.email_classification_schema import create_current_email_classifications
+from app.action_email_schema_release import require_current_email_pair, TARGET_EMAIL_VERSION
+from app.email_publication_sources import current_email_actions_available
 from app.run_storage import (
     SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
     create_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
@@ -182,6 +185,7 @@ from app.action_reply_storage import migrate_action_reply_schema
 
 from app.action_storage import (
     _current_objects as action_schema_objects,
+    email_action_auxiliary_objects_are_current,
     ACTION_TYPES, DELIVERY_ACTION_TYPES, REPLY_ACTION_TYPES,
     POSTFIX_ACTION_TYPES, OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
     create_action_schema,
@@ -191,8 +195,8 @@ from app.action_storage import (
     update_action,
     delete_action,
     reply_action_projection,
+    email_action_projection,
     _reply_variant_for,
-    validated_reply_variant,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
     REVIEW_CANDIDATE_SQL,
@@ -301,7 +305,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-13.5"
+STORE_SCHEMA_VERSION = "2026-10-14.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -1923,6 +1927,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1930,24 +1935,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
+                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION)
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
+                self._require_supported_store_bootstrap_source()
                 self._ensure_wal_journal_mode()
                 if self._schema_is_current_after_lock_retry():
                     self._reconcile_feedback_processing_round_backfill()
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
-                if self._migrate_known_task_schema():
-                    _INITIALIZED_STORE_PATHS.add(path_key)
-                    return
-                self._require_supported_store_bootstrap_source()
                 self._initialize()
                 if not self._schema_manifest_is_current_after_lock_retry():
                     raise FeedbackProcessingSchemaIntegrityError(
                         FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR
                     )
                 self.backfill_oa_audit_metadata()
-                self.set_service_state(STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION)
                 _INITIALIZED_STORE_PATHS.add(path_key)
 
     def _cached_initialized_path_is_healthy(self, path_key: Path) -> bool:
@@ -1955,7 +1957,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return False
         try:
             with self._connect() as db:
-                healthy = self._feedback_processing_round_guard_state_is_valid(db)
+                healthy = self._feedback_processing_round_guard_state_is_valid(db) and any(
+                    action_schema_is_current(db, include_reply=True, reply_variant=variant, include_email=True)
+                    for variant in ("actual_no_memory_fk", "fresh_memory_fk")
+                )
         except BaseException:
             _INITIALIZED_STORE_PATHS.discard(path_key)
             raise
@@ -2551,7 +2556,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and run_schema_is_current(db, include_task_runs=True, include_workbench=True)
             and task_schema_is_current(db, include_workbench=True)
             and workbench_schema_is_current(db)
-            and any(action_schema_is_current(db, include_reply=True, reply_variant=variant)
+            and any(action_schema_is_current(db, include_reply=True, reply_variant=variant, include_email=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
             and not removed_columns_present
@@ -2785,7 +2790,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def _initialize(self) -> None:
         with self._connect() as db:
             reply_variant = (
-                validated_reply_variant(db, allow_missing_objects=True)
+                _reply_variant_for(db)
                 if db.execute("select 1 from sqlite_master where name='actions'").fetchone()
                 else "fresh_memory_fk"
             )
@@ -4255,7 +4260,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "where payload_json<>'{}'"
             )
             db.execute("create index if not exists idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'")
-            create_action_schema(db, include_reply=True, reply_variant=reply_variant)
             self._migrate_oa_notification_events(db)
             feedback_event_columns = {
                 row["name"]
@@ -4697,6 +4701,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "alter table errors add column resolution text not null default ''"
                 )
             self._migrate_removed_runtime(db)
+            # Earlier legacy bootstrap helpers deliberately commit. The new
+            # parent/actions and Store marker publish together only after them.
+            db.execute("begin immediate")
+            create_current_email_classifications(db)
+            create_action_schema(db, include_reply=True, reply_variant=reply_variant, include_email=True)
             runtime_session_columns = {
                 row["name"]
                 for row in db.execute(
@@ -4755,6 +4764,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             self._migrate_project_attention_evidence(db)
             install_run_child_guards(db)
             install_task_child_guards(db)
+            if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
+                raise FeedbackProcessingSchemaIntegrityError(FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR)
+            db.execute(
+                "insert into service_state(key,value,updated_at) values(?,?,current_timestamp) "
+                "on conflict(key) do update set value=excluded.value,updated_at=current_timestamp",
+                (STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION),
+            )
 
     @staticmethod
     def _migrate_project_attention_evidence(db: sqlite3.Connection) -> None:
@@ -9263,8 +9279,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if "service_state" in tables else None
             )
             store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
-                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk")),
-                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk")),
+                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)),
+                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True)),
                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
             current_core_with_known_repairs = (
                 marker is not None
@@ -9280,8 +9296,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 and any(
                     action_schema_is_current(
                         db, allow_missing_objects=True, include_reply=True,
-                        reply_variant=variant,
-                    )
+                        reply_variant=variant, include_email=True,
+                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
                 # The old Attempt/Memory tables cannot coexist with candidate E.
@@ -9298,7 +9314,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "the exact 2026-10-13.4 source, or the current 2026-10-13.5 schema"
+                    "or the current 2026-10-14.1 schema"
                 )
         finally:
             db.close()
@@ -9583,7 +9599,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     ]
                     placeholders = ",".join("?" for _ in outcomes)
                     settled = db.execute(
-                        f"select 1 from email_unsubscribe_receipts "
+                        f"select 1 from ({email_action_projection('email_unsubscribe_receipts')}) "
                         f"where ?='email' and action_identity=? "
                         f"and outcome in ({placeholders}) limit 1",
                         (task["channel"], task["trigger_message_id"], *outcomes),
@@ -11176,7 +11192,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             from app.email_unsubscribe_direct import _RETRYABLE_SKIP_OUTCOMES
 
             query = (
-                "select 1 from email_unsubscribe_receipts "
+                f"select 1 from ({email_action_projection('email_unsubscribe_receipts')}) "
                 "where action_identity=? and outcome in ("
                 + ",".join("?" for _ in _RETRYABLE_SKIP_OUTCOMES)
                 + ")"
@@ -13931,7 +13947,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise AgentRunLeaseLostError("unsubscribe execution identity changed")
             if db.execute("select 1 from service_state where key=?", (key,)).fetchone():
                 raise ValueError("unsubscribe execution requires reconciliation")
-            receipt = db.execute("select effect_digest,outcome from email_unsubscribe_receipts where action_identity=?", (action_identity,)).fetchone()
+            receipt = db.execute(f"select effect_digest,outcome from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=?", (action_identity,)).fetchone()
             if receipt is not None and (
                 receipt["effect_digest"] != previous_receipt_digest or receipt["outcome"] not in _RETRYABLE_SKIP_OUTCOMES
             ):
@@ -13952,7 +13968,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def settle_direct_email_unsubscribe_execution(self, action_identity: str, execution_record: str) -> None:
         """Clear only this attempt's fence after a real terminal receipt exists."""
         with self._immediate_write_transaction() as db:
-            if db.execute("select 1 from email_unsubscribe_receipts where action_identity=?", (action_identity,)).fetchone() is None:
+            if db.execute(f"select 1 from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=?", (action_identity,)).fetchone() is None:
                 raise ValueError("unsubscribe terminal receipt is unavailable")
             db.execute(
                 "delete from service_state where key=? and value=?",
@@ -14255,10 +14271,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                   and coalesce(json_extract(tasks.trigger_message_json, '$.action_identity'), '')=tasks.trigger_message_id
                   and not exists (select 1 from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=tasks.id)
-                  and not exists (select 1 from email_unsubscribe_claims where action_identity=tasks.trigger_message_id)
-                  and not exists (select 1 from email_unsubscribe_receipts where action_identity=tasks.trigger_message_id)
-                  and not exists (select 1 from email_unsubscribe_effects where action_identity=tasks.trigger_message_id)
-                  and not exists (select 1 from email_unsubscribe_steps where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from ({email_action_projection('email_unsubscribe_claims')}) where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from ({email_action_projection('email_unsubscribe_effects')}) where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from ({email_action_projection('email_unsubscribe_steps')}) where action_identity=tasks.trigger_message_id)
                 order by tasks.id
                 """,
                 (retryable_errors[0], retryable_errors[1], retryable_errors[2]),
@@ -20189,13 +20205,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     @staticmethod
     def _email_unsubscribe_receipts_table_exists(db: sqlite3.Connection) -> bool:
         """Whether the independently initialized Email receipt ledger exists."""
-        return (
-            db.execute(
-                "select 1 from sqlite_master where type='table' and name=?",
-                ("email_unsubscribe_receipts",),
-            ).fetchone()
-            is not None
-        )
+        return current_email_actions_available(db)
 
     def reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts(self) -> int:
         """Project durable email unsubscribe receipts onto their failed tasks.
@@ -20228,11 +20238,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     end,
                     error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
-                from email_unsubscribe_receipts as receipts
+                from ({email_action_projection('email_unsubscribe_receipts')}) as receipts
                 where tasks.record_type='reply_tasks' and tasks.id in (
                     select current_tasks.id
                     from ({REPLY_TASK_SQL}) as current_tasks
-                    join email_unsubscribe_receipts as current_receipts
+                    join ({email_action_projection('email_unsubscribe_receipts')}) as current_receipts
                       on current_receipts.action_identity=current_tasks.trigger_message_id
                     where current_tasks.channel='email'
                       and current_tasks.status='failed'
@@ -23939,7 +23949,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 receipt_exclusion = f"""
                   and not exists (
                       select 1
-                      from email_unsubscribe_receipts as receipts
+                      from ({email_action_projection('email_unsubscribe_receipts')}) as receipts
                       where tasks.channel='email'
                         and receipts.action_identity=tasks.trigger_message_id
                         and receipts.outcome in ({receipt_placeholders})
@@ -30248,14 +30258,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             history_types=history_types,
             source_tables=source_tables,
         )
+        compact_query, branch_count = self._operation_logs_key_query(
+            source_tables, where_sql
+        )
         sql = f"""
+            with operation_logs as (
+                {compact_query}
+            )
             select source_table, source_id, count(*) over() as __total
-            from ({self._operation_logs_base_query(source_tables)}) as operation_logs
-            {where_sql}
+            from operation_logs
             order by occurred_at desc, source_table desc, source_id desc
             limit ? offset ?
         """
-        args = [*where_args, max(0, limit), max(0, offset)]
+        args = [*(where_args * branch_count), max(0, limit), max(0, offset)]
         with self.read_snapshot(), self._connect() as db:
             page_keys = db.execute(sql, tuple(args)).fetchall()
             if page_keys:
@@ -30295,6 +30310,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     [],
                 )
         return result
+
+    def _operation_logs_key_query(
+        self, source_tables: tuple[str, ...] | None, where_sql: str
+    ) -> tuple[str, int]:
+        # Reuse each source's full projection and its existing source selection;
+        # SQLite can omit display and status expressions for unfiltered keys.
+        if source_tables:
+            branches = [
+                self._operation_logs_base_query((source,))
+                for source in dict.fromkeys(source_tables)
+            ]
+        else:
+            branches = self._operation_logs_base_query().split("union all")
+        compact = [
+            "select source_table, source_id, occurred_at from ("
+            + branch + ") as source " + where_sql
+            for branch in branches
+        ]
+        return " union all ".join(compact), len(compact)
 
     def _list_failed_operation_logs_with_count(
         self,
@@ -30495,7 +30529,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             candidate_queries["email_actions"] = f"""
                 select actions.rowid as source_id,
                        coalesce(datetime(actions.updated_at), actions.updated_at) as occurred_at
-                from email_actions as actions
+                from ({email_action_projection('email_actions', include_rowid=True)}) as actions
                 join email_classifications as messages
                   on messages.id=actions.classification_id
                 where actions.status='failed'
@@ -30654,43 +30688,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return int(row["count"] or 0)
 
     def _email_actions_history_available(self) -> bool:
-        """Whether EmailStore's action tables exist in this database yet."""
-        if getattr(self, "_email_actions_history_tables_seen", False):
-            return True
+        """Whether EmailStore has initialized the selected Email schema."""
         with self._connect() as db:
-            found = db.execute(
-                "select count(*) from sqlite_master where type='table' "
-                "and name in ('email_actions', 'email_classifications')"
-            ).fetchone()[0]
-        if int(found) == 2:
-            self._email_actions_history_tables_seen = True
-            return True
-        return False
+            return current_email_actions_available(db)
 
     def _operation_logs_base_query(
         self,
         source_tables: tuple[str, ...] | None = None,
         reply_attempt_ids: list[int] | tuple[int, ...] | None = None,
     ) -> str:
-        latest_terminal_attempt_id_sql = """(
-            with latest_terminal_attempt as materialized (
-                select attempt_channel, attempt_conversation_id,
-                       attempt_trigger_message_id,
-                       max(cast(legacy_key as integer)) as latest_id
-                from actions
-                where record_type='reply_attempts'
-                  and attempt_send_status in (
-                      'sent', 'completed', 'skipped', 'needs_human',
-                      'reacted', 'commented', 'calendar', 'document'
-                  )
-                group by attempt_channel, attempt_conversation_id,
-                         attempt_trigger_message_id
-            )
-            select latest_id from latest_terminal_attempt
-            where attempt_channel=reply_attempts.channel
-              and attempt_conversation_id=reply_attempts.conversation_id
-              and attempt_trigger_message_id=reply_attempts.trigger_message_id
-        )"""
         query = f"""
             select
                     'error:' || id as id,
@@ -30785,7 +30791,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                                   =handed_over_tasks.execution_generation
                         ) then 'needs_human'
                         when send_status='failed' and (
-                            {latest_terminal_attempt_id_sql}>reply_attempts.id
+                            reply_attempts.terminal_id>reply_attempts.id
                             or exists (
                                 select 1
                                 from ({REPLY_TASK_CURRENT_SQL}) as terminal_tasks
@@ -30817,7 +30823,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         -- open question, including ones nobody has answered.
                         when send_status in ('blocked', 'needs_human', 'pending')
                             and (
-                            {latest_terminal_attempt_id_sql}>reply_attempts.id
+                            reply_attempts.terminal_id>reply_attempts.id
                             or coalesce(reply_attempts.resolved_at, '')<>''
                         ) then 'recovered'
                         else send_status
@@ -30846,7 +30852,29 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
+                from (
+                  with terminal_attempts as materialized (
+                    select attempt_channel as channel,
+                           attempt_conversation_id as conversation_id,
+                           attempt_trigger_message_id as trigger_message_id,
+                           max(cast(legacy_key as integer)) as terminal_id
+                    from actions
+                    where record_type='reply_attempts'
+                      and attempt_send_status in (
+                          'sent', 'completed', 'skipped', 'needs_human',
+                          'reacted', 'commented', 'calendar', 'document'
+                      )
+                    group by attempt_channel, attempt_conversation_id,
+                             attempt_trigger_message_id
+                  )
+                  select reply_attempts_base.*,
+                         (select terminal_id from terminal_attempts
+                          where terminal_attempts.channel=reply_attempts_base.channel
+                            and terminal_attempts.conversation_id=reply_attempts_base.conversation_id
+                            and terminal_attempts.trigger_message_id=reply_attempts_base.trigger_message_id
+                         ) as terminal_id
+                  from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts_base
+                ) as reply_attempts
                 where {
             (
                 "id in (" + ", ".join(str(int(i)) for i in reply_attempt_ids) + ") and "
@@ -31131,7 +31159,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from email_actions as actions
+                from ({email_action_projection('email_actions', include_rowid=True)}) as actions
                 join email_classifications as messages
                   on messages.id=actions.classification_id
             """
@@ -31143,7 +31171,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             match = re.search(r"'([^']+)' as source_table", branch)
             if match and match.group(1) in requested:
                 branches.append(branch)
-        return "union all".join(branches)
+        return "union all".join(branches) if branches else f"select * from ({query}) where 0"
 
     def _operation_log_filters(
         self,

@@ -8,16 +8,17 @@ import pytest
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_storage import RETIRED_TASK_TABLES, migrate_task_schema
 from tests.test_task_storage import source_database
-from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_store19
+from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
+from tests.test_email_legacy_schema import published_source as published_source
 
 
-def original_rows_source13(path, source_factory=source_database):
+def original_rows_source13(path, published_source, source_factory=source_database):
     """Keep every original business row on independently captured source13 DDL."""
     with closing(source_factory(path.with_suffix(".original.sqlite3"))) as original:
         original.execute("begin immediate")
         migrate_task_schema(original)
         original.commit()
-        with empty_source13(path) as db:
+        with empty_source13(path, published_source) as db:
             for table, sql in original.execute(
                 "select name,sql from sqlite_master where type='table' "
                 "and name not like 'sqlite_%' and name<>'service_state'"
@@ -44,16 +45,16 @@ def original_rows_source13(path, source_factory=source_database):
 
 
 @pytest.fixture(params=("fresh", "migrated"))
-def typed_runtime(request, tmp_path, monkeypatch):
+def typed_runtime(request, tmp_path, monkeypatch, published_source):
     path = tmp_path / "runtime.db"
     if request.param == "migrated":
-        original_rows_source13(path)
+        original_rows_source13(path, published_source)
         # Preserve this reader's original local-file recovery input on source13.
         with sqlite3.connect(path) as db:
             db.execute("update tasks set source_type='local_file' "
                        "where record_type='work_summary_inputs' and legacy_key='2'")
         advance_source16_to_store17(path)
-        advance_source17_to_store19(path)
+        advance_source17_to_current_store(path, published_source)
         AutoReplyStore(path)  # Publish the complete source before observing typed readers.
 
     accesses = set()

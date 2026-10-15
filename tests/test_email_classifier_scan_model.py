@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.action_storage import email_action_projection
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -1765,11 +1766,9 @@ def test_processed_model_rescan_preserves_original_authorization_snapshot(
     assert first_plan["action_plan_id"] == second_plan["action_plan_id"]
     with sqlite3.connect(tmp_path / "email.sqlite3") as db:
         plan_history = db.execute(
-            """
-            select action_plan_id, action_plan_version
-            from email_action_plans
-            order by action_plan_version
-            """
+            "select action_plan_id, action_plan_version "
+            f"from ({email_action_projection('email_action_plans')}) "
+            "order by action_plan_version"
         ).fetchall()
         current_action_plan_id = db.execute(
             "select current_action_plan_id from email_classifications"

@@ -5,7 +5,7 @@ from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 import pytest
 
 from app.email_classifier_contracts import EmailClassificationStatus
-from app.email_store import EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore
+from app.email_store import EmailPersistenceCorruption, EmailStore
 from tests.test_email_store import _classification, _persist_scan
 
 LOOKUP = "idx_email_provider_observations_lookup"
@@ -68,54 +68,6 @@ def test_new_schema_omits_lookup_but_keeps_folder_and_pk(tmp_path):
         assert FOLDER in indexes
         assert any(row[3] == "pk" for row in db.execute(
             "pragma index_list(email_provider_observations)"))
-
-
-def test_v47_migration_preserves_business_rows_and_reopens_idempotently(tmp_path):
-    path = legacy_v47(tmp_path / "legacy.sqlite3")
-    before = snapshot(path)
-    EmailStore(path)
-    with sqlite3.connect(path) as db:
-        assert LOOKUP not in index_names(db)
-        assert FOLDER in index_names(db)
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == EMAIL_SCHEMA_VERSION
-        versions = db.execute("select * from email_schema_migrations order by version").fetchall()
-        assert [row[0] for row in versions] == [47, 48, 49, 50, 51]
-        assert db.execute("select count(*) from email_direct_retry_requests").fetchone()[0] == 0
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-        assert db.execute("pragma quick_check").fetchone()[0] == "ok"
-    assert snapshot(path) == before
-    EmailStore(path, validate_rows=False)
-    EmailStore(path)
-    with sqlite3.connect(path) as db:
-        assert LOOKUP not in index_names(db)
-        assert db.execute("select * from email_schema_migrations order by version").fetchall() == versions
-    assert snapshot(path) == before
-
-
-def test_failed_migration_restores_lookup_version_and_rows(tmp_path, monkeypatch):
-    path = legacy_v47(tmp_path / "rollback.sqlite3")
-    before = snapshot(path)
-    with sqlite3.connect(path) as db:
-        cached_before = db.execute("select id, action_plan_json from email_classifications order by id").fetchall()
-        ddl_before = db.execute("select sql from sqlite_master where name='email_classifications'").fetchone()
-    original = EmailStore._validate_durable_state
-
-    def fail_validation(self, db):
-        if db.execute("select max(version) from email_schema_migrations").fetchone()[0] == EMAIL_SCHEMA_VERSION:
-            raise RuntimeError("injected provider-index migration failure")
-        return original(self, db)
-
-    monkeypatch.setattr(EmailStore, "_validate_durable_state", fail_validation)
-    with pytest.raises(RuntimeError, match="injected provider-index migration failure"):
-        EmailStore(path)
-    with sqlite3.connect(path) as db:
-        assert LOOKUP in index_names(db)
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 47
-    assert snapshot(path) == before
-
-    with sqlite3.connect(path) as db:
-        assert db.execute("select id, action_plan_json from email_classifications order by id").fetchall() == cached_before
-        assert db.execute("select sql from sqlite_master where name='email_classifications'").fetchone() == ddl_before
 
 
 def test_lookup_uses_pk_and_folder_query_keeps_its_index(tmp_path):

@@ -3,6 +3,9 @@
 import json
 from pathlib import Path
 import sqlite3
+import os
+import subprocess
+import sys
 
 SOURCE = json.loads(
     (Path(__file__).parent / "fixtures/store13-workbench-schema.json").read_text()
@@ -99,7 +102,18 @@ def source_database(path):
 
 
 def rows(db, table):
-    return db.execute(f'select * from "{table}" order by rowid').fetchall()
+    without_rowid = db.execute(
+        "select wr from pragma_table_list(?) where schema='main'", (table,)
+    ).fetchone()[0]
+    if without_rowid:
+        primary_key = [row[1] for row in sorted(
+            (row for row in db.execute(f'pragma table_info("{table}")') if row[5]),
+            key=lambda row: row[5],
+        )]
+        order = ",".join(f'"{column}"' for column in primary_key)
+    else:
+        order = "rowid"
+    return db.execute(f'select * from "{table}" order by {order}').fetchall()
 
 
 def fingerprint(db):
@@ -130,11 +144,22 @@ def fingerprint(db):
     )
 
 
-def full_source_database(path, auxiliary_path):
-    """Independent source13 scope plus unrelated current Store declarations."""
-    from app.store import AutoReplyStore, _INITIALIZED_STORE_PATHS
+def full_source_database(path, auxiliary_path, published_source):
+    """Independent source13 scope plus archived Store and Email declarations."""
+    from app.store import _INITIALIZED_STORE_PATHS
 
-    AutoReplyStore(auxiliary_path)
+    subprocess.run(
+        [sys.executable, "-c", "from pathlib import Path; from app.email_store import EmailStore; import sys; EmailStore(Path(sys.argv[1]))", str(path)],
+        cwd=published_source,
+        env={**os.environ, "PYTHONPATH": str(published_source)},
+        check=True, capture_output=True, text=True,
+    )
+    subprocess.run(
+        [sys.executable, "-c", "from pathlib import Path; from app.store import AutoReplyStore; import sys; AutoReplyStore(Path(sys.argv[1]))", str(auxiliary_path)],
+        cwd=published_source,
+        env={**os.environ, "PYTHONPATH": str(published_source)},
+        check=True, capture_output=True, text=True,
+    )
     with sqlite3.connect(auxiliary_path) as auxiliary:
         objects = auxiliary.execute(
             "select type,name,sql from sqlite_master where sql is not null and tbl_name<>'actions' order by case type when 'table' then 0 when 'index' then 1 else 2 end,name"
@@ -160,7 +185,14 @@ def full_source_database(path, auxiliary_path):
                 for table in SOURCE["tables"]
             ):
                 db.execute(sql)
-    # The current auxiliary Store owns actions, but source13 still used the
+    claims = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json").read_text())["tables"]["email_unsubscribe_claims"]["declaration"]
+    assert db.execute("select count(*) from email_unsubscribe_claims").fetchone() == (0,)
+    db.execute("drop table email_unsubscribe_claims")
+    db.execute(claims["sql"])
+    for obj in reversed(claims["indexes"]):
+        if obj["sql"]:
+            db.execute(obj["sql"])
+    # The archived auxiliary Store owns actions, but source13 still used the
     # six independently captured candidate declarations. Keep this a real old
     # schema instead of copying a new table into a database with an old marker.
     candidate_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-13-database-redesign-phase5a-inventory.json').read_text())['tables']
@@ -178,7 +210,7 @@ def full_source_database(path, auxiliary_path):
             if obj['type'] == 'table':
                 db.execute(obj['sql'])
     # Old source13 independently retained native receipts, even after the
-    # auxiliary current constructor has retired their physical declarations.
+    # auxiliary archived constructor has retired their physical declarations.
     receipt_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-13-database-redesign-phase5b-inventory.json').read_text())['tables']
     for name in ("external_action_results", "agent_effect_intents", "agent_execution_receipts"):
         state = receipt_source[name]

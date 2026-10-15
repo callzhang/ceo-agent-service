@@ -1,3 +1,4 @@
+from tests.test_email_legacy_schema import published_source as published_source
 import errno
 import hashlib
 import importlib.util
@@ -19,8 +20,9 @@ import app.store as store_module
 from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mutation
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
 from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, insert_action, update_action
+from app.action_storage import insert_email_action, update_email_action
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, SCHEDULED_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression, task_physical_id
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression, task_physical_id
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -29,12 +31,12 @@ from app.store import (
 )
 
 
-def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts():
-    with sqlite3.connect(":memory:") as db:
-        create_task_schema(db)
-        db.execute(
-            "create table email_unsubscribe_receipts (action_identity text, outcome text)"
-        )
+def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_path):
+    from tests.test_email_action_external_consumers import _two_failed_actions
+    from tests.test_email_action_storage import _cases
+
+    store = _two_failed_actions(tmp_path / "unsubscribe-parent.sqlite3")
+    with store._connect() as db:
         identity = "email-action:" + "a" * 64
         key = "email-unsubscribe-page:" + identity + ":" + "b" * 64
         insert_task(db, "reply_tasks", {
@@ -46,19 +48,25 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts():
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
-        db.execute(
-            "insert into email_unsubscribe_receipts values (?, 'skipped_no_reliable_entry')",
-            (identity,),
+        receipt = insert_email_action(
+            db, "email_unsubscribe_receipts",
+            _cases()["email_unsubscribe_receipts"] | {
+                "action_identity": identity,
+                "outcome": "skipped_no_reliable_entry",
+            },
         )
         assert store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
-        db.execute("update email_unsubscribe_receipts set outcome='done'")
+        update_email_action(db, "email_unsubscribe_receipts", receipt.lastrowid, {"outcome": "done"})
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
         db.execute("update tasks set status='failed' where record_type='reply_tasks'")
-        db.execute("update email_unsubscribe_receipts set outcome='skipped_no_reliable_entry'")
+        update_email_action(
+            db, "email_unsubscribe_receipts", receipt.lastrowid,
+            {"outcome": "skipped_no_reliable_entry"},
+        )
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
@@ -4387,17 +4395,17 @@ def test_store_repairs_missing_required_table_despite_current_schema_version(
         ).fetchone() == (1,)
 
 
-def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path) -> None:
-    from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_store19
+def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path, published_source) -> None:
+    from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
     from app.task_storage import WORKBENCH_TURN_SQL
 
     db_path = tmp_path / "source13-workbench.sqlite3"
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Leases','codex')")
         db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,lease_owner,lease_expires_at)
             values('turn','parent','request',1,'kept','running','original-owner','2026-10-13 00:00:00')""")
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
         columns = {str(row[1]) for row in db.execute("pragma table_info(tasks)")}
@@ -4875,14 +4883,6 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
         channel="email",
     )
     with store._connect() as db:
-        db.executescript(
-            """
-            create table email_unsubscribe_claims (action_identity text primary key);
-            create table email_unsubscribe_receipts (action_identity text);
-            create table email_unsubscribe_effects (action_identity text);
-            create table email_unsubscribe_steps (action_identity text);
-            """
-        )
         db.execute(
             "update tasks set status='failed', error=? where record_type='reply_tasks' and trigger_message_id=?",
             (

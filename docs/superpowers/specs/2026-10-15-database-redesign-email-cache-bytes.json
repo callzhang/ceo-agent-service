@@ -1,0 +1,61 @@
+{
+  "source_ref": "264c073cfe779b76a5a7f001480149fb784f0591",
+  "source_sha256": "57c9595a77e71fab6f89a518b68307b490eaf0a2833fc216610611cc5f10060d",
+  "source_observed_at_utc": "2026-10-15T09:15:41.822422+00:00",
+  "message_cache": {
+    "rows": 8919,
+    "nonempty_body_rows": 8795,
+    "normalized_text_bytes": 24416053
+  },
+  "classification_groups": [
+    {
+      "status": "pending_feedback",
+      "classification_source": "model",
+      "rows": 22,
+      "model_text_bytes": 29748,
+      "agent_result_json_bytes": 88,
+      "preview_bytes": 0
+    },
+    {
+      "status": "processed",
+      "classification_source": "agent",
+      "rows": 2798,
+      "model_text_bytes": 6008539,
+      "agent_result_json_bytes": 1043070,
+      "preview_bytes": 0
+    },
+    {
+      "status": "processed",
+      "classification_source": "model",
+      "rows": 5143,
+      "model_text_bytes": 5585215,
+      "agent_result_json_bytes": 20572,
+      "preview_bytes": 0
+    },
+    {
+      "status": "processed",
+      "classification_source": "user",
+      "rows": 956,
+      "model_text_bytes": 2147610,
+      "agent_result_json_bytes": 3824,
+      "preview_bytes": 53582
+    }
+  ],
+  "limit": "UTF-8 value-byte sums, not SQLite page savings or proven-retirement eligibility. No body content or provider recoverability read.",
+  "source_table_page_detail": [
+    {
+      "table": "email_classifications",
+      "page_bytes": 36532224,
+      "cell_payload_bytes": 24590692,
+      "unused_page_bytes": 11533837,
+      "pages": 8919
+    },
+    {
+      "table": "email_messages",
+      "page_bytes": 33939456,
+      "cell_payload_bytes": 29308176,
+      "unused_page_bytes": 4383796,
+      "pages": 8286
+    }
+  ]
+}

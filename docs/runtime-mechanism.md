@@ -1,5 +1,18 @@
 # Current Runtime Mechanism
 
+The nine follow-up/Todo-sync action declarations are available only through an
+explicit disabled-by-default candidate flag on the Email29 actual/fresh action
+scaffold. No Store constructor, release router or caller selects them. Task 1A
+supplies finite constraints and projections. Task 1B supplies source-shaped
+insert, update, delete and optional projected CAS, with SQLite-lock-held defaults
+and one public-ID allocator per source family. Business send attempts resolve
+the exact draft public ID to their physical parent action. Omitted defaults for
+one row share one SQLite statement time. The typed parent check runs after
+ordinary row constraints, so `INSERT OR IGNORE` preserves native constraint
+ordering and sequence progress; unresolved non-NULL parents still fail the
+native FK path. Migration and runtime
+selection remain separate follow-up work.
+
 The main launchd job declares `ProcessType=Interactive` because the local HTTP
 Console is a user-facing application dependency and does not use XPC activity
 for Adaptive classification. Omitting ProcessType applies Standard CPU/I/O
@@ -124,27 +137,25 @@ recovery and technical retries reconstruct it from the adopted review without
 native trajectory reads. Feedback budgets, candidate binding, terminal states
 and external execution remain unchanged.
 
-The Store18 candidate's maintenance reader supports exact previous/current
-delivery schemas through the existing publication selector. Its quality,
-deferral and scheduled recovery readers use finite sent/observer projections.
-The storage source changes preserve original blockers, exclusions, labels and
-recovery behavior; they do not add a new policy or replay path. Paired release
-routing, integrated constructor copy/current-fact rollback and native substitute
-CLI acceptance have passed. CI/live acceptance remain pending and production
-continues to use Store17.
+Published Store19 (`2026-10-13.5`) at5691f6c7 uses the sixteen-type
+action layout. Readonly observation on2026-10-14 found Email51,121 physical
+noninternal tables and no physical reply_attempts or memory_write_events.
+Their existing public IDs, allocation waters, results and receipts use finite
+projections. Store18 delivery consolidation and its inverse proof remain
+historical evidence; the current E actual layout retains no Memory FK.
+Existing blockers, exclusions, labels, delivery verification and recovery
+behavior are unchanged.
 
-The isolated Store18 candidate (`2026-10-13.4`) bootstraps the finite delivery
-action layout and accepts only exact published Store17 as its migration source.
-It does not recreate retired sent/observer tables during auxiliary repair.
-Four cold/fresh bootstrap checks cover both captured source declarations, raw
-sent TEXT and deleted-ID watermark progress. Store sent writes and direct
-Store/Audit sent readers now address finite actions while retaining public IDs,
-original sent facts, observer identities, feedback filters and transaction
-boundaries. Recall timestamps are read after the ordinary writer lock is
-acquired, matching the source UPDATE. Integrated paired release acceptance is
-still pending. Validated nonempty sent external-key lookups use the finite sent
-index for a key seek; production remains Store17.
-The published Store17 contract below continues to describe the live service.
+E passed complete CI and merged inPR82. This task's first normal deploy made
+no changes after the idle timeout; a separate deployment later succeeded.
+The second normal invocation observed production already at5691f6c7. Exact
+receipts and readonly schema checks are in
+`evals/database_redesign/phase5e_publication_status.v1.json`. Quick_check is ok,
+and the one original runs/task FK violation remains unchanged. Live
+UI/performance acceptance is still incomplete: Status eventually rendered
+PID34642 with degraded recovery health, while Status/Attention/History request
+timeouts require further diagnosis. Neither this publication nor disabled
+Email/follow-up preparation completes the10+1 goal.
 
 OA return uses its own effect verification, not the approval/rejection node
 completion predicate. The exact pending-node ownership check still precedes a
@@ -2242,9 +2253,9 @@ recursively walking the historical session trees. This does not alter persisted
 business results or audit evidence. The
 History chart projects lifecycle status only for reply
 attempts in the requested time window, avoiding a full-history status scan.
-The later-terminal Attempt predicate uses a materialized maximum public ID per
-channel/message key inside the status expression; key-only pagination does not
-evaluate that expression. Each chart uses one read snapshot and reads a failed
+The later-terminal Attempt predicate uses a grouped maximum public ID per
+channel, conversation and trigger through the status projection; key-only
+pagination does not evaluate that lookup. Each chart uses one read snapshot and reads a failed
 message's current task and WeChat delivery once within that request. Chart
 counts, lifecycle labels, recovered meeting handling and time buckets remain
 unchanged. Performance evidence is in `docs/console-query-performance.md`.
@@ -3036,7 +3047,7 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
-第五期C已通过PR77／46bfdbe0正常发布，生产Store17／Email51及126物理表读回通过；实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
+第五期C曾通过PR77／46bfdbe0正常发布，阶段验收时的Store17／Email51及126物理表读回通过；这是历史发布回执，后续已发布Store18。实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
 
 OA approval Attention reflects an unresolved process-level state from the latest
 verified provider scan. A running OA process may have completed the current
@@ -3063,6 +3074,41 @@ retry an invalid `null` response through the recent-message fallback; valid but
 unrecognized object envelopes retain the existing fallback behavior. Read-only
 message commands make only the configured bounded retry for JSON `null`; if it
 persists, the typed failure remains visible to normal recovery and Attention.
+
+### Email actions: isolated storage declaration
+
+`app/action_storage.py` can explicitly build a twenty-nine-type `actions`
+declaration when `include_email=True` is paired with the current reply variant.
+The default factories still build their prior declarations. The Email addition
+defines the 13 original families, their source-field projections and their
+own native constraints/indexes/triggers. It does not route live Email reads or
+writes through `actions`; no Store/Email initializer selects this option.
+Finite source-shaped Email mutation helpers now preserve nine signed source
+ROWID locators, two independent AUTOINCREMENT sequences and two composite keys.
+The writer lock precedes source default evaluation and locator/payload reads;
+successful calls return the source identity. Separate pure forward and
+current-fact inverse functions reconstruct all thirteen source families inside
+a caller-owned foreign-key-off transaction, translating the thirteen external
+blockers and preserving the original locators and allocator waters. They are
+unselected candidate functions; published-source binding, paired release and
+production acceptance remain required before an Email schema release. This is
+local storage preparation, not a production Store/Email version. Preflight
+replays MAIN and TEMP schema bindings in a separate SQLite connection and
+probes rename and DROP effects before touching the caller's tables. A TEMP
+trigger or view that would change or disappear is refused; unrelated TEMP
+objects remain untouched.
+Generated Email columns are scoped to their exact source family membership;
+same-named payload members on an older action never appear as Email fields.
+An Email-only CHECK keeps the older task/run/action physical reference slots
+NULL, including the fresh variant's memory attempt reference; native Email
+source-key foreign keys remain the only Email parent relationships.
+
+The unselected follow-up/Todo-sync migration requires the caller's existing
+foreign-key-off transaction. It recaptures the reviewed source before writing,
+copies nine action families and retargets the retained legacy-link FK. Its
+inverse reads current typed rows and current sequence waters before restoring
+the literal actual or fresh source tables, indexes and original legacy-link
+FK. Neither pure function updates Store/Email markers or invokes a provider.
 
 Recorded DingTalk delivery recovery (2026-10-14): startup reconciliation, explicit failed-task completion and protection against failed-run projection all honor the receipt verification state. A recorded receipt with verification.state=ambiguous or failed does not prove delivery and cannot restore done. Positive sent receipts and previously recorded legacy readback receipts keep their existing completion behavior.
 
@@ -3102,6 +3148,99 @@ Claude/Friday single-message bridges serialize the complete output schema as com
 Existing current-Project citation validation reports both the expected immutable WorkItem source_ref and the received reference when they differ. The existing repair path receives those known values. Validation conditions, result contract, repair budget, routing and permissions remain unchanged; no additional prompt rule is added. Verification is documented in docs/native-input-evidence-release-validation.md.
 
 
+## Unselected Email13 paired transaction protocol
+
+Task4A adds only an unselected transaction protocol in
+`app/action_email_schema_release.py`. An exact Store19/Email51 source capture
+retains the Store marker timestamp, every Email migration timestamp, original
+thirteen-family/old sixteen-action metadata and native aliases. Local tests
+explicitly pass sentinel target markers; no deployed or candidate default
+version is allocated. Publication performs the reviewed pure conversion and
+both marker writes within one FK-off writer transaction, then validates the
+complete target declaration, existing translated blockers and FK baseline.
+The inverse uses current facts and allocator waters and restores both original
+markers and the full source ledger. Unsupported current metadata or an
+exception leaves the transaction unchanged. No selector, constructor, DAO or
+default action flag invokes this preparation. The genuine paired initializer
+and complete constructor/DAO/validator/version switch remain one later coupled
+activation, with separate Task5/6 acceptance.
+
+
+## Email13 group4B DAO WIP boundary
+
+The unpublished candidate's current plan/direct/feedback/retry/attempt DAO reads
+now use finite actions projections. All direct claim, completion, explicit retry
+release and stale-recovery transitions keep their original writer transactions
+and guard outcomes. A finite direct-action helper rechecks the original public
+action ID and supplied status/start/attempt-count predicates, then mutates the
+resolved source ROWID through the accepted writer. A failed CAS still raises or
+returns the original caller outcome, and the caller's full transaction rolls
+back. Attempt IDs come from the original independent AUTO namespace.
+
+Operation creation preserves the exact plan/type `DO NOTHING` conflict target,
+without suppressing other native constraints. The two shared C/D dependency
+reads are converted solely to allow the B call paths; C/D lifecycle writes,
+startup metadata/durable validation and constructor activation remain deferred.
+The default schema is still Store19/Email51, so this partial branch does not
+claim usable default business paths, paired publication readiness, or native/
+provider acceptance.
+
+
+## Email13 group4C unsubscribe DAO WIP boundary
+
+The partial unpublished DAO now covers all six unsubscribe families, including
+state/terminal snapshots, live lineage, observation/context reads, continuation
+and journal writes, claim release/recovery, journal repair, terminal evidence,
+exact URL backfill and cancellation. Each existing explicit writer transaction
+keeps the original predicates while resolving public source identities to the
+accepted writer locator. Multi-row mutations remain within that transaction;
+a failure rolls back earlier changes. Journal steps use their original AUTO
+allocator and effects use their original composite identity, independently of
+physical actions IDs. Source-valid SQL NULL public IDs remain a storage concern
+separate from strict application validation.
+
+Continuation UPSERT uses its original public-key conflict target and changes
+only effect digest, observation reference, controls and updated time. Creation
+time and structural source ROWID survive the update, including encoded scalar
+values. Existing broad OR IGNORE effect writes remain broad, and receipt
+promotion/backfill retain their original allowed updates. Backfill takes the
+writer lock only after URL validation, then applies its original empty-address
+condition; an intervening fill still returns false without overwrite.
+
+The C deferrals stated at group4B acceptance are now closed for current DAO SQL.
+Seven reply lifecycle methods remain group4D work; only their two required mixed
+reply-receipt reads and the previously accepted shared reply-claim guard are
+converted. Historical schema dispatch, startup validation, fresh constructors,
+real target markers and the paired coordinator remain E/F work. Store19/Email51
+is still selected by default. This branch therefore remains partial preparation,
+with no default-runtime, full Task4, native/provider or production acceptance.
+
+
+## Email13 group4D reply DAO WIP boundary
+
+Current EmailStore reply claims and receipts now use finite actions projections
+and source-shaped writers, with all seventeen claim and thirteen receipt fields
+preserved. Every original D writer already held BEGIN IMMEDIATE; the conversion
+adds no transaction or earlier authorization boundary. Locator selection keeps
+the original public identity, status, owner/generation/lease and receipt JSON-text
+predicates within that same writer transaction. Native uniqueness and typed
+parent FKs remain in force.
+
+Dispatch replay and immutable conflicts, retryable snapshot refresh, terminated
+owner recovery and uncertain no-replay behavior retain their original outcomes.
+Receipt replay can enrich a previously empty SMTP acceptance ID but cannot erase
+or replace a non-empty one. A failed claim completion rolls back receipt inserts
+and enrichment. SQL NULL public keys remain separate from the strict public
+method input rules; no source storage constraint has been tightened.
+
+Current thirteen-family DAO SQL is now converted inside EmailStore, superseding
+the historical B/C D deferrals. Default constructors, metadata/row validators,
+historical schema dispatch and real paired release activation are still pending
+E/F work. Cancellation preview depends on the deferred shape validator. External
+consumers and native/full-copy/production acceptance remain separate Task5/6
+work. This is partial unpublished preparation; dormant SMTP remains disabled and
+Store19/Email51 is still selected by default.
+
 History latest-task lookup publication666f4078 passed exact-tree full Quality
 and normal deployment on2026-10-14. Production PID31985 and healthz were read
 back; live History list/chart, type/status controls, pagination and an existing
@@ -3111,6 +3250,156 @@ unavailable historical native delivery evidence. This is scoped read acceptance,
 not proof of all task execution or provider outcomes. See
 `docs/database-redesign-history-query-validation.md` for exact evidence.
 No schema or retention change is part of this History release.
+
+The subsequent local History query candidate narrows each selected source branch
+to `source_table`, `source_id`, and `occurred_at` before the combined page sort.
+The existing type, status, and text filters still run inside each source branch;
+the selected page is hydrated through the original full projection in the same
+read snapshot. Two later/superseding reply-attempt status checks share one
+per-trigger maximum terminal public Attempt ID, preserving the same eight
+terminal statuses and strict newer-ID comparison. The failed-only candidate path is unchanged. This candidate has
+focused local tests and Task6 whole-copy acceptance. Plain, matching and
+no-match public reads completed in1.7845s,0.9163s and1.3001s respectively;
+isolated read-only UI clicks also passed. Search still evaluates its original
+text predicates; this evidence does not promise a general latency bound or
+production acceptance. See the Email-actions native-copy acceptance JSON.
+
+
+### Unselected current Email fresh seeds (Task4E1)
+
+A private fresh-seed entry point now reuses the original category insertion,
+model-promotion defaults and initial description-revision logic without running
+the historical migration chain. The original v19→20 and v33→34 migrations call
+the factored bodies at the same points, retaining their clock, UUID, legacy
+conversion, DDL and ledger behavior. The fresh entry point requires retained
+tables and leaves transactions, savepoints and rollback to its caller.
+
+No constructor or reopen path calls it. F must select it only for a newly created
+database, never as repair on reopen, Email51 migration or reads. Repeated calls
+on seeded facts allocate no new IDs or clocks; existing configured sets and
+promotion/revision facts are preserved. Tests use an explicit neutral factory
+and genuine archived2773 default fresh0→51 facts, not a current default-constructor
+proof. Metadata/durable validators and coupled default activation remain E2/F;
+Store19/Email51 selection, production and dormant SMTP behavior are unchanged.
+
+
+### Current Email29 validation, Task4E2 preparation
+
+The candidate's one current shape/durable validator now targets the finite29
+schema. Its active plan, retry, direct, feedback, claim, effect, continuation,
+journal and receipt reads use the accepted projections. Exact action manifests
+cover both existing reply variants. Original16 retained-business requirements
+plus ledger, required metadata and retained-row policy remain; optional three
+historical tables are not newly required by startup. The49-object neutral
+factory proof is separate from this original startup coverage.
+
+Shape validation selects19 retained native triggers and13 exact existing
+translated blockers. Their finite installer is caller-transactional and creates
+only missing triggers, without repair/overwrite. Blocker predicates, status
+checks and errors stay unchanged. Durable validation adds no filtering, writes,
+commits or receipt/authorization/recovery policy. The genuine-source comparison
+retains specific NULL behavior: native NULL receipt identity remains accepted
+by the row validator but refused by the public writer; NULL feedback ID remains
+a durable refusal. The original retry timestamp ValueError is also preserved.
+The existing public cancellation preview now works read-only on an explicit
+converted target and returns the original decision.
+
+F is still pending. The default Store19/Email51 bootstrap currently creates the
+old layout, while the current validator targets29; this unpublished intermediate
+state is not a runnable default release. Historical <=48 cached-plan/source
+migration code is preserved, not routed through an alternate validator. F must
+refuse unsupported older sources before mutation and switch the supported pair,
+constructors/locks, coordinator and real markers together. E1 fresh seeds remain
+unselected; external Task5 and copy/native/publication Task6 remain open.
+
+
+### Coupled Email29 bootstrap and release candidate, Task4F
+
+The unpublished candidate now selects Store `2026-10-14.1`/Email52 together with
+29-kind actions. Exact Store19 (`2026-10-13.5`)/Email51 must pass through one paired
+coordinator release before target constructors run. Direct old-pair construction
+refuses read-only before WAL/cache/schema mutation and repeats selection under
+the existing lock; unsupported/mixed/old Email-only sources are also refused.
+The real publication child receives the prepared full metadata binding on stdin,
+atomically applies both markers/schema, and cold opens both real default classes.
+BLOB timestamps retain native values/types. Failed deployment verification uses
+the existing current-fact inverse before the old restart; unsupported inverse
+leaves the replacement stopped under existing updater behavior.
+
+Fresh Store keeps its legacy early commits but publishes canonical classification,
+29 actions and its marker in one final transaction. A failed prefix/suffix can
+leave unversioned core and existing retry refusal; no new repair is introduced.
+A successful Store-first state is valid. Email-first invokes actual AutoReplyStore
+once before taking Email's non-reentrant path lock. Its fresh transaction creates
+current retained nonactions, ledger, original seeds, translated blockers and52;
+rollback returns to Store-first. No historical0→51/action_plan_json/old13 creation
+runs. Current reopen and source51 migration leave existing empty config/revision
+sets empty. Existing coherent-current Store repair behavior is retained. Email current
+reopen still invokes its original provider-observation `important_signals_json`
+column helper before validation, preserving the existing missing-column repair.
+
+Local tests cover real constructors, both orders/concurrency, child fault/crash,
+current-fact inverse and the actual RepositoryUpdater lifecycle using the newly
+loaded selector. They do not establish selector reload in an already-running old
+UI/updater process. Task5A now reads current Email action History (including the
+failed candidate path), Attention, unsubscribe receipts and deployment quiet
+state through finite source-shaped projections. History identity uses the
+signed source ROWID even when the public action ID is NULL. Attention retains
+current-plan, status and retry-window predicates; the current Email runtime
+requires both Store20 and Email52, while generic publication readers accept
+Store20-first before the Email ledger is initialized. Deployment quiet checks
+read the exact Store19/Email51 native source or Store20/Email52 target.
+Historical/default fixture adaptation and the remaining Task5 selected paths
+are still open. The branch is not deployable; source-copy/native/provider/CI/
+publication gates remain open.
+
+
+### Original Email metadata refusals, Task5B0
+
+Store's missing-object repair permission excludes the32 Email-only auxiliaries
+already required by the target manifest. Their same-variant29-minus16 name
+difference is checked against canonical object type, owner and SQL, not a pair
+of special index names. Email does this read-only before its genuine Store call
+and retains EmailPersistenceCorruption; Store also requires the same metadata
+before entering its original current-known-repair path. Missing Email auxiliaries
+remain missing without schema/fact/marker/DB-byte or DELETE-journal changes.
+The shared action table/public-ID index and all prior Store repair paths retain
+their existing treatment. Normal Email→Store call count/lock order, current
+provider-signal column repair, fresh orders and coordinator/inverse are unchanged.
+No general factory, writer, source contract or Task5A consumer was changed.
+This is an unpublished regression correction, not final Task5 acceptance.
+
+Current Email29 action-family metadata belongs to the shared Store20 `actions`
+table. If its generated Email column, CHECK, collation or attempt parent FK is
+malformed, the genuine Store schema preflight raises `sqlite3.IntegrityError`
+before EmailStore's own current-schema validation, even with
+`validate_rows=False`. The Email Web route's existing exception mapping marks
+this `sqlite_integrity_error` and keeps Email unavailable. The older Email51
+separate-table metadata path used `EmailPersistenceCorruption` and
+`email_persistence_corruption`; this diagnostic difference follows the physical
+owner of the schema. Neither path repairs the malformed structure or adds a
+retry, recovery or authorization rule.
+
+The Store20/Email52 pair selector runs before the Email retained-schema
+validator. Partial malformed/future Email ledger values and a complete current
+pair with a future Email ledger are rejected as
+`sqlite3.IntegrityError("unsupported or mixed Store/Email source schema")`;
+a ledger lacking `version` raises `sqlite3.OperationalError("no such column:
+version")`. These source-selection reads do not change schema, ledger or
+Store marker facts, schema cookie or database bytes and do not open a repair
+or automatic retry path. Current retained Email business-table identifiers
+remain case-insensitive under the existing validator; their quoted forms use
+SQLite's normal double-quote, backtick and bracket syntax. Shared `actions`
+metadata and the pair markers are outside that retained Email owner scope.
+
+The Web API's direct `register_email_routes` path catches this paired
+IntegrityError and keeps Email endpoints unavailable while routes registered
+beforehand can answer. Full `create_audit_app` constructs AutoReplyStore first;
+its paired preflight rejects an unknown future Email ledger before route
+registration. The old Email51 whole-app isolation test runs in its bound
+published-source suite, while the current whole-app test asserts the refusal
+and unchanged schema, markers, cookie and bytes. No fallback, catch or retry
+was added to the runtime.
 
 
 Service context JSON blocks use compact serialization rather than indentation.

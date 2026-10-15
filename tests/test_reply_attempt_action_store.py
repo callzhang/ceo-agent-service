@@ -216,34 +216,6 @@ def _full_source18(path: Path, source_variant: str) -> None:
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
 
 
-@pytest.mark.parametrize("source_variant,target_variant", (
-    ("actual", "actual_no_memory_fk"),
-    ("fresh_candidate17", "fresh_memory_fk"),
-))
-def test_store_migrates_exact_source18_and_repairs_only_its_canonical_variant(
-    tmp_path: Path, source_variant: str, target_variant: str,
-) -> None:
-    path = tmp_path / "source18.sqlite3"
-    _full_source18(path, source_variant)
-    store = AutoReplyStore(path)
-    assert store.get_reply_attempt(19).trigger_text == "text"
-    assert [(e.id, e.payload_json) for e in store.list_memory_write_events_for_attempt(19)] == [
-        (23, "{}")]
-    with store._connect() as db:
-        assert validated_reply_variant(db) == target_variant
-        assert db.execute("select value from service_state where key='store_schema_version'").fetchone()[0] == "2026-10-13.5"
-        assert not db.execute("select 1 from sqlite_schema where name in "
-            "('reply_attempts','memory_write_events')").fetchone()
-        db.execute("drop index idx_actions_reply_created")
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    AutoReplyStore(path)
-    with store._connect() as db:
-        assert validated_reply_variant(db) == target_variant
-        assert db.execute("select 1 from sqlite_schema where name='idx_actions_reply_created'").fetchone()
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    AutoReplyStore(path)
-
-
 @pytest.mark.parametrize("unsupported_shape", ("extra_index", "retired_tables"))
 def test_current_store_rejects_unknown_reply_action_declaration_without_mutation(
     tmp_path: Path, unsupported_shape: str,

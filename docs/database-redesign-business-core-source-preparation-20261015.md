@@ -1,0 +1,80 @@
+# Business core source preparation, 2026-10-15
+
+Bounded read-only research at codeb670aea428ec63e993e6837a18e585985c951ee6
+and the verified264source snapshot. This is not constructor selection, a migration,
+a published predecessor binding, body retirement or fresh-source parity. No future
+Store/Email version or new DB field is assigned here. Exact metadata/counts are
+`docs/superpowers/specs/2026-10-15-database-redesign-business-core-source.json`.
+There are no raw records, names, titles, body texts or source URLs in that artifact.
+
+| Existing family | Rows | Source fields | Approved direction |
+| --- | ---: | ---: | --- |
+| business_projects |32|12| business |
+| business_tasks |594|19| business |
+| business_task_signals |833|13| actions.signal_fact |
+| business_source_documents |188|4| real source identity inline/shared provenance; verify recoverable-body retirement |
+| business_task_evidence |897|4| actions.task_evidence |
+| business_project_evidence |33|3| actions.project_evidence |
+| business_task_date_evidence |0|10| actions.date_fact |
+
+The seven families total65fields/2577rows. Every current column matches the
+approved CSV name/type/nullability/PK position; missing/stale/mismatched counts
+are zero. This does not by itself establish a closed migration unit.
+
+## Existing transaction and endpoint closure
+
+Task mutation currently writes documents, signals, Tasks, task evidence, date
+evidence and Task events in one transaction (six families/58fields). The replay
+path joins the deduped signal to the latest original Task event to return the
+original command result. Evidence can be copied elsewhere later; events therefore
+are necessary replay facts, not optional display logs. See
+app/task_semantic_service.py:240-261,445-485.
+
+The Project path adds projects, anchors, project evidence and context revisions
+(four families/26fields), making10actual behavior families/84fields together.
+The canonical Project anchor is uniquely typed; adopted Project context includes
+goal/scope/owner/responsibilities/facts and citations. The7core families have15
+direct external families/137fields in their declared dependency closure, including
+relations, anchor/cluster/Attention membership, legacy links and the separately
+prepared business Followup/Todo-sync families. Explicit endpoint remapping is
+needed when these parents move; this is not permission to migrate all15now.
+
+The disabled Followup preparation retains existing business parent endpoints.
+It must not be duplicated or assumed already published. Source-only metadata
+here observes the current19/51 producer; the future actual Email/Followup
+predecessor may change the link closure and must be bound from real declarations.
+
+## Body identity and adopted evidence
+
+source_document_key hashes a tuple of source type/ref/time, conversation, author
+identity/kind and evidence text (app/task_source_documents.py:42-65). It is not
+just a generic body hash. Source documents keep one shared body which current
+readers join as evidence_text. Current Task/Project signals useWorkItem.summary;
+Memory/session provenance uses cited excerpts while explicitly recording that
+the original was not reread (app/task_agent.py:1014-1077). Thus body can contain
+an extracted business summary rather than the provider's entire original.
+
+Signal context_json also holds actual locator/owner/assignment/reply-to/external
+Task facts; legacy import can copy an entire legacy row. Do not clear that JSON
+as though every member were redundant text. Necessary adopted results live in
+Task state/description/owner/date, immutable event snapshots, Project CRM state
+and context revisions. Preserve these independently of original-body retirement.
+ProjectContextService verifies existing citations in the caller's transaction
+(app/project_context_service.py:35-96). No new review/authorization policy is
+proposed by carrying that current behavior through the storage mapping.
+
+## Next bounded preparation
+
+Freeze the finite10behavior-family source oracle and incoming endpoint map,
+compare actual/genuine published-code fresh declarations and native key/FK/
+transaction/replay behavior, and refine the approved CSV into exact projections.
+Use the actually published predecessor for release binding; do not reserve a
+version or call the current candidate a published source.
+
+For each recoverable source, verify the real locator/version and exact original
+identity/bytes before retiring its body. The present source inspection does not
+prove any of188bodies retrievable. An Agent summary and a currently fetched provider
+body are not automatically identical historical inputs. Retain necessary adopted
+business facts and their direct references; create no generic source-body archive.
+No unused helper was proved by this bounded inspection, and zero date-evidence
+rows do not make its active deadline/writer path dead.

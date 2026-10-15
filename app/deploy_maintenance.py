@@ -19,6 +19,7 @@ from app.task_schema_release import publication_meeting_sources, publication_tas
 from app.action_schema_release import publication_candidate_source
 from app.action_receipt_schema_release import publication_receipt_sources
 from app.action_delivery_schema_release import publication_delivery_sources
+from app.email_publication_sources import publication_email_action_source
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
         candidate_source = publication_candidate_source(db)
         receipt_sources = publication_receipt_sources(db)
         delivery_sources = publication_delivery_sources(db)
+        email_actions = publication_email_action_source(db)
         scheduled_source = publication_scheduled_source(db)
         meeting_jobs, _ = publication_meeting_sources(db)
         processing = {row[0] for row in db.execute(f"select id from ({reply_source}) where status='processing'")}
@@ -44,7 +46,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
         for query in (
             f"select 1 from ({work_source}) where status='processing' limit 1",
             f"select 1 from ({meeting_jobs}) where status in ('processing','sending','summarizing') limit 1",
-            "select 1 from email_actions where status not in ('pending','done','skipped','failed','needs_human') limit 1",
+            f"select 1 from ({email_actions}) where status not in ('pending','done','skipped','failed','needs_human') limit 1",
             f"select 1 from ({scheduled_source}) where dispatch_status='pending' and lease_owner<>'' "
             "and julianday(lease_expires_at)>julianday('now') limit 1",
             f"select 1 from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where status in ('starting','running') and (agent_run_id is null or agent_run_id not in (select id from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id in (" + ','.join('?' for _ in task_ids) + "))) limit 1",

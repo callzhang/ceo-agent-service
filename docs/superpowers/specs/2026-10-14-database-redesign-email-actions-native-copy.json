@@ -1,0 +1,294 @@
+{
+  "status": "passed",
+  "observed_at_utc": "2026-10-14T20:25:13.529528+00:00",
+  "executed_candidate_commit": "07e1d0759e77ec5100f51d5f68c6b3a41f145552",
+  "native_script_sha256": "d04acaf0c1f911a2837720222bc33d6dca683d0788c984f6d445b907d6598831",
+  "production_head_before": "d06c148b90aaeee74c14bbabf0183ffd65f34048",
+  "production_head_after": "d06c148b90aaeee74c14bbabf0183ffd65f34048",
+  "source_binding": "Separate checkout HEAD and per-case SQLite online backup observations",
+  "cases": [
+    {
+      "case": "approve",
+      "status": "done",
+      "completed": true,
+      "published_pair": {
+        "store": "2026-10-14.1",
+        "email": 52,
+        "action_types": 29,
+        "retired_email_tables": 13
+      },
+      "native_baseline_phase": "post_email_publication",
+      "provider_calls": 1,
+      "verification_calls": 1,
+      "receipts": 1,
+      "sent_replies": 1,
+      "business_attempts": 1,
+      "original_tables_unchanged": 103,
+      "email_direct": {
+        "context_messages": 1,
+        "prior_context_receipts": 0,
+        "direct_attempts": 1,
+        "direct_status": "done",
+        "provider_result_persisted": true,
+        "history_locator_valid": true
+      },
+      "elapsed_seconds": 90.04,
+      "source": {
+        "source_ref": "d06c148b90aaeee74c14bbabf0183ffd65f34048",
+        "observed_at_utc": "2026-10-14T20:21:39.528074+00:00",
+        "bytes": 477790208,
+        "store": "2026-10-13.5",
+        "email": 51,
+        "tables": 121,
+        "fk_findings": 1,
+        "sha256": "5d5c4875fef9fce537be7c90b04567a9c9637ed86d7460e55db1eba5b449d977"
+      },
+      "native_calls": [
+        {
+          "role": "consumer",
+          "returncode": 0,
+          "timed_out": false
+        },
+        {
+          "role": "audit",
+          "returncode": 0,
+          "timed_out": false
+        }
+      ],
+      "native_references": [
+        {
+          "role": "consumer",
+          "status": "completed",
+          "revision": 0,
+          "session_id": "01a13c14-8d84-7451-9fdd-af1903b046b5",
+          "start": 0,
+          "end": 36,
+          "native_exists": true,
+          "tool_events": 5
+        },
+        {
+          "role": "audit",
+          "status": "completed",
+          "revision": 0,
+          "session_id": "01a13c14-bfe0-75b3-a19f-6ce1d7fb0e5e",
+          "start": 0,
+          "end": 29,
+          "native_exists": true,
+          "tool_events": 4
+        }
+      ]
+    },
+    {
+      "case": "revision",
+      "status": "done",
+      "completed": true,
+      "published_pair": {
+        "store": "2026-10-14.1",
+        "email": 52,
+        "action_types": 29,
+        "retired_email_tables": 13
+      },
+      "native_baseline_phase": "post_email_publication",
+      "provider_calls": 1,
+      "verification_calls": 1,
+      "receipts": 1,
+      "sent_replies": 1,
+      "business_attempts": 1,
+      "original_tables_unchanged": 103,
+      "email_direct": {
+        "context_messages": 1,
+        "prior_context_receipts": 0,
+        "direct_attempts": 1,
+        "direct_status": "done",
+        "provider_result_persisted": true,
+        "history_locator_valid": true
+      },
+      "elapsed_seconds": 113.57,
+      "source": {
+        "source_ref": "d06c148b90aaeee74c14bbabf0183ffd65f34048",
+        "observed_at_utc": "2026-10-14T20:23:19.623652+00:00",
+        "bytes": 477790208,
+        "store": "2026-10-13.5",
+        "email": 51,
+        "tables": 121,
+        "fk_findings": 1,
+        "sha256": "4c9c1aa70bca56e7ae42609b54ccb042c88978fb3208c7821f27b589aa8af979"
+      },
+      "native_calls": [
+        {
+          "role": "consumer",
+          "returncode": 0,
+          "timed_out": false
+        },
+        {
+          "role": "audit",
+          "returncode": 0,
+          "timed_out": false
+        },
+        {
+          "role": "consumer",
+          "returncode": 0,
+          "timed_out": false
+        },
+        {
+          "role": "audit",
+          "returncode": 0,
+          "timed_out": false
+        }
+      ],
+      "native_references": [
+        {
+          "role": "consumer",
+          "status": "completed",
+          "revision": 0,
+          "session_id": "01a13c16-0e96-75c3-bf05-42edcdea07a1",
+          "start": 0,
+          "end": 29,
+          "native_exists": true,
+          "tool_events": 4
+        },
+        {
+          "role": "audit",
+          "status": "completed",
+          "revision": 0,
+          "session_id": "01a13c16-4441-7c80-8b3b-e30e0a223a3f",
+          "start": 0,
+          "end": 31,
+          "native_exists": true,
+          "tool_events": 4
+        },
+        {
+          "role": "consumer",
+          "status": "completed",
+          "revision": 1,
+          "session_id": "01a13c16-0e96-75c3-bf05-42edcdea07a1",
+          "start": 0,
+          "end": 55,
+          "native_exists": true,
+          "tool_events": 4
+        },
+        {
+          "role": "audit",
+          "status": "completed",
+          "revision": 1,
+          "session_id": "01a13c16-9f10-7ac2-9cf2-4a31a0a6ad73",
+          "start": 0,
+          "end": 29,
+          "native_exists": true,
+          "tool_events": 4
+        }
+      ],
+      "review_decisions": [
+        "return",
+        "approve"
+      ]
+    }
+  ],
+  "checks": {
+    "real_provider_writes": 0,
+    "production_mutations": 0,
+    "actual_cli": true,
+    "ui_pending": false,
+    "owned_copies_cleaned": true
+  },
+  "limit": "Native general Consumer/Audit and deterministic Email public API proof are separate; no native Email-browser or live-provider acceptance.",
+  "ui": {
+    "passed": true,
+    "observed_at_utc": "2026-10-14T20:57:52.835281+00:00",
+    "candidate_commit": "0c210a7d617025c41e27ae2c09a12be8373ab6c1",
+    "scope": "Read-only browser clicks on the revision-case migrated copy; lifespan off, no provider mutations or write controls clicked.",
+    "history": {
+      "total": 35254,
+      "fixture_search_rows": 1,
+      "detail_opened": true,
+      "completed": true,
+      "internal_runs": 4,
+      "revisions": 1,
+      "verified_actions": 1
+    },
+    "native_reference_views": {
+      "consumer_steps": 2,
+      "audit_steps": 2,
+      "consumer_timeline_entries": 21,
+      "audit_timeline_entries": 13,
+      "tool_input_output_expanded": true,
+      "first_audit_return_reason_visible": true
+    },
+    "attention": {
+      "unresolved_issues": 27,
+      "detail_expanded": true,
+      "preexisting_retired_reply_table_errors_source": 1,
+      "preexisting_retired_reply_table_errors_target": 1
+    },
+    "email_fixture": {
+      "search_rows": 1,
+      "detail_opened": true,
+      "current_plan_version": 1,
+      "direct_status": "done",
+      "provider_receipt_visible": true
+    },
+    "existing_unsubscribe": {
+      "list_total": 1087,
+      "detail_records": 2,
+      "completed_receipt_visible": true,
+      "business_detail_link_opened": true,
+      "agent_run_link_present_source": false,
+      "agent_run_link_present_target": false
+    },
+    "browser_errors_or_warnings": 0,
+    "owned_tab_closed": true,
+    "owned_ui_process_stopped": true,
+    "ui_does_not_claim": "Native Email browser approval, real providers, every write control or all task types."
+  },
+  "history_query_acceptance": {
+    "candidate_commit": "0c210a7d617025c41e27ae2c09a12be8373ab6c1",
+    "public_queries": [
+      {
+        "case": "plain",
+        "passed": true,
+        "seconds": 1.7845,
+        "vm": 8541000,
+        "total": 35254,
+        "page_rows": 20,
+        "fixture_rows": 1
+      },
+      {
+        "case": "fixture_search",
+        "passed": true,
+        "seconds": 0.9163,
+        "vm": 12917000,
+        "total": 1,
+        "page_rows": 1,
+        "fixture_rows": 1
+      },
+      {
+        "case": "no_match_search",
+        "passed": true,
+        "seconds": 1.3001,
+        "vm": 23943000,
+        "total": 0,
+        "page_rows": 0,
+        "fixture_rows": 0
+      }
+    ]
+  },
+  "post_ui_checks": {
+    "original_tables_unchanged_after_ui": 103,
+    "quick_check": "ok",
+    "integrity_check": "ok",
+    "fk_findings": 1,
+    "owned_ui_process_absent": true,
+    "native_harness_unchanged_since_execution": true
+  },
+  "production_readback": {
+    "observed_at_utc": "2026-10-14T20:58:28.271555+00:00",
+    "checkout_head": "d06c148b90aaeee74c14bbabf0183ffd65f34048",
+    "store": "2026-10-13.5",
+    "email": 51,
+    "non_internal_tables": 121,
+    "tables_including_sqlite_internal": 122,
+    "sqlite_internal_tables": 1,
+    "observations_are_non_atomic": true,
+    "deployed": false
+  }
+}

@@ -188,3 +188,298 @@ in phase5d validation and phase5d_production_release.v1.json. No real test send,
 recall or feedback action, no native copy or VACUUM. Actual file size remains
 471347200 bytes. E can now refresh against actual published18, rather than the
 old Store17/empty-candidate observation. The full10+1 redesign remains incomplete.
+
+
+### 2026-10-14 current continuation and physical completion boundary
+
+The approved target is still exactly ten core tables plus one migration ledger,
+not ten groups of permanently retained old tables. A fresh readonly production
+observation at07:36 UTC found code `d9d34093`, Store18/Email51,123 non-SQLite-
+internal tables (including FTS virtual/shadow tables), a471,347,200-byte main
+file and4,185,952-byte WAL. Checkout, DB snapshot and file-size observations are
+separate, not an atomic production capture. The subsequent page observation
+reported115,075 pages of4096 bytes,6,425 free pages. No space was reclaimed.
+
+- Phase5D delivery consolidation is published. Phase5E Attempt/Memory candidate
+  `de01dcfd` is pushed in PR82, not published: current main delivery-repair and
+  presentation increments are preserved. FullCI38529409719 is running. Earlier
+  CI38521548780 at2bf passed13,083 backend,729 frontend and2 browser checks,
+  but does not accept the newer merged head. Actual-copy/old-code/native proof
+  executed at74ac; supplemental unchanged-path binding remains separately
+  identified. On the measured source, E removes two old physical tables,123→121.
+- Email13 source/writers and disabled pure forward/current-fact inverse passed
+  sequential independent SPEC then QUALITY; root acceptance2b888442 records
+  Task3A only. No constructor, paired release marker or target version selects
+  this schema. Actual E publication binding and Task3B latest-copy/genuine-old-
+  code cold read/write/re-forward remain mandatory before activation.
+- Nine follow-up/Todo-sync families have accepted source inventory/native
+  oracle and a150-field implementation plan/map atad8852d0. Planning and its
+  independent review are not storage implementation or publication. One atomic
+  nine-family migration must include the retained legacy-link FK conversion.
+
+Even E, Email13 and those nine families together would remove only24 of the
+measured123 old/noninternal tables (if no intervening additions). They do not
+complete the goal. Remaining business/evidence, emails, config/provider/current
+state, leftover actions/tasks, FTS retirement and ledger consolidation still
+require their approved mappings, caller conversion and paired inverse proof.
+Final acceptance must enumerate physical remaining tables and retained source
+fields, not infer completion from a stage name or green test count.
+
+Provider configuration is small: two email_accounts rows occupied8192 bytes
+including indexes. The distinct email_provider_observations table held72,090
+current per-message facts,13,316,096 data bytes plus11,542,528 index bytes.
+The approved destinations are configs and provider_state respectively; these
+counts do not justify keeping either old table permanently or deleting current
+provider inventory by age. No new retention policy is introduced here.
+
+### 2026-10-14 final E CI and unsuccessful normal publication
+
+Final complete CI38529409719 passed atde01dcfd:13,092 Python checks
+(118 skips/44 deselections),729 frontend checks(2 skips),build and2 browser
+checks. PR82 merged as4a962ff7 at08:26:51 UTC. Normal development-checkout
+deployment waited30 minutes and exited at08:57:26 with no changes because
+the service did not become idle. Quiet wait was not bypassed. Production
+remainedd9d34093/Store18/Email51 and123 physical noninternal tables; E is merged,
+not published. The new phase5e_publication_status.v1.json records this boundary.
+
+Before any E conversion, the same production PID73677 exposed healthz=ok but
+system_health=degraded with five latest-reply recovery violations; failure
+summary rose26→28 and Attention21→23 from the08:25:59 baseline. These are
+separately observed pre-migration facts, not evidence of an E regression or
+permission to replay/modify old tasks. Deployment/live acceptance remains open.
+
+Followup9 disabled source-shaped writers and readonly capture are now accepted
+through sequential SPEC/QUALITY; Task2B pure migration is beginning. Email13
+still awaits actual E publication binding and Task3B real-copy/old-code proof.
+Readonly configs/provider/schedules/state preparation covers34 existing tables
+and238 fields exactly against the approved CSV; it selects no runtime migration.
+The full ten-core-table plus ledger objective remains incomplete.
+
+
+### 2026-10-14 E publication readback and remaining acceptance
+
+The first timeout above remains a historical no-change receipt. A separate
+repository upgrade succeeded at09:38:23 UTC fromd9d34093 to5691f6c7; this task's
+second normal deploy exited0 because another deploy had already reached that
+commit. Readonly09:40–09:46 metadata confirmed Store19/Email51,121 tables,
+exact complete16-type actual action declaration and retirement of the two
+physical E source tables. Quick_check returnedok; the original single
+runs190042→tasks FK violation is unchanged. Main file474468352 bytes is not
+smaller; no VACUUM or file-size improvement is claimed.
+
+Status eventually rendered PID34642 with degraded recovery health and30
+failed queue items at09:55:14 UTC; earlier degraded health predates E.
+Several Status/Attention/History requests timed out. Readonly profiling
+isolated a History correlated anti-join bottleneck; a query-shape diagnostic
+reduced full page-key selection from>5s to1.440s, but set equivalence, HTTP
+acceptance and the other timeouts remain unverified. Publication is established;
+complete live acceptance is not.
+
+Followup9 pure migration/current-fact inversec57de7bc now passed sequential
+SPEC then QUALITY and is accepted locally at e60adb84. It remains disabled.
+Email13 now starts Task1 binding against actual published5691f6c7; Task3B
+latest-copy/genuine-old-code read/write/re-forward remains required before
+constructors, paired markers or any activation. The ten-core-table plus one
+ledger objective remains active and incomplete.
+
+
+Email13 Task1 is now accepted at467b4dc2 after sequential independent SPEC and
+QUALITY, against actual publishedeb797e6b Store19/Email51. Exact13-source-table
+metadata/144 fields and all declared closure match. The source-only70 checks
+include the repaired ordinary-rowid ignored-MAX behavior. This does not accept
+Task3B, constructors, callers, activation or publication. Next: preserve that
+published main increment, then actual-copy/current-fact inverse and genuine
+archived-old-code cold read/write/re-forward proof.
+
+
+Readonly remaining-source preparation now accounts for all45 old action tables
+still physically present: Email13, Followup9, business/evidence11 and the other
+12 families in docs/database-redesign-remaining-actions-source-preparation.md.
+The last group has116 existing columns, all exactly covered by the approved
+original CSV, and current writer paths including its three zero-row families.
+Root independently verified native metadata and original-map column coverage.
+This is preparation only; it neither activates a migration nor establishes
+that all historical payload values must be retained. Full10+1 remains open.
+
+
+Task3B exposed an old-application/source-SQL validation distinction: genuine
+published old EmailStore rejects NULL ActionPlan IDs even on an unmigrated
+fresh source, while SQLite permits them. The independently accepted docs-only
+clarification6729b596+d87d88e8 requires separate full SQL-edge preservation
+and strict default old-code application cases, on both actual and fresh sources.
+No NULL or original actual row can be deleted/sanitized, and source validation
+cannot be bypassed. Harness preparation894ac40e is not an actual-copy pass.
+Before the final run, preserve current published9cd41bcf recovery batching;
+its source DDL and Email implementation remain unchanged from the bound schema.
+
+
+### 2026-10-14 Email13 Task3B offline acceptance
+
+Repaired executed e9314a50 / evidence b0a7e904 passed sequential independent
+SPEC then QUALITY. Actual published2773 source (Store19/Email51) and separate
+genuine-old-created SQL-edge/application-valid fresh cases pass complete
+current-fact inverse, strict old public read/write and re-forward; actual
+121→108 tables, original FK finding1 unchanged. Historical eb remains the
+schema oracle, not a claim that the old runtime source is still eb. Original
+rows, exact fixture deltas, types/native identities and all allocator waters
+are checked, including exact independent donor waters after old public writes.
+The prior2b/6b/5099 runs retain their narrower, unaccepted final-proof status.
+
+Email13 constructors/callers/paired markers are not activated. Production
+remains121 tables until a later integrated release, not108 and not10+1. Before
+that integration, the known E History query bottleneck and incomplete live
+performance acceptance remain a separate bounded repair; the previous1.440s
+diagnostic was only count equivalence, not a published fix. Full10+1 remains
+active; Followup9 and the other prepared families remain disabled/preparatory.
+
+
+Email13 Task4 pure current-schema factories0a1929a0 now passed sequential
+SPEC then QUALITY. Exact native current classification30fields, retained
+19tables/10indexes/19triggers and empty separate ledger are prepared without
+selection or seed/version writes;49 native source objects were independently
+reconstructed and checked. Actual constructor orders, fresh default seeds,
+paired markers/inverse, DAO/callers and publication remain pending. History
+query repairPR86 has separate completed scoped reviews and external CI in
+progress; neither preparation nor CI progress changes the production table count.
+
+
+### 2026-10-14 Email13 Task4A/4B preparation acceptance
+
+Unselected paired protocol2fead6ee (rootf404192c) and unpublished partial
+five-family DAO1e54ce25 now passed sequential independent SPEC then QUALITY.
+The protocol preserves exact source markers/ledger and current-fact inverse.
+The DAO retains public methods/identities, transactions/CAS, original conflict
+semantics, retries and receipts; genuine2773 comparisons and bounded unrelated
+action growth passed. Neither unit selects target constructors/markers. The
+partial DAO branch requires explicit Email29 conversion and is not a runnable
+default release. Remaining unsubscribe/reply writes, validators, seeds, paired
+constructor/coordinator/subprocess and integrated/native/publication gates remain
+open. Full ten-core-plus-ledger completion is still outstanding.
+
+A separate2026-10-14 readonly measurement found Store19/Email51 and121 physical
+noninternal tables, DB475762688bytes/WAL4181832bytes. Accounts/category config
+including indexes were8192/16384bytes; provider current inventory was72095rows/
+24866816bytes and its folder-generation table55rows/8192bytes. Configuration
+and per-message current provider facts are distinct approved destinations.
+These are observation values, not retention or future size promises.
+
+The separate History query PR86 remains unpublished. Its first replacement
+Quality38562385604 ended with13135passed and2 stale existing-effect OA test
+expectations. Test-only538bf7ee passed independent SPEC/QUALITY; normal merge
+ec4ddf18 incorporates main834b8348 and preserves its stronger receipt assertion,
+with110 focused merged checks passed. Replacement Quality38568763727 is running;
+normal deployment and live readback remain required. No Email schema/table-count
+transition is implied by the History performance fix.
+
+
+### 2026-10-14 Email13 Task4C preparation acceptance
+
+Unpublished partial unsubscribe DAO9ecf1c25 passed sequential independent SPEC
+and QUALITY. All six families/61 fields and34 mutations retain public identities,
+lease/generation predicates, transaction rollback, effect/step chains, native
+continuation UPSERT and exact receipt backfill. Observed independent checks
+include2 critical SPEC cases plus3 option probes, and6 distinct QUALITY cases;
+no unretained full-run stdout is promoted to an observed pass receipt. The actor
+scoped189-case evidence remains separately recorded. Seven reply DAO methods
+and E/F bootstrap/validators/paired activation remain open; full10+1 is not done.
+
+HistoryPR86 Quality38568763727 passed13138 Python,729 frontend and2 browser
+cases plus build; all PR checks passed. Squash666f4078 has the exact tested
+ec4ddf18 file tree. Normal deployment started after merge; its existing readiness
+check still sees in-flight work, production was last observed834b8348/PID65400,
+and deployment/live readback have no completion receipt yet. This is no Email
+schema/table-count transition.
+
+
+2026-10-14: Email Task4D candidate2e38c20d passed sequential independent SPEC
+then QUALITY. Both independently ran11 cases; QUALITY added NULL identity
+recovery/atomicity probes. This completes only the seven reply DAO methods on
+explicit converted copies. A/B/C/D are accepted preparation; E validators/seeds,
+F paired constructor/default activation, Task5 external callers and actual-copy/
+native/publication gates remain open. Production remains Store19/Email51 with121
+physical noninternal tables; the full10-core-table plus ledger goal is unfinished.
+
+
+2026-10-14: Email E1 unselected fresh seed factoring25852120 passed sequential
+independent SPEC13 and QUALITY23 cases, with exact genuine fresh51 final facts,
+historical AST/SQL/clock parity and zero app callers. E2 current validators is
+next; historical <=48 helpers stay source-specific, unsupported source rejection
+belongs to F before mutation. No new default/schema/production migration.
+A/B/C/D/E1 are preparation, not complete Task4 or full10+1 acceptance.
+
+
+2026-10-14: Email E2f1778a7e passed sequential independent SPEC21+7 and QUALITY15
+checks plus isolated source/metadata/read-only/rollback probes. A/B/C/D/E1/E2
+preparation is accepted; current target validators are not default constructors.
+F paired release/locking/constructor/default selection remains next, then Task5
+external consumers and latest-copy/native/publication. Production is unchanged
+Store19/Email51/121tables; full10-core-table plus ledger remains unfinished.
+
+
+2026-10-14: Email Task4F20bebe37 passed sequential independent SPEC then QUALITY.
+The local candidate now selects Store2026-10-14.1/Email52/29-kind actions with
+the true paired subprocess, both real constructor orders and current-fact inverse.
+SPEC passed48 new F plus16 protocol/three existing-repair cases; QUALITY passed
+four focused cases and independent late old/new DAO writes, BLOB metadata and
+genuine old strict cold read/write. Existing provider signal-column repair stays.
+Cached construction has a measured schema-validation cost (roughly14–16ms on
+temporary empty DBs), accepted without adding another cache layer.
+
+This is not publication or full Task4 acceptance. Task5 external consumers and
+deferred current/historical SQL-test adaptation are next, followed by a latest
+actual production-copy/source refresh, native fake-provider proof and full CI/
+normal deploy/readback. Last production readback remains Store19/Email51/121
+tables at666f4078; source main4eb7abb8 is its documentation-only successor.
+HistoryPR86 is separately deployed with its limited UI/degraded-health boundary;
+it does not change Email schema. The full10-core-table plus ledger goal is open.
+
+
+2026-10-14: after normal main0441/PR87 merge4957997d, Task5A external-consumer
+candidate7dcbe227 passed sequential independent SPEC13 and QUALITY17 cases plus
+their own real0441 full-History, receipt, quiet and initialization probes.5A's
+implementation355-case pass remains separately recorded. Current readers now
+select29 explicitly; original source16/default publication behavior remains.
+
+QUALITY exposed a parent-F contract defect: native Email51 missing-action and
+receipt-classification indexes are refused, while target52 shared Store startup
+recreates their canonical counterparts. The archived parent reproduces it.
+Separate5B0 must fix this mechanism before old-test adaptation, preserving the
+existing Store repairs and Email refusal/provider-column repair. The earlier F
+acceptance is qualified by this confirmed open issue. No publication occurred;
+complete Task4/5, latest-copy/native/CI/deploy/live and the full10+1 goal are open.
+
+### Task5B0 accepted, 2026-10-14
+
+Sequential fresh SPEC then QUALITY accepted4a9de752: SPEC39+10 cases; QUALITY8 cases plus independent each32 malformed-metadata/cache probes, MAIN/TEMP ownership and preserved repair paths. Exact commands, exits and cleanup are in Email validation. Parent-F auxiliary-repair defect is corrected locally. Next5B1 is only six existing current scan/plan/feedback tests with finite existing projections and unchanged business assertions. Historical native migrations/shared corruption helpers need separate scope. Remaining Task4/5 gates, latest-copy/native acceptance, CI/deploy and full10+1 consolidation remain open.
+
+2026-10-14 Task5B1 accepted8989d5d4 after fresh sequential SPEC (six cases6pass2.65s) and QUALITY (complete-file AST equivalence after reversing only imports/projections). Exactly six current scan/plan/reference tests are adapted with business assertions retained. Remaining current/history/shared fixtures and later copy/native/CI/publication gates remain open; no runtime or production change.
+
+### Latest Email integration boundary, 2026-10-14
+
+Task5's named final gate is accepted after sequential SPEC/QUALITY:1,369 parent
+cases passed, including eight genuine0441 wrappers enforcing105 original child
+cases. Task6A actual latest-source copy passed all four cases396.75s with paired
+publication, all144 Email fields/types/identities/waters, target public writes,
+current-fact inverse, genuine d06 cold public writes and reforward. Task6B real
+Codex CLI approval/revision passed with two/four invocations, durable business
+results and one verified in-memory provider receipt per case. Email direct
+context/attempt/History coverage is separately deterministic, not native Email
+browser approval.
+
+Read-only Console clicks are now accepted on the revision copy after the scoped
+generic History repair0c210a7d and fresh SPEC/QUALITY. Whole-copy public reads
+completed plain1.7845s, fixture search0.9163s and no-match search1.3001s; browser
+History/detail/native tool I/O, Attention, mock Email plan/receipt and existing
+unsubscribe/business links rendered. Post-UI103 ordinary original tables,
+integrity checks and one pre-existing FK finding remained unchanged. Owned
+temporary copies, UI server and tab were removed. Aggregate-only evidence and
+precise coverage limits are in the Email validation document and Task6 JSONs.
+
+Email Task7 is still open: migrate the additional current/historical test
+fixtures outside the named matrix, run CI, reconcile main and deploy normally
+with live readback. Production still reads d06/Store19/Email51/121 non-internal
+tables at20:58UTC; SQLite's internal sequence table makes the inclusive count122.
+The tested Email target retires13 tables to108 under the same non-internal
+counting rule. No production/provider mutation or proportional size claim is
+made. Remaining business/provenance/config/provider-state/schedule/state
+consolidation is still required for the complete ten-core-table plus ledger goal.
