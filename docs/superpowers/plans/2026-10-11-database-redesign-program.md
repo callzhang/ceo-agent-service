@@ -21,7 +21,10 @@ suite. This selects the local unpublished Provider path, not production.
 Actual121-to104 source-copy/current inverse/genuine7dad cold writes/reforward
 now passes all four committed harness cases atfd3ba699. Root rehashed the frozen
 source unchanged; evidence is in the Provider validation and copy receipt. Five
-real native reply lifecycle branches with fake outbound are running separately.
+real native reply lifecycle branches with fake outbound now pass atc0afd584:
+13 CLI starts (one expected failure),11 sessions,four fake sends,zero real
+sends; all99 original ordinary tables remain unchanged. Draft PR93 and
+Provider Quality38795211969 at66745228 remain separate in-progress CI.
 The paired target active pages increased32129024 bytes versus that frozen
 source, so table reduction is not capacity acceptance. Separate ancestor
 Business/Email CI38769762524 failed28 tests and nine setup cases, with14361

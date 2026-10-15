@@ -326,3 +326,42 @@ started separately on new copies with in-memory outbound delivery; its result
 is still pending. The preceding capacity measurement remains an increase,
 not space-recovery acceptance. Full ten-core-plus-ledger completion, replacement
 CI and final production approval remain outstanding.
+
+
+## Real native reply lifecycle acceptance, 2026-10-15
+
+Five newly owned frozen-source copies passed the real Codex Consumer/Audit
+lifecycle atc0afd584, from19:13:47Z to19:36:08Z. The receipt is
+`superpowers/specs/2026-10-15-provider-native-copy-acceptance.json`.
+It records the exact executed module hashes and unchanged original970a909a
+source hash. Later source-oracle and documentation commits have no delta to
+app or this native harness, independently checked by Git. Native CLI keeps its
+own home/authentication; only task-bound artifact/contract tools are exposed,
+and actual outbound dispatch uses the existing in-memory substitute.
+
+| Case | CLI starts | Fake sends / receipts | Result |
+| --- | ---: | ---: | --- |
+| approve | 2 | 1 / 1 | Consumer, audit, execution, business result and terminal reopen pass |
+| revision | 4 | 1 / 1 | Real source change produces return then approve, new revision preserved |
+| no_action | 2 | 0 / 0 | Terminal business result and reopen pass without an outbound effect |
+| technical_retry | 3 | 1 / 1 | One deliberate CLI argument-start failure is retained, later real retry passes |
+| settlement_recovery | 2 | 1 / 1 | Deliberate SQLite final-settlement interruption, then reopen settles from receipt |
+
+Total13 CLI starts include one expected failed start and12 successful starts;
+there are11 distinct native session IDs, because revision resumes a session.
+Four fake sends and four external receipts were recorded, zero real sends.
+Every case records one business attempt, checks the original99 ordinary
+post-publication tables unchanged, validates terminal reopen, and requires
+completed native transcript references/ranges. The executed harness asserts
+terminal input compaction/provenance and absence of runs.final_result_json;
+its tool-event counts are reads through native trajectory references, not
+copied JSONL files. Native original trajectories were not copied or deleted.
+All five new owned temporary roots were removed and absence checked; the four
+previously rejected cleanup targets were not retried.
+
+This establishes the five reply branches on the frozen-input candidate.
+Other task types retain their prior separately scoped evidence; no production
+publication or live provider delivery is claimed. Draft PR93 is attached and
+Quality38795211969 is running on exact66745228. The successful ancestor
+Business/Email CI38785796782 at887cd377 remains separate evidence. Full10+1
+and final capacity acceptance remain open.
