@@ -21,9 +21,11 @@ database action.
   selected physical target.
 - `tests/test_provider_state_source.py` executes the literal captured DDL
   and explicit index SQL in separate private in-memory databases for both
-  actual and fresh variants. It checks all columns, defaults, PK positions,
-  hidden fields, index order/collations, and the absence of FK, triggers,
-  sequences, `WITHOUT ROWID`, integer PK alias, and `AUTOINCREMENT`.
+  actual and fresh variants. It checks reconstructed native columns, defaults,
+  PK positions, hidden fields, index order/collations, and identity behavior.
+  FK absence is also read from the reconstructed tables; trigger and sequence
+  absence is asserted from the frozen capture, not independently from a live
+  source database.
   No source rows, private configuration, provider network, or native Agent
   CLI are involved.
 
@@ -42,7 +44,7 @@ native `BINARY` collation and explicitly non-null components.
 | observations | 4 / 4 | `provider_folder_name` | TEXT | yes | 0 | current display name; cleared with folder identity above |
 | observations | 5 / 5 | `category_key` | TEXT | yes | 0 | active bound category, or `junk` for spam/trash; null otherwise |
 | observations | 6 / 6 | `important` | INTEGER | yes | 0 | null or 0/1; scan requires a boolean and stores 0/1 |
-| observations | 7 / 8 | `observed_at` | TEXT | no | 0 | nonblank; last changed message fact or tombstone time |
+| observations | 7 / 8 | `observed_at` | TEXT | no | 0 | nonblank; last scan-published changed fact or tombstone time; direct Star/Flag changes preserve it |
 | observations | 8 / 7 | `important_signals_json` | TEXT | yes | 0 | null or `json_valid`; scan writes a JSON list of nonblank names |
 | generations | 0 / 0 | `account_id` | TEXT | no | 1 | nonblank; mailbox scope |
 | generations | 1 / 1 | `provider_folder_id` | TEXT | no | 2 | nonblank; folder scope |
@@ -125,7 +127,8 @@ signal JSON decoding; a native-valid scalar in those rows is not shape-checked
 on that projection path.
 Star/Important flags derive from recognized signal names, while
 `important` also remains a separate boolean field. A Star/Flag write
-does not create a provider observation and cannot change a nonavailable row.
+does not create a provider observation, cannot change a nonavailable row,
+and does not advance the observation or folder-generation time.
 
 ## Proof boundary and unresolved choices
 

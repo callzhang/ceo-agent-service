@@ -356,10 +356,15 @@ def test_application_signals_shape_and_transaction_rollback(tmp_path):
         "account-a", APP_ID, (r"\Flagged",)
     )
     with store._connect() as db:
-        important, signals = db.execute(
-            f"select important,important_signals_json from {OBS}"
+        important, signals, observed_at = db.execute(
+            f"select important,important_signals_json,observed_at from {OBS}"
         ).fetchone()
+        generation_at = db.execute(
+            f"select observed_at from {GEN} where account_id='account-a' "
+            "and provider_folder_id='inbox'"
+        ).fetchone()[0]
     assert important == 1 and json.loads(signals) == [r"\Flagged"]
+    assert observed_at == generation_at == T1
     publish(store, [], T2, authoritative=("account-a:inbox",), accounts=("account-a",))
     assert not store.record_provider_important_signals(
         "account-a", APP_ID, ("$Important",)
