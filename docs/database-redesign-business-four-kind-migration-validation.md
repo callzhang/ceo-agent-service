@@ -69,3 +69,37 @@ needed even though the row-copy queries are MAIN-qualified.
 This is code and local SQLite validation only. Selecting the coupled
 Store/Email release, replacing current callers and bootstrap, copied-database
 proof, CI and deployment are later tasks under the reviewed integration plan.
+
+
+## Root acceptance and current candidate reconciliation
+
+The corrected complete integration plan at `6b0fbcfd` passed sequential
+independent SPEC and QUALITY review. Its Task4 copy harness now explicitly
+partitions moved/rebuilt/unchanged families, compares source-shaped Business
+values/types/ROWIDs/thirteen waters, binds code/proof paths and accounts for the
+combined net-sixteen table reduction. That review establishes implementability,
+not a copied-database acceptance result.
+
+Implementation SPEC first found a missing isolated parent-mutation proof;
+`0df6d3c8` supplies all nineteen endpoints in actual/fresh variants. QUALITY then
+reproduced silent TEMP-shadow parent data loss. `f677f53f` fixes only migration
+fact reads and necessary DDL destination collision handling. Fresh SPEC passed
+the nine new cases and all485 focused checks; subsequent QUALITY passed449
+migration/storage checks and found no remaining concrete related blocker.
+Both reviews kept the module unselected. Public runtime projections remain
+unchanged. This closes Task1 local implementation acceptance only.
+
+Root normal merge `fd4b29f9` incorporates reviewed Email head `82795db4` and its
+`origin/main` c2aa8082 increments. The only conflict was the claim ledger, where
+both sides were retained. Business modules remain byte-for-byte those reviewed
+at f677f53f. Root's combined Business migration/storage/source plus meeting
+Memory fixture checks passed **529 tests in 20.25 seconds**. Email-only complete
+Quality run38748142018 remains separate evidence and cannot establish Business
+integration. No main merge or production deployment occurred.
+
+Read-only production measurement at 2026-10-15T14:17:59.205604Z still found121
+noninternal physical tables and485036032 main-file bytes; all four old Business
+parents remained. No production database copy or migration was performed for
+this Task1 local acceptance. The approved10-core-plus-ledger target still needs
+Tasks2-4 application/paired-release/copy integration, remaining families and
+final retirement/publication.
