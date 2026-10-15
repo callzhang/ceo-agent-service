@@ -319,11 +319,11 @@ class AuditAgentRunner:
         )
 
         def parse_result(raw: str) -> AuditAgentResult:
-            result = parse_audit_agent_wire_result(raw)
-            if result.proposal_revision != context.proposal_revision:
-                raise ResultParseError("Audit proposal_revision does not match candidate")
-            if result.candidate_digest != context.candidate_digest:
-                raise ResultParseError("Audit candidate_digest does not match candidate")
+            result = parse_audit_agent_wire_result(
+                raw,
+                proposal_revision=context.proposal_revision,
+                candidate_digest=context.candidate_digest,
+            )
             validate_audit_candidate_fields(result, context.candidate)
             return result
 

@@ -13,6 +13,17 @@ ordering and sequence progress; unresolved non-NULL parents still fail the
 native FK path. Migration and runtime
 selection remain separate follow-up work.
 
+Task Agent's checked-in native strict schema documents existing Task identity
+fields: ordinary `update_task`/`update_fields` uses `task_id`; merge-only target
+and identity fields identify two distinct persisted Tasks. New supporting Tasks
+carry a registered assessment's Project selector explicitly; unresolved Project
+clues may retain a null selector. Model field descriptions and
+the generated schema stay synchronized. No validator or correction-budget
+change accompanies this clarification. A failed uncompacted Work input may be
+requeued through the existing reviewed-recovery CLI after the diagnosed cause
+is repaired; old failed runs remain intact, and acceptance requires a new
+terminal source/projection readback. See `docs/system-health-quality-validation.md`.
+
 DingTalk delivery verification reads outgoing identifiers only from the native
 send `result`, never referencedMessage or nested action metadata. An openTaskId
 always requires a task query; only result.sendStatus=SUCCESS confirms asynchronous
@@ -897,6 +908,8 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
 候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
+
+Audit wire 只返回审阅结论和反馈，不要求模型复述 `candidate_digest` 或 `proposal_revision`。解析器从本轮已核验的 `AuditTurnContext` 注入这两个绑定值，再用同一个上下文核对候选字段断言；严格 wire schema 拒绝模型额外输出绑定字段。恢复已完成的 Audit 原生结果也使用同一候选绑定解析器。持久化的 Audit 域结果仍带摘要和版本号，并保留原有完整内容与敏感值校验。
 
 Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
 

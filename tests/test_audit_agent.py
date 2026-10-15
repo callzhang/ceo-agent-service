@@ -48,10 +48,9 @@ def _candidate() -> ConsumerAgentResult:
     })
 
 
-def _wire(digest: str, *, outcome: str = "approve", revision: int = 0) -> str:
+def _wire(*, outcome: str = "approve") -> str:
     result = {
         "outcome": outcome, "summary": "Reviewed whole candidate",
-        "proposal_revision": revision, "candidate_digest": digest,
         "evidence_refs": ["source:1"],
         "feedback": ({"rule": "Missing source", "observation": "Unverified fact",
                      "requested_revision": "Read the source", "observation_basis": "business",
@@ -191,7 +190,7 @@ def test_audit_repeated_result_failure_starts_and_binds_fresh_session(setup):
             "code": "codex_result_invalid", "detail": "same invalid result",
             "retryable": True, "session_continuable": True,
         }, owner="prior-audit")
-    executor = CapturingExecutor(_wire(context.candidate_digest))
+    executor = CapturingExecutor(_wire())
     result = _runner(setup, executor).run(
         task, context, turn_attempt=2, parent_agent_run_id=parent.id,
     )
@@ -252,7 +251,7 @@ def test_audit_route_requires_role_boundary_and_image_capability(setup):
 
 def test_review_only_run_preserves_session_and_uses_bound_read_cli(setup):
     store, task, parent, context, _config, _router = setup
-    executor = CapturingExecutor(_wire(context.candidate_digest))
+    executor = CapturingExecutor(_wire())
     result = _runner(setup, executor).run(
         task, context, turn_attempt=0, parent_agent_run_id=parent.id,
     )
@@ -279,7 +278,7 @@ def test_review_only_run_preserves_session_and_uses_bound_read_cli(setup):
 @pytest.mark.parametrize("outcome", ["return", "reject"])
 def test_audit_feedback_is_business_review_without_external_result(setup, outcome):
     _store, task, parent, context, _config, _router = setup
-    executor = CapturingExecutor(_wire(context.candidate_digest, outcome=outcome))
+    executor = CapturingExecutor(_wire(outcome=outcome))
     result = _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     assert result.result.outcome.value == outcome
     assert result.result.feedback.requested_revision == "Read the source"
@@ -294,16 +293,54 @@ def test_candidate_digest_is_checked_before_claim(setup):
     assert store.get_agent_run_for_turn(task.id, task.execution_generation, role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0) is None
 
 
-def test_audit_wire_digest_and_revision_must_match_claimed_candidate(setup):
+def test_audit_wire_binding_is_service_owned_and_unexpected_echo_is_rejected(setup):
     _store, task, parent, context, _config, _router = setup
-    for turn_attempt, raw in enumerate((_wire("0" * 64), _wire(context.candidate_digest, revision=1))):
-        with pytest.raises(ResultParseError):
-            _runner(setup, CapturingExecutor(raw)).run(task, context, turn_attempt=turn_attempt, parent_agent_run_id=parent.id)
+    result = _runner(setup, CapturingExecutor(_wire())).run(
+        task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    assert result.result.candidate_digest == context.candidate_digest
+    assert result.result.proposal_revision == context.proposal_revision
+
+    raw_lines = _wire().splitlines()
+    event = json.loads(raw_lines[-1])
+    output = json.loads(event["item"]["text"])
+    output["candidate_digest"] = "0" * 64
+    output["proposal_revision"] = 17
+    event["item"]["text"] = json.dumps(output)
+    raw_lines[-1] = json.dumps(event)
+    with pytest.raises(ResultParseError):
+        _runner(setup, CapturingExecutor("\n".join(raw_lines))).run(
+            task, context, turn_attempt=1, parent_agent_run_id=parent.id)
+
+
+def test_completed_audit_recovery_uses_the_candidate_bound_parser(setup, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.agent_turn_runner as turn_runner
+    from app.agent_wire_contracts import parse_audit_agent_wire_result
+
+    _store, _task, _parent, context, _config, _router = setup
+    attempt = SimpleNamespace(
+        result_schema_id="audit-schema", runtime_kind="codex_cli",
+        session_id="audit-session", transcript_start=0, transcript_end=1,
+    )
+    run = SimpleNamespace(role=AgentRole.AUDIT, proposal_revision=context.proposal_revision)
+    monkeypatch.setattr(turn_runner, "read_native_result_stream", lambda *_args: _wire())
+
+    recovered = turn_runner.recover_completed_runtime_domain_result(
+        attempt, run, schema_id="audit-schema",
+        parse_result=lambda raw: parse_audit_agent_wire_result(
+            raw, proposal_revision=context.proposal_revision,
+            candidate_digest=context.candidate_digest,
+        ),
+    )
+
+    assert recovered.proposal_revision == context.proposal_revision
+    assert recovered.candidate_digest == context.candidate_digest
 
 
 def test_false_field_feedback_corrects_audit_without_revising_or_approving_candidate(setup):
     store, task, parent, context, _config, _router = setup
-    lines = _wire(context.candidate_digest, outcome="return").splitlines()
+    lines = _wire(outcome="return").splitlines()
     event = json.loads(lines[-1])
     output = json.loads(event["item"]["text"])
     output["feedback"].update(observation_basis="candidate_fields", candidate_field_assertions=[{
@@ -320,7 +357,7 @@ def test_false_field_feedback_corrects_audit_without_revising_or_approving_candi
     assert failed.status == "failed"
     assert json.loads(failed.structured_error_json)["code"] == "codex_result_invalid"
     assert json.loads(store.adopted_candidate_for_consumer_run(parent.id)["candidate_json"]) == context.candidate.model_dump(mode="json")
-    executor = CapturingExecutor(_wire(context.candidate_digest, outcome="return"))
+    executor = CapturingExecutor(_wire(outcome="return"))
     result = _runner(setup, executor).run(task, context, turn_attempt=1,
         parent_agent_run_id=parent.id)
     assert result.result.outcome is AuditOutcome.RETURN
@@ -330,7 +367,7 @@ def test_false_field_feedback_corrects_audit_without_revising_or_approving_candi
 
 def test_sensitive_audit_output_is_a_result_failure_not_a_process_outage(setup):
     store, task, parent, context, _config, _router = setup
-    lines = _wire(context.candidate_digest, outcome="return").splitlines()
+    lines = _wire(outcome="return").splitlines()
     event = json.loads(lines[-1])
     output = json.loads(event["item"]["text"])
     output["feedback"]["observation"] = "access_token=synthetic-test-secret"
@@ -379,7 +416,8 @@ def test_sensitive_recovered_audit_result_is_a_result_failure_not_a_process_outa
         )),
     )
     recovered = parse_audit_agent_wire_result(
-        _wire(context.candidate_digest, outcome="return")
+        _wire(outcome="return"), proposal_revision=context.proposal_revision,
+        candidate_digest=context.candidate_digest,
     )
     unsafe = recovered.model_copy(update={
         "feedback": recovered.feedback.model_copy(update={
@@ -425,7 +463,7 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
 
     _store, task, parent, _context, _config, _router = setup
     context = replace(_context, audit_rules="")
-    executor = CapturingExecutor(_wire(context.candidate_digest))
+    executor = CapturingExecutor(_wire())
     _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     command = executor.commands[0]
     setting = next(value for value in command if value.startswith("developer_instructions="))
@@ -468,7 +506,7 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
             skill_protocol_source=protocol_source,
         ),
     )
-    executor = CapturingExecutor(_wire(context.candidate_digest))
+    executor = CapturingExecutor(_wire())
     runner = _runner(setup, executor)
     runner.skill_protocol_override = "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED"
     selected_task = task.model_copy(update={
@@ -553,6 +591,6 @@ def test_audit_builds_native_role_skill_config_once(setup, tmp_path, monkeypatch
     calls, expected = track_role_skill_build(tmp_path, monkeypatch)
     _store, task, parent, context, _config, _router = setup
     context = replace(context, task=replace(context.task, skill_names=("ceo-document-review",)))
-    executor = CapturingExecutor(_wire(context.candidate_digest))
+    executor = CapturingExecutor(_wire())
     _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     assert_single_role_skill_build(calls, expected, executor)

@@ -182,11 +182,10 @@ class _DecodedRuntimeDomainResult:
 def recover_completed_runtime_domain_result(
     attempt: AgentRuntimeAttempt, run: AgentRun, *, schema_id: str,
     friday_adapter: FridayRuntimeAdapter | None = None,
+    parse_result: Callable[[str], ConsumerAgentResult | AuditAgentResult] | None = None,
 ) -> ConsumerAgentResult | AuditAgentResult:
     """Revalidate a completed turn using its runtime-owned transcript."""
-    from app.agent_wire_contracts import (
-        parse_audit_agent_wire_result, parse_consumer_agent_wire_result,
-    )
+    from app.agent_wire_contracts import parse_consumer_agent_wire_result
 
     if attempt.result_schema_id != schema_id:
         raise ValueError("completed runtime result schema mismatch")
@@ -202,10 +201,11 @@ def recover_completed_runtime_domain_result(
         )
     if not raw:
         raise ValueError("completed runtime native result unavailable")
-    parser = (
-        parse_consumer_agent_wire_result
-        if run.role is AgentRole.CONSUMER else parse_audit_agent_wire_result
-    )
+    parser = parse_result
+    if parser is None:
+        if run.role is AgentRole.AUDIT:
+            raise ValueError("completed Audit result requires its candidate-bound parser")
+        parser = parse_consumer_agent_wire_result
     parsed = parser(raw)
     if attempt.runtime_kind != RuntimeKind.CLAUDE_CLI.value:
         return parsed
@@ -989,6 +989,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     result = cast(ResultT, recover_completed_runtime_domain_result(
                         completed_attempt, run, schema_id=runtime_result_schema_id,
                         friday_adapter=self.friday_adapter,
+                        parse_result=parse_result,
                     ))
                 except ValueError as exc:
                     raise CompletedRuntimeResultBlockedError(
@@ -1532,8 +1533,6 @@ class AgentTurnProcess(Generic[ResultT]):
         outcome = getattr(result, "outcome")
         persisted = self.store.get_agent_run(run.id)
         assert persisted is not None
-        if run.role is AgentRole.AUDIT:
-            result = self._bind_audit_result(run, result)
         business_failure = outcome in {ConsumerOutcome.FAILED, AuditOutcome.FAILED}
         error_payload = None
         if business_failure:
@@ -1758,33 +1757,6 @@ class AgentTurnProcess(Generic[ResultT]):
             RuntimeFailureClass.UNCLASSIFIED.value,
             "runtime_unclassified",
             False, **native_bounds,
-        )
-
-    def _bind_audit_result(
-        self,
-        run: AgentRun,
-        result: ResultT,
-    ) -> ResultT:
-        """Bind the service-owned ``proposal_revision`` onto the Audit result.
-
-        The Audit run row defines the reviewed revision; the model only echoes
-        it (same rule as ``operation_id`` in ``audit_agent._parse_evidenced_result``).
-        A differing echo is logged and overwritten, never a run failure.
-        """
-        echoed = getattr(result, "proposal_revision")
-        if echoed == run.proposal_revision:
-            return result
-        _LOGGER.warning(
-            "audit result proposal_revision bound from run: task=%s run=%s "
-            "run_revision=%s echoed_revision=%s",
-            self.task.id,
-            run.id,
-            run.proposal_revision,
-            echoed,
-        )
-        return cast(
-            ResultT,
-            result.model_copy(update={"proposal_revision": run.proposal_revision}),
         )
 
     def _raise_for_process_failure(

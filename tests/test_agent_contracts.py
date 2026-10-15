@@ -1188,8 +1188,7 @@ def test_audit_review_only_and_system_execution_result():
 @pytest.mark.parametrize("old_outcome", ["executed", "feedback_provided", "needs_human", "dry_run", "revision_required"])
 def test_live_audit_wire_rejects_old_execution_outcomes(old_outcome):
     payload = {
-        "outcome": old_outcome, "summary": "Old result", "proposal_revision": 0,
-        "candidate_digest": "a" * 64, "feedback": None,
+        "outcome": old_outcome, "summary": "Old result", "feedback": None,
         "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
         "information_completeness": 1.0, "error_code": "",
         "error_retryable": False, "error_authorization_required": False,
@@ -1201,16 +1200,40 @@ def test_live_audit_wire_rejects_old_execution_outcomes(old_outcome):
 @pytest.mark.parametrize("outcome", ["return", "reject"])
 def test_review_feedback_required_on_return_and_reject(outcome):
     payload = {
-        "outcome": outcome, "summary": "Revise candidate", "proposal_revision": 0,
-        "candidate_digest": "a" * 64, "evidence_refs": ["message:1"],
+        "outcome": outcome, "summary": "Revise candidate", "evidence_refs": ["message:1"],
         "feedback": {"rule": "Audience must match source", "observation": "Wrong recipient", "requested_revision": "Correct recipient", "observation_basis": "business", "candidate_field_assertions": []},
         "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
         "information_completeness": 1.0, "error_code": "",
         "error_retryable": False, "error_authorization_required": False,
     }
-    assert AuditAgentWireResult.model_validate(payload).to_result().outcome.value == outcome
+    assert AuditAgentWireResult.model_validate(payload).to_result(
+        proposal_revision=0, candidate_digest="a" * 64,
+    ).outcome.value == outcome
     with pytest.raises(ValidationError):
         AuditAgentWireResult.model_validate({**payload, "feedback": None})
+
+
+def test_audit_wire_omits_service_owned_candidate_bindings():
+    from app.agent_wire_contracts import parse_audit_agent_wire_result
+
+    payload = {
+        "outcome": "approve", "summary": "Reviewed exact candidate",
+        "evidence_refs": [], "feedback": None, "risk": "low",
+        "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "error_code": "",
+        "error_retryable": False, "error_authorization_required": False,
+    }
+    raw = json.dumps({"type": "item.completed", "item": {
+        "type": "agent_message", "text": json.dumps(payload)}})
+    result = parse_audit_agent_wire_result(
+        raw, proposal_revision=7, candidate_digest="b" * 64,
+    )
+    assert result.proposal_revision == 7
+    assert result.candidate_digest == "b" * 64
+    with pytest.raises(ValidationError):
+        AuditAgentWireResult.model_validate({**payload, "candidate_digest": "b" * 64})
+    with pytest.raises(ValidationError):
+        AuditAgentWireResult.model_validate({**payload, "proposal_revision": 7})
 
 
 def test_pinned_consumer_schema_rejects_unbound_human_question_and_option():

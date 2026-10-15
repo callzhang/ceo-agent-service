@@ -832,7 +832,7 @@ def test_audit_pre_session_failure_is_ordinary_failed_retry(tmp_path, codex_fail
     def executor(command, *, on_stdout_line, **kwargs):
         return ProcessRunResult(1, "", codex_failure)
     with pytest.raises(Exception):
-        AgentTurnProcess(store=store, task=task, workspace=tmp_path, owner="audit", executor=executor, runtime_config=config, runtime_router=Router()).execute(run=run, prompt="Audit", session_id=None, developer_instructions="Return schema", configure_command=lambda c: None, parse_result=parse_audit_agent_wire_result, persist_conversation_session=False)
+        AgentTurnProcess(store=store, task=task, workspace=tmp_path, owner="audit", executor=executor, runtime_config=config, runtime_router=Router()).execute(run=run, prompt="Audit", session_id=None, developer_instructions="Return schema", configure_command=lambda c: None, parse_result=lambda raw: parse_audit_agent_wire_result(raw, proposal_revision=run.proposal_revision, candidate_digest="0" * 64), persist_conversation_session=False)
     persisted = store.get_agent_run(run.id)
     assert persisted is not None
     assert persisted.status in {"failed", "running"}
