@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 
 from app.store import AutoReplyStore
+from app.business_storage import update_business
 from app.project_context_service import ProjectContextService
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_semantic_models import AttentionCategory, BusinessTaskStatus
@@ -163,8 +164,12 @@ def test_task_list_filters_by_owner_and_sorts_by_creation_or_update(tmp_path):
     owned = store.create_business_task(title="有人负责", stage="candidate", owner_name="王明")
     bare = store.create_business_task(title="无人负责", stage="candidate")
     with store._immediate_write_transaction() as db:
-        db.execute("update business_tasks set created_at='2026-09-01 00:00:00', updated_at='2026-09-03 00:00:00' where id=?", (owned,))
-        db.execute("update business_tasks set created_at='2026-09-02 00:00:00', updated_at='2026-09-02 00:00:00' where id=?", (bare,))
+        update_business(db, "task", owned, {
+            "created_at": "2026-09-01 00:00:00", "updated_at": "2026-09-03 00:00:00",
+        })
+        update_business(db, "task", bare, {
+            "created_at": "2026-09-02 00:00:00", "updated_at": "2026-09-02 00:00:00",
+        })
     with _client(tmp_path) as client:
         def ids(query):
             response = client.get(f"/api/console/tasks/all?{query}")

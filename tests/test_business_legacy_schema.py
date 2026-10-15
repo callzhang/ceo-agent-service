@@ -24,13 +24,15 @@ HISTORICAL_TESTS = (
     "test_source_body_migration_preserves_exact_preexisting_foreign_key_violations",
     "test_source_body_migration_rolls_back_if_it_adds_a_foreign_key_violation",
 )
+HISTORICAL_CRM_TEST = "test_existing_project_schema_migration_keeps_identity_and_leaves_customer_null"
 
 
 def test_retired_store_bootstrap_contracts_under_published_source():
     assert len(HISTORICAL_TESTS) == len(set(HISTORICAL_TESTS)) == 8
     expected = Counter({name: 1 for name in HISTORICAL_TESTS})
     expected["test_legacy_signal_bodies_migrate_without_changing_evidence_identity_or_history"] = 2
-    assert sum(expected.values()) == 9
+    expected[HISTORICAL_CRM_TEST] = 1
+    assert sum(expected.values()) == 10
     with TemporaryDirectory(prefix="business-retired-store-source-", dir="/tmp") as directory:
         source = Path(directory)
         bound = subprocess.run(
@@ -53,6 +55,7 @@ def test_retired_store_bootstrap_contracts_under_published_source():
                 sys.executable, "-m", "pytest", "-q", f"--junitxml={report}",
                 "--basetemp", str(source / "pytest"),
                 *(f"tests/test_task_semantic_store.py::{name}" for name in HISTORICAL_TESTS),
+                f"tests/test_project_crm_customer.py::{HISTORICAL_CRM_TEST}",
             ],
             cwd=source,
             env={**os.environ, "PYTHONPATH": str(source), "PYTEST_ADDOPTS": ""},

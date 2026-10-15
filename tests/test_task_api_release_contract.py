@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from app.store import AutoReplyStore
+from app.business_storage import insert_business
 from app.fxiaoke_customer_lookup import CrmCustomerCandidate, CrmCustomerLookup
 from tests.test_console_web_api import _client
 
@@ -68,7 +69,11 @@ def test_task_detail_contains_all_relations_and_anchor_links(tmp_path):
     with store._immediate_write_transaction() as db:
         signal_id = _signal(store, db, "all-links")
         for index in range(101):
-            other_id = int(db.execute("insert into business_tasks (title, stage, status, commitment_status, business_relevance, created_at, updated_at) values (?, 'candidate', 'open', 'none', 'relevant', current_timestamp, current_timestamp)", (f"Other {index}",)).lastrowid)
+            other_id = int(insert_business(db, "task", {
+                "title": f"Other {index}", "stage": "candidate",
+                "status": "open", "commitment_status": "none",
+                "business_relevance": "relevant",
+            }).lastrowid)
             db.execute("insert into business_task_relations (from_task_id, to_task_id, relation_type, supporting_signal_id) values (?, ?, 'related_to', ?)", (task_id, other_id, signal_id))
             anchor_id = store.create_business_anchor_in_transaction(anchor_type="matter", anchor_ref=f"matter-{index}", title=f"Matter {index}", _db=db)
             store.create_business_task_anchor_link_in_transaction(task_id=task_id, anchor_id=anchor_id, status="confirmed", active=True, evidence_signal_id=signal_id, _db=db)

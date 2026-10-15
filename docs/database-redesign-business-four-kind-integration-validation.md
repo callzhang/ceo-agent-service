@@ -21,6 +21,19 @@ Task 4's native copied-production validation, copy-harness assertions and real d
 
 The current Console CRM search regression first failed with `Business writes require a caller transaction` in `update_business`. The endpoint had opened a bare connection, and the adjacent confirmation and clearing methods used the same bare-connection pattern. All three now use the existing Business writer transaction. The exact end-to-end test passed after the change: search saved candidates without linking or writing CRM, an unseen customer remained rejected, the selected customer could be confirmed, and the link could be cleared. The typed writer retains its strict caller-transaction requirement.
 
+## Current caller fixture closure
+
+Five current-target files covering the Project-centered evaluation oracle,
+Console Task release contract, Project CRM behavior, Web Attention ordering and
+source Project registration passed 55 cases. Their negative oracle assertions
+remain intact. Fixtures now use source-shaped Business projections for reads
+and typed Business inserts/updates within caller-owned transactions. The
+genuinely retired Project CRM column-upgrade test passed under the exact
+published `7dadc492` source code and joined the archive-backed historical
+wrapper, which checks ten exact parameterized cases without skips. The
+opt-in copied-database acceptance file received its one current Business
+projection read; it was not run against a production copy in this fixture pass.
+
 
 ## Independent Task2+3 acceptance
 
