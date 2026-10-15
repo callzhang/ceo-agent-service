@@ -157,3 +157,44 @@ typed `actions` predicates; the old source blocker SQL is predecessor evidence
 only. These are separate target, migration and caller/publication plans. This
 source plan reserves no schema version and introduces no auditor or retention
 policy.
+
+## Bounded configs SOURCE behavior oracle, 2026-10-15
+
+The accepted literal capture covers all 118 fields across the 15 config
+families for both `actual` and published `fresh` variants. The new unselected
+oracle reconstructs those declarations in owned in-memory SQLite connections
+and behaviorally samples native identities, affinity and NULL behavior,
+AUTOINCREMENT and WITHOUT ROWID layout, uniqueness, CHECKs, internal FKs,
+cascades, immutable history and snapshot exceptions. It also exercises the
+genuine archived `7dadc492` Store/Email constructor through public category
+CAS, runtime Skill activation/load receipts, scheduled configuration interning
+and references, caller-owned transaction rollback, and WeChat scope watermark
+methods. The six predecessor account blocker predicates are compared with the
+current candidate's typed `actions` predicates as declarations only.
+
+Verification in this worktree: `python -m pytest -q
+tests/test_configs_source_contract.py tests/test_config_state_native_source.py
+tests/test_provider_state_source.py tests/test_storage_scheduled_configs.py`
+passed **38 cases in 19.54 seconds**, including **19 new behavior cases** and
+the six previously accepted config metadata cases. `python -m pytest -q
+tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`
+passed **26 cases in 0.52 seconds**. That predecessor DML gate reconstructs
+captured Email action parents/children with narrow account, message and
+classification stubs; it is not a genuine full constructor or new configs
+target test. Ruff, compileall and `git diff --check` passed on the new files.
+On SQLite 3.53.4, the explicit high-water probe returned sequences 700 for
+`managed_skills` and 901 for `managed_skill_revisions` and
+`runtime_skill_configs` in both variants; ignored invalid CHECK rows advanced
+the latter two native sequences. These results pin bounded source behavior,
+not universal DML proof for all 118 fields.
+
+The next atomic closure remains separate work: map all 15 config families;
+`scheduled_tasks`, `runs.snapshot_id` and `runs.scheduled_task_id`;
+`scheduled_task_skill_refs`; `managed_skill_export_receipts` and
+`runtime_skill_load_receipts` to typed `actions` references; the approved
+empty `email_training_snapshot_observations` FK/trigger retirement; and the
+six account blocker predicates against current typed `actions`. Target
+declaration/storage, pure migration/inverse, current caller/paired publication,
+and actual-copy gates each need their own evidence. This source-only oracle
+does not establish target parity, migration readiness, production behavior,
+or a release. It introduces no schema version, audit rule or retention policy.
