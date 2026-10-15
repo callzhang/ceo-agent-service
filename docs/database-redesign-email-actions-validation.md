@@ -2782,3 +2782,24 @@ and merge `git diff --check` passed. The first worker-node invocation selected
 one truncated test name and collected no tests; the corrected invocation above
 is the measured result. The root task owns the broader 29-file matrix,
 fresh-source copy/native proof, independent review, CI and publication.
+
+
+### Task7 diagnostics increment independent acceptance
+
+Root accepts0d703eae and evidence2d984302 after fresh sequential SPEC then
+QUALITY PASS. The exact productionfca229bb increment changes only per-scan
+runtime metadata predicate reuse and slow-context diagnostics in the existing
+read-snapshot connection path. Both changed functions match incoming main;
+central Email schema, storage, migration/inverse, release selection, History,
+copy and native harness implementations remain unchanged. The33 focused and
+14 changed Worker checks are implementer results. The already-imported29-file
+schema/lifecycle matrix retains its evidence scope; the bounded new diagnostic
+checks cover the new code.
+
+The7301 source-copy/native initialization runs were interrupted by root after
+production advanced tofca229bb and machine load exceeded30. Both owned process
+groups exited130 before native CLI/model/provider execution; no test failure
+or timeout was masked. Both incomplete native working roots were removed and
+absence verified. These runs are not accepted results. A refreshed latest-source
+copy/native run will execute serially after the matrix. No production mutation
+or real test sending occurred. CI/publication/live readback/full10+1 stay open.
