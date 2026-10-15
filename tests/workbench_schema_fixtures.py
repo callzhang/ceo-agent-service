@@ -162,7 +162,7 @@ def full_source_database(path, auxiliary_path, published_source):
     )
     with sqlite3.connect(auxiliary_path) as auxiliary:
         objects = auxiliary.execute(
-            "select type,name,sql from sqlite_master where sql is not null and tbl_name<>'actions' order by case type when 'table' then 0 when 'index' then 1 else 2 end,name"
+            "select type,name,sql from sqlite_master where sql is not null and tbl_name<>'actions' order by case type when 'table' then 0 when 'index' then 1 else 2 end,rowid"
         ).fetchall()
     db = source_database(path)
     names = {row[0] for row in db.execute("select name from sqlite_master")}

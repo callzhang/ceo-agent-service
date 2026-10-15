@@ -240,3 +240,47 @@ scope. They do not override this failed combined CI result. No main merge,
 production publication or deployment is authorized by this receipt. Provider
 selection in the separate worktree remains unpushed and is not covered by
 this Business/Email CI run.
+
+### Bounded Business CI fixture repair, 2026-10-15
+
+The source13 auxiliary fixture replayed its archived indexes alphabetically.
+SQLite assigns `pragma index_list` sequence numbers in index creation order,
+so that replay changed the exact Business declaration fingerprint. The fixture
+now copies tables, indexes and triggers in their `sqlite_schema` rowid order
+within each phase. A focused regression was red with the former ordering
+(`unsupported Business source declarations`) and green after the correction.
+The source13 fixture recaptures the accepted **fresh** Business declarations:
+four parent fingerprints and the fifteen-child fingerprint match the fresh
+release constants. It is a historical 0441 fixture; its hashes do not claim to
+match the separately bound published 7dad **actual** source variant.
+
+The native storage affinity test now follows the running SQLite decision for
+JSON BLOB input. On local SQLite 3.53.4 the valid JSON BLOB is accepted, with
+the exact value, Python storage class and allocator waters matching the target.
+A separate invalid BLOB exercises native and target rejection, requiring the
+same SQLite error name and unchanged rows and waters. CI's earlier native
+rejection on its SQLite build was not reproduced locally. The historical
+suggestion-column test now runs genuine Store `2026-10-04.2` code from
+`0bd75f7c` to create candidate, formal and event rows, then its immediate
+`9469363a` successor to upgrade them twice. It verifies default `origin` and
+`suggestion_json`, public IDs, all prior task columns, raw event history and
+foreign keys. This is a separate historical transition, not a claim that this
+old database can open under the current paired release.
+
+Current fixtures now start the Business writer transaction for attention,
+count Task rows through the typed projection while preserving every other
+count key, and install current Business core in the replay comparison fixture
+while intentionally omitting Project evidence and source documents. The replay
+still requires explicit comparison failure, latest public run ID and unchanged
+database bytes. The additional native-copy fixture uses `/tmp`; its existing
+owned-root guard resolves `/tmp` to the host path, which is `/private/tmp` on
+macOS and `/tmp` on Linux. Its published-pair assertion includes the four
+retired Business parents.
+
+Local evidence: 144 historical Workbench, Task storage and meeting tests;
+468 complete Business storage, daily facts, suggestion and replay files; six
+additional-copy harness cases and the separate historical upgrade test; one source13 regression
+red then green. Changed-file Ruff, compileall and diff checks passed. These
+are local fixture/test results only. A replacement exact-head Linux CI run is
+still required; no runtime app module, provider, real database, native CLI,
+production service, push, PR or deployment changed in this repair.

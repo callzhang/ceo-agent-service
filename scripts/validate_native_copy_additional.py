@@ -25,7 +25,7 @@ from scripts.validate_native_copy_lifecycle import (  # noqa: E402
 
 def prepare(root):
     root = root.resolve()
-    assert root.parent == Path('/private/tmp') and root.name.startswith('ceo-native-copy.')
+    assert root.parent == Path('/tmp').resolve() and root.name.startswith('ceo-native-copy.')
     metadata = json.loads((root / 'source-meta.json').read_text())
     source = root / 'source.sqlite3'
     assert _file_sha256(source) == metadata['sha256']

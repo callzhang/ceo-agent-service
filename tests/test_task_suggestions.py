@@ -1,13 +1,17 @@
 from dataclasses import replace
+import io
 import json
+import os
 import sqlite3
 import subprocess
 import sys
+import tarfile
 
 import pytest
 
 from app.project_context_service import ProjectContextService
-from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import (
     BusinessActorKind,
@@ -110,7 +114,10 @@ def record(project, **changes):
 def counts(store):
     with store._connect() as db:
         return {
-            table: db.execute(f"select count(*) from {table}").fetchone()[0]
+            table: db.execute(
+                f"select count(*) from ({BUSINESS_PROJECTIONS['task']})" if table == "business_tasks"
+                else f"select count(*) from {table}"
+            ).fetchone()[0]
             for table in (
                 "business_tasks",
                 "business_task_events",
@@ -249,7 +256,10 @@ def test_suggestion_invalid_proof_does_not_partially_write(project, invalid):
 
 def counts_in_transaction(db):
     return {
-        table: db.execute(f"select count(*) from {table}").fetchone()[0]
+        table: db.execute(
+            f"select count(*) from ({BUSINESS_PROJECTIONS['task']})" if table == "business_tasks"
+            else f"select count(*) from {table}"
+        ).fetchone()[0]
         for table in (
             "business_tasks",
             "business_task_events",
@@ -414,70 +424,70 @@ def test_unobserved_provenance_cannot_be_original_suggestion_proof(
         assert counts_in_transaction(db) == before
 
 
-def test_legacy_task_columns_upgrade_preserves_truth_and_raw_history(project):
-    store, _, signal, _ = project
-    result = TaskSemanticService(store).record_candidate(
-        RecordCandidate(title="原始待明确事项", signal=signal)
-    )
-    original = store.get_business_task(result.task_id).model_dump(mode="json")
-    original.pop("origin")
-    original.pop("suggestion_json")
-    formal_id = store.create_business_task(
-        title="已有真实承诺",
-        stage="formal",
-        formal_basis="explicit_assignment",
-        commitment_status="accepted",
-        owner_name="王五",
-        owner_user_id="wangwu",
-        owner_evidence_json='{"source_ref":"historic:human"}',
-        deadline_at="2026-10-08",
-    )
-    original_formal = store.get_business_task(formal_id).model_dump(mode="json")
-    original_formal.pop("origin")
-    original_formal.pop("suggestion_json")
-    # Produce a real pre-Task-3 representation in this test-owned database.
-    with sqlite3.connect(store.path) as db:
-        history = db.execute(
-            "select * from business_task_events order by id"
-        ).fetchall()
-        db.execute("alter table business_tasks drop column origin")
-        db.execute("alter table business_tasks drop column suggestion_json")
-    # A real service upgrade restarts its process; do not let this process's
-    # initialized-path cache bypass the migration being tested.
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from pathlib import Path; from app.store import AutoReplyStore; AutoReplyStore(Path(sys.argv[1]))._initialize()",
-            str(store.path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    upgraded = AutoReplyStore(store.path)
-    current = upgraded.get_business_task(result.task_id).model_dump(mode="json")
-    assert current.pop("origin") == "source"
-    assert current.pop("suggestion_json") == "{}"
-    assert current == original
-    current_formal = upgraded.get_business_task(formal_id).model_dump(mode="json")
-    assert current_formal.pop("origin") == "source"
-    assert current_formal.pop("suggestion_json") == "{}"
-    assert current_formal == original_formal
-    with upgraded._connect() as db:
-        assert {"origin", "suggestion_json"}.issubset(
-            {row["name"] for row in db.execute("pragma table_info(business_tasks)")}
+def test_legacy_task_columns_upgrade_preserves_truth_and_raw_history(tmp_path):
+    source = tmp_path / "store-0bd"
+    successor = tmp_path / "store-946"
+    for ref, destination in (("0bd75f7c", source), ("9469363a", successor)):
+        destination.mkdir()
+        archive = subprocess.check_output(["git", "archive", ref, "app"])
+        with tarfile.open(fileobj=io.BytesIO(archive)) as bundle:
+            bundle.extractall(destination, filter="data")
+
+    path = tmp_path / "historic.sqlite3"
+    old_code = """
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+from app.store import AutoReplyStore
+store = AutoReplyStore(Path(sys.argv[1]))
+now = datetime(2026, 10, 4, tzinfo=timezone.utc)
+signal = store.create_business_task_signal(
+    source_type='message', source_ref='historic:candidate',
+    evidence_text='原始待明确事项', dedupe_key='historic:candidate', now=now)
+candidate = store.create_business_task(title='原始待明确事项', stage='candidate', now=now)
+formal = store.create_business_task(
+    title='已有真实承诺', stage='formal', formal_basis='explicit_assignment',
+    commitment_status='accepted', owner_name='王五', owner_user_id='wangwu',
+    owner_evidence_json='{"source_ref":"historic:human"}', deadline_at='2026-10-08', now=now)
+with store.business_task_transaction() as db:
+    store.append_business_task_event(
+        task_id=candidate, event_type='created', signal_id=signal,
+        before_json='{}', after_json='{"source":"historic"}', reason='historic source', _db=db)
+"""
+    def run(code, checkout):
+        subprocess.run(
+            [sys.executable, "-c", code, str(path)], cwd=checkout,
+            env={**os.environ, "PYTHONPATH": str(checkout)},
+            check=True, capture_output=True, text=True, timeout=120,
         )
-        assert (
-            db.execute(
-                "select value from service_state where key='store_schema_version'"
-            ).fetchone()[0]
-            == STORE_SCHEMA_VERSION
-        )
-        assert [
-            tuple(row)
-            for row in db.execute("select * from business_task_events order by id")
-        ] == history
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-    AutoReplyStore(store.path)
-    assert upgraded.get_business_task(result.task_id).stage.value == "candidate"
+
+    run(old_code, source)
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        assert db.execute("select value from service_state where key='store_schema_version'").fetchone()[0] == "2026-10-04.2"
+        assert "origin" not in {row["name"] for row in db.execute("pragma table_info(business_tasks)")}
+        original = [dict(row) for row in db.execute("select * from business_tasks order by id")]
+        history = [dict(row) for row in db.execute("select * from business_task_events order by id")]
+        assert [(row["id"], row["title"], row["stage"]) for row in original] == [
+            (1, "原始待明确事项", "candidate"), (2, "已有真实承诺", "formal")]
+        assert len(history) == 1 and history[0]["task_id"] == 1
+
+    upgrade_code = """
+from pathlib import Path
+import sys
+from app.store import AutoReplyStore
+store = AutoReplyStore(Path(sys.argv[1]))
+assert store.get_business_task(1).stage.value == 'candidate'
+assert store.get_business_task(2).stage.value == 'formal'
+"""
+    for _ in range(2):
+        run(upgrade_code, successor)
+        with sqlite3.connect(path) as db:
+            db.row_factory = sqlite3.Row
+            assert db.execute("select value from service_state where key='store_schema_version'").fetchone()[0] == "2026-10-04.3"
+            rows = [dict(row) for row in db.execute("select * from business_tasks order by id")]
+            assert [{key: row[key] for key in original[0]} for row in rows] == original
+            assert [(row["origin"], row["suggestion_json"]) for row in rows] == [
+                ("source", "{}"), ("source", "{}")]
+            assert [dict(row) for row in db.execute("select * from business_task_events order by id")] == history
+            assert db.execute("pragma foreign_key_check").fetchall() == []

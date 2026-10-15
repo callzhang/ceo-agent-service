@@ -19,7 +19,7 @@ from test_native_copy_lifecycle_harness import old_email_copy  # noqa: F401
 @pytest.fixture
 def owned_old_copy(request):
     _, historical = request.getfixturevalue("old_email_copy")
-    with TemporaryDirectory(prefix="ceo-native-copy.", dir="/private/tmp") as owned:
+    with TemporaryDirectory(prefix="ceo-native-copy.", dir="/tmp") as owned:
         root = Path(owned)
         source = root / "source.sqlite3"
         shutil.copyfile(historical, source)
@@ -40,6 +40,7 @@ def test_prepare_publishes_current_pair_before_store_open_and_reserves_task_ids(
     assert preparation["published_pair"] == {
         "store": "2026-10-14.1", "email": 52,
         "action_types": 29, "retired_email_tables": 13,
+        "retired_business_parents": 4,
     }
     assert AutoReplyStore(store.path) and EmailStore(store.path)
     baseline = root / "pre-native-target.sqlite3"
