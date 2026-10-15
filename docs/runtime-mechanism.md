@@ -3149,6 +3149,12 @@ Task Agent 当前每轮已经完整提交仓库中的 Work Tracking Skill，Code
 或共享 AGENTS 配置。该改动消除第二份旧 Skill 的可见入口，尚未把完整正文改成按需读取。
 验证与限制见 `docs/task-inline-skill-once-validation.md`。
 
+Codex continuation commands retain the caller-selected workspace through the native
+global `--cd <workspace>` option before `exec resume`; cold commands are unchanged.
+Continuation no longer inherits the service process directory. Workbench inserts
+its existing model/MCP timeout options after the located exec/resume command so
+global options remain intact. Native session IDs, source, schema, credentials,
+permissions and route policy are unchanged. See `docs/codex-resume-workspace-validation.md`.
 Attempt current failure descriptions use only the latest Agent turn or the persisted final task/execution stop. A later completed turn supersedes earlier technical failures in the current-stop projection; historical runs remain available in the runtime trajectory and are never rewritten. A final Audit return/reject keeps its actual summary, and accepted but unverified System actions retain their uncertain execution diagnosis.
 
 Audit field assertions are first bound to the exact current candidate. Only their sensitivity-check copy reuses the existing strict configured service callback-pair validation; original assertion values, candidate digests and persisted results are unchanged. Other Audit prose, malformed pairs and nonconfigured URLs retain credential detection. Fresh and recovered Audit results use the same check. Audit context identifies the service-prepared DingTalk signature and feedback postfix so Consumer is not asked to remove content the service reattaches.
@@ -3156,3 +3162,4 @@ Audit field assertions are first bound to the exact current candidate. Only thei
 Attempt detail resolves a persisted run through its stable reply_task_id; message-key lookup is used only for records without a bound run. Current OA input keys can change while the original run keeps its task identity. Verified execution recovery can therefore project the settled task without rewriting historical Attempts or runs. Attempt15465 execution213/action208 was reconciled from its existing accepted OA return using exact native readback, then task404881 was closed through the existing settlement operation; no dispatch was made and original run rows matched the verified backup.
 
 Attempt current stop evidence is scoped to the current task execution generation, including an empty current-run list. Current failure summaries and codes come from that generation's final run, task error or exact current reviewed execution; an approved Audit summary cannot replace a failed or uncertain execution result. Historical run trajectories and execution details retain their identities, while their provider-risk rerun constraints continue to use the original Attempt. A settled done/skipped task has no current stop even if an old Audit returned its candidate.
+Consumer and Audit both persist a new Codex session selected by the existing runtime retry router within the active run. After an idle timeout, a fresh Audit attempt may replace that run's current session just as Consumer does; each runtime attempt retains its original session, transcript slice and failure. Audit never writes the Consumer conversation session slot. This repairs session persistence only and does not change route selection, retry budgets, candidate binding or external execution.

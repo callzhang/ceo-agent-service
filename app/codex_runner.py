@@ -341,6 +341,8 @@ class CodexRunner:
         if session_id:
             return [
                 self.codex_bin,
+                "--cd",
+                str(self.workspace),
                 "exec",
                 "resume",
                 *common_options,

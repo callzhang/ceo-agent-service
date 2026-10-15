@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "production_ref": "633f5e59d8235826b747a2afc55b3217dd0d8611",
+  "production_clean": true,
+  "sources": {
+    "app/task_agent.py": {
+      "sha256": "7cc0056a6c348e70a44a360d2112ed6af4e72aa296483ae5b062c59149eb51c9",
+      "matches_reviewed": true
+    },
+    "app/agent_runtime_router.py": {
+      "sha256": "c6ef5d7185fa728e25800859ba571c990941be57311825062c99135346d64c9c",
+      "matches_reviewed": true
+    },
+    "app/codex_runtime_adapter.py": {
+      "sha256": "cadb8ac340cc04c1dd8e21c51e62ee2566ba35633530d4b3cf92e0baee13a932",
+      "matches_reviewed": true
+    },
+    "app/business_skills.py": {
+      "sha256": "f43d8f76f1bb09b8af1582577884bf778d7cac1b8384d0745f8f41a221868a6d",
+      "matches_reviewed": true
+    }
+  },
+  "readback": [
+    {
+      "path": "/healthz",
+      "http": 200,
+      "keys": [
+        "ok",
+        "status"
+      ],
+      "top_counts": {
+        "ok": true
+      },
+      "list_sizes": {},
+      "status": "ok",
+      "seconds": 0.05
+    },
+    {
+      "path": "/api/console/status",
+      "http": 200,
+      "keys": [
+        "item",
+        "meta"
+      ],
+      "top_counts": {},
+      "list_sizes": {},
+      "seconds": 2.843
+    },
+    {
+      "path": "/api/console/attention?page_size=2",
+      "http": 200,
+      "keys": [
+        "items",
+        "meta"
+      ],
+      "top_counts": {},
+      "list_sizes": {
+        "items": 16
+      },
+      "seconds": 1.035
+    },
+    {
+      "path": "/api/console/history?page_size=2&include_chart=false",
+      "http": 200,
+      "keys": [
+        "items",
+        "meta"
+      ],
+      "top_counts": {},
+      "list_sizes": {
+        "items": 2
+      },
+      "seconds": 6.982
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer&route_name=codex_oauth",
+      "http": 200,
+      "keys": [
+        "item",
+        "meta"
+      ],
+      "top_counts": {},
+      "list_sizes": {},
+      "seconds": 0.657
+    }
+  ],
+  "processes": [
+    {
+      "pid": "54768",
+      "ppid": "1",
+      "module": "app.service_supervisor"
+    },
+    {
+      "pid": "54781",
+      "ppid": "54768",
+      "module": "app.cli"
+    },
+    {
+      "pid": "54782",
+      "ppid": "54768",
+      "module": "app.cli"
+    },
+    {
+      "pid": "54783",
+      "ppid": "54768",
+      "module": "app.cli"
+    }
+  ],
+  "observed_at": "2026-10-15T07:20:24.821896+00:00",
+  "formal_deploy": "another deploy got there first; production is at 633f5e59",
+  "operational_summary": {
+    "service_ok": true,
+    "system_health_violations": 0,
+    "meeting_memory_pending": 0,
+    "meeting_memory_processing": 0,
+    "meeting_memory_failed": 0,
+    "meeting_memory_ghost_attempts": 0,
+    "queues": {
+      "count": 13,
+      "pending": 3,
+      "processing": 1,
+      "failed": 20,
+      "retryable": 0,
+      "attention": 20
+    },
+    "consumer_preview": {
+      "developer_chars": 34021,
+      "task_chars": 24,
+      "runtime_context_chars": 2863
+    },
+    "limits": [
+      "Existing queue failures are visible; no before/after business-failure attribution or new production Task semantic acceptance.",
+      "Another formal deployment installed this exact pushed ref before this command obtained the deployment lock.",
+      "No external business action replay and no short-Skill runtime publication."
+    ]
+  },
+  "task_schema_sha256": "05b8c4e15d7b2a967d9b1fe1af26ad7dd847d8f5d4c23b4ccf47cf6423ee0c97",
+  "task_schema_compact_chars": 26624
+}

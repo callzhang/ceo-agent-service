@@ -79,6 +79,11 @@ def _mcp_startup_timeout_overlays(config_path: Path) -> list[str]:
     return overlays
 
 
+def _exec_options_index(command: Sequence[str]) -> int:
+    index = command.index("exec") + 1
+    return index + 1 if command[index:index + 1] == ["resume"] else index
+
+
 def _command_with_mcp_startup_timeouts(
     command: Sequence[str], config_path: Path
 ) -> list[str]:
@@ -86,7 +91,7 @@ def _command_with_mcp_startup_timeouts(
     arguments: list[str] = []
     for overlay in _mcp_startup_timeout_overlays(config_path):
         arguments.extend(("-c", overlay))
-    insert_at = 3 if len(effective) > 2 and effective[2] == "resume" else 2
+    insert_at = _exec_options_index(effective)
     effective[insert_at:insert_at] = arguments
     return effective
 
@@ -729,7 +734,7 @@ class CodexRuntime:
             preserve_native_instructions=True,
             preserve_native_approval_config=False,
         )
-        insert_at = 3 if provider_session_ref else 2
+        insert_at = _exec_options_index(command)
         overlay: list[str] = []
         if model.strip():
             overlay[0:0] = ["-m", model.strip()]

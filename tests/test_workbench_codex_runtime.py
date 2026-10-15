@@ -236,9 +236,9 @@ def test_codex_resume_command_keeps_provider_reference_process_private(tmp_path:
         )
     )
 
-    assert command[:3] == ["codex", "exec", "resume"]
+    assert command[:5] == ["codex", "--cd", str(tmp_path), "exec", "resume"]
     assert SESSION_ID in command
-    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert executor.commands[0][:5] == ["codex", "--cd", str(tmp_path), "exec", "resume"]
     assert SESSION_ID in executor.commands[0]
     assert SESSION_ID not in repr(events)
     assert SESSION_ID not in result.error_detail

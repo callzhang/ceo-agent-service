@@ -833,7 +833,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         new_session,
                         owner=self.owner,
                         transcript_start_line=run.transcript_start_line,
-                        allow_consumer_session_handoff=(run.role is AgentRole.CONSUMER),
+                        allow_session_handoff=True,
                     )
                 if (
                     not is_claude

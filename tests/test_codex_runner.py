@@ -188,7 +188,7 @@ def test_codex_command_read_only_resume_inherits_native_user_config(tmp_path: Pa
         approval_policy="never",
     )
 
-    assert command[:3] == ["codex", "exec", "resume"]
+    assert command[:5] == ["codex", "--cd", str(tmp_path), "exec", "resume"]
     assert "--ignore-user-config" not in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
 
@@ -817,6 +817,8 @@ def test_builds_resume_command(tmp_path: Path):
 
     assert _without_developer_instructions(command) == [
         "codex",
+        "--cd",
+        str(tmp_path),
         "exec",
         "resume",
         "--json",

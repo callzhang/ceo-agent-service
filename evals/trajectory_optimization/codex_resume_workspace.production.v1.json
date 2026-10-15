@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "production_ref": "3fc5fdae5059efb8a1b9a0698aac0a14555479b9",
+  "production_clean": true,
+  "sources": {
+    "app/task_agent.py": {
+      "sha256": "7cc0056a6c348e70a44a360d2112ed6af4e72aa296483ae5b062c59149eb51c9",
+      "matches_reviewed": true
+    },
+    "app/agent_runtime_router.py": {
+      "sha256": "c6ef5d7185fa728e25800859ba571c990941be57311825062c99135346d64c9c",
+      "matches_reviewed": true
+    },
+    "app/codex_runtime_adapter.py": {
+      "sha256": "cadb8ac340cc04c1dd8e21c51e62ee2566ba35633530d4b3cf92e0baee13a932",
+      "matches_reviewed": true
+    },
+    "app/business_skills.py": {
+      "sha256": "f43d8f76f1bb09b8af1582577884bf778d7cac1b8384d0745f8f41a221868a6d",
+      "matches_reviewed": true
+    },
+    "app/codex_runner.py": {
+      "sha256": "f8d5b3d9750e0cb5839d0fa0701eb31ef5ed6b57ead9266be2f714db5838ac5e",
+      "matches_reviewed": true
+    },
+    "app/workbench/codex_runtime.py": {
+      "sha256": "f6816ef28560bfe0906f1ecc1a61180f18cb908015c59d373c23029e8b5af667",
+      "matches_reviewed": true
+    }
+  },
+  "readback": [
+    {
+      "path": "/healthz",
+      "http": 200,
+      "keys": [
+        "ok",
+        "status"
+      ],
+      "top_counts": {
+        "ok": true
+      },
+      "list_sizes": {},
+      "status": "ok",
+      "seconds": 0.177
+    },
+    {
+      "path": "/api/console/status",
+      "http": 200,
+      "keys": [
+        "item",
+        "meta"
+      ],
+      "top_counts": {},
+      "list_sizes": {},
+      "seconds": 11.811
+    },
+    {
+      "path": "/api/console/attention?page_size=2",
+      "http": 200,
+      "keys": [
+        "items",
+        "meta"
+      ],
+      "top_counts": {},
+      "list_sizes": {
+        "items": 11
+      },
+      "seconds": 1.057
+    },
+    {
+      "path": "/api/console/history?page_size=2&include_chart=false",
+      "http": 200,
+      "keys": [
+        "items",
+        "meta"
+      ],
+      "top_counts": {},
+      "list_sizes": {
+        "items": 2
+      },
+      "seconds": 17.596
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer&route_name=codex_oauth",
+      "http": 200,
+      "keys": [
+        "item",
+        "meta"
+      ],
+      "top_counts": {},
+      "list_sizes": {},
+      "seconds": 2.615
+    }
+  ],
+  "processes": [
+    {
+      "pid": "26283",
+      "ppid": "1",
+      "module": "app.service_supervisor"
+    },
+    {
+      "pid": "26308",
+      "ppid": "26283",
+      "module": "app.cli"
+    },
+    {
+      "pid": "26309",
+      "ppid": "26283",
+      "module": "app.cli"
+    },
+    {
+      "pid": "26310",
+      "ppid": "26283",
+      "module": "app.cli"
+    }
+  ],
+  "formal_deploy": "deployed 7b45bbd0 -> 3fc5fdae",
+  "limits": [
+    "No new production business replay. Same-session directory behavior proved in separate authorized anonymous native continuation.",
+    "Short progressive Skill and native tool-host switches remain eval-only and held."
+  ]
+}
