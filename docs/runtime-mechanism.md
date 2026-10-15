@@ -1,5 +1,13 @@
 # Current Runtime Mechanism
 
+The unselected `app/provider_state_storage.py` unit has point reads and writes,
+batch upserts and set-based reconciliation for observations and folder
+generations in one typed `provider_state` table. Its composite keys remain
+account-scoped; a generation's `observed_at` can overlay an observation's time
+when a later caller projects classification state. Every write requires a
+caller-owned transaction. No current Store constructor or provider path selects
+this table; the original two source tables remain the runtime contract.
+
 The unpublished Store `2026-10-14.1`/Email52 candidate selects the four-kind
 Business storage unit for Task, Project,
 Anchor and Project context revision together, preserving all 42 existing source

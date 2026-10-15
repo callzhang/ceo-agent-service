@@ -1,5 +1,14 @@
 # CEO Agent Service Architecture
 
+An unselected `provider_state` storage unit now represents current provider
+observations and folder generations as two typed rows in one table. It keeps
+the source's account-scoped composite identities and twelve named fields;
+classification projections may overlay a generation time on an observation.
+Its source-shaped writes, batched upserts and set reconciliation require an
+existing caller transaction. Current Store constructors and provider callers
+continue to use the original two tables. Migration and release selection are
+separate work.
+
 The unpublished Store `2026-10-14.1`/Email52 candidate selects the four-kind
 Business storage unit for Task, Project,
 Anchor and Project context revision together, preserving all 42 existing source
