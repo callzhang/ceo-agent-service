@@ -294,6 +294,26 @@ def _exercise_current_email(candidate):
             "provider_result_persisted": True, "history_locator_valid": True}
 
 
+def _reserve_fixture_task_ids(candidate):
+    """Reserve candidate-only Task identities before native fixture allocation."""
+    with sqlite3.connect(candidate) as db:
+        db.execute("begin immediate")
+        current = db.execute(
+            "select seq from sqlite_sequence where name='tasks'"
+        ).fetchone()
+        maximum = db.execute("select coalesce(max(id), 0) from tasks").fetchone()[0]
+        assert max(maximum, current[0] if current else 0) < 2**52, \
+            "native copy requires an ordinary source Task allocator"
+        # Keep fixture identities above ordinary tasks and exactly representable
+        # by native tools/JSON consumers using JavaScript numbers.
+        reservation = 2**52 | (uuid4().int & ((1 << 51) - 1))
+        if current is None:
+            db.execute("insert into sqlite_sequence(name,seq) values('tasks',?)", (reservation,))
+        else:
+            db.execute("update sqlite_sequence set seq=? where name='tasks'", (reservation,))
+    return reservation
+
+
 def run(root, case="approve"):
     root = root.resolve()
     assert root.parent == Path("/private/tmp") and root.name.startswith("ceo-native-copy.")
@@ -331,6 +351,7 @@ def run(root, case="approve"):
     from app.native_trajectory import find_codex_session_path
 
     store = AutoReplyStore(candidate_path)
+    task_id_reservation = _reserve_fixture_task_ids(candidate_path)
     key = "native-copy-acceptance:" + str(uuid4())
     instruction = (
         "这是数据库副本中的真实 Codex CLI 验收任务，数据均为测试数据。请使用 "
@@ -348,6 +369,7 @@ def run(root, case="approve"):
         single_chat=False, trigger_message_id=trigger.open_message_id, trigger_sender=trigger.sender_name,
         trigger_create_time=trigger.create_time, trigger_text=instruction, trigger_message_json=trigger.model_dump_json())
     assert task.status == "pending"
+    assert task.id == task_id_reservation + 1
     artifacts = _task_file_root(store.path, task.id, task.execution_generation, create=True)
     source_file = artifacts / "case-input.json"
     fixture = {"verification_tag": "NATIVE_COPY_" + uuid4().hex[:12], "records": [{"units": 23}, {"units": 27}, {"units": 50}]}
@@ -418,9 +440,11 @@ def run(root, case="approve"):
     completed = worker.process_claimed_reply_task(task)
     runs = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
     current = store.get_reply_task(task.id)
+    from app.task_artifacts import cleanup_terminal_task_artifacts
+    cleanup_terminal_task_artifacts(store, task.id)
     report = {"case": case, "interrupted": interrupted, "source": metadata,
         "published_pair": published_pair, "native_baseline_phase": "post_email_publication",
-        "task_id": task.id, "conversation_id": key, "status": current.status,
+        "task_id": task.id, "task_id_allocator_reservation": task_id_reservation, "conversation_id": key, "status": current.status,
         "completed": completed, "native_invocations": native.calls,
         "provider_calls": len(provider.calls), "verification_calls": len(provider.verifications), "runs": []}
     for run in runs:
