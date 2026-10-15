@@ -284,3 +284,25 @@ empty table, before inserting any zero rowid. Extracting the corrected plan
 code to an owned temporary package yielded `75 passed` in `3.73s`; Ruff and
 compileall passed. These are synthetic plan-code checks, not an implemented
 target module, source migration or account-cascade acceptance.
+
+#### Unselected seven-kind Email configs storage implementation
+
+Commits `07a5b841` and `573ab35b` add the finite seven-kind `configs`
+declaration and caller-transactional source-shaped storage API. The new
+`tests/test_configs_storage.py` passed 75 synthetic actual/fresh cases; the
+focused command including `tests/test_configs_source_contract.py`,
+`tests/test_config_state_native_source.py`, and
+`tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`
+passed 126 cases total. Ruff, compileall and `git diff --check` passed. A
+direct finite-kind probe rejected `managed_skills`, an empty Email account
+payload, and an extra account payload key with `IntegrityError`.
+
+The seven-kind Email `configs` declaration and storage API passed synthetic
+actual/fresh differential checks. This is unselected local storage; the final
+15-kind target, caller conversion, actual copy, native execution, production
+publication and source retirement remain separate gates. The positive source
+account UPDATE/DELETE and account-to-binding cascade still need genuine
+predecessor action declarations or the full published constructor before
+selection; the focused typed-action fixture proves the six current target
+blocker predicates only. No Store/Email default constructor selects this
+module, and no schema version or migration changed.
