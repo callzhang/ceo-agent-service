@@ -33,6 +33,12 @@ Read the handover document, OA remarks/comments, and records for the receiving p
 
 This Skill does not yet define the completion standard, time-critical exceptions, or the authority of HR/manager/asset and account owners. An incomplete handover is a material gap: return it for a traceable handover record under the decision table. Do not infer approval authority from role title or past cases; escalate the exact unresolved branch with `needs_human`.
 
+### Explicit no-return instructions and target routing
+
+When the latest OA comments or an explicit instruction from the current authorized approver says not to return the approval to a named person, that instruction overrides the generic return-to-submitter route: do not return the approval to that person. Do not treat the instruction as evidence that the handover gap is resolved. Keep the handover evidence checks above, and do not approve solely because returning to the named person is prohibited.
+
+Before proposing another recipient, identify the exact unresolved handover item and who owns or can complete it. Route a correctable gap only to a valid OA target whose responsibility for that gap is supported by evidence. Do not assume the applicant, initiator, handover recipient, HR or an asset/account owner is the correct target based only on their title or presence in the workflow. If no such target is established, keep the current task pending with `no_action` and use `needs_human` for the unresolved routing decision. Do not ask that person to repeat already verified material.
+
 ## Promotion
 
 Read the full promotion plan, performance/history or feedback sources, meeting records, OA comments and attachments. Assess whether the evidence covers changed role responsibilities, demonstrated business outcomes, capability gaps, organizational collaboration, management methods, risk anticipation and measurable follow-up goals. Search current materials about the person, role and department to ground the proposed plan in actual needs.
