@@ -1,0 +1,576 @@
+{
+  "version": 1,
+  "status": "held_native_catalog_regression",
+  "arms": [
+    {
+      "arm": "baseline",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T23-57-18-01a13e59-db60-77f0-a885-11b654ea2ce8.jsonl",
+      "native_sha256": "3e3081a9b6ab9e1a829d73b998431efefa23bd7e91c7ee163af6cb519a900742",
+      "phases": [
+        {
+          "phase": "cold",
+          "session_id": "01a13e59-db60-77f0-a885-11b654ea2ce8",
+          "range": [
+            0,
+            24
+          ],
+          "submissions": 1,
+          "input_chars": 39036,
+          "input_matches_native": true,
+          "full_current_skill_in_input": true,
+          "schema_sha256": "05b8c4e15d7b2a967d9b1fe1af26ad7dd847d8f5d4c23b4ccf47cf6423ee0c97",
+          "counts": {
+            "projects": 1,
+            "tasks": 0,
+            "attention": 0,
+            "quick_check": "ok"
+          },
+          "catalog_work_tracking_rows": [
+            "- ceo-work-tracking: Use for the Task Agent's structured Project/Task extraction and assessment. This reader returns local decisions without replying to the source. Consumer source replies use ceo-document-review or ceo-message-triage; external operations use their service workflows. (file: r3/ceo-work-tracking/SKILL.md)",
+            "- ceo-work-tracking: Use for the Task Agent's structured Project/Task extraction and assessment. This reader returns local decisions without replying to the source. Consumer source replies use ceo-document-review or ceo-message-triage; external operations use their service workflows. (file: r0/ceo-work-tracking/SKILL.md)"
+          ],
+          "calls": [
+            {
+              "line": 11,
+              "name": "exec",
+              "arguments": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md && printf '\\\\n---SKILL---\\\\n' && sed -n '1,280p' /Users/derek/.agents/skills/ceo-work-tracking/SKILL.md\",yield_time_ms:10000,max_output_tokens:30000}); text(r.output);\n"
+            }
+          ],
+          "tool_output_chars": [
+            39603
+          ],
+          "outputs": [
+            {
+              "line": 21,
+              "sha256": "871a4a5b6b73e68ec360594859be255c49ee1d39e0a552be55935b53133a4155",
+              "strict_schema_valid": true,
+              "pydantic_valid": true,
+              "project_count": 1,
+              "task_count": 0,
+              "assessment_outcomes": [
+                "not_needed"
+              ]
+            }
+          ],
+          "applied_projection": {
+            "status": "no_proposal",
+            "source_type": "ai_minutes",
+            "task_decision_count": 0,
+            "project_link_count": 0,
+            "registry_row_count": null,
+            "proposal_count": 0,
+            "applied_count": 0,
+            "outcomes": [],
+            "project_decisions": [
+              {
+                "project_decision_index": 0,
+                "project_id": 1,
+                "anchor_id": 1,
+                "revision_id": 1,
+                "signal_ids": [
+                  1
+                ]
+              }
+            ],
+            "task_decisions": [],
+            "project_assessments": [
+              {
+                "assessment_index": 0,
+                "anchor_id": 1,
+                "task_ids": [],
+                "attention_id": null,
+                "status": "recorded",
+                "reason": "Assessment recorded; no Attention application requested.",
+                "evidence": [
+                  {
+                    "source_ref": "meeting:anonymous-full-runner-cold",
+                    "source_excerpt": "当前验收按计划推进，未报告风险，没有新的独立行动项。",
+                    "signal_id": 1,
+                    "source_time": "2026-10-14T09:00:00+00:00",
+                    "source_link": ""
+                  }
+                ]
+              }
+            ],
+            "recompute_error": ""
+          }
+        },
+        {
+          "phase": "risk",
+          "session_id": "01a13e59-db60-77f0-a885-11b654ea2ce8",
+          "range": [
+            24,
+            41
+          ],
+          "submissions": 1,
+          "input_chars": 37413,
+          "input_matches_native": true,
+          "full_current_skill_in_input": true,
+          "schema_sha256": "05b8c4e15d7b2a967d9b1fe1af26ad7dd847d8f5d4c23b4ccf47cf6423ee0c97",
+          "counts": {
+            "projects": 1,
+            "tasks": 1,
+            "attention": 1,
+            "quick_check": "ok"
+          },
+          "catalog_work_tracking_rows": [
+            "- ceo-work-tracking: Use for the Task Agent's structured Project/Task extraction and assessment. This reader returns local decisions without replying to the source. Consumer source replies use ceo-document-review or ceo-message-triage; external operations use their service workflows. (file: r0/ceo-work-tracking/SKILL.md)"
+          ],
+          "calls": [],
+          "tool_output_chars": [],
+          "outputs": [
+            {
+              "line": 38,
+              "sha256": "d1f3b50b8b8cfab5d823e5d43f3e8432353b55630a9834728594b817af3bd554",
+              "strict_schema_valid": true,
+              "pydantic_valid": true,
+              "project_count": 1,
+              "task_count": 1,
+              "assessment_outcomes": [
+                "needs_attention"
+              ]
+            }
+          ],
+          "applied_projection": {
+            "status": "completed",
+            "source_type": "ai_minutes",
+            "task_decision_count": 1,
+            "project_link_count": 1,
+            "registry_row_count": null,
+            "proposal_count": 1,
+            "applied_count": 1,
+            "outcomes": [
+              {
+                "task_id": null,
+                "assessment_index": 0,
+                "anchor_id": 1,
+                "attention_id": 1,
+                "status": "applied",
+                "reason": "Attention proposal applied."
+              }
+            ],
+            "project_decisions": [
+              {
+                "project_decision_index": 0,
+                "project_id": 1,
+                "anchor_id": 1,
+                "revision_id": 2,
+                "signal_ids": [
+                  1,
+                  2
+                ]
+              }
+            ],
+            "task_decisions": [
+              {
+                "decision_index": 0,
+                "task_id": 1,
+                "signal_id": 3,
+                "anchor_id": 1
+              }
+            ],
+            "project_assessments": [
+              {
+                "assessment_index": 0,
+                "anchor_id": 1,
+                "task_ids": [
+                  1
+                ],
+                "attention_id": 1,
+                "status": "applied",
+                "reason": "Attention proposal applied.",
+                "evidence": [
+                  {
+                    "source_ref": "meeting:anonymous-full-runner-risk",
+                    "source_excerpt": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。",
+                    "signal_id": 2,
+                    "source_time": "2026-10-14T09:01:00+00:00",
+                    "source_link": ""
+                  }
+                ]
+              }
+            ],
+            "recompute_error": ""
+          }
+        }
+      ],
+      "applied_context_revisions": 2,
+      "final_context": {
+        "goal": "完成客户验收和回款",
+        "scope": "星桥交付项目的客户验收与回款安排",
+        "overall_owner": {
+          "person_user_id": "",
+          "person_name": "陈明",
+          "responsibility": "总体负责交付",
+          "evidence": [
+            {
+              "signal_id": 1,
+              "source_ref": "meeting:anonymous-full-runner-cold",
+              "source_excerpt": "陈明总负责交付"
+            }
+          ]
+        },
+        "responsibilities": [
+          {
+            "person_user_id": "",
+            "person_name": "赵华",
+            "responsibility": "负责客户回款排期",
+            "evidence": [
+              {
+                "signal_id": 1,
+                "source_ref": "meeting:anonymous-full-runner-cold",
+                "source_excerpt": "赵华负责客户回款排期"
+              }
+            ]
+          }
+        ],
+        "facts": [
+          {
+            "key": "project_status",
+            "text": "会议决定启动星桥交付项目。",
+            "evidence": [
+              {
+                "signal_id": 1,
+                "source_ref": "meeting:anonymous-full-runner-cold",
+                "source_excerpt": "会议决定启动星桥交付项目，目标是完成客户验收和回款。"
+              }
+            ],
+            "date_type": "",
+            "date_value": ""
+          },
+          {
+            "key": "acceptance_progress",
+            "text": "当前验收按计划推进。",
+            "evidence": [
+              {
+                "signal_id": 1,
+                "source_ref": "meeting:anonymous-full-runner-cold",
+                "source_excerpt": "当前验收按计划推进"
+              }
+            ],
+            "date_type": "",
+            "date_value": ""
+          },
+          {
+            "key": "risk_and_actions",
+            "text": "未报告风险，没有新的独立行动项。",
+            "evidence": [
+              {
+                "signal_id": 1,
+                "source_ref": "meeting:anonymous-full-runner-cold",
+                "source_excerpt": "未报告风险，没有新的独立行动项。"
+              }
+            ],
+            "date_type": "",
+            "date_value": ""
+          },
+          {
+            "key": "acceptance_materials_and_payment_risk",
+            "text": "当前客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。",
+            "evidence": [
+              {
+                "signal_id": 2,
+                "source_ref": "meeting:anonymous-full-runner-risk",
+                "source_excerpt": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。"
+              }
+            ],
+            "date_type": "",
+            "date_value": ""
+          }
+        ]
+      }
+    },
+    {
+      "arm": "candidate",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T23-57-27-01a13e59-fc35-7662-8f0d-ae7fd09fb0f0.jsonl",
+      "native_sha256": "eb09e1a09d2f8f14b222b0e3d7dac4f27383a07288c12d537190a2434e4d2ea1",
+      "phases": [
+        {
+          "phase": "cold",
+          "session_id": "01a13e59-fc35-7662-8f0d-ae7fd09fb0f0",
+          "range": [
+            0,
+            22
+          ],
+          "submissions": 1,
+          "input_chars": 39036,
+          "input_matches_native": true,
+          "full_current_skill_in_input": true,
+          "schema_sha256": "05b8c4e15d7b2a967d9b1fe1af26ad7dd847d8f5d4c23b4ccf47cf6423ee0c97",
+          "counts": {
+            "projects": 1,
+            "tasks": 0,
+            "attention": 0,
+            "quick_check": "ok"
+          },
+          "catalog_work_tracking_rows": [],
+          "calls": [
+            {
+              "line": 11,
+              "name": "exec",
+              "arguments": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md\",max_output_tokens:12000,yield_time_ms:10000}); text(r.output);\n"
+            }
+          ],
+          "tool_output_chars": [
+            19637
+          ],
+          "outputs": [
+            {
+              "line": 19,
+              "sha256": "997e85827a9545bbe8df64e0b08b2d18da897ee4cb25cfbf95892e84e58aace9",
+              "strict_schema_valid": true,
+              "pydantic_valid": true,
+              "project_count": 1,
+              "task_count": 0,
+              "assessment_outcomes": [
+                "not_needed"
+              ]
+            }
+          ],
+          "applied_projection": {
+            "status": "no_proposal",
+            "source_type": "ai_minutes",
+            "task_decision_count": 0,
+            "project_link_count": 0,
+            "registry_row_count": null,
+            "proposal_count": 0,
+            "applied_count": 0,
+            "outcomes": [],
+            "project_decisions": [
+              {
+                "project_decision_index": 0,
+                "project_id": 1,
+                "anchor_id": 1,
+                "revision_id": 1,
+                "signal_ids": [
+                  1
+                ]
+              }
+            ],
+            "task_decisions": [],
+            "project_assessments": [
+              {
+                "assessment_index": 0,
+                "anchor_id": 1,
+                "task_ids": [],
+                "attention_id": null,
+                "status": "recorded",
+                "reason": "Assessment recorded; no Attention application requested.",
+                "evidence": [
+                  {
+                    "source_ref": "meeting:anonymous-full-runner-cold",
+                    "source_excerpt": "当前验收按计划推进，未报告风险，没有新的独立行动项。",
+                    "signal_id": 1,
+                    "source_time": "2026-10-14T09:00:00+00:00",
+                    "source_link": ""
+                  }
+                ]
+              }
+            ],
+            "recompute_error": ""
+          }
+        },
+        {
+          "phase": "risk",
+          "session_id": "01a13e59-fc35-7662-8f0d-ae7fd09fb0f0",
+          "range": [
+            22,
+            37
+          ],
+          "submissions": 1,
+          "input_chars": 37651,
+          "input_matches_native": true,
+          "full_current_skill_in_input": true,
+          "schema_sha256": "05b8c4e15d7b2a967d9b1fe1af26ad7dd847d8f5d4c23b4ccf47cf6423ee0c97",
+          "counts": {
+            "projects": 1,
+            "tasks": 1,
+            "attention": 1,
+            "quick_check": "ok"
+          },
+          "catalog_work_tracking_rows": [],
+          "calls": [],
+          "tool_output_chars": [],
+          "outputs": [
+            {
+              "line": 34,
+              "sha256": "97ffd42a4202947d71442bf84749d8f5911008a7d9f6cea3e2997e1df93674d4",
+              "strict_schema_valid": true,
+              "pydantic_valid": true,
+              "project_count": 1,
+              "task_count": 1,
+              "assessment_outcomes": [
+                "needs_attention"
+              ]
+            }
+          ],
+          "applied_projection": {
+            "status": "completed",
+            "source_type": "ai_minutes",
+            "task_decision_count": 1,
+            "project_link_count": 1,
+            "registry_row_count": null,
+            "proposal_count": 1,
+            "applied_count": 1,
+            "outcomes": [
+              {
+                "task_id": null,
+                "assessment_index": 0,
+                "anchor_id": 1,
+                "attention_id": 1,
+                "status": "applied",
+                "reason": "Attention proposal applied."
+              }
+            ],
+            "project_decisions": [
+              {
+                "project_decision_index": 0,
+                "project_id": 1,
+                "anchor_id": 1,
+                "revision_id": 2,
+                "signal_ids": [
+                  1,
+                  2
+                ]
+              }
+            ],
+            "task_decisions": [
+              {
+                "decision_index": 0,
+                "task_id": 1,
+                "signal_id": 3,
+                "anchor_id": 1
+              }
+            ],
+            "project_assessments": [
+              {
+                "assessment_index": 0,
+                "anchor_id": 1,
+                "task_ids": [
+                  1
+                ],
+                "attention_id": 1,
+                "status": "applied",
+                "reason": "Attention proposal applied.",
+                "evidence": [
+                  {
+                    "source_ref": "meeting:anonymous-full-runner-risk",
+                    "source_excerpt": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。",
+                    "signal_id": 2,
+                    "source_time": "2026-10-14T09:01:00+00:00",
+                    "source_link": ""
+                  }
+                ]
+              }
+            ],
+            "recompute_error": ""
+          }
+        }
+      ],
+      "applied_context_revisions": 2,
+      "final_context": {
+        "goal": "完成客户验收和回款。",
+        "scope": "星桥交付项目的交付验收及客户回款排期。",
+        "overall_owner": {
+          "person_user_id": "",
+          "person_name": "陈明",
+          "responsibility": "总体负责交付。",
+          "evidence": [
+            {
+              "signal_id": 1,
+              "source_ref": "meeting:anonymous-full-runner-cold",
+              "source_excerpt": "陈明总负责交付"
+            }
+          ]
+        },
+        "responsibilities": [
+          {
+            "person_user_id": "",
+            "person_name": "赵华",
+            "responsibility": "负责客户回款排期。",
+            "evidence": [
+              {
+                "signal_id": 1,
+                "source_ref": "meeting:anonymous-full-runner-cold",
+                "source_excerpt": "赵华负责客户回款排期"
+              }
+            ]
+          }
+        ],
+        "facts": [
+          {
+            "key": "project_status",
+            "text": "会议决定启动星桥交付项目。",
+            "evidence": [
+              {
+                "signal_id": 1,
+                "source_ref": "meeting:anonymous-full-runner-cold",
+                "source_excerpt": "会议决定启动星桥交付项目"
+              }
+            ],
+            "date_type": "",
+            "date_value": ""
+          },
+          {
+            "key": "acceptance_progress",
+            "text": "当前验收按计划推进。",
+            "evidence": [
+              {
+                "signal_id": 1,
+                "source_ref": "meeting:anonymous-full-runner-cold",
+                "source_excerpt": "当前验收按计划推进"
+              }
+            ],
+            "date_type": "",
+            "date_value": ""
+          },
+          {
+            "key": "reported_risk",
+            "text": "当前未报告风险。",
+            "evidence": [
+              {
+                "signal_id": 1,
+                "source_ref": "meeting:anonymous-full-runner-cold",
+                "source_excerpt": "未报告风险"
+              }
+            ],
+            "date_type": "",
+            "date_value": ""
+          },
+          {
+            "key": "independent_action_items",
+            "text": "当前没有新的独立行动项。",
+            "evidence": [
+              {
+                "signal_id": 1,
+                "source_ref": "meeting:anonymous-full-runner-cold",
+                "source_excerpt": "没有新的独立行动项"
+              }
+            ],
+            "date_type": "",
+            "date_value": ""
+          },
+          {
+            "key": "acceptance_materials_and_payment_schedule",
+            "text": "客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。",
+            "evidence": [
+              {
+                "signal_id": 2,
+                "source_ref": "meeting:anonymous-full-runner-risk",
+                "source_excerpt": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。"
+              }
+            ],
+            "date_type": "",
+            "date_value": ""
+          }
+        ]
+      }
+    }
+  ],
+  "limits": [
+    "Anonymous readonly MCP-free Codex OAuth Task pipeline only; no production replay or all-provider acceptance.",
+    "Confirmed cause: factory appended a second skills.config array and replaced original explicit path selection; candidate catalog expanded. This candidate was not published.",
+    "Shared AGENTS remains CLI-owned and read by both arms; no project-doc setting changed."
+  ],
+  "cold_service_inputs_equal_after_owned_path_normalization": true
+}

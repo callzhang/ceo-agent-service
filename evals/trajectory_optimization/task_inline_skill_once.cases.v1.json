@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "cases_source": "task_schema_titles.release.cases.v1.json",
+  "target_ref": "dedf0b7b + Task inline-name suppression only",
+  "baseline": "Same full current Skill and native catalog; clear inlined_skill_names metadata only.",
+  "candidate": "Same full current Skill; native same-name catalog suppression through existing factory.",
+  "route": "codex_oauth",
+  "clocks": {
+    "cold": "2026-10-14T09:00:00+00:00",
+    "risk": "2026-10-14T09:01:00+00:00"
+  },
+  "acceptance": [
+    "complete native input/tool/result inspection",
+    "cold and same-session risk business application",
+    "exact source facts and schema unchanged",
+    "same-name installed Skill absent only in candidate"
+  ],
+  "limits": "Synthetic readonly/MCP-free Task pipeline; no production replay or all-provider claim.",
+  "outcome": "Held after review: duplicate skills.config arrays replaced the original catalog selection."
+}

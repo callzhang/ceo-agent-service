@@ -727,3 +727,19 @@ def test_compact_protocol_keeps_empty_catalog_and_required_read_contract():
     assert _compact_catalog_records(compact)[1] == []
     assert 'PROTOCOL PRECONDITION' in compact
     assert '`agent_cli.read_skill`' in compact
+
+
+def test_codex_override_composes_selected_and_inlined_skills(tmp_path):
+    import tomllib
+    root = tmp_path / "skills"
+    inline = _skill_file(root, "inline", "inline", "Already in prompt.")
+    selected = _skill_file(root, "selected", "selected", "Keep selected.")
+    other = _skill_file(root, "other", "other", "Keep excluded.")
+    value = codex_skill_config_override(
+        ("inline", "selected"), inlined_names=("inline",),
+        target_root=root, codex_home=tmp_path / "codex",
+    )
+    entries = tomllib.loads(value)["skills"]["config"]
+    paths = {entry["path"]: entry["enabled"] for entry in entries if "path" in entry}
+    assert paths == {str(inline): True, str(selected): True, str(other): False}
+    assert entries[-1] == {"name": "inline", "enabled": False}

@@ -16,6 +16,7 @@ from app.task_semantic_models import (
     TaskSuggestion,
 )
 from app.work_summary_payload import decode_work_summary_payload
+from app.prompt_schema import _compact_prompt_schema
 
 
 def _null_means_omitted(field: FieldInfo) -> bool:
@@ -1110,7 +1111,7 @@ class TaskAgentDecision(StrictTaskModel):
 
 def task_agent_output_schema() -> dict[str, Any]:
     """Return the Task Agent's complete contract in Codex strict-schema form."""
-    schema = TaskAgentDecision.model_json_schema()
+    schema = _compact_prompt_schema(TaskAgentDecision.model_json_schema())
 
     def normalize(value: object) -> None:
         if isinstance(value, dict):
@@ -1123,10 +1124,10 @@ def task_agent_output_schema() -> dict[str, Any]:
             if value.get("type") == "object" and isinstance(properties, dict):
                 value["additionalProperties"] = False
                 value["required"] = list(properties)
-                for property_schema in properties.values():
-                    if isinstance(property_schema, dict):
-                        property_schema.pop("default", None)
-            for nested in value.values():
+            for key, nested in value.items():
+                # These values are JSON data, not nested schema nodes.
+                if key in ("enum", "const", "default", "examples"):
+                    continue
                 normalize(nested)
         elif isinstance(value, list):
             for nested in value:

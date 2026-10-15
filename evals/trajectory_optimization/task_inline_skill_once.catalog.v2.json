@@ -1,0 +1,68 @@
+{
+  "version": 2,
+  "frozen_config_arrays_differ_only_by_target_rule": true,
+  "runs": [
+    {
+      "arm": "baseline",
+      "config_sha256": "2bc4652f8ef1970f6f79e455d5ce4e408db1f745140091c5010dbe19e111cdf1",
+      "rows": [
+        "- plugin-creator: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, generate or update marketplace entries for plugin ordering and availability metadata, or update an existing local plugin during development with the CLI-driven cachebuster and reinstall flow. (file: r1/plugin-creator/SKILL.md)",
+        "- ceo-work-tracking: Use for the Task Agent's structured Project/Task extraction and assessment. This reader returns local decisions without replying to the source. Consumer source replies use ceo-document-review or ceo-message-triage; external operations use their service workflows. (file: r3/ceo-work-tracking/SKILL.md)",
+        "- ceo-work-tracking: Use for the Task Agent's structured Project/Task extraction and assessment. This reader returns local decisions without replying to the source. Consumer source replies use ceo-document-review or ceo-message-triage; external operations use their service workflows. (file: r0/ceo-work-tracking/SKILL.md)",
+        "- memory-connector:document: Upload authorized long files and documents to memory-connector with document_upload so they become searchable memory. (file: r2/document/SKILL.md)",
+        "- memory-connector:manage: Check, update, reinstall, or uninstall the installed Friday Memory plugin through its hosted installer lifecycle. (file: r2/manage/SKILL.md)",
+        "- memory-connector:recall: Retrieve durable project, user, and decision context from memory-connector before substantial work. (file: r2/recall/SKILL.md)",
+        "- memory-connector:remember: Save short, confirmed-durable preferences, decisions, conventions, and summaries to memory-connector with memory_write. (file: r2/remember/SKILL.md)"
+      ]
+    },
+    {
+      "arm": "candidate",
+      "config_sha256": "eaaa6373702a7ea52feeb867c543e3474667fd403a48a1430f1105cb27f07d88",
+      "rows": [
+        "- plugin-creator: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, generate or update marketplace entries for plugin ordering and availability metadata, or update an existing local plugin during development with the CLI-driven cachebuster and reinstall flow. (file: r0/plugin-creator/SKILL.md)",
+        "- memory-connector:document: Upload authorized long files and documents to memory-connector with document_upload so they become searchable memory. (file: r1/document/SKILL.md)",
+        "- memory-connector:manage: Check, update, reinstall, or uninstall the installed Friday Memory plugin through its hosted installer lifecycle. (file: r1/manage/SKILL.md)",
+        "- memory-connector:recall: Retrieve durable project, user, and decision context from memory-connector before substantial work. (file: r1/recall/SKILL.md)",
+        "- memory-connector:remember: Save short, confirmed-durable preferences, decisions, conventions, and summaries to memory-connector with memory_write. (file: r1/remember/SKILL.md)"
+      ]
+    },
+    {
+      "arm": "baseline",
+      "config_sha256": "2bc4652f8ef1970f6f79e455d5ce4e408db1f745140091c5010dbe19e111cdf1",
+      "rows": [
+        "- plugin-creator: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, generate or update marketplace entries for plugin ordering and availability metadata, or update an existing local plugin during development with the CLI-driven cachebuster and reinstall flow. (file: r1/plugin-creator/SKILL.md)",
+        "- ceo-work-tracking: Use for the Task Agent's structured Project/Task extraction and assessment. This reader returns local decisions without replying to the source. Consumer source replies use ceo-document-review or ceo-message-triage; external operations use their service workflows. (file: r3/ceo-work-tracking/SKILL.md)",
+        "- ceo-work-tracking: Use for the Task Agent's structured Project/Task extraction and assessment. This reader returns local decisions without replying to the source. Consumer source replies use ceo-document-review or ceo-message-triage; external operations use their service workflows. (file: r0/ceo-work-tracking/SKILL.md)",
+        "- memory-connector:document: Upload authorized long files and documents to memory-connector with document_upload so they become searchable memory. (file: r2/document/SKILL.md)",
+        "- memory-connector:manage: Check, update, reinstall, or uninstall the installed Friday Memory plugin through its hosted installer lifecycle. (file: r2/manage/SKILL.md)",
+        "- memory-connector:recall: Retrieve durable project, user, and decision context from memory-connector before substantial work. (file: r2/recall/SKILL.md)",
+        "- memory-connector:remember: Save short, confirmed-durable preferences, decisions, conventions, and summaries to memory-connector with memory_write. (file: r2/remember/SKILL.md)"
+      ]
+    },
+    {
+      "arm": "candidate",
+      "config_sha256": "eaaa6373702a7ea52feeb867c543e3474667fd403a48a1430f1105cb27f07d88",
+      "rows": [
+        "- plugin-creator: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, generate or update marketplace entries for plugin ordering and availability metadata, or update an existing local plugin during development with the CLI-driven cachebuster and reinstall flow. (file: r0/plugin-creator/SKILL.md)",
+        "- memory-connector:document: Upload authorized long files and documents to memory-connector with document_upload so they become searchable memory. (file: r1/document/SKILL.md)",
+        "- memory-connector:manage: Check, update, reinstall, or uninstall the installed Friday Memory plugin through its hosted installer lifecycle. (file: r1/manage/SKILL.md)",
+        "- memory-connector:recall: Retrieve durable project, user, and decision context from memory-connector before substantial work. (file: r1/recall/SKILL.md)",
+        "- memory-connector:remember: Save short, confirmed-durable preferences, decisions, conventions, and summaries to memory-connector with memory_write. (file: r1/remember/SKILL.md)"
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "removed_names": [
+        "- ceo-work-tracking"
+      ],
+      "added_names": []
+    },
+    {
+      "removed_names": [
+        "- ceo-work-tracking"
+      ],
+      "added_names": []
+    }
+  ]
+}

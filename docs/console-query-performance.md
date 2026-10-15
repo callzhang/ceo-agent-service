@@ -1,5 +1,24 @@
 # Console query performance
 
+## Follow-up acceptance on 2026-10-15
+
+The earlier production acceptance below is a historical measurement, not proof
+of current responsiveness. Fresh `fca229bb` HTTP requests timed out while new
+snapshot diagnostics recorded queue-summary reads of 97–169s and one failed
+History read of 158s. A separate read-only Status build took 4–5s; two same-process
+builds took 11.63s each. A user-authorized 32-second pause of the other local
+Email test process group was fully resumed afterward: healthz returned in
+0.113s, while Status still exceeded20s and History10s. Other tests are not a
+sufficient single-cause explanation.
+
+Attempt metadata fields are VIRTUAL generated columns over `payload_json`.
+The current14,917 Attempt rows contain36,821,166 payload bytes. Existing trigger,
+status and run-recovery indexes each cover only part of the queue read, so a
+metadata-only SELECT can still read and decode JSON. The source query, index
+coverage and actual I/O must be verified separately. Per-specialized-queue
+slow diagnostics now record only the reader name and duration, preserving the
+existing fresh-snapshot, count and exception contracts.
+
 ## Scope and evidence
 
 This repair covers the Overview Status API, History lists, filters, pagination
@@ -115,3 +134,54 @@ continued after restart. The existing retained standard backup
 `auto-reply-2026-10-14.sqlite3` passed read-only `PRAGMA quick_check = ok`.
 Disposable diagnostic databases and generated navigation artifacts are removed
 at task end; regression code and this concise evidence remain in the repository.
+
+## launchd resource-class boundary
+
+Both the installed main job and repository template omitted `ProcessType`.
+The local `launchd.plist(5)` manual and [Apple's launchd manual source](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5)
+specify that an omitted value applies Standard CPU/I/O resource limits.
+Interactive is appropriate when application responsiveness depends on the job
+and Adaptive XPC activity cannot be used. This service responds through local
+HTTP rather than XPC. The template now declares Interactive, without changing
+program arguments, environment or the existing 4096-file limit. Existing
+installed settings are updated for the same key before the formal deploy
+re-bootstraps the job; the updater does not overwrite the whole native plist.
+
+A regression first observed the missing declaration and then passed with it.
+The observed standalone/live discrepancy motivates this configuration repair;
+actual latency improvement still requires the live post-restart comparison.
+The experimental three-index metadata query is not published: it adds about
+20% VM work and its single-run wall-clock gain was not stable. No database
+schema, unregistered index or new query cache is introduced by this repair.
+
+## Interactive release readback
+
+Formal deployment moved production from86772bcd to27575931. The installed
+plist was backed up and read back byte-for-byte, changed only ProcessType,
+and compared as a parsed dictionary with every other key unchanged. launchctl
+then reported `spawn type = interactive (4)`, supervisor26590 and HTTP26608.
+This confirms the native setting was actually reloaded.
+
+Initial startup readback returned Status in8.673/11.365s and History with its
+chart in25.800s; the resource classification alone is not proof of eliminating
+all host contention. After recovery, sequential frontend-equivalent requests
+(`include_chart=0`) returned History20 in4.193/2.391s, History100 in1.486s,
+page2 in2.512s, and Status in2.937s. All returned200; the page sizes were20/100/20
+and total35332. A separate month chart returned in10.029s with6930 events.
+Browser readback showed100 selected,1–100 of35332, the completed6930-event
+month chart, and healthy on Settings. The temporary acceptance tab was closed.
+These measurements show the earlier minute-scale timeout was removed in this
+release; response times still depend on startup and host CPU/I/O contention.
+
+The live Status health check at2026-10-15T06:53:10.860593Z was healthy with
+zero violations,46 readable native delivery results and474 unavailable.
+Meeting Memory had no pending/due/delayed/processing/retryable/failed or ghost
+records. Persisted input404912 remained done after the restart, its recovered
+Task run360429 completed, and WeChat delivery137 remained intentionally skipped
+with its original pre-send failure retained. Historical queue failures and
+Attention decisions remain visible and were not converted to success.
+
+A final bounded64MiB/2MiB connection-cache experiment reduced RSS but did not
+complete the required reverse-order and concurrent equivalence comparison
+within90s. No cache setting change was published. The experimental database,
+queries and measurement files are disposable task artifacts.

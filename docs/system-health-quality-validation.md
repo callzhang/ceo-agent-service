@@ -145,3 +145,49 @@ the current transport schema while retaining compact/raw validation equivalence
 and extra-field rejection. All ten trace/provenance cases passed; independent
 review accepted the semantic assertions. No runtime contract, timeout, skip or
 expected business outcome changed in this test-only repair.
+
+The completed `ff4d3623` Quality log additionally exposed six specialized
+prompt-format assertions: one Meeting audience case, one Task Skill guidance
+case, and four read-only Project evaluation variants. All six reproduced RED
+and passed after asserting the exact JSON participant ID or original
+`source.ref`. Original audience, combined-message content, read-only transport,
+source payload and side-effect assertions remain. Independent review accepted
+the three-file test-only change; Ruff and diff checks passed.
+
+## Latest-trigger quality query cost
+
+The four trigger-latest checks repeated full-history window sorting. Attempt
+fields are VIRTUAL generated columns over `actions.payload_json`, so metadata
+selection can still read JSON. The finite source now reads candidate statuses
+through the existing status index before resolving identity fields, groups
+candidate keys once and fixes those keys as the outer lookup. The latest lookup
+still includes every status and retains `datetime(updated_at), id` order and
+NULL partitions. OA's separate process-identity window and all consumer quality
+predicates remain unchanged. No schema, index or persistent cache was added.
+
+Cost regressions first failed for terminal history, repeated candidates and
+many candidate keys. The final 87 focused tests passed. On the same production
+read-only snapshot, the original full Reply Attempt check used10.634M VM steps
+and3.846s; the candidate used2.300M /1.388s and2.302M /1.119s. Complete violations
+and Attention issue fields matched, and99 current ten-field candidate rows
+matched exactly. EXPLAIN and bytecode verified status rejection before payload
+column reads, candidate-key outer iteration and indexed public-ID/trigger
+lookups. This proves the query's improvement, not complete HTTP acceptance.
+
+## Audit wire fixture follow-up
+
+Complete Quality run 38690491856 on `ae08b7c7` exposed 38 failures after the
+service-owned Audit revision/digest transport change; the preceding 24
+format assertions no longer failed. Synthetic native-output fixtures still
+emitted `proposal_revision` and `candidate_digest`, which the current strict
+wire schema rejects. The fixture adapters now omit only those transport echoes;
+the domain result retains its service-provided binding. The instruction test
+asserts the same ownership. Two explicit controls verify each forbidden echo
+still raises validation failure and service conversion restores the binding.
+
+All 38 affected scenarios plus those two controls passed in168.11s using
+temporary copies of repository seed prompts. An earlier local run using the
+operator's old saved prompt was isolated as configuration pollution and is not
+counted as CI evidence. Ruff and diff checks passed, and independent review
+accepted the test-only change. Lifecycle, delivery, receipt, retry and side-effect
+assertions remain; no validator, timeout, skip or expected business result changed.

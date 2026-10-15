@@ -865,6 +865,31 @@ def _prompt_json_section(prompt: str, heading: str):
     return value
 
 
+@pytest.mark.parametrize(
+    "forbidden_field, value",
+    [("proposal_revision", 4), ("candidate_digest", "a" * 64)],
+)
+def test_native_audit_fixture_keeps_binding_owned_by_service(forbidden_field, value):
+    from pydantic import ValidationError
+    from app.agent_wire_contracts import AuditAgentWireResult
+
+    domain = _audit_protocol_result(
+        "approve", 4, "Reviewed candidate.", operation_id="operation-4",
+        candidate_digest="a" * 64,
+    )
+    event = _agent_result_event(domain)
+    payload = json.loads(event["item"]["text"])
+    assert "proposal_revision" not in payload
+    assert "candidate_digest" not in payload
+    adopted = AuditAgentWireResult.model_validate(payload).to_result(
+        proposal_revision=domain.proposal_revision, candidate_digest=domain.candidate_digest,
+    )
+    assert adopted.proposal_revision == 4
+    assert adopted.candidate_digest == "a" * 64
+    with pytest.raises(ValidationError, match=forbidden_field):
+        AuditAgentWireResult.model_validate({**payload, forbidden_field: value})
+
+
 def _agent_result_event(result) -> dict[str, object]:
     if isinstance(result, ConsumerAgentResult):
         error = result.error
@@ -899,8 +924,6 @@ def _agent_result_event(result) -> dict[str, object]:
         payload = {
             "outcome": result.outcome.value,
             "summary": result.summary,
-            "proposal_revision": result.proposal_revision,
-            "candidate_digest": result.candidate_digest,
             "evidence_refs": list(result.evidence_refs),
             "feedback": (
                 result.feedback.model_dump(mode="json")

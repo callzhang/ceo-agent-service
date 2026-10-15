@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 import stat
 import subprocess
+import sys
 from types import SimpleNamespace
 from typing import TypedDict
 from urllib.parse import parse_qs, quote, urlencode, urlparse
@@ -2562,6 +2563,20 @@ def _parse_launchctl_print(output: str) -> dict[str, str]:
     return parsed
 
 
+def _read_status_queue(reader: Callable[..., dict[str, object]], *args) -> dict[str, object]:
+    started_at = time.monotonic()
+    try:
+        return reader(*args)
+    finally:
+        elapsed = time.monotonic() - started_at
+        if elapsed >= 1.0:
+            print(
+                f"slow console queue reader={reader.__name__} elapsed_seconds={elapsed:.3f}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+
 def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
     specs = [
         ("Reply tasks", "reply_tasks", "status", "updated_at", "error"),
@@ -2590,25 +2605,25 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
             if not _sqlite_table_exists(db, physical_table):
                 continue
             if table == "reply_tasks":
-                snapshots.append(_reply_task_queue_snapshot(db))
+                snapshots.append(_read_status_queue(_reply_task_queue_snapshot, db))
                 continue
             if table == "work_summary_inputs":
-                snapshots.append(_work_summary_input_queue_snapshot(db))
+                snapshots.append(_read_status_queue(_work_summary_input_queue_snapshot, db))
                 continue
             if table == "meeting_alignment_jobs":
-                snapshots.append(_meeting_job_queue_snapshot(db))
+                snapshots.append(_read_status_queue(_meeting_job_queue_snapshot, db))
                 continue
             if table == "okr_review_requests":
-                snapshots.append(_okr_review_queue_snapshot(db))
+                snapshots.append(_read_status_queue(_okr_review_queue_snapshot, db))
                 continue
             if table == "reply_attempts":
-                snapshots.append(_reply_attempt_queue_snapshot(db))
+                snapshots.append(_read_status_queue(_reply_attempt_queue_snapshot, db))
                 continue
             if table == "memory_write_events":
-                snapshots.append(_memory_write_queue_snapshot(db, name))
+                snapshots.append(_read_status_queue(_memory_write_queue_snapshot, db, name))
                 continue
             if table == "wechat_deliveries":
-                snapshots.append(_wechat_delivery_queue_snapshot(db))
+                snapshots.append(_read_status_queue(_wechat_delivery_queue_snapshot, db))
                 continue
             counts = _queue_status_counts(db, table, status_column)
             retryable = _queue_retryable_count(db, table, status_column, error_column)
@@ -2627,9 +2642,9 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                 }
             )
         if current_email_actions_available(db):
-            snapshots.append(_email_action_queue_snapshot(db))
+            snapshots.append(_read_status_queue(_email_action_queue_snapshot, db))
         if _sqlite_table_exists(db, "tasks"):
-            snapshots.append(_email_unsubscribe_task_queue_snapshot(db))
+            snapshots.append(_read_status_queue(_email_unsubscribe_task_queue_snapshot, db))
     return snapshots
 
 

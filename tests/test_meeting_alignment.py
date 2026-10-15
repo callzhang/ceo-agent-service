@@ -2904,7 +2904,9 @@ def test_same_verified_private_audience_receives_one_combined_message(tmp_path):
     job = store.get_meeting_alignment_job(job_id)
     assert job.status == "sent", job.error
     assert runner.calls == 1
-    assert '"user_id": "u-mina"' in runner.prompts[0]
+    source_json = runner.prompts[0].split("完整会议来源 JSON：\n", 1)[1]
+    source = json.JSONDecoder().raw_decode(source_json)[0]
+    assert any(participant["user_id"] == "u-mina" for participant in source["participants"])
     assert [call.get("user_id") for call in dws.send_calls] == ["u-mina"]
     assert decision.final_message in dws.send_calls[0]["text"]
     assert decision.sensitive_private_message.message in dws.send_calls[0]["text"]

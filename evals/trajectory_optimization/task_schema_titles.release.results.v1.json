@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "baseline_ref": "ae08b7c7",
+  "status": "independent_title_only_contract_and_native_pair_passed",
+  "schema": {
+    "before_chars": 30478,
+    "after_chars": 26624,
+    "removed_titles": 163,
+    "source_generator_parsed_equal_to_file": true,
+    "native_file_only_title_deletions": true
+  },
+  "cold_inputs_equal_after_only_owned_path_normalization": true,
+  "arms": [
+    {
+      "arm": "baseline",
+      "phases": [
+        {
+          "phase": "cold",
+          "session_id": "01a13e36-bfda-7552-af1c-c08cebdc01b5",
+          "submissions": 1,
+          "status": "done",
+          "native_sha256": "10b34b0837907d31b594a69e4066fc10b92af4c253d297c4b212a80dc848b71e",
+          "input_chars": [
+            39036
+          ],
+          "actual_schema_argument_sha256": [
+            null
+          ],
+          "counts": {
+            "projects": 1,
+            "tasks": 0,
+            "attention": 0,
+            "quick_check": "ok"
+          },
+          "attempts": [
+            {
+              "id": 2,
+              "range": [
+                0,
+                24
+              ],
+              "saved_input_matches_native": true,
+              "tool_names": [
+                "exec"
+              ],
+              "outputs": [
+                {
+                  "line": 20,
+                  "strict_schema_valid": true,
+                  "pydantic_valid": true,
+                  "sha256": "b5977a1b806f1e5e04960949b3d269a9ee488e8f78961a35675588cfc938d471"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "phase": "risk",
+          "session_id": "01a13e36-bfda-7552-af1c-c08cebdc01b5",
+          "submissions": 1,
+          "status": "done",
+          "native_sha256": "10b34b0837907d31b594a69e4066fc10b92af4c253d297c4b212a80dc848b71e",
+          "input_chars": [
+            37349
+          ],
+          "actual_schema_argument_sha256": [
+            "7491b80d201c952980c35e95d7ec437634ad25132e2a1393a4b8f5f9f7845d28"
+          ],
+          "counts": {
+            "projects": 1,
+            "tasks": 1,
+            "attention": 1,
+            "quick_check": "ok"
+          },
+          "attempts": [
+            {
+              "id": 4,
+              "range": [
+                24,
+                41
+              ],
+              "saved_input_matches_native": true,
+              "tool_names": [],
+              "outputs": [
+                {
+                  "line": 37,
+                  "strict_schema_valid": true,
+                  "pydantic_valid": true,
+                  "sha256": "3f6a1d87d2499240095cb4721dd4f2bbff7bbcd992b25ee5dee713312569bbed"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "contexts": {
+        "revisions": 2,
+        "prior_fields_preserved": {
+          "goal": true,
+          "overall_owner": true,
+          "responsibilities": true
+        },
+        "current_risk_source_retained": true
+      },
+      "cold_service_contains_full_current_protocol": true
+    },
+    {
+      "arm": "candidate",
+      "phases": [
+        {
+          "phase": "cold",
+          "session_id": "01a13e37-04eb-77e1-a7ab-cdc46afbaaf7",
+          "submissions": 1,
+          "status": "done",
+          "native_sha256": "414ab40adce5a37888e4c3c1dc40717c542b6e424a3561b296b0f6c483ab567a",
+          "input_chars": [
+            39036
+          ],
+          "actual_schema_argument_sha256": [
+            null
+          ],
+          "counts": {
+            "projects": 1,
+            "tasks": 0,
+            "attention": 0,
+            "quick_check": "ok"
+          },
+          "attempts": [
+            {
+              "id": 2,
+              "range": [
+                0,
+                22
+              ],
+              "saved_input_matches_native": true,
+              "tool_names": [
+                "exec"
+              ],
+              "outputs": [
+                {
+                  "line": 18,
+                  "strict_schema_valid": true,
+                  "pydantic_valid": true,
+                  "sha256": "451a357a430925f754ac0c5d9e529694bb6902f1b25c267757b26b31d2f99b5d"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "phase": "risk",
+          "session_id": "01a13e37-04eb-77e1-a7ab-cdc46afbaaf7",
+          "submissions": 1,
+          "status": "done",
+          "native_sha256": "414ab40adce5a37888e4c3c1dc40717c542b6e424a3561b296b0f6c483ab567a",
+          "input_chars": [
+            37656
+          ],
+          "actual_schema_argument_sha256": [
+            "05b8c4e15d7b2a967d9b1fe1af26ad7dd847d8f5d4c23b4ccf47cf6423ee0c97"
+          ],
+          "counts": {
+            "projects": 1,
+            "tasks": 1,
+            "attention": 1,
+            "quick_check": "ok"
+          },
+          "attempts": [
+            {
+              "id": 4,
+              "range": [
+                22,
+                39
+              ],
+              "saved_input_matches_native": true,
+              "tool_names": [],
+              "outputs": [
+                {
+                  "line": 35,
+                  "strict_schema_valid": true,
+                  "pydantic_valid": true,
+                  "sha256": "3179d3570008ae176ad244595feb73c00d9c0e44429a3e74b6a0c9b4c2e18f7e"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "contexts": {
+        "revisions": 2,
+        "prior_fields_preserved": {
+          "goal": true,
+          "overall_owner": true,
+          "responsibilities": true
+        },
+        "current_risk_source_retained": true
+      },
+      "cold_service_contains_full_current_protocol": true
+    }
+  ],
+  "limits": [
+    "Anonymous configured Codex OAuth readonly/MCP-free current-main Task fixture, not production replay.",
+    "Cold schema path is established by original runner factory/adapter code binding; direct command/hash capture was added for risk and is not claimed as saved cold command evidence.",
+    "Both arms submit once per phase; one fixed pair does not establish first-pass-rate, total-token or billed-cost improvement.",
+    "No held PR57 native alternatives, short Skill, source scanner, Settings, provider, Audit binding or policy change.",
+    "Checked-in native file preserves original0/1 numeric spelling; existing current Pydantic generator emits mathematically equal0.0/1.0 for six bounds."
+  ],
+  "source_observation": {
+    "installed_skill_differs_from_ci": true,
+    "installed_sha256": "1cd05b1a3589437d795001723ec5bfb332456db16f21ff79b7f23bce6af5b101",
+    "ci_sha256": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+    "installed_chars": 23453,
+    "ci_chars": 24895,
+    "cold_tool_reads": "Both native cold runs additionally read shared AGENTS and a different installed Skill,260/280 lines; neither returns full installed Skill. This existing source duplication/version issue is separate from title-only change.",
+    "not_a_claim": "No assertion that native discovery, installed version consistency, reference freshness or all-route business behavior is fixed."
+  },
+  "owned_fixture_cleanup": {
+    "path": "/private/tmp/ceo-title-release-pair.uAjTfa",
+    "removed": true,
+    "bytes": 3633870,
+    "reason": "Both anonymous Stores verified terminal and complete; preserve committed fixtures/metadata and CLI-owned original native sessions, no historical Store/code backups."
+  },
+  "native_originals": [
+    {
+      "session_id": "01a13e36-bfda-7552-af1c-c08cebdc01b5",
+      "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T23-18-57-01a13e36-bfda-7552-af1c-c08cebdc01b5.jsonl",
+      "sha256": "10b34b0837907d31b594a69e4066fc10b92af4c253d297c4b212a80dc848b71e"
+    },
+    {
+      "session_id": "01a13e37-04eb-77e1-a7ab-cdc46afbaaf7",
+      "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T23-19-15-01a13e37-04eb-77e1-a7ab-cdc46afbaaf7.jsonl",
+      "sha256": "414ab40adce5a37888e4c3c1dc40717c542b6e424a3561b296b0f6c483ab567a"
+    }
+  ]
+}

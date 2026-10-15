@@ -13,10 +13,26 @@ ordering and sequence progress; unresolved non-NULL parents still fail the
 native FK path. Migration and runtime
 selection remain separate follow-up work.
 
+The main launchd job declares `ProcessType=Interactive` because the local HTTP
+Console is a user-facing application dependency and does not use XPC activity
+for Adaptive classification. Omitting ProcessType applies Standard CPU/I/O
+limits. Existing installed plist settings must match this declaration before
+the formal deploy/restart re-bootstraps the job; deployment does not copy the
+entire plist over machine-specific environment settings.
+
 Hourly quality checks reuse the unchanged credential/path predicate result for
 identical runtime metadata strings within one scan. Every historical runtime
 row and all seven fields remain in scope, violations are still counted per
 row, and each new scan resolves the current path-prefix configuration afresh.
+
+Reply Attempt fields are VIRTUAL generated columns over `actions.payload_json`.
+The four trigger-latest quality checks first read candidate statuses through
+the existing status index, then group only candidate trigger keys and resolve
+each key's latest Attempt through the existing identity index. The candidate
+keys drive the lookup so SQLite cannot reverse it into another history scan.
+All statuses participate in the latest lookup; NULL key partitions and the
+original `datetime(updated_at), id` ordering remain unchanged. The separate
+OA process-identity window and all downstream quality predicates are unchanged.
 
 Task Agent's checked-in native strict schema documents existing Task identity
 fields: ordinary `update_task`/`update_fields` uses `task_id`; merge-only target
@@ -548,10 +564,14 @@ payloads. Transaction behavior and existing error propagation are unchanged.
 Reused `read_snapshot` connections also report contexts lasting at least one
 second with the same caller chain and timing fields; their finish and close
 times are zero because the enclosing snapshot retains transaction ownership.
+Specialized Status queue readers also report individual calls lasting at least
+one second, using only the reader name and duration; no parameters or business
+payloads are logged. Counts, freshness and error propagation remain unchanged.
 
 Worker status summarizes the current `reply_attempts` projection using only
-identity, status, timestamp, and error columns. It does not load full attempt
-payloads such as captured inputs or reply bodies to calculate queue counts.
+identity, status, timestamp, and error fields. These fields are VIRTUAL generated
+columns over `actions.payload_json`: selecting metadata alone does not prove
+index-only I/O, and an uncovered field can still decode the full JSON payload.
 It groups trigger identities and seeks each trigger's latest attempt through
 `idx_actions_reply_current_trigger`; it does not rank every retry row in a
 window function for each status request.
@@ -2296,6 +2316,13 @@ bounded attempt handling to operate. It is not a CLI execution outage. The
 credential predicate and rejection itself remain unchanged; no unsafe result
 is accepted and no content-feedback cycle is consumed by a parse failure.
 
+Generic credential key/value text requires the value to end at the string boundary
+or an explicit comma/semicolon delimiter. This avoids treating ordinary diagnostic
+prose such as `access token: load access token: acquiring file lock` as a secret,
+while retaining detection for delimited values such as `api_key=...;`. Known
+credential formats, sensitive-field context, entropy checks and outbound
+credential validation are unchanged.
+
 ### Daily Report Source Identity
 
 Daily report `handled_today` facts retain their original conversation ID,
@@ -2965,6 +2992,8 @@ Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000�
 
 OA pending scans carry the complete scheduled Consumer wrapper, including exact frozen Skill materials, into the claimed reply input. Consumer and Audit read those original bodies through read_task_skill; the scanner must not use the Task extraction projection that omits skill_materials. Task extraction sources retain their existing body-free scheduled context. This changes input delivery only, not Skill contents, task classification, audit policy, routes or sessions; old inputs are not rebuilt.
 
+Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files.
+
 
 ### 第五期A：候选与执行存储合并
 
@@ -3375,3 +3404,18 @@ current WorkItem metadata retain the same parsed values and field selection.
 Full source strings, schema constraints, source projection, business rules,
 roles, native schema delivery and session behavior are unchanged. See
 docs/specialized-json-formatting-validation.md for acceptance/publication status.
+
+
+Task native schemas omit autogenerated display-title annotations, using the same
+annotation formatter as Consumer/Audit. Field names (including title), full field
+descriptions, literal JSON values, strict required fields and every validation
+constraint remain unchanged. Existing Task identity validators and provider,
+Skill/source, session, correction and Audit contracts are preserved. Consumer/Audit
+schema text is byte-identical. See docs/task-schema-title-formatting-validation.md.
+
+Task Agent 当前每轮已经完整提交仓库中的 Work Tracking Skill，Codex 命令复用现有
+`inlined_skill_names` 元数据，由适配器把已有路径筛选和同名隐藏规则合成一份
+原生 `skills.config` 数组，避免重复配置键覆盖。仅隐藏同名安装副本的目录项。完整当前正文、
+其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
+或共享 AGENTS 配置。该改动消除第二份旧 Skill 的可见入口，尚未把完整正文改成按需读取。
+验证与限制见 `docs/task-inline-skill-once-validation.md`。

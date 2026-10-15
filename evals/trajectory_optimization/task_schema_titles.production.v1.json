@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "formal_deploy": "deployed e4fdb5d2 -> 86772bcd",
+  "production_ref": "86772bcd80321eab175a7abb3fa635cb2f2e4367",
+  "production_clean": true,
+  "sources": {
+    "app/task_models.py": {
+      "sha256": "0bbf87282bb4d73c6a281fa11b5c11b640f503b1391421d73651df5f7a792ad5",
+      "matches_reviewed": true
+    },
+    "app/prompt_schema.py": {
+      "sha256": "e6af6807931e3c4760f867effb8712d1649b01fe597feda3c33958b251da69db",
+      "matches_reviewed": true
+    },
+    "app/consumer_agent.py": {
+      "sha256": "47e5662f62a3db71babc09c6ed21a398385b403a237cfe51fa84902de03fa516",
+      "matches_reviewed": true
+    },
+    "app/schemas/task_agent_decision.schema.json": {
+      "sha256": "05b8c4e15d7b2a967d9b1fe1af26ad7dd847d8f5d4c23b4ccf47cf6423ee0c97",
+      "matches_reviewed": true
+    }
+  },
+  "schema_compact_chars": 26624,
+  "remaining_display_titles": 0,
+  "processes": [
+    {
+      "pid": "13016",
+      "ppid": "1",
+      "module": "app.service_supervisor"
+    },
+    {
+      "pid": "13065",
+      "ppid": "13016",
+      "module": "app.cli"
+    },
+    {
+      "pid": "13066",
+      "ppid": "13016",
+      "module": "app.cli"
+    },
+    {
+      "pid": "13067",
+      "ppid": "13016",
+      "module": "app.cli"
+    }
+  ],
+  "readback": [
+    {
+      "path": "/healthz",
+      "http": 200,
+      "seconds": 0.507,
+      "ok": true,
+      "status": "ok"
+    },
+    {
+      "path": "/api/console/status",
+      "error": "TimeoutError",
+      "seconds": 20.12
+    },
+    {
+      "path": "/api/console/attention?page_size=2",
+      "error": "TimeoutError",
+      "seconds": 20.11
+    },
+    {
+      "path": "/api/console/history?page_size=2&include_chart=false",
+      "error": "TimeoutError",
+      "seconds": 20.002
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer&route_name=codex_oauth",
+      "error": "TimeoutError",
+      "seconds": 20.022
+    }
+  ],
+  "limits": [
+    "Production source/ref/process/health verified; Status/Attention/History/public Settings timed out, so full operational acceptance remains open.",
+    "No new production business replay, all-task or source-loading acceptance."
+  ],
+  "single_settings_retry": {
+    "error": "TimeoutError",
+    "seconds": 15.084
+  },
+  "console_diagnostics": {
+    "queue_reader": "_reply_attempt_queue_snapshot",
+    "elapsed_seconds": 43.047,
+    "full_queue_snapshot_seconds": 77.978,
+    "other_slow_readers": [
+      "_meeting_job_queue_snapshot",
+      "_wechat_delivery_queue_snapshot",
+      "_email_action_queue_snapshot"
+    ],
+    "attribution": "Existing diagnostic log observations; no claim title annotations cause or repair query latency."
+  },
+  "acceptance_status": "production_source_process_health_verified_console_acceptance_open"
+}
