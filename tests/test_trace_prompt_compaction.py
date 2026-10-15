@@ -9,6 +9,22 @@ from app.agent_wire_contracts import ConsumerAgentWireResult, AuditAgentWireResu
 from app.consumer_agent import _schema_json, _compact_prompt_schema
 
 
+def _seed_prompt_configuration():
+    from app.developer_prompt import (
+        SEED_DEVELOPER_PROMPT_TEMPLATE, SEED_USER_PROMPT_TEMPLATE,
+        render_developer_prompt_template,
+    )
+    from app.prompt_composition import PromptConfiguration
+
+    seed = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
+    return PromptConfiguration(
+        developer_template=seed,
+        developer_instructions=render_developer_prompt_template(seed),
+        user_template=SEED_USER_PROMPT_TEMPLATE.read_text(encoding="utf-8"),
+        work_profile="",
+    )
+
+
 def test_compact_schema_preserves_actual_title_and_default_fields():
     class Document(BaseModel):
         title: str = Field(description="The document title")
@@ -30,8 +46,7 @@ def test_wire_schema_compaction_retains_validation_constraints():
                   error_authorization_required=False, risk="low", confidence=0.9,
                   rule_coverage=1.0, information_completeness=1.0)
     consumer = dict(common, outcome="no_action", proposal=None, durable_memories=[])
-    audit = dict(common, outcome="approve", proposal_revision=0,
-                 candidate_digest="0" * 64, feedback=None)
+    audit = dict(common, outcome="approve", feedback=None)
     for model, valid in ((ConsumerAgentWireResult, consumer), (AuditAgentWireResult, audit)):
         raw = model.model_json_schema()
         compact = json.loads(_schema_json(model))
@@ -58,11 +73,14 @@ def test_task_context_retains_original_result_rules_facts_and_stage():
         messages=(), materials=(), prior_receipts=(), trigger_raw_payload={"source_fact": "KEEP"},
     )
     rendered = context.render(current_time="2026-10-07T10:00:00+08:00")
-    developer = consumer_developer_instructions(runtime_context="", work_profile="")
+    developer = consumer_developer_instructions(
+        runtime_context="", work_profile="", prompt_configuration=_seed_prompt_configuration(),
+    )
     assert (developer + rendered).count(_CONSUMER_AGENT_RULES) == 1
     assert _CONSUMER_AGENT_RULES not in rendered
     assert "UNMODIFIED_SOURCE" in rendered
-    assert '"source_fact": "KEEP"' in rendered
+    trigger = json.JSONDecoder().raw_decode(rendered.split("\nOriginal trigger\n", 1)[1])[0]
+    assert trigger["raw_payload"]["source_fact"] == "KEEP"
     assert "### Execution stage" in rendered
 
 
@@ -94,7 +112,8 @@ def test_role_command_suppresses_project_docs_without_changing_native_home(monke
 
 def test_contract_fingerprint_includes_details_beyond_catalog_names(monkeypatch):
     import app.consumer_agent as consumer
-    before = consumer.consumer_wire_contract_hash()
+    configuration = _seed_prompt_configuration()
+    before = consumer.consumer_wire_contract_hash(prompt_configuration=configuration)
     document = consumer.system_action_contract_document()
     monkeypatch.setattr(consumer, "system_action_contract_document", lambda: document + "\nA changed operation detail.")
-    assert consumer.consumer_wire_contract_hash() != before
+    assert consumer.consumer_wire_contract_hash(prompt_configuration=configuration) != before

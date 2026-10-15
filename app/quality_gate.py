@@ -589,12 +589,19 @@ def _check_runtime_attempt_invariants(db: sqlite3.Connection, violations: list[Q
         _add(violations, source="agent_runtime_attempts", code=code, count=_count(db, sql), severity="error", detail="runtime attempt invariant violated")
     leaks = 0
     path_prefixes = forbidden_path_prefixes()
+    checked_values: dict[str, bool] = {}
+
+    def contains_leak(value: object) -> bool:
+        text = str(value or "")
+        if text not in checked_values:
+            checked_values[text] = (
+                contains_credential(text)
+                or contains_local_runtime_leak(text, path_prefixes=path_prefixes)
+            )
+        return checked_values[text]
+
     for row in db.execute(f'select route_name, runtime_kind, credential_mode, model, session_id, failure_code, transcript_reference from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts'):
-        leaks += any(
-            contains_credential(str(value or ""))
-            or contains_local_runtime_leak(str(value or ""), path_prefixes=path_prefixes)
-            for value in row
-        )
+        leaks += any(contains_leak(value) for value in row)
     _add(violations, source="agent_runtime_attempts", code="runtime_secret_leak", count=leaks, severity="error", detail="runtime attempt evidence contains sensitive material")
 
 

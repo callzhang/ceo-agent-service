@@ -13,6 +13,11 @@ ordering and sequence progress; unresolved non-NULL parents still fail the
 native FK path. Migration and runtime
 selection remain separate follow-up work.
 
+Hourly quality checks reuse the unchanged credential/path predicate result for
+identical runtime metadata strings within one scan. Every historical runtime
+row and all seven fields remain in scope, violations are still counted per
+row, and each new scan resolves the current path-prefix configuration afresh.
+
 Task Agent's checked-in native strict schema documents existing Task identity
 fields: ordinary `update_task`/`update_fields` uses `task_id`; merge-only target
 and identity fields identify two distinct persisted Tasks. New supporting Tasks
@@ -540,6 +545,9 @@ finish (commit or rollback), and connection close time. Body time can include
 waiting to acquire a transaction, so it is not automatically write-lock hold
 time. Logs keep call sites and elapsed durations, not SQL parameters or business
 payloads. Transaction behavior and existing error propagation are unchanged.
+Reused `read_snapshot` connections also report contexts lasting at least one
+second with the same caller chain and timing fields; their finish and close
+times are zero because the enclosing snapshot retains transaction ownership.
 
 Worker status summarizes the current `reply_attempts` projection using only
 identity, status, timestamp, and error columns. It does not load full attempt

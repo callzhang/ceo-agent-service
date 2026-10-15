@@ -2626,7 +2626,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def _connect(self) -> Iterator[sqlite3.Connection]:
         snapshot = self._read_snapshot_connection.get()
         if snapshot is not None:
-            yield snapshot
+            started_at = time.monotonic()
+            try:
+                yield snapshot
+            finally:
+                elapsed = time.monotonic() - started_at
+                if elapsed >= 1.0:
+                    print(
+                        f"slow sqlite context elapsed_seconds={elapsed:.3f} "
+                        f"body_seconds={elapsed:.3f} "
+                        "finish_seconds=0.000 close_seconds=0.000 "
+                        f"callers={_sqlite_caller_chain(sys._getframe(2))}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
             return
         connection = self._open_connection()
         started_at = time.monotonic()
