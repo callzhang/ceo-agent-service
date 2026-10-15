@@ -62,3 +62,90 @@ def test_nonterminal_task_keeps_artifacts_for_resume_and_audit(tmp_path, monkeyp
 
     assert artifact.read_text() == "keep until terminal"
     assert legacy_artifact.read_text() == "legacy remains until task access or terminal"
+
+
+@pytest.mark.parametrize(
+    "result_status, task_status",
+    [
+        ("executed", "done"),
+        ("failed_terminal", "failed"),
+        ("needs_human", "needs_human"),
+        ("skipped", "skipped"),
+        ("failed_retryable", "pending"),
+    ],
+)
+def test_email_finalizer_cleans_only_after_persisted_terminal_status(
+    tmp_path, monkeypatch, result_status, task_status
+):
+    from app import email_worker, task_artifacts
+
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "task-artifacts")
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr("app.config.workspace_path", lambda: workspace)
+    task_root = task_artifacts.TASK_ARTIFACT_ROOT / "7"
+    artifact = task_root / "generation-7" / "result.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("temporary email task evidence")
+    legacy_root = workspace / "consumer-artifacts/7"
+    legacy_artifact = legacy_root / "old-generation" / "result.md"
+    legacy_artifact.parent.mkdir(parents=True)
+    legacy_artifact.write_text("legacy email task evidence")
+    task = SimpleNamespace(
+        id=7, status="processing", attempts=1,
+        execution_generation="generation-7",
+        conversation_id="email-thread:7", conversation_title="Email task",
+        trigger_message_id="email-action:7", trigger_sender="sender@example.com",
+        trigger_text="email action",
+    )
+    run = SimpleNamespace(
+        id=70, codex_session_id="", transcript_start_line=0,
+        transcript_end_line=0, tool_events=[],
+    )
+    events = []
+
+    class Store:
+        def get_agent_run(self, run_id):
+            assert run_id == run.id
+            return run
+
+        def current_reviewed_candidate(self, task_id, generation):
+            assert (task_id, generation) == (task.id, task.execution_generation)
+            return {"id": 71, "review_id": 72}
+
+        def finalize_orchestrated_reply_task(self, **kwargs):
+            assert kwargs["task_id"] == task.id
+            assert kwargs["expected_execution_generation"] == task.execution_generation
+            assert kwargs["task_status"] == task_status
+            assert artifact.exists()
+            task.status = kwargs["task_status"]
+            events.append("finalized")
+
+        def get_reply_task(self, task_id):
+            assert task_id == task.id
+            assert events == ["finalized"]
+            events.append("read_persisted_task")
+            return task
+
+        def defer_reply_task(self, task_id, error, **kwargs):
+            assert task_id == task.id
+            assert kwargs["expected_execution_generation"] == task.execution_generation
+            task.status = "pending"
+            events.append("deferred")
+
+    result = SimpleNamespace(
+        status=result_status, final_run_id=run.id, summary="reviewed email result",
+        error=SimpleNamespace(code="", authorization_required=False),
+        candidate_id=71, review_id=72,
+    )
+
+    email_worker._finalize_email_task(Store(), task, result)
+
+    assert task.status == task_status
+    if task_status == "pending":
+        assert events == ["deferred"]
+        assert artifact.read_text() == "temporary email task evidence"
+        assert legacy_artifact.read_text() == "legacy email task evidence"
+    else:
+        assert events == ["finalized", "read_persisted_task"]
+        assert not task_root.exists()
+        assert not legacy_root.exists()

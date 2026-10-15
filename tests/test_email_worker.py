@@ -10098,6 +10098,11 @@ def test_bare_authorization_required_result_is_failed():
     captured = {}
 
     class Store:
+        def get_reply_task(self, task_id):
+            # This capture-only store does not persist a task row.
+            assert task_id == captured["task_id"]
+            return None
+
         def get_agent_run(self, run_id):
             assert run_id == 70
             return run
@@ -10151,6 +10156,11 @@ def test_a_durable_step_without_a_receipt_stays_an_ordinary_retry():
     captured = {}
 
     class Store:
+        def get_reply_task(self, task_id):
+            # This capture-only store does not persist a task row.
+            assert task_id == captured["task_id"]
+            return None
+
         def get_email_unsubscribe_claim(self, action_identity):
             return {"status": "uncertain", "phase": "effect_uncertain"}
 
@@ -10214,6 +10224,11 @@ def test_domain_authorization_rejection_remains_failed():
     captured = {}
 
     class Store:
+        def get_reply_task(self, task_id):
+            # This capture-only store does not persist a task row.
+            assert task_id == captured["task_id"]
+            return None
+
         def get_agent_run(self, run_id):
             assert run_id == 80
             return run
@@ -10299,6 +10314,11 @@ def _route_refusal_case(error: str = ""):
     captured = {}
 
     class Store:
+        def get_reply_task(self, task_id):
+            # This capture-only store does not persist a task row.
+            assert task_id == captured["task_id"]
+            return None
+
         def get_agent_run(self, run_id):
             return run
 
@@ -10408,6 +10428,11 @@ def _finalize_audited_unsubscribe(module, result, tool_events, *, task_id=383232
     captured = {}
 
     class Store:
+        def get_reply_task(self, task_id):
+            # This capture-only store does not persist a task row.
+            assert task_id == captured["task_id"]
+            return None
+
         def get_agent_run(self, run_id):
             assert run_id == result.final_run_id
             return run
@@ -10920,6 +10945,11 @@ def _browser_failure_task(error: str = ""):
 
 def _browser_failure_store(captured: dict, run):
     class Store:
+        def get_reply_task(self, task_id):
+            # This capture-only store does not persist a task row.
+            assert task_id == captured["task_id"]
+            return None
+
         def get_agent_run(self, run_id):
             assert run_id == run.id
             return run
