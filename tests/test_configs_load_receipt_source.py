@@ -38,7 +38,7 @@ def _columns(db, table):
 
 
 def test_receipt_declarations_match_frozen_actual_in_published_fresh(old_email_copy):
-    """The two source families share literal schema, but allocate separately."""
+    """Each receipt family matches its own frozen actual declaration."""
     frozen = json.loads(PROBE.read_text())["actual_frozen_receipt_metadata"]
     _, path = old_email_copy
     with closing(sqlite3.connect(path)) as db:
