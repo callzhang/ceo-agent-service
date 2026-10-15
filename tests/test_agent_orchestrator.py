@@ -388,3 +388,50 @@ def test_six_persisted_technical_failures_prevent_another_provider_turn(
         assert "ROOT_CAUSE" in result.summary
     assert result.error.retryable is (expected_status == "failed_retryable")
     assert len(store.list_agent_runs_for_task_generation(task.id, task.execution_generation)) == (7 if role is AgentRole.AUDIT else 6)
+
+
+@pytest.mark.parametrize(
+    ("error_code", "failed_turns", "expected_delay"),
+    [
+        ("dependency_read_unavailable", 1, 60),
+        ("dependency_read_unavailable", 2, 120),
+        ("dependency_read_unavailable", 5, 900),
+        ("agent_context_refresh_failed", 2, 120),
+    ],
+)
+def test_dependency_read_wait_backoff_increases_without_exhausting_task(
+    tmp_path, error_code, failed_turns, expected_delay
+):
+    store, task, context = task_and_context(tmp_path)
+    latest = None
+    for turn in range(failed_turns):
+        claim = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=turn,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner=f"dependency-{turn}",
+        )
+        assert claim.claimed
+        store.fail_agent_run(
+            claim.run.id,
+            AgentError(
+                code=error_code,
+                retryable=True,
+                source_code="forbidden.accessDenied",
+            ).model_dump(mode="json"),
+            owner=f"dependency-{turn}",
+        )
+        latest = store.get_agent_run(claim.run.id, load_events=False)
+
+    driver, _ = orchestrator(store, ScriptedConsumer(store), ScriptedAudit(store))
+    deferred = driver._technical_state(task, latest, 0)
+    result = driver._deferred_result(deferred)
+
+    assert result.status == "failed_retryable"
+    assert result.error.code == error_code
+    assert result.error.source_code == "forbidden.accessDenied"
+    assert result.retry_after_seconds == expected_delay

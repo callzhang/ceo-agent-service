@@ -18,7 +18,7 @@ from app.agent_contracts import (
 from app.agent_result import AgentError, ResultParseError
 from app.agent_turn_runner import AgentTurnRunResult
 from app.codex_capacity import is_codex_provider_recovery_code
-from app.external_retry import retry_delay_seconds
+from app.external_retry import DEFAULT_MAX_RETRY_DELAY_SECONDS, retry_delay_seconds
 from app.reviewed_candidates import rejected_content_changed
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
@@ -117,6 +117,7 @@ class _Deferred:
     feedback_cycles: int
     detail: str = ""
     source_error: AgentError | None = None
+    retry_after_seconds: float = 0.0
 
 
 def _enrich_oa_applicant_target(
@@ -686,6 +687,7 @@ class AgentOrchestrator:
         if error.code == "provider_risk_rejected" or error.source_code == "provider_risk_rejected":
             return self._run_terminal(run, "failed_terminal", error.model_copy(update={"retryable":False}), cycles)
         if error.code in EXTERNAL_DEPENDENCY_WAIT_ERRORS and error.retryable:
+            retry_after = self._dependency_retry_after_seconds(task, run, error.code)
             if task.error != error.code:
                 return _Deferred(
                     run,
@@ -693,8 +695,15 @@ class AgentOrchestrator:
                     cycles,
                     error.source_code or error.code,
                     error,
+                    retry_after,
                 )
-            return self._run_terminal(run, "failed_retryable", error, cycles)
+            return self._run_terminal(
+                run,
+                "failed_retryable",
+                error,
+                cycles,
+                retry_after_seconds=retry_after,
+            )
         if error.retryable and not error.authorization_required:
             runs = self.store.list_agent_runs_for_task_generation(task.id, task.execution_generation, load_events=False)
             failed_turns = _consecutive_failed_turns([
@@ -714,7 +723,16 @@ class AgentOrchestrator:
         return self._run_terminal(run, _failure_status(error), error, cycles)
 
     @staticmethod
-    def _run_terminal(run, status, error, cycles, consumer=None, audit=None):
+    def _run_terminal(
+        run,
+        status,
+        error,
+        cycles,
+        consumer=None,
+        audit=None,
+        *,
+        retry_after_seconds=0.0,
+    ):
         source = error.source_code or error.code
         summary = audit.summary if audit else consumer.summary if consumer else source
         if error.code:
@@ -729,6 +747,33 @@ class AgentOrchestrator:
             consumer_result=consumer,
             audit_result=audit,
             feedback=audit.feedback if audit else None,
+            retry_after_seconds=retry_after_seconds,
+        )
+
+    def _dependency_retry_after_seconds(
+        self, task: ReplyTask, run: AgentRun, error_code: str
+    ) -> float:
+        runs = self.store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation, load_events=False
+        )
+        failed_turns = 0
+        for prior in sorted(
+            (
+                item
+                for item in runs
+                if item.role is run.role
+                and item.proposal_revision == run.proposal_revision
+            ),
+            key=lambda item: (item.turn_attempt, item.id),
+            reverse=True,
+        ):
+            if prior.status != "failed" or _run_error(prior).code != error_code:
+                break
+            failed_turns += 1
+        return retry_delay_seconds(
+            60,
+            failed_turns - 1,
+            max_delay_seconds=DEFAULT_MAX_RETRY_DELAY_SECONDS,
         )
 
     @staticmethod
@@ -881,6 +926,7 @@ class AgentOrchestrator:
                 retryable=True,
             ),
             feedback_cycles=state.feedback_cycles,
+            retry_after_seconds=state.retry_after_seconds,
         )
 
 
