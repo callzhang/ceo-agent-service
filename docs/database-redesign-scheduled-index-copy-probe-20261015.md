@@ -65,3 +65,38 @@ result here substitutes for those checks or authorizes production selection.
 This index experiment is independent of completing the ten-core-table plus
 one-ledger physical schema. It neither waives any remaining table merge nor
 introduces a history-retention policy.
+
+## Actual Store and dispatcher method follow-up
+
+Two newly owned backups of the same frozen source were exercised with the real
+current Store and dispatcher methods: one keeps original indexes; the other
+changes only dispatch to the conservative partial predicate and retains the
+original full claim index. No application files, schema marker or production
+database changed. The Store handle used its ordinary connection attributes
+without constructor initialization, because this source predates the branch's
+paired schema. This is method verification, not constructor or migration proof.
+
+Twenty-one observations match across the copies: metrics before/after; tied
+candidate ordering; wrong-owner rejection; execution linking; dispatched,
+skipped and failed completion; expired-lease dispatcher takeover and ledger
+completion; five reopened DTOs; two cursor pages; latest and overlap queries.
+Additional assertions reject claiming a completed row, a live lease, or a
+future row. No Agent executes and no provider is called. The linked execution
+identifier is an inert test value.
+
+All DTO and ledger comparison fields are exact except the ledger's
+`created_at`: its actual SQLite `current_timestamp` default uses wall time,
+whereas these public methods accept an injected `now`. Each creation timestamp
+was checked within its own real call interval; only that nondeterministic field
+was excluded from the cross-copy ledger hash. An initial exact comparison
+failed on this clock difference. An earlier fixture's empty-string lease expiry
+also failed the public DTO's UTC parser; it was corrected to native NULL for an
+unclaimed lease. Neither test-fixture correction changed application code.
+
+Both copies pass `quick_check`. Both retain precisely the original known FK
+finding `runs` row 190042 -> `tasks`, FK group 1; this is not a clean-FK claim.
+The source hash is unchanged and the new temporary parent was removed. Exact
+metadata is in `superpowers/specs/2026-10-15-scheduled-index-method-probe.json`.
+Public lease release/renew, full History HTTP composition, constructor selection
+and forward/current-fact inverse remain outside this follow-up's scope and
+must be verified before selecting an index migration.
