@@ -1,5 +1,24 @@
 # Console query performance
 
+## Follow-up acceptance on 2026-10-15
+
+The earlier production acceptance below is a historical measurement, not proof
+of current responsiveness. Fresh `fca229bb` HTTP requests timed out while new
+snapshot diagnostics recorded queue-summary reads of 97–169s and one failed
+History read of 158s. A separate read-only Status build took 4–5s; two same-process
+builds took 11.63s each. A user-authorized 32-second pause of the other local
+Email test process group was fully resumed afterward: healthz returned in
+0.113s, while Status still exceeded20s and History10s. Other tests are not a
+sufficient single-cause explanation.
+
+Attempt metadata fields are VIRTUAL generated columns over `payload_json`.
+The current14,917 Attempt rows contain36,821,166 payload bytes. Existing trigger,
+status and run-recovery indexes each cover only part of the queue read, so a
+metadata-only SELECT can still read and decode JSON. The source query, index
+coverage and actual I/O must be verified separately. Per-specialized-queue
+slow diagnostics now record only the reader name and duration, preserving the
+existing fresh-snapshot, count and exception contracts.
+
 ## Scope and evidence
 
 This repair covers the Overview Status API, History lists, filters, pagination

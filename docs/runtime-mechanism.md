@@ -537,10 +537,14 @@ payloads. Transaction behavior and existing error propagation are unchanged.
 Reused `read_snapshot` connections also report contexts lasting at least one
 second with the same caller chain and timing fields; their finish and close
 times are zero because the enclosing snapshot retains transaction ownership.
+Specialized Status queue readers also report individual calls lasting at least
+one second, using only the reader name and duration; no parameters or business
+payloads are logged. Counts, freshness and error propagation remain unchanged.
 
 Worker status summarizes the current `reply_attempts` projection using only
-identity, status, timestamp, and error columns. It does not load full attempt
-payloads such as captured inputs or reply bodies to calculate queue counts.
+identity, status, timestamp, and error fields. These fields are VIRTUAL generated
+columns over `actions.payload_json`: selecting metadata alone does not prove
+index-only I/O, and an uncovered field can still decode the full JSON payload.
 It groups trigger identities and seeks each trigger's latest attempt through
 `idx_actions_reply_current_trigger`; it does not rank every retry row in a
 window function for each status request.
