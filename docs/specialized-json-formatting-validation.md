@@ -15,3 +15,5 @@ Read-only production queries use URI mode=ro with bounded query progress, no Sto
 No publication or deployment yet.
 
 Final four-file run359 passed in14.76s; Ruff/diff pass. Independent readonly review finds no runtime blocker, confirms four serializer-only changes and metadata arithmetic, and independently passes the3 new tests. Its minor integer-test precision finding is addressed with exact int type plus value; final4 direct checks pass in0.59s. No model/provider calls were added for formatting-only equivalence. Formal publication and production readback pending.
+
+Ordinary push is initially rejected because current main has the separate Console query repair d7c72a3f and its merge/readback documentation. Normal merge7f98a4b2 preserves that upstream change; no code conflict and no history rewrite. Post-merge eight-file specialized/Task/query-cost/snapshot/cache group passes373 tests in19.52s, targeted Ruff/diff pass. This supersedes the earlier359-test integration count for the published tree; provider/business execution remains outside formatting equivalence.
