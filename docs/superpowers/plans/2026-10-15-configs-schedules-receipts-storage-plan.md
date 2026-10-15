@@ -628,6 +628,14 @@ def skill_receipt_schema_parts():
         "foreign key(skill_revision_ref,skill_revision_kind,skill_revision_public_key) references configs(id,record_type,public_key)",
         "foreign key(runtime_config_ref,skill_config_kind,skill_config_public_key) references configs(id,record_type,public_key)",
     )
+    checks += tuple(
+        f"check(record_type<>'{kind}' or {_encoded_value_check('payload_json', '$.' + field)})"
+        for kind, fields in (
+            ("managed_skill_export_receipts", ("revision_id", "sha256", "path", "created_at")),
+            ("runtime_skill_load_receipts", ("config_id", "pid", "error", "created_at")),
+        )
+        for field in fields
+    )
     indexes = (
         "create index idx_actions_skill_export_revision on actions(skill_revision_ref,cast(legacy_key as integer)) where record_type='managed_skill_export_receipts'",
         "create index idx_actions_skill_load_config on actions(runtime_config_ref,cast(legacy_key as integer)) where record_type='runtime_skill_load_receipts'",
