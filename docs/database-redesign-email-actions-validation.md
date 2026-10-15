@@ -2803,3 +2803,27 @@ or timeout was masked. Both incomplete native working roots were removed and
 absence verified. These runs are not accepted results. A refreshed latest-source
 copy/native run will execute serially after the matrix. No production mutation
 or real test sending occurred. CI/publication/live readback/full10+1 stay open.
+
+
+### Task7 final named focused matrix
+
+The exact29-file Task2–6 matrix completed with1996 passed and6 pre-existing
+actual/fresh reference-variant skips in1490.10s, using three low-priority
+workers and no new skip or relaxed assertion. It started on the accepted
+f258 runtime; the later bounded diagnostics increment changed no inspected
+schema/lifecycle/harness implementation and its33+14 focused cases passed
+separately. Scoped Ruff passed all89 changed Python files againstfca229bb,
+and the same publication diff check passed. The long elapsed time occurred
+under shared-machine load; no timeout was raised to obtain this result.
+
+Draft PR90 is attached to this task at
+https://github.com/callzhang/ceo-agent-service/pull/90 (pushed8ac15d2d). Its
+Quality CI38692215658 is pending, not accepted here. Latestfca229bb online
+backup integrity passed:481296384bytes, Store2026-10-13.5/Email51,121 noninternal
+tables, original1 FK diagnostic. The superseded owned7301 backup was removed
+after this new backup was verified. Refreshed copy proof is running serially;
+native approval/revision, CI and publication are still open. Keep PR draft
+and do not merge main pending Derek's direct approval of the final result.
+
+The owned focused-test root was removed after this aggregate receipt was
+recorded; no historical test DB/archive is retained. Full10+1 remains open.
