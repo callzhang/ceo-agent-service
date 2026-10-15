@@ -20,6 +20,11 @@ SOURCE_PATHS = (
     "tests",
     "pyproject.toml",
     "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json",
+    "docs/superpowers/specs/2026-10-13-database-redesign-phase5a-inventory.json",
+    "docs/superpowers/specs/2026-10-13-database-redesign-phase5b-inventory.json",
+    "docs/superpowers/specs/2026-10-13-database-redesign-phase5c-postfix-source.json",
+    "docs/superpowers/specs/2026-10-13-database-redesign-phase5d-delivery-source.json",
+    "docs/superpowers/specs/2026-10-13-database-redesign-phase5e-reply-source.json",
 )
 
 STORE_TESTS = (
@@ -110,6 +115,15 @@ SCHEMA_RELEASE_TESTS = (
     "test_plan_inverse_preserves_new_classification_and_canonical_versions",
     "test_plan_inverse_failure_is_atomic",
     "test_plan_inverse_preserves_original_legacy_snapshot_byte_form",
+)
+DELIVERY_BOOTSTRAP_TESTS = (
+    "test_cold_store_migrates_exact_published_source_layout",
+)
+REPLY_ACTION_STORE_TESTS = (
+    "test_store_migrates_exact_source18_and_repairs_only_its_canonical_variant",
+)
+WORKBENCH_SOURCE_CHAIN_TESTS = (
+    "test_source13_fixture_keeps_original_actions_receipts_and_watermark",
 )
 
 
@@ -349,4 +363,40 @@ def test_published_email_schema_release(published_source: Path) -> None:
         },
         expected_functions=5,
         expected_cases=7,
+    )
+
+
+def test_published_delivery_bootstrap_migration(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="delivery-bootstrap",
+        module="test_action_delivery_bootstrap",
+        names=DELIVERY_BOOTSTRAP_TESTS,
+        extra_cases={"test_cold_store_migrates_exact_published_source_layout": 2},
+        expected_functions=1,
+        expected_cases=2,
+    )
+
+
+def test_published_reply_action_store_migration(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="reply-action-store",
+        module="test_reply_attempt_action_store",
+        names=REPLY_ACTION_STORE_TESTS,
+        extra_cases={"test_store_migrates_exact_source18_and_repairs_only_its_canonical_variant": 2},
+        expected_functions=1,
+        expected_cases=2,
+    )
+
+
+def test_published_workbench_source_chain(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="workbench-source-chain",
+        module="test_workbench_caller_source_chain",
+        names=WORKBENCH_SOURCE_CHAIN_TESTS,
+        extra_cases={},
+        expected_functions=1,
+        expected_cases=1,
     )

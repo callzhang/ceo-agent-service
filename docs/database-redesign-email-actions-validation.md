@@ -2580,3 +2580,23 @@ omits include_email (6failed2.50s total). These are recorded failures, not
 accepted target behavior. Both roots were deleted and absence verified. The
 next changes must retain current business tests while binding genuine historical
 owner tests to fixed source. CI/publication and full10+1 remain open.
+
+### Task7 Store-owned historical source tests
+
+The three remaining Store-owned historical functions in delivery bootstrap,
+reply action Store, and source13 caller chain match their original function ASTs
+at fixed commit `0441cf15fafe800f9ca4d67f667e87062ca62109`. Their five parameter
+children now run under three new groups in the published-source harness, with
+the five exact phase5 inventory/source JSON files included in that archive.
+The existing thirteen groups and 121 children remain selected unchanged. The
+complete harness passed 16 groups and enforced 68 function names/126 child
+cases with exact JUnit counts, zero failures, errors, or skips (83.03s).
+
+The only current assertion changed is the delivery auxiliary repair's exact
+manifest check, which now includes Email alongside Reply. The two affected
+current modules passed 18 cases in 4.70s. AST comparison found only the three
+historical removals and that one current assertion change; other retained
+functions and helpers were unchanged, apart from now-unused imports. Scoped
+Ruff and diff checks passed. Both owned temporary roots were removed and their
+absence verified. This is local test evidence; fresh sequential SPEC/QUALITY,
+CI/publication, and the full10+1 gate remain open.
