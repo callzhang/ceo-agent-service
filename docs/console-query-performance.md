@@ -80,3 +80,38 @@ failed-only error-body projection test also passes: materializing current
 Attempt metadata does not load successful/skipped error bodies, and the exact
 failed-ID read retains the original equal-timestamp error tie behavior. Ruff
 and `git diff --check` passed. No full suite was run while the service was live.
+
+## Production acceptance
+
+The normal updater deployed runtime `832da02e` with the explicitly authorized
+`--skip-quiet-wait` option. Production and development runtime code matched;
+launchd reported a new running supervisor PID `37209`, and `/healthz` returned
+200 in 0.022s. Sequential local HTTP readback after the restart returned:
+
+| Request | Elapsed seconds | Readback |
+| --- | ---: | --- |
+| Overview Status, first / repeated | 0.860 / 0.832 | 13 queues, current counts and PID |
+| History 20, first / repeated | 1.617 / 0.711 | 20 rows, total 35,325 |
+| History 100 | 1.141 | 100 rows, same total |
+| History page 2 | 0.763 | 20 rows, same total |
+| History failed | 0.905 | 13 matching rows |
+| History done | 0.926 | 19,740 total matches |
+| History approval type | 0.921 | 597 total matches |
+| History Chinese text search | 3.055 | 424 total matches |
+| Chart 24 hours | 0.237 | 84 events |
+| Chart one month | 2.051 | 6,933 events |
+| Attention | 0.204 | First 15 of 17 items |
+
+The browser rendered the Overview status/queues, the History list and chart,
+then exactly 100 History links after selecting the 100-row size. Switching the
+chart to one month rendered 6,933 events and all series, with loading complete.
+The acceptance tab was closed afterward. The live database progressed between
+the diagnostic copy and release, so production totals legitimately differ.
+
+The existing System health state remains `degraded`; the query repair does not
+settle unresolved business failures. Failed queue objects' latest timestamps
+precede this deployment, Email startup readiness is 3/3 and the dispatcher tick
+continued after restart. The existing retained standard backup
+`auto-reply-2026-10-14.sqlite3` passed read-only `PRAGMA quick_check = ok`.
+Disposable diagnostic databases and generated navigation artifacts are removed
+at task end; regression code and this concise evidence remain in the repository.
