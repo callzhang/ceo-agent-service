@@ -80,7 +80,9 @@ def test_scoped_runner_delivers_read_only_evaluation_prompt(call_style, repair_r
     )
     prompt = transport["prompt"]
     assert candidate in prompt
-    assert '"ref": "original:chat:42"' in prompt
+    work_json = prompt.split("Current Work Item JSON:\n", 1)[1]
+    delivered_work = json.JSONDecoder().raw_decode(work_json)[0]
+    assert delivered_work["source"]["ref"] == "original:chat:42"
     assert "evaluation-memory-marker" in prompt
     delivered_context = prompt.split(
         "Current semantic Project/Task context (rank is context, never authority):\n", 1

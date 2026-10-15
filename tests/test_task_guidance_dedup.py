@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from app.task_agent import build_task_agent_prompt
 from app.task_models import WorkItem
@@ -28,7 +29,9 @@ def test_current_skill_owns_shared_guidance_once_and_task_keeps_unique_contract(
     )
     assert "EXACT_CURRENT_CONTEXT" in prompt
     assert "2026-10-12T10:00:00Z" in prompt
-    assert '"ref": "synthetic-source"' in prompt
+    work_json = prompt.split("Current Work Item JSON:\n", 1)[1]
+    delivered_work = json.JSONDecoder().raw_decode(work_json)[0]
+    assert delivered_work["source"]["ref"] == "synthetic-source"
     # The installed Skill can omit these rules even when the CI Skill has them.
     task_only = prompt.replace(path.read_text().strip(), "")
     for rule in (

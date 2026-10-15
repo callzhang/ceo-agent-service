@@ -145,3 +145,11 @@ the current transport schema while retaining compact/raw validation equivalence
 and extra-field rejection. All ten trace/provenance cases passed; independent
 review accepted the semantic assertions. No runtime contract, timeout, skip or
 expected business outcome changed in this test-only repair.
+
+The completed `ff4d3623` Quality log additionally exposed six specialized
+prompt-format assertions: one Meeting audience case, one Task Skill guidance
+case, and four read-only Project evaluation variants. All six reproduced RED
+and passed after asserting the exact JSON participant ID or original
+`source.ref`. Original audience, combined-message content, read-only transport,
+source payload and side-effect assertions remain. Independent review accepted
+the three-file test-only change; Ruff and diff checks passed.
