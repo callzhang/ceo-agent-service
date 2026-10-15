@@ -72,8 +72,8 @@ personnel follow-up; W-20 has a neutral title, checklist-only body, no private
 fallback and unresolved sensitive follow-up; W-21 remains deliverable to the
 explicitly authorized full committee. Ordinary business coordination is retained.
 These are synthetic semantic and renderer checks, not live ACL or provider-send
-acceptance. The final merged source has byte-identical prompt, schema, group
-policy and Skill files to candidate8d51e3bd; the additional private push-title
+acceptance. The final merged source has byte-identical prompt, schema and group
+policy plus identical disclosure instructions to candidate8d51e3bd; the additional private push-title
 fix is covered separately by the integrated delivery regressions.
 
 ## Release and recovery boundary
@@ -95,3 +95,5 @@ bytes, not the current renderer. Pre-release production inventory found zero
 processing/ready_to_send meeting jobs; recheck before deployment.
 
 Production deployment and final readback: pending.
+
+Publication preparation found an already-installed Management Weekly Meeting subsection and reference, absent from the active142/repository baseline. Preserve those exact existing bytes in a separate reconciliation commit and in the released meeting Skill; no weekly rules were changed. Native disclosure scenarios are unrelated to management-weekly preparation.

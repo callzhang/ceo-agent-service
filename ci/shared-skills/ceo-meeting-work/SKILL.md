@@ -27,6 +27,16 @@ Load the matching chat or document-comment Skill only when delivery requires it.
 Use `ceo-calendar-invite` for attendance decisions and `ceo-work-tracking` when
 an agreed action becomes tracked work.
 
+## Management Weekly Meeting
+
+When preparing or revising Derek's management weekly agenda, report template,
+company-health section, or meeting feedback, read
+[management-weekly.md](references/management-weekly.md). It contains the
+confirmed 90-minute agenda, 3–5 core metrics per department, short inline metric
+rules, and the distinction between a shared blank template and restricted
+actual financial data. Apply this mode to management weekly work; do not impose
+it on other meeting types.
+
 ## Read Evidence Deliberately
 
 1. Identify the requested meeting outcome: preparation, summary, decision,
