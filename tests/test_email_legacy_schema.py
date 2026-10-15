@@ -22,6 +22,7 @@ SOURCE_PATHS = (
     "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json",
     "docs/superpowers/specs/2026-10-13-database-redesign-phase5a-inventory.json",
     "docs/superpowers/specs/2026-10-13-database-redesign-phase5b-inventory.json",
+    "docs/superpowers/specs/2026-10-13-database-redesign-phase5b-fresh-source.json",
     "docs/superpowers/specs/2026-10-13-database-redesign-phase5c-postfix-source.json",
     "docs/superpowers/specs/2026-10-13-database-redesign-phase5d-delivery-source.json",
     "docs/superpowers/specs/2026-10-13-database-redesign-phase5e-reply-source.json",
@@ -124,6 +125,19 @@ REPLY_ACTION_STORE_TESTS = (
 )
 WORKBENCH_SOURCE_CHAIN_TESTS = (
     "test_source13_fixture_keeps_original_actions_receipts_and_watermark",
+)
+POSTFIX_FACTORY_TESTS = (
+    "test_real_store17_fixture_historical_publication_and_republication",
+)
+REPLY_FACTORY_TESTS = (
+    "test_current_store19_factory_publishes_full_store18_source_and_current_fact_inverse",
+    "test_factory_routes_only_exact_current_transition",
+)
+FRESH_REPLY_FACTORY_TESTS = (
+    "test_current_fresh_store_constructor_has_canonical_fresh_reply_actions",
+)
+WORKBENCH_PARTIAL_SOURCE_TESTS = (
+    "test_partial_retired_source_without_known_marker_refuses_before_bootstrap",
 )
 
 
@@ -399,4 +413,52 @@ def test_published_workbench_source_chain(published_source: Path) -> None:
         extra_cases={},
         expected_functions=1,
         expected_cases=1,
+    )
+
+
+def test_published_postfix_factory(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="postfix-factory",
+        module="test_action_postfix_schema_release",
+        names=POSTFIX_FACTORY_TESTS,
+        extra_cases={},
+        expected_functions=1,
+        expected_cases=1,
+    )
+
+
+def test_published_reply_factory(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="reply-factory",
+        module="test_action_reply_schema_release",
+        names=REPLY_FACTORY_TESTS,
+        extra_cases={},
+        expected_functions=2,
+        expected_cases=2,
+    )
+
+
+def test_published_fresh_reply_factory(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="fresh-reply-factory",
+        module="test_reply_attempt_action_migration",
+        names=FRESH_REPLY_FACTORY_TESTS,
+        extra_cases={},
+        expected_functions=1,
+        expected_cases=1,
+    )
+
+
+def test_published_workbench_partial_source(published_source: Path) -> None:
+    _run_published_tests(
+        published_source,
+        group="workbench-partial-source",
+        module="test_workbench_storage_manifest",
+        names=WORKBENCH_PARTIAL_SOURCE_TESTS,
+        extra_cases={"test_partial_retired_source_without_known_marker_refuses_before_bootstrap": 8},
+        expected_functions=1,
+        expected_cases=8,
     )

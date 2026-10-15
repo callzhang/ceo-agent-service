@@ -167,7 +167,12 @@ def test_partial_retired_source_without_known_marker_refuses_before_bootstrap(
                 (marker,),
             )
         before = fingerprint(db)
-    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed"):
+    expected_diagnostic = (
+        "unsupported or malformed"
+        if marker is None
+        else "unsupported or mixed Store/Email source schema"
+    )
+    with pytest.raises(sqlite3.IntegrityError, match=expected_diagnostic):
         AutoReplyStore(path)
     with sqlite3.connect(path) as db:
         assert fingerprint(db) == before

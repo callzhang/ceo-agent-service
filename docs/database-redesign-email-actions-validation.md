@@ -2913,3 +2913,43 @@ current refusal expectations, and adds diagnostic evidence without widening
 the read-only SQL whitelist. Incoming main131ae6a8 meeting changes also require
 integration before final publication. PR90 remains draft and unmerged;
 production writes, provider sends and full10+1 acceptance have not occurred.
+
+### CI38692215658 schema fixtures and Linux trace visibility (2026-10-15)
+
+The focused pre-change run reproduced the eight remaining schema-fixture
+failures and four passing cases: four historical Store19 constructor assumptions
+failed against the current Store20/Email29 factory, and only the four `unknown`
+marker variants of the partial Workbench source test failed because the paired
+source guard correctly reports `unsupported or mixed Store/Email source schema`.
+The four `None` variants already passed with `unsupported or malformed`.
+
+The four factory test functions now run unchanged from exact published source
+`0441cf15fafe800f9ca4d67f667e87062ca62109` through the existing strict
+JUnit archive harness (one postfix, two reply, one fresh reply). The original
+partial Workbench source test also runs there with all eight parameter cases.
+All five archived function ASTs match that published ref; the three current
+modules retain every other function AST. The first archive run passed 13 cases
+and failed one postfix case because source extraction omitted the archived
+`2026-10-13-database-redesign-phase5b-fresh-source.json` manifest read by its
+helper. That exact file exists at the same published ref and is now in
+`SOURCE_PATHS`; no current manifest was substituted. The archive harness still
+requires exact identities and counts and rejects failures, errors, and skips.
+
+The current Workbench test retains its eight calls, database fingerprint,
+exception type, and no-mutation readback. Its expected diagnostic now follows
+the observed marker: `None` requires `unsupported or malformed`; `unknown`
+requires `unsupported or mixed Store/Email source schema`. The current fresh
+Store20 assertion also checks that retired reply and memory tables are absent.
+The Email journal test retains the same allowed-statement predicate and all
+other journal/schema/transaction checks; on failure it now prints only rejected
+normalized trace statements plus Python and SQLite versions. The old Linux CI
+log did not contain the offending SQL, so this change does not establish a
+Linux fix or authorize a broader whitelist.
+
+After the manifest extraction correction, the four strict archive groups and
+the affected current files passed together: **89 passed in 130.21 seconds**.
+Scoped Ruff and `git diff --check` passed; archived function AST and remaining
+current function AST preservation checks passed. This is local fixture and
+diagnostic verification only. A new Linux CI run must reveal or clear the
+journal trace; real-copy, native, publication, and full Email13 acceptance
+remain with the root release owner.

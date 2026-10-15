@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import sys
 from threading import Barrier
 
 import pytest
@@ -3305,11 +3306,18 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
         "pragma index_xinfo",
         "pragma foreign_key_list",
     )
-    assert all(
-        statement in {"begin", "commit"}
-        or statement.startswith("select ")
-        or statement.startswith(read_pragma_prefixes)
+    rejected = [
+        statement
         for statement in normalized
+        if not (
+            statement in {"begin", "commit"}
+            or statement.startswith("select ")
+            or statement.startswith(read_pragma_prefixes)
+        )
+    ]
+    assert not rejected, (
+        f"rejected normalized SQLite traces={rejected}; "
+        f"Python={sys.version}; SQLite={sqlite3.sqlite_version}"
     )
     assert all(
         any(statement.startswith(prefix) for statement in normalized)

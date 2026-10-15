@@ -15,7 +15,7 @@ def test_fresh_store_uses_delivery_actions_without_old_sent_tables(tmp_path):
     with sqlite3.connect(path) as db:
         assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ('2026-10-14.1',)
         assert action_schema_is_current(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
-        assert not db.execute("select 1 from sqlite_master where name in ('sent_replies','sent_reply_observers')").fetchall()
+        assert not db.execute("select 1 from sqlite_master where name in ('sent_replies','sent_reply_observers','reply_attempts','memory_write_events')").fetchall()
 
 
 def test_delivery_auxiliary_repair_preserves_layout(tmp_path):
