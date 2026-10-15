@@ -570,14 +570,14 @@ package and focused test files contain the complete unselected 15-kind
 `actions` declarations/storage. The applyable 12-file patch is embedded in
 `docs/superpowers/plans/2026-10-15-configs-schedules-receipts-storage-plan.md`;
 its SHA-256 is
-`56efae5dc86675eaddc30e092dd06a4163e2fd01b7045aabc88ef1f8554119b5`.
-The twelve prototype Python files, hashed as ordered `path\0content\0` pairs, have SHA-256 `8610626895eb6c96b83f2d1c37eb215172baeca2441070d74062ded86b4b1e91`. `git apply --check` passed against this worktree. The prototype and patch are
+`9edd3b5df518138f07a1079d94f33800d3c1393ad480216f18cc743abc1a4967`.
+The twelve prototype Python files, hashed as ordered `path\0content\0` pairs, have SHA-256 `346142d15949fbaef53c44fc22139ff0aee461187ee6330acbd1347cb61eefdf`. `git apply --check` passed against this worktree. The prototype and patch are
 retained as implementation input through independent SPEC/QUALITY review and
 the subsequent implementation handoff, on the parent task's request; after
 that implementation is fixed, the task-owned temporary parent must be removed
 and its absence asserted.
 
-The prototype passed 19 focused integrated cases (numeric SQLite FK affinity
+The prototype passed 31 focused integrated cases (numeric SQLite FK affinity
 including `'01'`/`'1.0'`/`1.0` and BLOB rejection, mutable integer-alias
 rekey, schedule 17-field CAS delete, exact receipt body bytes and independent
 sequences) plus three eight-kind source/target cases covering all 45 remaining
@@ -591,3 +591,18 @@ resolved in the prototype by a **temporary-only** path adaptation; the patch
 does not change that repository path. This is target prototype verification,
 not production copy, migration, public caller selection, real DB readback or
 native-SQL parity for the four recorded receipt counterexamples.
+
+Fresh SPEC on the first integrated plan found two source-fidelity gaps. In the
+retained complete prototype, twelve new controls failed before repair and
+passed after repair: two actual/fresh receipt public-reader cases compare
+source Store `int()`/`str()` hydration of legal BLOB-in-TEXT fields; ten
+actual/fresh cases cover `MAXROWID` in the three config and two receipt
+AUTOINCREMENT streams, comparing native `SQLITE_FULL` code 13/name, whole
+caller-transaction and savepoint rollback, and pending-marker disappearance.
+The complete focused target/config suite passed 109 cases (31 integrated,
+3 new-kind differential/metadata, 75 original seven-kind); the published
+account positive and accepted receipt source oracle passed another 5 cases.
+Normal 700/901/901 stream boundaries stayed green. Only native `SQLITE_FULL`
+rolls back caller-owned transactions here, mirroring source plain INSERT;
+ordinary source-shaped writes retain the caller transaction. This adds no new
+review, safety or authorization behavior.

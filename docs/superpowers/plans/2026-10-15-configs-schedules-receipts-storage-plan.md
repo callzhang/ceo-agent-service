@@ -4,7 +4,7 @@
 
 **Goal:** Add an unselected native SQLite declaration and caller-transactional storage for all fifteen `configs` families, the single `schedules` family, and two Skill receipt `actions` kinds, deriving successful load bodies from existing configuration relations.
 
-**Architecture:** Extend the accepted seven-kind `configs` table and source-shaped storage with the remaining eight kinds, typed physical references, and independent source allocators. Add a real one-kind `schedules` table and an explicit opt-in extension of the current Email `actions` declaration for two immutable Skill receipts. No Store/Email constructor or runtime reader selects these declarations in this unit.
+**Architecture:** Extend the accepted seven-kind `configs` table and source-shaped storage with the remaining eight kinds, typed physical references, and independent source allocators. Caller-owned transactions are preserved for ordinary writes; native AUTOINCREMENT `SQLITE_FULL` is the source exception and rolls back the whole transaction/savepoint before raising the SQLite-coded error. Add a real one-kind `schedules` table and an explicit opt-in extension of the current Email `actions` declaration for two immutable Skill receipts. No Store/Email constructor or runtime reader selects these declarations in this unit.
 
 **Tech Stack:** Python 3, `sqlite3` with SQLite JSON functions and generated columns, pytest, Ruff. All tests use synthetic, owned temporary databases; the accepted literal source metadata is a test oracle, never a runtime schema input.
 
@@ -343,7 +343,7 @@ triggers += (
 )
 ```
 
-For direct SQLite inserts as well as helper inserts, append the following three source allocator triggers. They preserve independent AUTOINCREMENT watermarks without a new user table; an explicit negative/zero source ID does not raise the watermark. The helper's `_reserve_auto` is idempotent with these triggers.
+For direct SQLite inserts as well as helper inserts, append the following three source allocator triggers. They preserve independent AUTOINCREMENT watermarks without a new user table; an explicit negative/zero source ID does not raise the watermark. The helper's `_reserve_auto` is idempotent with these triggers. At `MAX_ROWID`, the three auto config streams and two receipt streams must roll back the caller transaction, including a nested savepoint, and raise the existing `_raise_autoincrement_full()` native SQLite exception (`SQLITE_FULL`, code 13); a hand-constructed `OperationalError` is not equivalent.
 
 ```python
 for kind in AUTOINCREMENT_KINDS:
@@ -501,7 +501,9 @@ def _next_auto_rowid(db: sqlite3.Connection, kind: str) -> int:
                          "where record_type=?", (kind,)).fetchone()[0]
     value = max(_auto_sequence(db, kind), maximum or 0, 0)
     if value == MAX_ROWID:
-        raise sqlite3.OperationalError("database or disk is full")
+        if db.in_transaction:
+            db.rollback()
+        _raise_autoincrement_full()
     return value + 1
 
 def _source_identity(db: sqlite3.Connection, kind: str, source_rowid) -> int:
@@ -818,8 +820,9 @@ def load_receipt_projection(db: sqlite3.Connection, action_id: int) -> SkillLoad
     if row is None:
         raise LookupError(action_id)
     public_id, config_id, pid, config_ref, error, created_at = row
-    return SkillLoadReceipt(public_id, config_id, pid,
-                            loaded_body(db, config_ref, error), error, created_at)
+    return SkillLoadReceipt(int(public_id), int(config_id), int(pid),
+                            str(loaded_body(db, config_ref, error)),
+                            str(error), str(created_at))
 
 def compare_source_load_body(db: sqlite3.Connection, action_id: int, source_body) -> None:
     projected = load_receipt_projection(db, action_id)
@@ -843,7 +846,7 @@ def insert_skill_receipt(db: sqlite3.Connection, kind: str, values: dict,
 The source ID remains `legacy_key` and the independent sequence metadata, while `actions.id` is the target physical ID. Do not conflate them. Replace the signature above with this complete implementation and add the reader functions in the same module:
 
 ```python
-from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key
+from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full
 from app.action_skill_config_definitions import SKILL_RECEIPT_KINDS
 
 MAX_ROWID = 2**63 - 1
@@ -865,7 +868,9 @@ def next_skill_receipt_id(db: sqlite3.Connection, kind: str) -> int:
                          "where record_type=?", (kind,)).fetchone()[0]
     last = max(watermark, maximum or 0, 0)
     if last == MAX_ROWID:
-        raise sqlite3.OperationalError("database or disk is full")
+        if db.in_transaction:
+            db.rollback()
+        _raise_autoincrement_full()
     return last + 1
 
 def insert_skill_receipt(db: sqlite3.Connection, kind: str, values: dict,
@@ -936,7 +941,9 @@ def export_receipt_projection(db: sqlite3.Connection, action_id: int) -> SkillEx
                      "record_type='managed_skill_export_receipts'", (action_id,)).fetchone()
     if row is None:
         raise LookupError(action_id)
-    return SkillExportReceipt(*row)
+    public_id, revision_id, sha256, path, created_at = row
+    return SkillExportReceipt(int(public_id), int(revision_id), str(sha256),
+                              str(path), str(created_at))
 
 def latest_managed_skill_export_receipt(db: sqlite3.Connection,
                                          revision_id: int) -> SkillExportReceipt | None:
@@ -948,7 +955,7 @@ def latest_managed_skill_export_receipt(db: sqlite3.Connection,
     return export_receipt_projection(db, row[0]) if row else None
 ```
 
-The source insert helper compares a supplied `loaded_json` *before* inserting, and never writes it. The separately defined `compare_source_load_body` checks a copied source row against an inserted target action in the later release-copy gate. Both functions reject BLOB/noncanonical values instead of fabricating equivalent history. The returned ID is the public source ID; use `actions.id` only to address the target physical row.
+The source insert helper compares a supplied `loaded_json` *before* inserting, and never writes it. Public receipt projections apply the existing Store `int()`/`str()` hydration contract to each field, including legal BLOB values in source TEXT columns; target storage keeps those BLOB storage classes. Successful load-body reconstruction of a native-SQL BLOB revision digest remains within the already recorded noncanonical/late-binding source exception, not a new persisted body rule. The separately defined `compare_source_load_body` checks a copied source row against an inserted target action in the later release-copy gate. Both functions reject BLOB/noncanonical values instead of fabricating equivalent history. The returned ID is the public source ID; use `actions.id` only to address the target physical row.
 
 - [ ] **Step 4: GREEN.** Run `python -m pytest -q tests/test_configs_target_integrated.py tests/test_configs_skill_storage.py tests/test_configs_load_receipt_source.py tests/test_configs_storage.py tests/test_configs_account_source.py`; verify exact reader DTO/UTF-8 bytes, 20-before-100, failure `'{}'`, wrong reconstructed body rejection/rollback; source-legal mismatched export SHA in the low-level helper, duplicate successes, native immutable errors, independent sequences and all 11 receipt source fields. Commit new unselected modules and opted-in action declaration together.
 
@@ -1282,8 +1289,12 @@ diff --git a/app/configs_definitions.py b/app/configs_definitions.py
 diff --git a/app/configs_storage.py b/app/configs_storage.py
 --- a/app/configs_storage.py
 +++ b/app/configs_storage.py
-@@ -9,7 +9,8 @@
- from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key
+@@ -6,10 +6,11 @@
+ import math
+ import sqlite3
+
+-from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key
++from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full
  from app.configs_definitions import (
      CONFIG_FIELDS, CONFIG_INDEX_DDL, CONFIG_TABLE_DDL, CONFIG_TRIGGER_DDL,
 -    DEFAULTS, ROWID_KINDS, SCALAR_KEY, config_column, config_payload_fields,
@@ -1292,7 +1303,7 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
  )
 
 
-@@ -72,6 +73,45 @@
+@@ -72,6 +73,47 @@
              (kind,),
          ))
          return scratch.execute("insert into source_rows default values").lastrowid
@@ -1318,7 +1329,9 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
 +                         "where record_type=?", (kind,)).fetchone()[0]
 +    value = max(_auto_sequence(db, kind), maximum or 0, 0)
 +    if value == MAX_ROWID:
-+        raise sqlite3.OperationalError("database or disk is full")
++        if db.in_transaction:
++            db.rollback()
++        _raise_autoincrement_full()
 +    return value + 1
 +
 +
@@ -1338,7 +1351,7 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
 
 
  def _completed(db: sqlite3.Connection, kind: str, supplied: dict) -> dict:
-@@ -121,6 +161,19 @@
+@@ -121,6 +163,19 @@
      if kind == "email_training_snapshots":
          data["snapshot_snapshot_digest"] = complete["snapshot_digest"]
          data["snapshot_frozen"] = complete["frozen"]
@@ -1358,7 +1371,7 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
      return data
 
 
-@@ -134,11 +187,16 @@
+@@ -134,11 +189,16 @@
                    source_rowid=_UNSET, ignore=False) -> ConfigWriteResult:
      _check(kind, values)
      _lock(db)
@@ -1378,7 +1391,7 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
      else:
          if source_rowid is not _UNSET:
              raise ValueError("WITHOUT ROWID config has no source rowid")
-@@ -149,6 +207,8 @@
+@@ -149,6 +209,8 @@
      sql = ("insert " + ("or ignore " if ignore else "") + "into configs(" +
             ",".join(data) + ") values(" + ",".join("?" for _ in data) + ")")
      cursor = db.execute(sql, tuple(data.values()))
@@ -1387,7 +1400,7 @@ diff --git a/app/configs_storage.py b/app/configs_storage.py
      return ConfigWriteResult(identity if cursor.rowcount else None, cursor.rowcount)
 
 
-@@ -176,6 +236,13 @@
+@@ -176,6 +238,13 @@
      if kind in ROWID_KINDS:
          legacy = (key if new_source_rowid is _UNSET else
                    str(_native_integer_primary_key(new_source_rowid, update=True)))
@@ -1610,13 +1623,13 @@ diff --git a/app/action_skill_config_storage.py b/app/action_skill_config_storag
 new file mode 100644
 --- /dev/null
 +++ b/app/action_skill_config_storage.py
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,156 @@
 +"""Unselected typed Skill receipt action storage and exact public projection."""
 +from dataclasses import dataclass
 +import json
 +import sqlite3
 +
-+from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key
++from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full
 +from app.action_skill_config_definitions import SKILL_RECEIPT_KINDS
 +
 +@dataclass(frozen=True)
@@ -1654,8 +1667,8 @@ new file mode 100644
 +    if row is None:
 +        raise LookupError(action_id)
 +    public_id, config_id, pid, config_ref, error, created_at = row
-+    return SkillLoadReceipt(public_id, config_id, pid,
-+                            loaded_body(db, config_ref, error), error, created_at)
++    return SkillLoadReceipt(int(public_id), int(config_id), int(pid),
++                            str(loaded_body(db, config_ref, error)), str(error), str(created_at))
 +
 +def compare_source_load_body(db: sqlite3.Connection, action_id: int, source_body) -> None:
 +    projected = load_receipt_projection(db, action_id)
@@ -1682,7 +1695,9 @@ new file mode 100644
 +                         "where record_type=?", (kind,)).fetchone()[0]
 +    last = max(watermark, maximum or 0, 0)
 +    if last == MAX_ROWID:
-+        raise sqlite3.OperationalError("database or disk is full")
++        if db.in_transaction:
++            db.rollback()
++        _raise_autoincrement_full()
 +    return last + 1
 +
 +def insert_skill_receipt(db: sqlite3.Connection, kind: str, values: dict,
@@ -1753,7 +1768,9 @@ new file mode 100644
 +                     "record_type='managed_skill_export_receipts'", (action_id,)).fetchone()
 +    if row is None:
 +        raise LookupError(action_id)
-+    return SkillExportReceipt(*row)
++    public_id, revision_id, sha256, path, created_at = row
++    return SkillExportReceipt(int(public_id), int(revision_id), str(sha256),
++                              str(path), str(created_at))
 +
 +def latest_managed_skill_export_receipt(db: sqlite3.Connection,
 +                                         revision_id: int) -> SkillExportReceipt | None:
@@ -2058,7 +2075,7 @@ diff --git a/tests/test_configs_target_integrated.py b/tests/test_configs_target
 new file mode 100644
 --- /dev/null
 +++ b/tests/test_configs_target_integrated.py
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,282 @@
 +from contextlib import closing
 +import json
 +import sqlite3
@@ -2248,6 +2265,99 @@ new file mode 100644
 +    assert first.lastrowid==1
 +    with pytest.raises(sqlite3.IntegrityError):
 +        insert_config(target,'scheduled_task_config_versions',{'snapshot_json':'not-json'})
++
++@pytest.mark.parametrize('variant',('actual','fresh'))
++def test_receipt_public_reader_casts_blob_text_like_store(target,variant):
++    from app.action_skill_config_storage import latest_managed_skill_export_receipt
++    from app.store import AutoReplyStore
++    probe=json.loads((ROOT / 'docs/superpowers/specs/2026-10-15-configs-load-receipt-dedup-probe.json').read_text())['actual_frozen_receipt_metadata']
++    with source_db(variant) as source:
++        source.row_factory=sqlite3.Row
++        for spec in probe.values():
++            for obj in sorted(spec['objects'],key=lambda item: {'table':0,'index':1,'trigger':2}[item['type']]):
++                source.execute(obj['sql'])
++        s={'id':1,'name':'s-1','display_name':'Skill','created_at':'t'}
++        r={'id':2,'skill_id':1,'revision_number':1,'content':'body','sha256':'sha','source':'test','created_at':'t'}
++        c={'id':3,'status':'pending_restart','created_at':'t'}
++        for kind,row in (('managed_skills',s),('managed_skill_revisions',r),('runtime_skill_configs',c)):
++            source_insert(source,kind,row)
++            insert_config(target,kind,row)
++        source.execute('insert into managed_skill_export_receipts(id,revision_id,sha256,path,created_at) values(?,?,?,?,?)',
++                       (20,2,b'sha',b'/tmp/p',b'time'))
++        insert_skill_receipt(target,'managed_skill_export_receipts',
++                             {'revision_id':2,'sha256':b'sha','path':b'/tmp/p','created_at':b'time'},source_id=20)
++        source.execute('insert into runtime_skill_load_receipts(id,config_id,pid,loaded_json,error,created_at) values(?,?,?,?,?,?)',
++                       (30,3,7,'{}',b'error',b'time'))
++        insert_skill_receipt(target,'runtime_skill_load_receipts',
++                             {'config_id':3,'pid':7,'loaded_json':'{}','error':b'error','created_at':b'time'},source_id=30)
++        native_export=source.execute('select id,revision_id,sha256,path,created_at from managed_skill_export_receipts').fetchone()
++        native_load=source.execute('select id,config_id,pid,loaded_json,error,created_at from runtime_skill_load_receipts').fetchone()
++        expected_export=tuple(AutoReplyStore._managed_skill_export_receipt_from_row(native_export).__dict__.values())
++        expected_load=tuple(AutoReplyStore._runtime_skill_load_receipt_from_row(native_load).__dict__.values())
++        export_id=target.execute("select id from actions where record_type='managed_skill_export_receipts'").fetchone()[0]
++        load_id=target.execute("select id from actions where record_type='runtime_skill_load_receipts'").fetchone()[0]
++        assert tuple(export_receipt_projection(target,export_id).__dict__.values())==expected_export
++        assert tuple(load_receipt_projection(target,load_id).__dict__.values())==expected_load
++        assert latest_managed_skill_export_receipt(target,2)==export_receipt_projection(target,export_id)
++        assert latest_skill_load_receipt_for_pid(target,7)==load_receipt_projection(target,load_id)
++        # Storage classes remain native, while the public DTO casts TEXT-like BLOBs.
++        assert tuple(source.execute('select typeof(error),typeof(created_at) from runtime_skill_load_receipts').fetchone())==('blob','blob')
++        assert target.execute('select typeof(skill_error),typeof(skill_created_at) from actions where id=?',(load_id,)).fetchone()==('blob','blob')
++
++@pytest.mark.parametrize('variant',('actual','fresh'))
++@pytest.mark.parametrize('kind',('managed_skills','managed_skill_revisions','runtime_skill_configs',
++                                 'managed_skill_export_receipts','runtime_skill_load_receipts'))
++def test_auto_max_full_rolls_back_caller_and_savepoint(target,variant,kind):
++    probe=json.loads((ROOT / 'docs/superpowers/specs/2026-10-15-configs-load-receipt-dedup-probe.json').read_text())['actual_frozen_receipt_metadata']
++    maximum=2**63-1
++    with source_db(variant) as source:
++        for spec in probe.values():
++            for obj in sorted(spec['objects'],key=lambda item: {'table':0,'index':1,'trigger':2}[item['type']]):
++                source.execute(obj['sql'])
++        parent_skill={'id':1,'name':'parent','display_name':'Parent','created_at':'t'}
++        parent_revision={'id':2,'skill_id':1,'revision_number':1,'content':'x','sha256':'s','source':'t','created_at':'t'}
++        parent_config={'id':3,'status':'pending_restart','created_at':'t'}
++        for parent,row in (('managed_skills',parent_skill),('managed_skill_revisions',parent_revision),('runtime_skill_configs',parent_config)):
++            source_insert(source,parent,row)
++            insert_config(target,parent,row)
++        rows={
++            'managed_skills': {'id':maximum,'name':'max','display_name':'Max','created_at':'t'},
++            'managed_skill_revisions': {'id':maximum,'skill_id':1,'revision_number':2,'content':'y','sha256':'t','source':'t','created_at':'t'},
++            'runtime_skill_configs': {'id':maximum,'status':'pending_restart','created_at':'t'},
++            'managed_skill_export_receipts': {'id':maximum,'revision_id':2,'sha256':'s','path':'p','created_at':'t'},
++            'runtime_skill_load_receipts': {'id':maximum,'config_id':3,'pid':7,'loaded_json':'{}','error':'','created_at':'t'},
++        }
++        seed=rows[kind]
++        if kind in probe:
++            source.execute('insert into '+kind+'('+','.join(seed)+') values('+','.join('?' for _ in seed)+')',tuple(seed.values()))
++            insert_skill_receipt(target,kind,{k:v for k,v in seed.items() if k!='id'},source_id=maximum)
++        else:
++            source_insert(source,kind,seed)
++            insert_config(target,kind,seed)
++        for db in (source,target):
++            db.execute('create table max_marker(note text)')
++            db.commit()
++        errors=[]
++        for db,native in ((source,True),(target,False)):
++            db.execute('begin')
++            db.execute("insert into max_marker values('pending')")
++            db.execute('savepoint max_case')
++            try:
++                if native:
++                    values={k:v for k,v in seed.items() if k!='id'}
++                    db.execute('insert into '+kind+'('+','.join(values)+') values('+','.join('?' for _ in values)+')',tuple(values.values()))
++                elif kind in probe:
++                    insert_skill_receipt(db,kind,{k:v for k,v in seed.items() if k!='id'})
++                else:
++                    insert_config(db,kind,{k:v for k,v in seed.items() if k!='id'})
++            except sqlite3.OperationalError as exc:
++                errors.append((exc.sqlite_errorcode,exc.sqlite_errorname,db.in_transaction,
++                               db.execute('select count(*) from max_marker').fetchone()[0]))
++            else:
++                pytest.fail('MAXROWID AUTOINCREMENT unexpectedly inserted')
++            with pytest.raises(sqlite3.OperationalError):
++                db.execute('release max_case')
++        assert errors==[(13,'SQLITE_FULL',False,0)]*2
 ```
 
-The focused verification command after application is `python -m pytest -q tests/test_configs_target_integrated.py tests/test_configs_skill_storage.py tests/test_configs_storage.py tests/test_configs_account_source.py tests/test_configs_load_receipt_source.py`; run `ruff check` on the twelve patched Python files, `python -m compileall -q` on the seven application modules and new tests, and `git diff --check`. The account positive fixture uses a historical Git archive in a disposable copy; the plan prototype locally adapted only that fixture’s repository root to point back to this worktree. Do not copy that temporary hardcoded path into the implementation. The four accepted receipt source-oracle cases establish source behavior, while the 19 integrated cases and three eight-kind cases exercise the target. No real data copy or caller selection is claimed.
+The focused verification command after application is `python -m pytest -q tests/test_configs_target_integrated.py tests/test_configs_skill_storage.py tests/test_configs_storage.py tests/test_configs_account_source.py tests/test_configs_load_receipt_source.py`; run `ruff check` on the twelve patched Python files, `python -m compileall -q` on the seven application modules and new tests, and `git diff --check`. The account positive fixture uses a historical Git archive in a disposable copy; the plan prototype locally adapted only that fixture’s repository root to point back to this worktree. Do not copy that temporary hardcoded path into the implementation. The four accepted receipt source-oracle cases establish source behavior, while the 31 integrated cases and three eight-kind cases exercise the target. The new actual/fresh controls call the Store public receipt row hydrators directly and compare BLOB-to-`str()` DTO values; five auto streams each compare native and target `SQLITE_FULL` code/name, caller transaction rollback, pending marker removal, and nested savepoint loss after a committed MAXID seed. No real data copy or caller selection is claimed.
