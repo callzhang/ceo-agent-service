@@ -1923,11 +1923,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._read_snapshot_connection: ContextVar[sqlite3.Connection | None] = (
             ContextVar(f"audit_read_snapshot_{id(self)}", default=None)
         )
-        self._history_page_cache_lock = threading.Lock()
-        self._history_page_cache: tuple[
-            float, tuple[str, ...], int, list[OperationLog]
-        ] | None = None
-        self._history_page_cache_refreshing = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_initialized()
 
@@ -25404,12 +25399,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                           )
                       )
                   )
-                  and attempts.id=(
+                  and attempts.id in (
                       select max(latest.id)
                       from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
-                      where latest.conversation_id=attempts.conversation_id
-                        and latest.trigger_message_id=attempts.trigger_message_id
-                )
+                      where latest.conversation_id is not null
+                        and latest.trigger_message_id is not null
+                      group by latest.conversation_id, latest.trigger_message_id
+                  )
                 order by attempts.id desc
             """.replace(
                     "__NOT_EXTERNAL__", self._not_external_failure_sql()
@@ -30211,35 +30207,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(sql, tuple(args)).fetchall()
             return [OperationLog.model_validate(dict(row)) for row in rows]
 
-    def _refresh_history_page_cache(
-        self,
-        limit: int,
-        offset: int,
-        query: str,
-        log_type: str,
-        statuses: tuple[str, ...] | None,
-        history_types: tuple[str, ...] | None,
-        source_tables: tuple[str, ...] | None,
-    ) -> None:
-        try:
-            self.list_operation_logs_with_count(
-                limit,
-                offset,
-                query,
-                log_type,
-                statuses,
-                history_types,
-                source_tables,
-                _skip_history_cache=True,
-            )
-        except Exception:
-            # A stale page is still preferable to making the web request wait
-            # for a failed background refresh. The next request can retry.
-            pass
-        finally:
-            with self._history_page_cache_lock:
-                self._history_page_cache_refreshing = False
-
     def list_operation_logs_with_count(
         self,
         limit: int,
@@ -30249,40 +30216,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         statuses: tuple[str, ...] | None = None,
         history_types: tuple[str, ...] | None = None,
         source_tables: tuple[str, ...] | None = None,
-        _skip_history_cache: bool = False,
     ) -> tuple[int, list[OperationLog]]:
         """Count compact keys, then hydrate only the page in one snapshot."""
-        cacheable = (
-            limit <= 100
-            and offset == 0
-            and not query.strip()
-            and not log_type.strip()
-            and not statuses
-            and not history_types
-            and bool(source_tables)
-        )
-        if cacheable and not _skip_history_cache:
-            with self._history_page_cache_lock:
-                cached = self._history_page_cache
-                if cached is not None and cached[1] == tuple(source_tables or ()):
-                    if time.monotonic() - cached[0] < 1.0:
-                        return cached[2], list(cached[3])
-                    if not self._history_page_cache_refreshing:
-                        self._history_page_cache_refreshing = True
-                        threading.Thread(
-                            target=self._refresh_history_page_cache,
-                            args=(
-                                limit,
-                                offset,
-                                query,
-                                log_type,
-                                statuses,
-                                history_types,
-                                source_tables,
-                            ),
-                            daemon=True,
-                        ).start()
-                    return cached[2], list(cached[3])
         if (
             statuses == ("failed",)
             and not query.strip()
@@ -30353,15 +30288,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     ),
                     [],
                 )
-        if cacheable:
-            with self._history_page_cache_lock:
-                self._history_page_cache = (
-                    time.monotonic(),
-                    tuple(source_tables or ()),
-                    result[0],
-                    list(result[1]),
-                )
-                self._history_page_cache_refreshing = False
         return result
 
     def _operation_logs_key_query(
@@ -30704,19 +30630,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
         return statuses
 
-    def warm_history_page_cache(
-        self, *, source_tables: tuple[str, ...], limit: int = 20
-    ) -> int:
-        """Pre-render the default History page before the web listener is ready."""
-        with self._history_page_cache_lock:
-            self._history_page_cache = None
-        total, _rows = self.list_operation_logs_with_count(
-            limit=limit,
-            offset=0,
-            source_tables=source_tables,
-        )
-        return total
-
     def list_operation_log_types(self) -> list[str]:
         with self._connect() as db:
             rows = db.execute(
@@ -30919,9 +30832,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as todo_id,
                     0 as follow_up_id
                 from (
-                  select reply_attempts_base.*, terminal_attempts.terminal_id
-                  from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts_base
-                  left join (
+                  with terminal_attempts as materialized (
                     select attempt_channel as channel,
                            attempt_conversation_id as conversation_id,
                            attempt_trigger_message_id as trigger_message_id,
@@ -30934,10 +30845,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       )
                     group by attempt_channel, attempt_conversation_id,
                              attempt_trigger_message_id
-                  ) as terminal_attempts
-                    on terminal_attempts.channel=reply_attempts_base.channel
-                   and terminal_attempts.conversation_id=reply_attempts_base.conversation_id
-                   and terminal_attempts.trigger_message_id=reply_attempts_base.trigger_message_id
+                  )
+                  select reply_attempts_base.*,
+                         (select terminal_id from terminal_attempts
+                          where terminal_attempts.channel=reply_attempts_base.channel
+                            and terminal_attempts.conversation_id=reply_attempts_base.conversation_id
+                            and terminal_attempts.trigger_message_id=reply_attempts_base.trigger_message_id
+                         ) as terminal_id
+                  from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts_base
                 ) as reply_attempts
                 where {
             (

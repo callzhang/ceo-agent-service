@@ -55,7 +55,7 @@ def _meeting_alignment_prompt_schema() -> str:
     """
     schema = MeetingAlignmentDecision.model_json_schema()
     schema.pop("description", None)
-    return json.dumps(schema, ensure_ascii=False, indent=2)
+    return json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
 
 
 MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA = _meeting_alignment_prompt_schema()
@@ -352,7 +352,7 @@ def build_meeting_alignment_prompt(
     skill_protocol: str = "",
 ) -> str:
     source_json = json.dumps(
-        source.model_dump(mode="json"), ensure_ascii=False, indent=2
+        source.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
     )
     target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
 - 业务内容返回 audience_scope=business。使用 DWS 做群发现，以实际内容、业务目的和披露范围决定 target.kind=group 或 target.kind=direct；人数和群名称不决定受众。

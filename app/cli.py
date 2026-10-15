@@ -1,5 +1,6 @@
 from app.task_storage import REPLY_TASK_SQL
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
+from app.action_storage import SENT_REPLY_SQL
 import argparse
 import errno
 import json
@@ -355,6 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
         "process-work-items",
         "retry-work-summary-input",
         "reconcile-confirmed-meeting-delivery",
+        "reconcile-failed-reply-chat-readback",
         "retry-failed-email-unsubscribe",
         "release-failed-email-unsubscribe",
         "cancel-failed-email-unsubscribe",
@@ -553,6 +555,9 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--input-id", type=_positive_int, required=True)
         if command == "reconcile-confirmed-meeting-delivery":
             subparser.add_argument("--job-id", type=_positive_int, required=True)
+            subparser.add_argument("--apply", action="store_true")
+        if command == "reconcile-failed-reply-chat-readback":
+            subparser.add_argument("--task-id", type=_positive_int, required=True)
             subparser.add_argument("--apply", action="store_true")
         if command == "cancel-failed-email-unsubscribe":
             subparser.add_argument("--task-id", type=_positive_int, required=True)
@@ -4982,6 +4987,72 @@ def main() -> None:
             finally:
                 db.close()
         print(json.dumps(report, ensure_ascii=False), flush=True)
+    elif args.command == "reconcile-failed-reply-chat-readback":
+        from app.dingtalk_delivery_repair import (
+            apply_native_chat_readback,
+            collect_native_chat_readback,
+            native_reply_text_matches,
+        )
+        if args.apply and settings.dry_run:
+            raise SystemExit("--apply refused: dry-run is on")
+        if args.apply:
+            inspected_store = AutoReplyStore(settings.db_path)
+        else:
+            from contextvars import ContextVar
+            import sqlite3 as sqlite3_module
+            db = sqlite3_module.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True)
+            db.row_factory = sqlite3_module.Row
+            inspected_store = AutoReplyStore.__new__(AutoReplyStore)
+            inspected_store.path = settings.db_path
+            inspected_store._read_snapshot_connection = ContextVar(
+                "native_chat_readback_preview", default=db
+            )
+        try:
+            proof = collect_native_chat_readback(inspected_store, DwsClient(), args.task_id)
+            rows = proof["payload"].get("messages", []) if isinstance(proof["payload"], dict) else []
+            exact_matches = 0
+            with inspected_store._connect() as db:
+                task = db.execute(
+                    f"select * from ({REPLY_TASK_SQL}) where id=?", (args.task_id,)
+                ).fetchone()
+                if task is not None:
+                    sent = db.execute(
+                        f"select reply_text from ({SENT_REPLY_SQL}) where channel=? and conversation_id=? "
+                        "and trigger_message_id=?",
+                        (task["channel"], task["conversation_id"], task["trigger_message_id"]),
+                    ).fetchone()
+                    if sent is not None and isinstance(rows, list):
+                        exact_matches = sum(
+                            1 for row in rows if isinstance(row, dict)
+                            and row.get("conversationId") == task["conversation_id"]
+                            and (row.get("quotedMessage") or {}).get("messageId") == task["trigger_message_id"]
+                            and native_reply_text_matches(
+                                row.get("text"), sent["reply_text"], task["trigger_sender"]
+                            )
+                            and (row.get("senderUserId") == proof["principal_user_id"]
+                                 or row.get("senderOpenDingTalkId", row.get("senderId"))
+                                 == proof["principal_open_dingtalk_id"])
+                            and (not row.get("senderUserId")
+                                 or row.get("senderUserId") == proof["principal_user_id"])
+                            and (not row.get("senderOpenDingTalkId", row.get("senderId"))
+                                 or row.get("senderOpenDingTalkId", row.get("senderId"))
+                                 == proof["principal_open_dingtalk_id"])
+                        )
+            if args.apply:
+                applied = apply_native_chat_readback(inspected_store, proof)
+            else:
+                applied = False
+            print(json.dumps({
+                "task_id": args.task_id, "complete": proof["payload"].get("complete") is True,
+                "partial": proof["payload"].get("partial"),
+                "has_more": proof["payload"].get("hasMore"),
+                "failures": (len(proof["payload"]["failures"])
+                             if isinstance(proof["payload"].get("failures"), list) else None),
+                "exact_matches": exact_matches, "applied": applied,
+            }, ensure_ascii=False), flush=True)
+        finally:
+            if not args.apply:
+                db.close()
     elif args.command == "retry-failed-email-unsubscribe":
         retry_failed_email_unsubscribe_command(settings)
     elif args.command == "release-failed-email-unsubscribe":

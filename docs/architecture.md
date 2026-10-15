@@ -25,6 +25,21 @@ CHECK or UNIQUE rows do not attempt FK validation, while a missing non-NULL
 parent remains a failed FK write. This does not select the declaration or
 change runtime task behavior.
 
+Console History counts and orders compact source keys through an inline union,
+then hydrates the requested page within one database read snapshot. It has no
+page-result cache or background page refresh: page size and newly committed
+records are reflected by the current query. Overview Attention computes the
+latest public Attempt ID set once per message key; the Attempt queue explicitly
+materializes its reused current-row projection once per SQL statement. These
+are equivalent read-plan changes with unchanged lifecycle, counts, filtering,
+ordering and external actions. Status-dependent History reads compute later
+terminal Attempt IDs from one grouped maximum per channel, conversation and
+trigger. The status projection looks it up only when needed, so key-only
+pagination prunes it. Each chart uses one
+read snapshot and reuses its current-task/delivery reads for repeated failed
+message keys only within that request. Evidence is in
+`docs/console-query-performance.md`.
+
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
 revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override
@@ -109,6 +124,17 @@ native event/result projection. File I/O never extends these writer leases.
 运行或历史 Attempt。当前任务的失败状态优先于历史 completed 展示。未知投递使用技术失败／
 uncertain 执行状态，不生成管理者业务决策问题。
 
+`reconcile-failed-reply-chat-readback --task-id ...` is an explicit, one-task
+maintenance path for a historical reply whose send is already present in the
+sent-reply ledger but whose provider task can no longer be queried. It reads
+only that conversation around the UTC `sent_at` instant (SQLite's naive
+`CURRENT_TIMESTAMP` is interpreted as UTC) and requires the exact
+query range plus complete, untruncated, failure-free native history, one exact
+outgoing body quoting the original trigger, and a sender matching the authenticated principal. `--apply` records that evidence
+against the same approved candidate, external action and generation in one
+CAS transaction, then settles the task. It never sends or comments. Preview is
+read-only; incomplete, conflicting or multi-action evidence remains unresolved.
+
 Consumer 与 Audit 的实际只读工具目录提供 `read_dingtalk_group_members` 和
 `read_dingtalk_user_profiles`。群成员读取使用 DWS 原生有界自动分页，原样保留真人、
 机器人、完整性、桶、续页和失败信息；企业资料读取只接收已核实的组织 userId，
@@ -161,6 +187,8 @@ CLI 原生 `auto_review` 是 Codex 对 `codex-auto-review` 模型的一次额外
 审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许三个内容反馈周期，基础设施失败不消耗反馈周期。反馈次数耗尽本身是自动闭环失败，不是人工决策依据；只有 Consumer 提出的完整当前实例问题经过 Audit approve，才进入 `needs_human`；分值描述证据，不作为固定路由阈值。
 
 修订后的 Audit 输入从当前 Consumer 的持久父链读取促成该修订的已采用 return/reject，传入原 proposal_revision、candidate_digest 和完整 feedback。该段在当前事实和候选之前，明确只是修订背景，不是事实来源或业务授权；不复制旧 summary 或分值。Audit 对照上次要求复核当前候选，先前要求本身有误时应说明依据并纠正，遵从反馈不能证明事实成立。初轮和已批准执行后的新阶段不带该段；进程恢复及技术重试从同一采用记录恢复，不依赖原生轨迹可用性。三轮上限、候选绑定、状态和外部动作权限保持原样。
+
+恢复已完成的 Audit runtime 结果时仍执行相同的敏感值校验；校验失败记为结果校验失败，不记为 Codex/provider 进程故障。拒绝规则不放宽，失败结果不会因此被采用或执行。
 
 所有任务都禁止使用 `discard` 动作或写入 `discarded` 状态。无需动作的结果在 trace 记录 `no_action` 后进入 `done`；需要修正时由审核 Agent 写入 `audit_feedback`，执行 Agent 生成新 revision；处理失败使用 `failed`；无法自动解决使用 `needs_human`。
 
@@ -1185,8 +1213,13 @@ Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，�
 
 Consumer 可以直接使用普通工作工具，写入并读回本任务本代次的材料，或通过既有绑定的
 日报/周报接口操作文档。普通写入不因为有副作用而被一律改成待审核系统动作；其事实证据是
-真实工具结果与读回。`consumer_artifact_write` 写入任务工作目录，`read_task_artifact` 与
-`list_task_artifacts` 为两角色提供只读材料；Audit 没有对应写入工具。系统已注册且需要审核的
+真实工具结果与读回。`consumer_artifact_write` 将本任务材料写入
+`/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>`，`read_task_artifact` 与
+`list_task_artifacts` 为两角色提供当前代的只读材料；Audit 没有对应写入工具。任务仍为
+`pending` 或 `processing` 时保留文件供恢复和审核；进入 `done`、`failed`、`needs_human` 或
+`skipped` 后，服务清理该任务的全部代次目录。部署前遗留的 workspace 工件会在任务下次读写时迁入
+`/tmp`，终态清理也会清除尚未访问的旧位置。Consumer 与 Audit 的运行指令同时明确 memory 是耐久
+参考区、临时工件只能使用 task-bound `/tmp` 工作区。系统已注册且需要审核的
 动作仍必须完整提案 → Audit → SystemExecutor → 真实回执。Consumer 解析器不扫描整个候选的
 自然语言完成短语，也不把摘要转换成执行事实。是否引用历史完成、是否还需要业务动作，由
 完整候选、来源及实际回执判断；风险拒绝、授权缺失与历史拒绝不可重放的机制保留。
@@ -1247,7 +1280,7 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`，直接向模型声明具名任务工具。已验证的成功 MCP 读取使用原生直接调用；Agent 仍可能先尝试 CodeMode，再从错误中恢复，不能把声明方式等同于模型必定采用的调用过程。其他工具保留原生 CodeMode 路径；已有角色工具列表、functions 排除、沙箱、会话和路线保持不变。直接调用不能保证超长工具结果不被原生运行时截断，完整事实仍需按实际 trajectory 验证。
 
-Audit 使用实际只读工具接口审核候选，没有受控发送、审批或命令执行能力。Consumer 保留任务绑定的文档和报告操作；Codex Consumer 使用原生 shell、unified execution、补丁和 V8 host 在当前 task/generation 的 consumer-artifacts 目录执行普通本地代码。原生 workspace-write 沙箱允许任务目录及原生临时目录写入，命令网络关闭；MCP 进程仍从服务源码目录启动，受控发送、OA 等注册操作仍只由 System 执行。Audit 排除内建 functions namespace 并保留 read-only 沙箱。两种角色均不开放 browser、image generation、委派、自动 Skill 安装、记忆写入或未登记 MCP 操作。Claude 仍只有受限内建读取与角色 MCP 工件工具，没有 shell 代码执行；Friday 不能承担这两个角色。原生执行验证必须保留实际命令结果和文件回读，写出代码文件不等于执行代码。
+Audit 使用实际只读工具接口审核候选，没有受控发送、审批或命令执行能力。Consumer 保留任务绑定的文档和报告操作；Codex Consumer 使用原生 shell、unified execution、补丁和 V8 host 在当前 task/generation 的 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>` 目录执行普通本地代码。该 task-bound 目录与 durable workspace 分离，原生 workspace-write 沙箱只为当前任务打开它及原生临时目录，命令网络关闭；MCP 进程仍从服务源码目录启动。任务终态清理所有代次的本地工件，pending/processing 期间保留以支持恢复和 Audit 读回。受控发送、OA 等注册操作仍只由 System 执行。Audit 排除内建 functions namespace 并保留 read-only 沙箱。两种角色均不开放 browser、image generation、委派、自动 Skill 安装、记忆写入或未登记 MCP 操作。Claude 仍只有受限内建读取与角色 MCP 工件工具，没有 shell 代码执行；Friday 不能承担这两个角色。原生执行验证必须保留实际命令结果和文件回读，写出代码文件不等于执行代码。
 
 ## 会话与反馈周期
 
@@ -1493,7 +1526,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-角色同一 revision 每个 pass 最多两个技术 turn；连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。唯一不计入该上限的已识别外部读取等待是 `dependency_read_unavailable` 和 `agent_context_refresh_failed`：它们让任务退避后重新读取并归还 DingTalk attempt，不形成业务结论；成功读取但无匹配数据或业务证据仍缺失不属于此错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
+角色同一 revision 每个 pass 最多两个技术 turn；普通连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。`dependency_read_unavailable` 和 `agent_context_refresh_failed` 是外部读取等待，不形成业务结论或消耗 DingTalk attempt，也不计入六次上限；同一角色和修订连续遇到相同依赖错误时，按已持久化失败 run 数以 60、120、240 秒等间隔退避，最长 15 分钟，再读取当前来源。这个等待不终止待办。成功读取但无匹配数据或业务证据仍缺失不属于依赖错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
 
 ## 统一外发消息后缀
 
@@ -2496,3 +2529,20 @@ that unsupported pair before route registration. The older Email51 Audit-app
 isolation assertion is exercised against its genuine published source. Current
 Web API tests use finite Email action projections and typed writers for synthetic
 fixtures; this changes no runtime route, recovery or authorization behavior.
+
+Service context JSON blocks use compact serialization rather than indentation.
+Every original field, nested value, identifier and string whitespace/newline is
+preserved; only JSON separator/indentation bytes change. Consumer and Audit share
+this renderer. Candidate digest calculation, source binding, business validation,
+role/tool boundaries, session reuse and historical saved inputs remain unchanged.
+See docs/context-json-formatting-validation.md for focused verification and
+metadata-only measurements; publication status is recorded there.
+
+
+Specialized Meeting, email-classification and Task inputs serialize their existing
+JSON blocks compactly. Meeting inline schema (still minus its existing root
+description) and complete MeetingSource, sorted classification context, and
+current WorkItem metadata retain the same parsed values and field selection.
+Full source strings, schema constraints, source projection, business rules,
+roles, native schema delivery and session behavior are unchanged. See
+docs/specialized-json-formatting-validation.md for acceptance/publication status.

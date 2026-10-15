@@ -29,6 +29,13 @@ Read the complete application, comments, attachments and linked project material
 
 Keep applicant assertions separate from independently verified records. An item that was submitted but could not be read is handled under the generic Skill's principle 5 (unread is not missing).
 
+### Known unknowns and reviewer-side read failures
+
+- Read the latest applicant comments and prior review history before asking for project facts. If the applicant has explicitly said a fact is not yet available, record it as a **known unknown** with its source and date; do not ask for the same fact again as though it were omitted. If that unknown is material, follow the generic Skill's decision table using the evidence available; do not invent a business threshold or treat repetition as new evidence.
+- For each material known unknown, identify whether an existing project rule makes the fact necessary to assess this exact decision. If it is necessary and cannot be verified elsewhere, do not assume it is acceptable as a risk or turn the same request into a differently worded return. Keep the approval pending and route the unresolved decision to `needs_human` when an authorized person must decide how to proceed; if the applicable rule itself is unclear, name that gap and keep `rule_coverage < 1.0`. Do not create new hard gates or approval authority in order to resolve the unknown.
+- Separate applicant-side missing information from reviewer-side read failures. A denied link, inaccessible attachment, provider/API error, credential or local read failure, or exhausted retry budget means the review source could not be verified; it does not mean the applicant failed to submit it. After the same source returns a stable access or permission error, stop repeating the same read path; use another already-authorized source only if one exists, otherwise report the blocker. Do not use that failure alone as a return or refusal reason. Keep the approval pending when the unread source is material, and state the exact source and access/read error for follow-up.
+- When one source is unreadable, continue assessing the independently readable evidence where possible, but do not represent the whole application as fully reviewed or approve based on an unverified material source.
+
 ## Project rules
 
 1. **Strategic fit.** A project must fit the company strategy or bring a product, algorithm or delivery-efficiency upgrade. Check this first; it is the reason a project exists.

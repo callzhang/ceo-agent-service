@@ -52,6 +52,7 @@ from app.native_cli_metadata import (
     has_noninteractive_confirmation,
     prepare_material_output_root,
 )
+from app.task_artifacts import migrate_legacy_task_artifacts, task_artifact_directory
 
 # Codex truncates one MCP text block at 1 MiB. Keep command output below that
 # boundary even after JSON escaping so the controlled receipt remains valid.
@@ -1149,24 +1150,12 @@ def _read_bound_task_skill(
 def _task_file_root(
     db_path: Path | None, task_id: int | None, generation: str | None, *, create: bool,
 ) -> Path:
-    from app.config import repo_root, workspace_path
-
     if generation is None:
         raise ValueError("task file binding is missing")
     if _current_task_generation(db_path, task_id) != generation:
         raise ValueError("task file generation changed")
-    root = workspace_path().resolve()
-    if root.is_relative_to(repo_root().resolve()):
-        raise ValueError("task file workspace overlaps service source")
-    if create:
-        root.mkdir(parents=True, exist_ok=True)
-    for component in ("consumer-artifacts", str(task_id), generation):
-        root = root / component
-        if root.is_symlink():
-            raise ValueError("task file directory is linked")
-        if create:
-            root.mkdir(exist_ok=True)
-    return root
+    migrate_legacy_task_artifacts(task_id)
+    return task_artifact_directory(task_id, generation, create=create)
 
 
 def _task_file_path(root: Path, name: str) -> Path:

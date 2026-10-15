@@ -106,6 +106,39 @@ def test_email_summary_preserves_plan_retry_and_latest_row_semantics(database):
     assert result["latest_error"] == "最新\x1f错误"
 
 
+def test_email_summary_scans_actions_in_storage_order_for_current_plan(database):
+    database.execute(
+        "create index idx_email_classifications_status "
+        "on email_classifications(status, id desc)"
+    )
+    database.execute(
+        "create index idx_email_actions_classification_plan "
+        "on actions(email_classification_id, email_action_plan_id)"
+    )
+    database.execute(
+        "insert into email_classifications values(1, 'processed', 'current')"
+    )
+    database.execute(
+        "insert into actions (record_type, email_action_id, email_classification_id, "
+        "email_action_plan_id, email_status, email_attempt_count, "
+        "email_next_attempt_at, email_updated_at, email_error) "
+        "values('email_actions', 'one', 1, 'current', 'done', 1, '', '2026-10-14', '')"
+    )
+
+    statements = []
+    database.set_trace_callback(statements.append)
+    snapshot = _email_action_queue_snapshot(database)
+    database.set_trace_callback(None)
+    plan = [
+        str(row[3])
+        for row in database.execute("explain query plan " + statements[0])
+    ]
+
+    assert snapshot["counts"] == {"done": 1}
+    assert any("SCAN a" in step for step in plan)
+    assert any("SEARCH c USING INTEGER PRIMARY KEY" in step for step in plan)
+
+
 def test_reply_summary_excludes_other_task_types(database):
     database.execute(
         "insert into tasks(id,record_type,status,updated_at,error) values(99,'work_summary_inputs','failed','future','other-type-error')"

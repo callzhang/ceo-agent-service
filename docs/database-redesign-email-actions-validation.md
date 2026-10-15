@@ -2663,6 +2663,32 @@ The latest origin/main refresh is nowff4d36234a05f33bd9f68119f886b68e1b2b84fd,
 with59 changed files since d06: newer Console query/cache removal, delivery
 repair, input formatting and related evidence. Read-only production checkout
 was5e52cafc8f209986868454d25ea5ba77a6be782c, clean. This supersedes the earlier
-023188/d06 assumption for future integration. No merge or deploy has occurred
-yet. Preserve the new increments, bind the actual immediate predecessor and
+023188/d06 assumption for future integration. The local normal merge of
+ff4d36234 is now being verified; no deployment has occurred. Preserve the new increments, bind the actual immediate predecessor and
 revalidate affected code/proofs before CI/publication. Full10+1 remains open.
+
+### Task7 current-main integration (local candidate)
+
+The normal merge from the exact fetched main ff4d36234 retains its incoming
+Console, Worker, delivery-repair, formatting, evidence and documentation
+changes. The Email queue keeps the target finite `email_actions` projection
+and the incoming actions-first `CROSS JOIN` plan. History keeps per-source
+compact keys before page hydration and removes the incoming obsolete page
+cache and its private test-only switch. Two reply-attempt recovery checks
+share the existing grouped terminal public-ID maximum by channel,
+conversation and trigger. A scalar lookup from that materialized group is
+pruned from key-only pages; `EXPLAIN QUERY PLAN` shows no terminal group in
+the key query and one `MATERIALIZE terminal_attempts` in the status query.
+The incoming unresolved-problem grouping across channels is preserved.
+
+The first bounded combined run had 79 passes and two failures. One measured
+133,000 SQLite VM steps against the existing 100,000 bound because the joined
+terminal group was evaluated for key-only pagination. Moving the same grouped
+maximum into the prunable status projection passed six selected History
+key/status/chart cost checks. The other failure came from comparing target
+`limit=1` pages against archived 0441's page cache, which returns all three
+rows for its first page. The mixed History oracle now binds to the exact clean
+published predecessor 5e52cafc, retaining exact rows, counts, ordering and
+page comparison plus a one-row page-size assertion. Historical schema fixture
+sources remain 0441. This is local integration evidence; CI, publication,
+deployment and the full10+1 gate remain open.

@@ -38,6 +38,7 @@ Interpret event and participant times using source-supported timezones and the m
 - If the new meeting is more important, accept it, decline the existing meeting, and notify the verified existing inviter with the concrete conflict reason.
 - If the available facts cannot establish which meeting is more important, do not accept or decline either one. Notify the verified new inviter about the conflict and ask them to coordinate with the existing inviter or provide the missing importance reason; then reassess from the new facts.
 - A missing description alone is not a reason to clarify. Decide from the other confirmed facts when they establish the value.
+- A meeting whose title itself says it is a one-to-one conversation with a colleague (a 1:1, a regular catch-up with one person, a plain request to talk) already states its purpose: the value is the conversation with that person, so it has no agenda to supply. Do not ask the inviter why the principal should attend or what input is expected; accept it, subject to the hard boundaries and conflict rules above. Judge by what the title says, not by the attendee count: a two-person meeting whose title names a topic, candidate, decision, deliverable, or review is decided from its own facts like any other meeting.
 - When a clear-value event is already accepted by the principal, do not issue a
   duplicate calendar response. Keep the decision meaning as
   `accept_already_confirmed`: the principal's participation is valuable, the
@@ -58,6 +59,7 @@ Interpret event and participant times using source-supported timezones and the m
 | `no_principal_input_needed` | `decline` | `no` | Propose decline. |
 | `missing_attendance_value` | `clarify_inviter` | `yes` | Ask what decision or input is required. |
 | `missing_description_but_clear_title` | `accept` | `no` | Do not clarify only for the description. |
+| `one_to_one_by_title` | `accept` | `no` | Title states a conversation with one colleague. Propose acceptance; do not ask for an agenda or the value of attending. |
 | `silent_meeting_with_material` | `process_material_and_accept` | `no` | Process the material and produce the requested review outcome, then propose acceptance. |
 | `silent_meeting_without_material` | `clarify_exact_material` | `yes` | Ask for the referenced material itself. |
 

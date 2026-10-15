@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "baseline_ref": "0ca145ba",
+  "status": "lossless_original_block_comparison_not_new_native_execution",
+  "samples": [
+    {
+      "attempt_id": 360330,
+      "workload_kind": "meeting",
+      "status": "completed",
+      "session_id": "01a13dee-9b6a-7fe0-b539-cf2c9edc9952",
+      "native_sha256": "a7545a8e2f5c30dcc31421b5d0a2b8b45a8d982e3f2cf5ff5b9f70888fa288e7",
+      "range": [
+        0,
+        18
+      ],
+      "input_chars": 268758,
+      "input_sha256": "492c03a98eda9fe1ae89333dfc027eae12f89802bc9c02c4bb28f114c73653d0",
+      "blocks": [
+        {
+          "marker": "MeetingAlignmentDecision Pydantic JSON schema:",
+          "before_chars": 10493,
+          "after_chars": 6945,
+          "chars_removed": 3548,
+          "parsed_equal": true,
+          "original_sha256": "1dd0463363bdfb4854d6e5873d4a13ca1dc25607be1bd637b137d11edebebb4a"
+        },
+        {
+          "marker": "完整会议来源 JSON：",
+          "before_chars": 77934,
+          "after_chars": 61768,
+          "chars_removed": 16166,
+          "parsed_equal": true,
+          "original_sha256": "7a6da2bc794a74b2509190060211f3cf40da102371ea635ef28d295c967af23e"
+        }
+      ],
+      "total_removed_chars": 19714
+    },
+    {
+      "attempt_id": 360165,
+      "workload_kind": "meeting",
+      "status": "completed",
+      "session_id": "01a13dc3-ec7e-7af0-a735-093ebf90fa12",
+      "native_sha256": "1d3a8adaace56d1e1476c4272583f4fce0ca05a76f627d5627f5c74912e7b2eb",
+      "range": [
+        0,
+        18
+      ],
+      "input_chars": 333772,
+      "input_sha256": "118cc6d67a3864c33c9dc62d95ffed44dacd445653f64227c3b835b0abec2013",
+      "blocks": [
+        {
+          "marker": "MeetingAlignmentDecision Pydantic JSON schema:",
+          "before_chars": 10493,
+          "after_chars": 6945,
+          "chars_removed": 3548,
+          "parsed_equal": true,
+          "original_sha256": "1dd0463363bdfb4854d6e5873d4a13ca1dc25607be1bd637b137d11edebebb4a"
+        },
+        {
+          "marker": "完整会议来源 JSON：",
+          "before_chars": 217619,
+          "after_chars": 166899,
+          "chars_removed": 50720,
+          "parsed_equal": true,
+          "original_sha256": "e2d55f70c8ec5c4bfc89ed77822b5beadbcac5f47975218f2f54b449e07d58b5"
+        }
+      ],
+      "total_removed_chars": 54268
+    },
+    {
+      "attempt_id": 360277,
+      "workload_kind": "email_classification",
+      "status": "completed",
+      "session_id": "01a13de3-f51e-7202-a772-22e25f79a023",
+      "native_sha256": "68c6c10f22b8f27f21e83046ce39b24f85c440cfd9bb52b1d481296c36721c0f",
+      "range": [
+        0,
+        15
+      ],
+      "input_chars": 16006,
+      "input_sha256": "a77a04e83d7c60061dc49af8fe0f6bbb2cf57e7d2c3f2c76ae7756b40ca4d0db",
+      "blocks": [
+        {
+          "marker": "Exact invocation context:",
+          "before_chars": 7755,
+          "after_chars": 6146,
+          "chars_removed": 1609,
+          "parsed_equal": true,
+          "original_sha256": "5259b0c800a070b92ff1f30143455a3e4c4487a267556716d494bfd08cb375ff"
+        }
+      ],
+      "total_removed_chars": 1609
+    },
+    {
+      "attempt_id": 359897,
+      "workload_kind": "email_classification",
+      "status": "completed",
+      "session_id": "01a13d75-f55d-7e01-bdc2-ceefb22c5e37",
+      "native_sha256": "83e88bcc5e9544549cf33a820409bc53a66aadb042caaa4f5e0bbb3a11b0b033",
+      "range": [
+        0,
+        15
+      ],
+      "input_chars": 14417,
+      "input_sha256": "2be85efae2450f89fe40a662afdfcf38dbecdaf0f4aeffcbc4732ba1fb31e96c",
+      "blocks": [
+        {
+          "marker": "Exact invocation context:",
+          "before_chars": 6510,
+          "after_chars": 4828,
+          "chars_removed": 1682,
+          "parsed_equal": true,
+          "original_sha256": "f5c8b4ecd5c7328ea02a364ed272105d9eeb55ff550f6672e95518c0edcc211a"
+        }
+      ],
+      "total_removed_chars": 1682
+    },
+    {
+      "attempt_id": 359771,
+      "workload_kind": "email_classification",
+      "status": "completed",
+      "session_id": "01a13d52-4962-7c82-be93-47d715c37112",
+      "native_sha256": "0435fd4ba2f26dc06248309bd19d909e869bee01e92898c8ce6d7d41c10ec0c1",
+      "range": [
+        0,
+        15
+      ],
+      "input_chars": 65106,
+      "input_sha256": "7a899f0f5ccefe6f3eb1acb5f2b3c3377a4e4fc6fdcb68f360e9cd1bb2fd9da1",
+      "blocks": [
+        {
+          "marker": "Exact invocation context:",
+          "before_chars": 57101,
+          "after_chars": 54534,
+          "chars_removed": 2567,
+          "parsed_equal": true,
+          "original_sha256": "aefe664cab65b2abde08f78884a2b2ccfa0a2bec9460c4f02c0c2ff7d0eaa9e1"
+        }
+      ],
+      "total_removed_chars": 2567
+    },
+    {
+      "attempt_id": 357887,
+      "workload_kind": "task",
+      "status": "failed",
+      "session_id": "01a13b26-22ac-7891-9388-64b6a5a44786",
+      "native_sha256": "9d282181a2474a2852700d82c8af46eac0c9853d196bfcb8065ef26746375b8a",
+      "range": [
+        181,
+        201
+      ],
+      "input_chars": 11570,
+      "input_sha256": "6fecd647b0fad1b54c6968c9bc51cc40bbff609b47b2f1942651a39b0ca54c2e",
+      "blocks": [
+        {
+          "marker": "Current Work Item JSON:",
+          "status": "not_present_in_saved_attempt",
+          "chars_removed": 0
+        }
+      ],
+      "total_removed_chars": 0
+    },
+    {
+      "attempt_id": 357723,
+      "workload_kind": "task",
+      "status": "completed",
+      "session_id": "01a13b26-22ac-7891-9388-64b6a5a44786",
+      "native_sha256": "9d282181a2474a2852700d82c8af46eac0c9853d196bfcb8065ef26746375b8a",
+      "range": [
+        136,
+        150
+      ],
+      "input_chars": 11751,
+      "input_sha256": "17f437d43bae010e0817a802a62b05893783afc960b13c60a058ec3888dd386e",
+      "blocks": [
+        {
+          "marker": "Current Work Item JSON:",
+          "status": "not_present_in_saved_attempt",
+          "chars_removed": 0
+        }
+      ],
+      "total_removed_chars": 0
+    }
+  ],
+  "boundary": "Saved originals unchanged; metadata only, no private bodies copied. Only specified present JSON blocks reformatted. Task latest attempts lack original WorkItem marker, so no Task live savings inferred or history reconstructed. No token/business outcome claim; failed sample remains failed."
+}

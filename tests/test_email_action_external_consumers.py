@@ -45,7 +45,7 @@ def _two_failed_actions(path):
 def test_history_keeps_native_signed_rowid_and_nullable_public_id(tmp_path):
     store = _two_failed_actions(tmp_path / "history.sqlite3")
     total, page = store.list_operation_logs_with_count(
-        limit=1, source_tables=("email_actions",), _skip_history_cache=True,
+        limit=1, source_tables=("email_actions",),
     )
     assert total == 2
     assert [(item.id, item.source_id, item.status) for item in page] == [
@@ -53,7 +53,7 @@ def test_history_keeps_native_signed_rowid_and_nullable_public_id(tmp_path):
     ]
     total, page = store.list_operation_logs_with_count(
         limit=1, offset=1, statuses=("failed",),
-        source_tables=("email_actions",), _skip_history_cache=True,
+        source_tables=("email_actions",),
     )
     assert total == 2
     assert [(item.id, item.source_id) for item in page] == [("email-action:-7", -7)]
@@ -61,7 +61,6 @@ def test_history_keeps_native_signed_rowid_and_nullable_public_id(tmp_path):
         update_email_action(db, "email_actions", 42, {"status": "done"})
     total, page = store.list_operation_logs_with_count(
         limit=10, statuses=("failed",), source_tables=("email_actions",),
-        _skip_history_cache=True,
     )
     assert total == 1
     assert [item.source_id for item in page] == [-7]
@@ -150,7 +149,7 @@ def test_genuine_source_history_rowids_survive_real_pair_and_mixed_pagination(co
     store = AutoReplyStore(source)
     EmailStore(source)
     total, rows = store.list_operation_logs_with_count(
-        limit=10, source_tables=("email_actions",), _skip_history_cache=True,
+        limit=10, source_tables=("email_actions",),
     )
     assert total == len(before) == len(action_ids)
     assert {row.source_id for row in rows} == {row[0] for row in before}
@@ -166,7 +165,7 @@ def test_genuine_source_history_rowids_survive_real_pair_and_mixed_pagination(co
     )
     source_tables = ("email_actions", "reply_attempts")
     full_total, full = store.list_operation_logs_with_count(
-        limit=20, source_tables=source_tables, _skip_history_cache=True,
+        limit=20, source_tables=source_tables,
     )
     assert full_total == len(before) + 1
     assert {row.source_table for row in full} == set(source_tables)
@@ -174,7 +173,6 @@ def test_genuine_source_history_rowids_survive_real_pair_and_mixed_pagination(co
     for offset in range(full_total):
         page_total, page = store.list_operation_logs_with_count(
             limit=1, offset=offset, source_tables=source_tables,
-            _skip_history_cache=True,
         )
         assert page_total == full_total
         paged.extend(page)
@@ -187,7 +185,6 @@ def test_genuine_source_history_rowids_survive_real_pair_and_mixed_pagination(co
         })
     failed_total, failed = store.list_operation_logs_with_count(
         limit=10, statuses=("failed",), source_tables=source_tables,
-        _skip_history_cache=True,
     )
     assert failed_total == 1
     assert [(row.id, row.source_id, row.status) for row in failed] == [
@@ -267,7 +264,7 @@ def test_current_plan_poll_and_retry_window_on_target(tmp_path, monkeypatch):
 def test_published_main_history_matches_target_for_mixed_failed_and_pages(
     converted_pair, tmp_path
 ):
-    """PR87's actual source reader is the old-side History oracle."""
+    """The immediate published predecessor is the old-side History oracle."""
     import io
     import json
     import os
@@ -295,10 +292,10 @@ def test_published_main_history_matches_target_for_mixed_failed_and_pages(
             "started_at='start', finished_at='finish', error='source-failure' "
             "where rowid=-7"
         )
-    published = tmp_path / "published-main-0441cf15"
+    published = tmp_path / "published-main-5e52cafc"
     published.mkdir()
     archive = subprocess.check_output(
-        ["git", "archive", "0441cf15", "app"],
+        ["git", "archive", "5e52cafc8f209986868454d25ea5ba77a6be782c", "app"],
         cwd=Path(__file__).resolve().parents[1],
     )
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
@@ -315,11 +312,11 @@ store.record_reply_attempt(conversation_id='mixed',conversation_title='Mixed',
 def snap(statuses=None):
     sources=('email_actions','reply_attempts')
     total,all_rows=store.list_operation_logs_with_count(limit=20,statuses=statuses,
-        source_tables=sources,_skip_history_cache=True)
+        source_tables=sources)
     pages=[]
     for offset in range(total):
         count,rows=store.list_operation_logs_with_count(limit=1,offset=offset,
-            statuses=statuses,source_tables=sources,_skip_history_cache=True)
+            statuses=statuses,source_tables=sources)
         pages.append((count,[(r.id,r.source_table,r.source_id,r.status,r.context,
                             r.summary) for r in rows]))
     return total,[(r.id,r.source_table,r.source_id,r.status,r.context,r.summary)
@@ -343,13 +340,12 @@ print(json.dumps({'all':snap(),'failed':snap(('failed',))},ensure_ascii=False))
         sources = ("email_actions", "reply_attempts")
         total, all_rows = store.list_operation_logs_with_count(
             limit=20, statuses=statuses, source_tables=sources,
-            _skip_history_cache=True,
         )
         pages = []
         for offset in range(total):
             count, rows = store.list_operation_logs_with_count(
                 limit=1, offset=offset, statuses=statuses,
-                source_tables=sources, _skip_history_cache=True,
+                source_tables=sources,
             )
             pages.append((count, [
                 (r.id, r.source_table, r.source_id, r.status, r.context, r.summary)
@@ -360,6 +356,8 @@ print(json.dumps({'all':snap(),'failed':snap(('failed',))},ensure_ascii=False))
             for r in all_rows
         ], pages
 
-    assert json.loads(json.dumps({
+    actual = json.loads(json.dumps({
         "all": target_snap(), "failed": target_snap(("failed",)),
-    }, ensure_ascii=False)) == expected
+    }, ensure_ascii=False))
+    assert all(len(page[1]) == 1 for page in actual["all"][2])
+    assert actual == expected

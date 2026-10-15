@@ -2349,10 +2349,19 @@ class DingTalkAutoReplyWorker:
             yield from page
             after_id = page[-1].id
 
-    def _reply_task_retry_available_at(self, attempts: int) -> str:
-        delay_seconds = min(
-            REPLY_TASK_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempts - 1, 0)),
-            REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+    def _reply_task_retry_available_at(
+        self, attempts: int, *, retry_after_seconds: float | None = None
+    ) -> str:
+        delay_seconds = (
+            min(
+                max(retry_after_seconds, REPLY_TASK_RETRY_BASE_DELAY_SECONDS),
+                REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+            )
+            if retry_after_seconds is not None
+            else min(
+                REPLY_TASK_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempts - 1, 0)),
+                REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+            )
         )
         return self._sqlite_timestamp(
             self._now().astimezone(timezone.utc) + timedelta(seconds=delay_seconds)
@@ -2398,19 +2407,27 @@ class DingTalkAutoReplyWorker:
     def _process_queued_task(
         self, conversation: DingTalkConversation, task: ReplyTask
     ) -> bool:
-        terminal = self._agent_orchestrator().persisted_terminal_result(task)
-        if terminal is not None:
-            return self._apply_orchestration_result(task, terminal)
-        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-        _context_messages, prompt_context_messages = (
-            self._queued_task_prompt_context_messages(conversation, trigger)
-        )
-        return self._process_agent_queued_task(
-            conversation,
-            task,
-            trigger,
-            prompt_context_messages,
-        )
+        try:
+            terminal = self._agent_orchestrator().persisted_terminal_result(task)
+            if terminal is not None:
+                return self._apply_orchestration_result(task, terminal)
+            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+            _context_messages, prompt_context_messages = (
+                self._queued_task_prompt_context_messages(conversation, trigger)
+            )
+            return self._process_agent_queued_task(
+                conversation,
+                task,
+                trigger,
+                prompt_context_messages,
+            )
+        finally:
+            self._cleanup_task_artifacts_if_terminal(task.id)
+
+    def _cleanup_task_artifacts_if_terminal(self, task_id: int) -> None:
+        from app.task_artifacts import cleanup_terminal_task_artifacts
+
+        cleanup_terminal_task_artifacts(self.store, task_id)
 
     def process_claimed_reply_task(
         self, task: ReplyTask, *, claim_guard: ClaimGuard | None = None
@@ -2521,7 +2538,12 @@ class DingTalkAutoReplyWorker:
                             self._codex_capacity_retry_available_at()
                             if capacity_exhausted
                             else self._reply_task_retry_available_at(
-                                max(task.attempts, 1)
+                                max(task.attempts, 1),
+                                retry_after_seconds=(
+                                    result.retry_after_seconds
+                                    if dependency_read_wait
+                                    else None
+                                ),
                             )
                         )
                     )
@@ -2601,7 +2623,14 @@ class DingTalkAutoReplyWorker:
                 else (
                     self._codex_capacity_retry_available_at()
                     if capacity_exhausted
-                    else self._reply_task_retry_available_at(task.attempts)
+                    else self._reply_task_retry_available_at(
+                        task.attempts,
+                        retry_after_seconds=(
+                            result.retry_after_seconds
+                            if dependency_read_wait
+                            else None
+                        ),
+                    )
                 )
             )
 

@@ -449,7 +449,6 @@ def test_history_without_email_tables_still_answers(tmp_path: Path):
     total, _rows = store.list_operation_logs_with_count(
         limit=20,
         source_tables=history_types.HISTORY_SOURCE_TABLES,
-        _skip_history_cache=True,
     )
     assert total == 1
 

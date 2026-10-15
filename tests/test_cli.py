@@ -69,6 +69,42 @@ def test_email_unsubscribe_cancellation_requires_exact_identity_and_explicit_app
         build_parser().parse_args(["cancel-failed-email-unsubscribe", "--task-id", "77"])
 
 
+def test_native_chat_readback_is_explicitly_previewed_before_apply():
+    arguments = ["reconcile-failed-reply-chat-readback", "--task-id", "1"]
+    preview = build_parser().parse_args(arguments)
+    assert preview.task_id == 1
+    assert preview.apply is False
+    assert build_parser().parse_args([*arguments, "--apply"]).apply is True
+
+
+def test_native_chat_readback_cli_preview_uses_read_only_database_connection(
+    tmp_path, monkeypatch, capsys
+):
+    db_path = tmp_path / "preview.sqlite3"
+    AutoReplyStore(db_path)
+    before = db_path.read_bytes()
+    proof = {
+        "task_id": 99,
+        "payload": {"messages": [], "complete": True, "partial": False,
+                    "hasMore": False, "failures": []},
+        "queried_at": "2026-10-15T02:00:00Z", "start": "2026-10-15T09:55:00+08:00",
+        "end": "2026-10-15T10:05:00+08:00", "principal_user_id": "u1",
+        "principal_open_dingtalk_id": "o1",
+    }
+    monkeypatch.setattr("app.dingtalk_delivery_repair.collect_native_chat_readback",
+                        lambda store, dws, task_id: proof)
+    monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", "0")
+    monkeypatch.setattr(sys, "argv", [
+        "app.cli", "reconcile-failed-reply-chat-readback", "--db", str(db_path),
+        "--task-id", "99",
+    ])
+
+    cli.main()
+
+    assert json.loads(capsys.readouterr().out)["applied"] is False
+    assert db_path.read_bytes() == before
+
+
 def test_task_project_repair_commands_parse_required_paths():
     plan = build_parser().parse_args(
         [

@@ -2258,7 +2258,9 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(
     assert "FROZEN HISTORICAL SKILL BODY" not in prompt
     assert "# Old Work Tracking Snapshot" not in prompt
     assert "Return update_project with todo_changes." not in prompt
-    assert '"scheduled_task_run_id": 11' in prompt
+    work_json, _ = json.JSONDecoder().raw_decode(prompt.split("Current Work Item JSON:\n", 1)[1])
+    assert type(work_json["scheduled_consumer"]["scheduled_task_run_id"]) is int
+    assert work_json["scheduled_consumer"]["scheduled_task_run_id"] == 11
     assert skill_path.read_text().strip() in prompt
     assert "native CLI manages compaction" in prompt
     assert (
