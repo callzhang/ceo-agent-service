@@ -73,3 +73,19 @@ The metadata-only receipt is
 This adds no recovered provenance and proves no general source unavailability.
 The previous30 verified/158 unproved result and body-retirement blocker remain
 unchanged; no source reader, caller, storage or provider behavior was changed.
+
+
+## Remaining candidates in the same original session, 2026-10-15
+
+Root then tested all156 other unproved source documents against the same
+219379588-byte prefix of the original orchestrator trajectory. Its SHA-256
+remained exactly the prior probe value. Exact complete plain/UTF-8 JSON/ASCII
+JSON string searches found no matches. Candidate bodies were checked against
+the prior frozen hash/byte metadata in process memory and were never output
+or saved. The selection and proof bounds are recorded in
+`superpowers/specs/2026-10-15-business-original-session-source-probe.json`.
+
+Together with the separate two-document probe, this checks all158 unproved
+documents against this one identified original session only. It neither proves
+general source unavailability nor creates an identity from body equality.
+The30 verified/158 unproved source-recovery boundary is unchanged.

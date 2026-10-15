@@ -1,0 +1,21 @@
+{
+  "evidence_type": "bounded_read_only_exact_source_probe_metadata",
+  "candidate_source_artifact": "docs/superpowers/specs/2026-10-15-database-redesign-business-native-source-recovery.json",
+  "candidate_source_artifact_sha256": "ed8ef6f509b4c2d08df7a4c1ce10801ed56e345a258941d30139b3492bbd70ea",
+  "candidate_selection": "exact_full_body_verified=false excluding previously probed source_document_id8 and30",
+  "candidate_document_count": 156,
+  "candidate_body_utf8_bytes": 5313581,
+  "source_copy_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "source_access": "mode=ro; query_only; body values held only in process memory; every candidate matched prior frozen hash/bytes; no body output or copy",
+  "native_session_uuid": "01a122e3-0bec-73b3-b7aa-c0be8e731a61",
+  "native_path": "/Users/derek/.codex/sessions/2026/10/09/rollout-2026-10-09T15-57-47-01a122e3-0bec-73b3-b7aa-c0be8e731a61.jsonl",
+  "prefix_bytes": 219379588,
+  "prefix_sha256": "ced388d04775d905e79a9b50491acdfafb6f6b9715ebcddd6a7cc9a08bcaab80",
+  "prefix_matches_prior_probe": true,
+  "lines": 85178,
+  "method": "Walk JSON string leaves, use candidate prefixes to locate possible occurrences, then require exact full-body plain, UTF-8 JSON string literal or ASCII JSON string literal match. This exact prefix predates the current probe.",
+  "matches": [],
+  "identity_boundary": "An exact body match alone would not establish provenance identity; no such match was found.",
+  "conclusion": "No additional source recovered from this one original-session prefix. Prior30verified/158unproved counts unchanged; originals may exist elsewhere. Source-body retirement remains unproved.",
+  "mutations": "Only this metadata and validation/claim documentation; no source database/native/caller/provider/production mutation."
+}
