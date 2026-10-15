@@ -27,7 +27,7 @@ The current candidate has already translated the six source account blocker trig
 | `docs/database-redesign-config-state-source-preparation.md` | Append evidence after the tests run, distinguishing source oracle from target readiness. |
 | `docs/agent-claims.md` | Claim exactly these files before editing and stage only the implementer's hunks. |
 
-No `app/`, `scripts/`, existing tests, source-binding artifact or captured JSON/CSV is edited. The accepted `old_email_copy` fixture in `tests/test_native_copy_lifecycle_harness.py:72-96` is the genuine `git archive 7dadc492` constructor pattern if an archived public-call test needs a file-backed source. It creates a private database and does not invoke a native Agent CLI.
+No `app/`, `scripts/`, existing tests, source-binding artifact or captured JSON/CSV is edited. The accepted `old_email_copy` fixture in `tests/test_native_copy_lifecycle_harness.py:72-96` provides the genuine `git archive 7dadc492` constructor for the archived public-call tests. It creates a private database and does not invoke a native Agent CLI. Register that fixture module through `pytest_plugins`, not a direct fixture import, to avoid Ruff F401/F811.
 
 ### Task 1: Literal fixture and source identity
 
@@ -42,6 +42,8 @@ No `app/`, `scripts/`, existing tests, source-binding artifact or captured JSON/
 import pytest
 
 from tests.configs_source_fixtures import CONFIGS, capture, source_db
+
+pytest_plugins = ("test_native_copy_lifecycle_harness",)
 
 
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
@@ -66,7 +68,7 @@ def test_fifteen_config_identities_and_118_fields(variant):
 
 - [ ] **Step 3: Run the RED check.** Run `python -m pytest -q tests/test_configs_source_contract.py::test_fifteen_config_identities_and_118_fields`. Expected: collection fails with `ModuleNotFoundError: No module named 'tests.configs_source_fixtures'`.
 
-- [ ] **Step 4: Add the literal-only fixture.** Create `tests/configs_source_fixtures.py` with this complete content. It executes no constructor, fabricated parent or target DDL. The 34 captured tables include the genuine `scheduled_tasks` parent; external receipt and blocker children are exercised only on a genuine archived constructor in Task 4.
+- [ ] **Step 4: Add the literal-only fixture.** Create `tests/configs_source_fixtures.py` with this complete content. It executes no constructor, fabricated parent or target DDL. The 34 captured tables include the genuine `scheduled_tasks` parent. The external runtime receipt is exercised through the archived constructor in Task 3. Task 3's six account-blocker predicate comparison is declaration-only; the separately existing focused source DML gate reconstructs the captured Email action parents/children and all 13 external triggers with narrow account/message/classification stubs.
 
 ```python
 """Owned SQLite fixtures from the frozen actual/published-fresh source DDL."""
@@ -587,7 +589,7 @@ print(json.dumps({"cas": changed["config_version"], "shared_snapshot": same,
     }
 ```
 
-Import `old_email_copy` explicitly in this file from `test_native_copy_lifecycle_harness`, matching the existing import in `tests/test_native_copy_additional_harness.py:16`. The test must also verify a caller-owned `BEGIN IMMEDIATE` group: create one scheduled snapshot reference, force a failing second write inside the same transaction, roll back, and assert neither the new snapshot nor its run reference survived. The later target plan must retain that atomic boundary.
+The `pytest_plugins` registration from Task 1 supplies `old_email_copy` to both archived tests without an unused or duplicate import. The block above verifies the caller-owned `BEGIN IMMEDIATE` group: the new snapshot and its temporary run reference both disappear on rollback. The later target plan must retain that atomic boundary.
 
 - [ ] **Step 3: Pin the six predecessor blocker owners and current candidate predicate boundary.** Add `from app.action_email_storage import finite_target_external_sql` to the new test's imports, then append this complete test. It compares declaration predicates only; it neither reinstalls old trigger SQL nor claims a target configs implementation.
 
@@ -617,17 +619,17 @@ def test_six_account_blockers_have_distinct_old_and_current_action_owners():
             assert error in current[name]
 ```
 
-- [ ] **Step 4: Run scoped tests and commit.** Run `python -m pytest -q tests/test_configs_source_contract.py tests/test_config_state_native_source.py tests/test_provider_state_source.py tests/test_storage_scheduled_configs.py`. Expected: source contracts and adjacent scheduling/provider checks pass. Run `ruff check tests/configs_source_fixtures.py tests/test_configs_source_contract.py`, `python -m compileall -q tests/configs_source_fixtures.py tests/test_configs_source_contract.py`, and `git diff --check`. Commit only the new test file with `git add tests/test_configs_source_contract.py` and `git commit -m "test: pin configs caller and immutable source behavior"`.
+- [ ] **Step 4: Run scoped tests and commit.** Run `python -m pytest -q tests/test_configs_source_contract.py tests/test_config_state_native_source.py tests/test_provider_state_source.py tests/test_storage_scheduled_configs.py`. Expected: source contracts and adjacent scheduling/provider checks pass. Also run `python -m pytest -q tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`; its 13 trigger cases over captured `actual` and `fresh_candidate` Email action declarations yield 26 source DML checks, including the six account update/delete blockers. That test uses narrow account/message/classification stubs and is a predecessor-behavior gate, not a genuine full constructor or new configs target test. Run `ruff check tests/configs_source_fixtures.py tests/test_configs_source_contract.py`, `python -m compileall -q tests/configs_source_fixtures.py tests/test_configs_source_contract.py`, and `git diff --check`. Commit only the new test file with `git add tests/test_configs_source_contract.py` and `git commit -m "test: pin configs caller and immutable source behavior"`.
 
 ### Task 4: Documentation and acceptance handoff
 
 **Files:** Append `docs/database-redesign-config-state-source-preparation.md`; update own claim row in `docs/agent-claims.md`.
 
-- [ ] **Step 1: Append the actual test command, count and outcome.** Say explicitly that the 15/118 source oracle is unselected, generated from synthetic literal actual/fresh connections plus a genuine `7dad` archived constructor; record any native-version-specific allocator result. Do not report target parity, migration/inverse, actual-copy or production readiness.
+- [ ] **Step 1: Append the actual test command, count and outcome.** Say explicitly that all 118 fields have accepted literal actual/fresh metadata coverage, while this unselected oracle behaviorally samples named native constraints and callers through synthetic connections and a genuine `7dad` archived constructor. Record the separate 26-case predecessor blocker DML gate and its narrow-stub scope, plus any native-version-specific allocator result. Do not report universal DML proof for every field, target parity, migration/inverse, actual-copy or production readiness.
 - [ ] **Step 2: Record the next atomic closure as future work:** all 15 config families, `scheduled_tasks` and `runs.snapshot_id`/`runs.scheduled_task_id`, `scheduled_task_skill_refs`, `managed_skill_export_receipts` and `runtime_skill_load_receipts` converted to typed `actions` references, the approved empty `email_training_snapshot_observations` FK/trigger retirement, and the six account blocker predicates against current typed `actions`. Distinguish each from this source-only test commit. No new version, audit rule or retention policy is proposed.
 - [ ] **Step 3: Run `git diff --check` and a literal placeholder scan:** `rg -n 'TBD|TODO|implement later|fill in details|Add appropriate|Similar to Task' docs/database-redesign-config-state-source-preparation.md tests/test_configs_source_contract.py tests/configs_source_fixtures.py`. Expected: no plan placeholders in new prose/code. Stage only own appendix and claim row; commit `git add docs/database-redesign-config-state-source-preparation.md docs/agent-claims.md && git commit -m "docs: record configs source contract evidence"`.
 - [ ] **Step 4: Hand off for fresh sequential SPEC then QUALITY review.** Provide commit SHAs and focused test receipts. No implementation unit begins until the source contract is accepted. The next separate plan is target declaration/storage, then pure migration/inverse, then current caller/paired publication with actual-copy gates.
 
 ## Self-review of scope
 
-This plan covers every captured config family by literal declaration and field count, and gives focused native DML checks for identities, SQLite storage/NULL behavior, allocator, uniqueness, CHECKs, FKs, immutable exceptions, runtime load receipt matching, category CAS, scheduled snapshot interning/references/transaction rollback, and WeChat's mutable watermark. The literal capture already verifies all indexes/triggers/column ordinals; this oracle must add behavior, not duplicate six accepted metadata tests. Three limitations remain explicit: six account blocker source triggers need genuine archived child tables and are predecessor evidence only; the five external FK groups belong to later closure; and target equivalence, migration, caller selection and publication are separate work.
+This plan covers every captured config family by accepted literal declaration and 118-field metadata, then behaviorally samples named native identities, SQLite storage/NULL behavior, allocator, uniqueness, CHECKs, FKs, immutable exceptions, runtime load receipt matching, category CAS, scheduled snapshot interning/references/transaction rollback, and WeChat's mutable watermark. It does not claim a DML proof for every field. The literal capture already verifies all indexes/triggers/column ordinals; this oracle adds behavior without repeating the six accepted metadata tests. The six predecessor account blockers receive declaration comparison here and a separate existing 26-case source DML gate on narrow stubs. The five external FK groups belong to later atomic closure; target equivalence, migration, caller selection and publication remain separate work.

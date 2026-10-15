@@ -133,15 +133,20 @@ a claim that these 34 tables have been merged.
 ## Bounded configs source-contract plan, 2026-10-15
 
 `docs/superpowers/plans/2026-10-15-configs-source-contract-plan.md` specifies
-the next independently testable unit for the 15 config families and their 118
-existing fields. It uses the already accepted literal actual/fresh metadata
-and synthetic SQLite DML, plus the genuine archived published constructor for
-caller and externally referenced trigger behavior. It records identity,
-allocator, SQL affinity/NULL, constraints, immutability exceptions, category
+the next independently testable unit for the 15 config families. All 118
+existing fields already have accepted literal actual/fresh metadata coverage;
+the proposed source oracle samples named DML constraints and caller behavior,
+without claiming universal behavioral proof for every field. It uses synthetic
+SQLite connections and the genuine archived published constructor for category
 CAS, runtime Skill load-receipt matching, scheduled snapshot interning and
-references, and the WeChat scope watermark. This is research and planning only:
-no source contract test, target declaration, migration, caller selection,
-actual-copy proof or release was implemented by this appendix.
+references, and the WeChat scope watermark. The six predecessor account
+blockers receive declaration comparison in this plan; the separate existing
+`tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`
+gate exercises 13 captured external trigger cases over actual/fresh_candidate
+Email action declarations with narrow account/message/classification stubs.
+This is research and planning only: no source contract test, target declaration,
+migration, caller selection, actual-copy proof or release was implemented by
+this appendix.
 
 The future atomic closure remains the 15 config families together with
 `scheduled_tasks` and the two `runs` schedule/config references, managed Skill
