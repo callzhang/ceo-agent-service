@@ -2523,3 +2523,21 @@ Store19 expectation; the exact five selectors now pass (5 in 2.96s). All 41
 nonselected function ASTs in the four files match HEAD; scoped Ruff and
 `git diff --check` pass. The owned pytest temporary root was removed and
 absence verified. Fresh sequential SPEC and QUALITY review remain pending.
+
+### Task7 current marker independent acceptance and browser baseline
+
+Root acceptsb6004e35 plus documentation precisionc7c93669 after fresh sequential
+SPEC and QUALITY PASS. Five current expectations select Store20 and the exact
+29-type fresh manifest; all41 other functions, historical Store19 ownership and
+substantive current business assertions remain unchanged. The five GREEN cases
+and scoped checks were sufficient; no redundant rerun followed the wording-only
+correction. No production publication is implied.
+
+Separately, root ran the existing local-only audited E2E case and both
+remove_accepted_control variants of the dedicated-profile continuation case
+with WORKBENCH_BROWSER_TESTS=1. All three reached the original persistence-read
+assertions and failed only because those reads still name retired Email tables
+(3failed32.96s). This is a baseline, not a completed browser gate. Their owned
+pytest root was deleted with absence verified; no task Chromium process remains.
+The E2E's existing IMAP/SMTP/network substitutes were retained. No real provider
+or production mutation was performed.
