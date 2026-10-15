@@ -1,0 +1,1666 @@
+{
+  "scope": "Copied-DB SELECT/index probe, not public write/claim/History acceptance or runtime/schema change. Three repeats; no ANALYZE/VACUUM. Five native-legal manual trigger rows provide ties, active/expired leases and future work. Earlier prototype scheduled-trigger ties correctly failed the native per-task/instant UNIQUE constraint; no constraint was removed.",
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "variants": [
+    {
+      "variant": "full_source",
+      "index_bytes": 18493440,
+      "indexes": [
+        {
+          "name": "idx_scheduled_task_runs_claim",
+          "bytes": 9072640
+        },
+        {
+          "name": "idx_scheduled_task_runs_dispatch",
+          "bytes": 9420800
+        }
+      ],
+      "cases": [
+        {
+          "name": "metrics_pending",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "a9aa85acf18adf4f2e42f1cb876a854cf82b70587922457d888db0e2df100099",
+          "same_as_baseline": true,
+          "median_ms": 0.013,
+          "min_ms": 0.008,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_due",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "77471ebe3613f4714666523fa961eb443f57dc2396a31528afdbbea86fadc8f8",
+          "same_as_baseline": true,
+          "median_ms": 0.006,
+          "min_ms": 0.006,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_claimed",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "same_as_baseline": true,
+          "median_ms": 0.006,
+          "min_ms": 0.006,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_dispatch (dispatch_status=? AND lease_expires_at>?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_oldest",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "3388e812c89e68797ac7332eff30f7f9c21802bd30855a9210007afefed8686f",
+          "same_as_baseline": true,
+          "median_ms": 0.007,
+          "min_ms": 0.007,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "legacy_claim_head",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "da7909f746a611f54e2989a4f1f676a7b328e5f0a13f29dd0ce83e35ad615998",
+          "same_as_baseline": true,
+          "median_ms": 0.006,
+          "min_ms": 0.005,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_page",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "78a9ac9c7e54bb2ac598b017f3c19b5adb6b5ce47e62d4180e10998675d4e75b",
+          "same_as_baseline": true,
+          "median_ms": 0.411,
+          "min_ms": 0.157,
+          "plan": [
+            [
+              7,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ],
+            [
+              16,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_keyset",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "bb03386c3136a2afcc27c94aee58d133ce3f77ea400895bb5ca3879495448415",
+          "same_as_baseline": true,
+          "median_ms": 0.214,
+          "min_ms": 0.167,
+          "plan": [
+            [
+              7,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ],
+            [
+              22,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "latest_per_task",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "0938156f6b1f3cea22363ff79eaa43a10fd2dccb78f7a351ee8b0670d6c0f05e",
+          "same_as_baseline": true,
+          "median_ms": 0.296,
+          "min_ms": 0.292,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "history_before",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "ba69bf88184d0162f29a1c25206ba26773e42ffb6788da0cda498e51f5be9881",
+          "same_as_baseline": true,
+          "median_ms": 0.486,
+          "min_ms": 0.343,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=? AND <expr><?)"
+            ]
+          ]
+        },
+        {
+          "name": "overlap",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "aa9172a193eba1bf8d182fbe7339484c569b3821db3eb6c1d68aabb90bbcd6ce",
+          "same_as_baseline": true,
+          "median_ms": 0.013,
+          "min_ms": 0.013,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "failure_streak",
+          "scope": "current query branch",
+          "row_count": 500,
+          "sha256": "d0dbadc88c014331f46b902d91152bf1905f1c3d8fe319debfe80fa1044e5ef4",
+          "same_as_baseline": true,
+          "median_ms": 0.939,
+          "min_ms": 0.721,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "wide_failed",
+          "scope": "diagnostic global filter, not full History API",
+          "row_count": 100,
+          "sha256": "3e8facd6c80fbf5bd4bed8d328dbc598a140b7c8f09e8c389812cb9a79279009",
+          "same_as_baseline": true,
+          "median_ms": 0.474,
+          "min_ms": 0.412,
+          "plan": [
+            [
+              5,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=?)"
+            ],
+            [
+              21,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        },
+        {
+          "name": "status_counts",
+          "scope": "diagnostic global aggregation",
+          "row_count": 4,
+          "sha256": "7e925dcadb7c149575526e5465e730e1923ee27ee073601ec0112ca9d6700fe2",
+          "same_as_baseline": true,
+          "median_ms": 46.743,
+          "min_ms": 46.709,
+          "plan": [
+            [
+              7,
+              0,
+              199,
+              "SCAN runs USING COVERING INDEX idx_scheduled_task_runs_claim"
+            ]
+          ]
+        },
+        {
+          "name": "terminal_time_range",
+          "scope": "diagnostic terminal range, not proven current caller",
+          "row_count": 1,
+          "sha256": "913472257d0e9f93c554fb25d3c5932e56be20a11eaaae3aaea77654fc11c968",
+          "same_as_baseline": true,
+          "median_ms": 13.866,
+          "min_ms": 5.954,
+          "plan": [
+            [
+              3,
+              0,
+              45,
+              "SEARCH runs USING COVERING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for>? AND scheduled_for<?)"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "pending_only",
+      "index_bytes": 8192,
+      "indexes": [
+        {
+          "name": "idx_probe_pending_claim",
+          "bytes": 4096
+        },
+        {
+          "name": "idx_probe_pending_dispatch",
+          "bytes": 4096
+        }
+      ],
+      "cases": [
+        {
+          "name": "metrics_pending",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "a9aa85acf18adf4f2e42f1cb876a854cf82b70587922457d888db0e2df100099",
+          "same_as_baseline": true,
+          "median_ms": 558.636,
+          "min_ms": 309.164,
+          "plan": [
+            [
+              4,
+              0,
+              212,
+              "SCAN runs USING INDEX idx_scheduled_task_runs_latest"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_due",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "77471ebe3613f4714666523fa961eb443f57dc2396a31528afdbbea86fadc8f8",
+          "same_as_baseline": true,
+          "median_ms": 0.009,
+          "min_ms": 0.008,
+          "plan": [
+            [
+              4,
+              0,
+              193,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_claimed",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "same_as_baseline": true,
+          "median_ms": 0.006,
+          "min_ms": 0.004,
+          "plan": [
+            [
+              4,
+              0,
+              193,
+              "SEARCH runs USING INDEX idx_probe_pending_dispatch (lease_expires_at>?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_oldest",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "3388e812c89e68797ac7332eff30f7f9c21802bd30855a9210007afefed8686f",
+          "same_as_baseline": true,
+          "median_ms": 0.005,
+          "min_ms": 0.005,
+          "plan": [
+            [
+              4,
+              0,
+              193,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "legacy_claim_head",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "da7909f746a611f54e2989a4f1f676a7b328e5f0a13f29dd0ce83e35ad615998",
+          "same_as_baseline": true,
+          "median_ms": 0.004,
+          "min_ms": 0.004,
+          "plan": [
+            [
+              5,
+              0,
+              193,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_page",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "78a9ac9c7e54bb2ac598b017f3c19b5adb6b5ce47e62d4180e10998675d4e75b",
+          "same_as_baseline": true,
+          "median_ms": 0.12,
+          "min_ms": 0.116,
+          "plan": [
+            [
+              7,
+              0,
+              193,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (scheduled_for<?)"
+            ],
+            [
+              15,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_keyset",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "bb03386c3136a2afcc27c94aee58d133ce3f77ea400895bb5ca3879495448415",
+          "same_as_baseline": true,
+          "median_ms": 0.13,
+          "min_ms": 0.129,
+          "plan": [
+            [
+              7,
+              0,
+              193,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (scheduled_for<?)"
+            ],
+            [
+              21,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "latest_per_task",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "0938156f6b1f3cea22363ff79eaa43a10fd2dccb78f7a351ee8b0670d6c0f05e",
+          "same_as_baseline": true,
+          "median_ms": 0.428,
+          "min_ms": 0.366,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "history_before",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "ba69bf88184d0162f29a1c25206ba26773e42ffb6788da0cda498e51f5be9881",
+          "same_as_baseline": true,
+          "median_ms": 0.486,
+          "min_ms": 0.478,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=? AND <expr><?)"
+            ]
+          ]
+        },
+        {
+          "name": "overlap",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "aa9172a193eba1bf8d182fbe7339484c569b3821db3eb6c1d68aabb90bbcd6ce",
+          "same_as_baseline": true,
+          "median_ms": 0.011,
+          "min_ms": 0.01,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "failure_streak",
+          "scope": "current query branch",
+          "row_count": 500,
+          "sha256": "d0dbadc88c014331f46b902d91152bf1905f1c3d8fe319debfe80fa1044e5ef4",
+          "same_as_baseline": true,
+          "median_ms": 0.777,
+          "min_ms": 0.642,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "wide_failed",
+          "scope": "diagnostic global filter, not full History API",
+          "row_count": 100,
+          "sha256": "3e8facd6c80fbf5bd4bed8d328dbc598a140b7c8f09e8c389812cb9a79279009",
+          "same_as_baseline": true,
+          "median_ms": 9.956,
+          "min_ms": 8.009,
+          "plan": [
+            [
+              5,
+              0,
+              213,
+              "SCAN runs USING INDEX idx_runs_public_id"
+            ]
+          ]
+        },
+        {
+          "name": "status_counts",
+          "scope": "diagnostic global aggregation",
+          "row_count": 4,
+          "sha256": "7e925dcadb7c149575526e5465e730e1923ee27ee073601ec0112ca9d6700fe2",
+          "same_as_baseline": true,
+          "median_ms": 860.351,
+          "min_ms": 341.046,
+          "plan": [
+            [
+              8,
+              0,
+              212,
+              "SCAN runs USING INDEX idx_scheduled_task_runs_latest"
+            ],
+            [
+              11,
+              0,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ]
+          ]
+        },
+        {
+          "name": "terminal_time_range",
+          "scope": "diagnostic terminal range, not proven current caller",
+          "row_count": 1,
+          "sha256": "913472257d0e9f93c554fb25d3c5932e56be20a11eaaae3aaea77654fc11c968",
+          "same_as_baseline": true,
+          "median_ms": 373.479,
+          "min_ms": 200.726,
+          "plan": [
+            [
+              4,
+              0,
+              212,
+              "SCAN runs USING INDEX idx_scheduled_task_runs_latest"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "pending_plus_status",
+      "index_bytes": 3854336,
+      "indexes": [
+        {
+          "name": "idx_probe_pending_claim",
+          "bytes": 4096
+        },
+        {
+          "name": "idx_probe_pending_dispatch",
+          "bytes": 4096
+        },
+        {
+          "name": "idx_probe_status",
+          "bytes": 3846144
+        }
+      ],
+      "cases": [
+        {
+          "name": "metrics_pending",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "a9aa85acf18adf4f2e42f1cb876a854cf82b70587922457d888db0e2df100099",
+          "same_as_baseline": true,
+          "median_ms": 0.007,
+          "min_ms": 0.006,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_due",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "77471ebe3613f4714666523fa961eb443f57dc2396a31528afdbbea86fadc8f8",
+          "same_as_baseline": true,
+          "median_ms": 0.006,
+          "min_ms": 0.006,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_claimed",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "same_as_baseline": true,
+          "median_ms": 0.025,
+          "min_ms": 0.007,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_oldest",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "3388e812c89e68797ac7332eff30f7f9c21802bd30855a9210007afefed8686f",
+          "same_as_baseline": true,
+          "median_ms": 0.012,
+          "min_ms": 0.009,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "legacy_claim_head",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "da7909f746a611f54e2989a4f1f676a7b328e5f0a13f29dd0ce83e35ad615998",
+          "same_as_baseline": true,
+          "median_ms": 0.441,
+          "min_ms": 0.156,
+          "plan": [
+            [
+              5,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ],
+            [
+              27,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_page",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "78a9ac9c7e54bb2ac598b017f3c19b5adb6b5ce47e62d4180e10998675d4e75b",
+          "same_as_baseline": true,
+          "median_ms": 0.204,
+          "min_ms": 0.185,
+          "plan": [
+            [
+              7,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ],
+            [
+              14,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ],
+            [
+              61,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_keyset",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "bb03386c3136a2afcc27c94aee58d133ce3f77ea400895bb5ca3879495448415",
+          "same_as_baseline": true,
+          "median_ms": 0.15,
+          "min_ms": 0.136,
+          "plan": [
+            [
+              7,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ],
+            [
+              20,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ],
+            [
+              67,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        },
+        {
+          "name": "latest_per_task",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "0938156f6b1f3cea22363ff79eaa43a10fd2dccb78f7a351ee8b0670d6c0f05e",
+          "same_as_baseline": true,
+          "median_ms": 0.348,
+          "min_ms": 0.323,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "history_before",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "ba69bf88184d0162f29a1c25206ba26773e42ffb6788da0cda498e51f5be9881",
+          "same_as_baseline": true,
+          "median_ms": 3.248,
+          "min_ms": 1.159,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=? AND <expr><?)"
+            ]
+          ]
+        },
+        {
+          "name": "overlap",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "aa9172a193eba1bf8d182fbe7339484c569b3821db3eb6c1d68aabb90bbcd6ce",
+          "same_as_baseline": true,
+          "median_ms": 0.013,
+          "min_ms": 0.011,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "failure_streak",
+          "scope": "current query branch",
+          "row_count": 500,
+          "sha256": "d0dbadc88c014331f46b902d91152bf1905f1c3d8fe319debfe80fa1044e5ef4",
+          "same_as_baseline": true,
+          "median_ms": 4.029,
+          "min_ms": 3.567,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "wide_failed",
+          "scope": "diagnostic global filter, not full History API",
+          "row_count": 100,
+          "sha256": "3e8facd6c80fbf5bd4bed8d328dbc598a140b7c8f09e8c389812cb9a79279009",
+          "same_as_baseline": true,
+          "median_ms": 0.526,
+          "min_ms": 0.199,
+          "plan": [
+            [
+              5,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "status_counts",
+          "scope": "diagnostic global aggregation",
+          "row_count": 4,
+          "sha256": "7e925dcadb7c149575526e5465e730e1923ee27ee073601ec0112ca9d6700fe2",
+          "same_as_baseline": true,
+          "median_ms": 30.26,
+          "min_ms": 17.523,
+          "plan": [
+            [
+              7,
+              0,
+              198,
+              "SCAN runs USING COVERING INDEX idx_probe_status"
+            ]
+          ]
+        },
+        {
+          "name": "terminal_time_range",
+          "scope": "diagnostic terminal range, not proven current caller",
+          "row_count": 1,
+          "sha256": "913472257d0e9f93c554fb25d3c5932e56be20a11eaaae3aaea77654fc11c968",
+          "same_as_baseline": true,
+          "median_ms": 87.747,
+          "min_ms": 87.012,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "pending_leading_status_only",
+      "index_bytes": 8192,
+      "indexes": [
+        {
+          "name": "idx_probe_pending_claim",
+          "bytes": 4096
+        },
+        {
+          "name": "idx_probe_pending_dispatch",
+          "bytes": 4096
+        }
+      ],
+      "cases": [
+        {
+          "name": "metrics_pending",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "a9aa85acf18adf4f2e42f1cb876a854cf82b70587922457d888db0e2df100099",
+          "same_as_baseline": true,
+          "median_ms": 0.009,
+          "min_ms": 0.008,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_due",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "77471ebe3613f4714666523fa961eb443f57dc2396a31528afdbbea86fadc8f8",
+          "same_as_baseline": true,
+          "median_ms": 0.007,
+          "min_ms": 0.007,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_claimed",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "same_as_baseline": true,
+          "median_ms": 0.008,
+          "min_ms": 0.007,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_dispatch (dispatch_status=? AND lease_expires_at>?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_oldest",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "3388e812c89e68797ac7332eff30f7f9c21802bd30855a9210007afefed8686f",
+          "same_as_baseline": true,
+          "median_ms": 0.007,
+          "min_ms": 0.007,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "legacy_claim_head",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "da7909f746a611f54e2989a4f1f676a7b328e5f0a13f29dd0ce83e35ad615998",
+          "same_as_baseline": true,
+          "median_ms": 0.007,
+          "min_ms": 0.006,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_page",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "78a9ac9c7e54bb2ac598b017f3c19b5adb6b5ce47e62d4180e10998675d4e75b",
+          "same_as_baseline": true,
+          "median_ms": 0.334,
+          "min_ms": 0.196,
+          "plan": [
+            [
+              7,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ],
+            [
+              16,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_keyset",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "bb03386c3136a2afcc27c94aee58d133ce3f77ea400895bb5ca3879495448415",
+          "same_as_baseline": true,
+          "median_ms": 0.222,
+          "min_ms": 0.139,
+          "plan": [
+            [
+              7,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ],
+            [
+              22,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "latest_per_task",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "0938156f6b1f3cea22363ff79eaa43a10fd2dccb78f7a351ee8b0670d6c0f05e",
+          "same_as_baseline": true,
+          "median_ms": 0.455,
+          "min_ms": 0.444,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "history_before",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "ba69bf88184d0162f29a1c25206ba26773e42ffb6788da0cda498e51f5be9881",
+          "same_as_baseline": true,
+          "median_ms": 0.362,
+          "min_ms": 0.335,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=? AND <expr><?)"
+            ]
+          ]
+        },
+        {
+          "name": "overlap",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "aa9172a193eba1bf8d182fbe7339484c569b3821db3eb6c1d68aabb90bbcd6ce",
+          "same_as_baseline": true,
+          "median_ms": 0.013,
+          "min_ms": 0.011,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "failure_streak",
+          "scope": "current query branch",
+          "row_count": 500,
+          "sha256": "d0dbadc88c014331f46b902d91152bf1905f1c3d8fe319debfe80fa1044e5ef4",
+          "same_as_baseline": true,
+          "median_ms": 0.632,
+          "min_ms": 0.629,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "wide_failed",
+          "scope": "diagnostic global filter, not full History API",
+          "row_count": 100,
+          "sha256": "3e8facd6c80fbf5bd4bed8d328dbc598a140b7c8f09e8c389812cb9a79279009",
+          "same_as_baseline": true,
+          "median_ms": 12.166,
+          "min_ms": 9.245,
+          "plan": [
+            [
+              5,
+              0,
+              213,
+              "SCAN runs USING INDEX idx_runs_public_id"
+            ]
+          ]
+        },
+        {
+          "name": "status_counts",
+          "scope": "diagnostic global aggregation",
+          "row_count": 4,
+          "sha256": "7e925dcadb7c149575526e5465e730e1923ee27ee073601ec0112ca9d6700fe2",
+          "same_as_baseline": true,
+          "median_ms": 503.241,
+          "min_ms": 451.213,
+          "plan": [
+            [
+              8,
+              0,
+              212,
+              "SCAN runs USING INDEX idx_scheduled_task_runs_latest"
+            ],
+            [
+              11,
+              0,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ]
+          ]
+        },
+        {
+          "name": "terminal_time_range",
+          "scope": "diagnostic terminal range, not proven current caller",
+          "row_count": 1,
+          "sha256": "913472257d0e9f93c554fb25d3c5932e56be20a11eaaae3aaea77654fc11c968",
+          "same_as_baseline": true,
+          "median_ms": 265.17,
+          "min_ms": 258.659,
+          "plan": [
+            [
+              4,
+              0,
+              212,
+              "SCAN runs USING INDEX idx_scheduled_task_runs_latest"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "pending_leading_status_plus_status",
+      "index_bytes": 3854336,
+      "indexes": [
+        {
+          "name": "idx_probe_pending_claim",
+          "bytes": 4096
+        },
+        {
+          "name": "idx_probe_pending_dispatch",
+          "bytes": 4096
+        },
+        {
+          "name": "idx_probe_status",
+          "bytes": 3846144
+        }
+      ],
+      "cases": [
+        {
+          "name": "metrics_pending",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "a9aa85acf18adf4f2e42f1cb876a854cf82b70587922457d888db0e2df100099",
+          "same_as_baseline": true,
+          "median_ms": 0.008,
+          "min_ms": 0.006,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_due",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "77471ebe3613f4714666523fa961eb443f57dc2396a31528afdbbea86fadc8f8",
+          "same_as_baseline": true,
+          "median_ms": 0.008,
+          "min_ms": 0.007,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_claimed",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "same_as_baseline": true,
+          "median_ms": 0.005,
+          "min_ms": 0.004,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_dispatch (dispatch_status=? AND lease_expires_at>?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_oldest",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "3388e812c89e68797ac7332eff30f7f9c21802bd30855a9210007afefed8686f",
+          "same_as_baseline": true,
+          "median_ms": 0.005,
+          "min_ms": 0.005,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "legacy_claim_head",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "da7909f746a611f54e2989a4f1f676a7b328e5f0a13f29dd0ce83e35ad615998",
+          "same_as_baseline": true,
+          "median_ms": 0.004,
+          "min_ms": 0.004,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_page",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "78a9ac9c7e54bb2ac598b017f3c19b5adb6b5ce47e62d4180e10998675d4e75b",
+          "same_as_baseline": true,
+          "median_ms": 0.215,
+          "min_ms": 0.134,
+          "plan": [
+            [
+              7,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ],
+            [
+              16,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_keyset",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "bb03386c3136a2afcc27c94aee58d133ce3f77ea400895bb5ca3879495448415",
+          "same_as_baseline": true,
+          "median_ms": 0.159,
+          "min_ms": 0.131,
+          "plan": [
+            [
+              7,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_claim (dispatch_status=? AND scheduled_for<?)"
+            ],
+            [
+              22,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "latest_per_task",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "0938156f6b1f3cea22363ff79eaa43a10fd2dccb78f7a351ee8b0670d6c0f05e",
+          "same_as_baseline": true,
+          "median_ms": 0.323,
+          "min_ms": 0.298,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "history_before",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "ba69bf88184d0162f29a1c25206ba26773e42ffb6788da0cda498e51f5be9881",
+          "same_as_baseline": true,
+          "median_ms": 0.422,
+          "min_ms": 0.307,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=? AND <expr><?)"
+            ]
+          ]
+        },
+        {
+          "name": "overlap",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "aa9172a193eba1bf8d182fbe7339484c569b3821db3eb6c1d68aabb90bbcd6ce",
+          "same_as_baseline": true,
+          "median_ms": 0.012,
+          "min_ms": 0.01,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "failure_streak",
+          "scope": "current query branch",
+          "row_count": 500,
+          "sha256": "d0dbadc88c014331f46b902d91152bf1905f1c3d8fe319debfe80fa1044e5ef4",
+          "same_as_baseline": true,
+          "median_ms": 0.574,
+          "min_ms": 0.574,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "wide_failed",
+          "scope": "diagnostic global filter, not full History API",
+          "row_count": 100,
+          "sha256": "3e8facd6c80fbf5bd4bed8d328dbc598a140b7c8f09e8c389812cb9a79279009",
+          "same_as_baseline": true,
+          "median_ms": 0.089,
+          "min_ms": 0.086,
+          "plan": [
+            [
+              5,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "status_counts",
+          "scope": "diagnostic global aggregation",
+          "row_count": 4,
+          "sha256": "7e925dcadb7c149575526e5465e730e1923ee27ee073601ec0112ca9d6700fe2",
+          "same_as_baseline": true,
+          "median_ms": 12.668,
+          "min_ms": 9.407,
+          "plan": [
+            [
+              7,
+              0,
+              198,
+              "SCAN runs USING COVERING INDEX idx_probe_status"
+            ]
+          ]
+        },
+        {
+          "name": "terminal_time_range",
+          "scope": "diagnostic terminal range, not proven current caller",
+          "row_count": 1,
+          "sha256": "913472257d0e9f93c554fb25d3c5932e56be20a11eaaae3aaea77654fc11c968",
+          "same_as_baseline": true,
+          "median_ms": 57.256,
+          "min_ms": 51.598,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_probe_status (dispatch_status=?)"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "pending_dispatch_keep_full_claim",
+      "index_bytes": 8302592,
+      "indexes": [
+        {
+          "name": "idx_probe_pending_dispatch",
+          "bytes": 4096
+        },
+        {
+          "name": "idx_scheduled_task_runs_claim",
+          "bytes": 8298496
+        }
+      ],
+      "cases": [
+        {
+          "name": "metrics_pending",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "a9aa85acf18adf4f2e42f1cb876a854cf82b70587922457d888db0e2df100099",
+          "same_as_baseline": true,
+          "median_ms": 0.007,
+          "min_ms": 0.007,
+          "plan": [
+            [
+              4,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_due",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "77471ebe3613f4714666523fa961eb443f57dc2396a31528afdbbea86fadc8f8",
+          "same_as_baseline": true,
+          "median_ms": 0.007,
+          "min_ms": 0.006,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_claimed",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "same_as_baseline": true,
+          "median_ms": 0.004,
+          "min_ms": 0.004,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_probe_pending_dispatch (dispatch_status=? AND lease_expires_at>?)"
+            ]
+          ]
+        },
+        {
+          "name": "metrics_oldest",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "3388e812c89e68797ac7332eff30f7f9c21802bd30855a9210007afefed8686f",
+          "same_as_baseline": true,
+          "median_ms": 0.005,
+          "min_ms": 0.004,
+          "plan": [
+            [
+              4,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "legacy_claim_head",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "da7909f746a611f54e2989a4f1f676a7b328e5f0a13f29dd0ce83e35ad615998",
+          "same_as_baseline": true,
+          "median_ms": 0.005,
+          "min_ms": 0.004,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_page",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "78a9ac9c7e54bb2ac598b017f3c19b5adb6b5ce47e62d4180e10998675d4e75b",
+          "same_as_baseline": true,
+          "median_ms": 0.114,
+          "min_ms": 0.112,
+          "plan": [
+            [
+              7,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ],
+            [
+              16,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "dispatcher_keyset",
+          "scope": "current query branch",
+          "row_count": 3,
+          "sha256": "bb03386c3136a2afcc27c94aee58d133ce3f77ea400895bb5ca3879495448415",
+          "same_as_baseline": true,
+          "median_ms": 0.115,
+          "min_ms": 0.114,
+          "plan": [
+            [
+              7,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for<?)"
+            ],
+            [
+              22,
+              0,
+              47,
+              "SEARCH claim USING INDEX sqlite_autoindex_dispatcher_claim_leases_1 (adapter_name=? AND source_id=?) LEFT-JOIN"
+            ]
+          ]
+        },
+        {
+          "name": "latest_per_task",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "0938156f6b1f3cea22363ff79eaa43a10fd2dccb78f7a351ee8b0670d6c0f05e",
+          "same_as_baseline": true,
+          "median_ms": 0.279,
+          "min_ms": 0.271,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "history_before",
+          "scope": "current query branch",
+          "row_count": 100,
+          "sha256": "ba69bf88184d0162f29a1c25206ba26773e42ffb6788da0cda498e51f5be9881",
+          "same_as_baseline": true,
+          "median_ms": 0.276,
+          "min_ms": 0.269,
+          "plan": [
+            [
+              5,
+              0,
+              49,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=? AND <expr><?)"
+            ]
+          ]
+        },
+        {
+          "name": "overlap",
+          "scope": "current query branch",
+          "row_count": 1,
+          "sha256": "aa9172a193eba1bf8d182fbe7339484c569b3821db3eb6c1d68aabb90bbcd6ce",
+          "same_as_baseline": true,
+          "median_ms": 0.009,
+          "min_ms": 0.008,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "failure_streak",
+          "scope": "current query branch",
+          "row_count": 500,
+          "sha256": "d0dbadc88c014331f46b902d91152bf1905f1c3d8fe319debfe80fa1044e5ef4",
+          "same_as_baseline": true,
+          "median_ms": 0.525,
+          "min_ms": 0.481,
+          "plan": [
+            [
+              5,
+              0,
+              60,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_latest (scheduled_task_id=?)"
+            ]
+          ]
+        },
+        {
+          "name": "wide_failed",
+          "scope": "diagnostic global filter, not full History API",
+          "row_count": 100,
+          "sha256": "3e8facd6c80fbf5bd4bed8d328dbc598a140b7c8f09e8c389812cb9a79279009",
+          "same_as_baseline": true,
+          "median_ms": 0.24,
+          "min_ms": 0.237,
+          "plan": [
+            [
+              5,
+              0,
+              61,
+              "SEARCH runs USING INDEX idx_scheduled_task_runs_claim (dispatch_status=?)"
+            ],
+            [
+              21,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        },
+        {
+          "name": "status_counts",
+          "scope": "diagnostic global aggregation",
+          "row_count": 4,
+          "sha256": "7e925dcadb7c149575526e5465e730e1923ee27ee073601ec0112ca9d6700fe2",
+          "same_as_baseline": true,
+          "median_ms": 9.318,
+          "min_ms": 9.102,
+          "plan": [
+            [
+              7,
+              0,
+              199,
+              "SCAN runs USING COVERING INDEX idx_scheduled_task_runs_claim"
+            ]
+          ]
+        },
+        {
+          "name": "terminal_time_range",
+          "scope": "diagnostic terminal range, not proven current caller",
+          "row_count": 1,
+          "sha256": "913472257d0e9f93c554fb25d3c5932e56be20a11eaaae3aaea77654fc11c968",
+          "same_as_baseline": true,
+          "median_ms": 3.023,
+          "min_ms": 2.657,
+          "plan": [
+            [
+              3,
+              0,
+              45,
+              "SEARCH runs USING COVERING INDEX idx_scheduled_task_runs_claim (dispatch_status=? AND scheduled_for>? AND scheduled_for<?)"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "source_sha256_unchanged": true,
+  "new_owned_temp_removed": true,
+  "conservative_candidate_sql": {
+    "pending_dispatch": "CREATE INDEX idx_probe_pending_dispatch ON runs(dispatch_status,lease_expires_at,scheduled_for,cast(legacy_key AS integer)) WHERE record_type='scheduled_task_runs' AND dispatch_status='pending'",
+    "full_claim": "CREATE INDEX idx_scheduled_task_runs_claim ON runs(dispatch_status,scheduled_for,cast(legacy_key AS integer)) WHERE record_type='scheduled_task_runs'"
+  },
+  "selected_for_runtime": false,
+  "capacity_decomposition": {
+    "original_two_indexes": 18493440,
+    "candidate_two_indexes": 8302592,
+    "measured_total_reduction": 10190848,
+    "dispatch_predicate_reduction": 9416704,
+    "claim_rebuild_compaction": 774144
+  }
+}
