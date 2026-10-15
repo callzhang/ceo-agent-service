@@ -180,3 +180,20 @@ Bounded current-code scheduled-history findings are recorded separately in
 83610exact zero-work summaries as a classification cohort only, with concrete
 source/recovery references that prevent equating the cohort to deletable rows.
 No age cutoff, claim cleanup, history retirement or schema behavior was added.
+
+## Exact264 source versus completed native-revision target
+
+At runtime candidate6056cddc, the completed native revision case target had
+506163200file/page bytes,0free-list bytes and108noninternal tables. Its frozen
+264source had484073472file bytes. This comparison includes controlled native
+Task/Consumer/Audit/review/result/receipt and Email direct-action fixture writes;
+it is not a same-facts migration decomposition. It still does not establish a
+capacity reduction and does not supersede the earlier donor active-page comparison.
+The target working database was removed after aggregate evidence retention.
+
+Actual remaining Email cache fields/callers are documented in
+`docs/database-redesign-email-cache-findings-20261015.md`: normalized_text and
+legacy model_text persist outside completed-task input compaction. Their Console,
+selected-training, owner-example and thread/recovery consumers need ref-based
+input loading before retirement. No cache was blanked, no provider recoverability
+was assumed, and no field-level reclaimed-size forecast is claimed.

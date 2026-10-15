@@ -1,0 +1,403 @@
+{
+  "scope": "real Codex Consumer/Audit on owned264 SQLite source, in-memory outbound provider only",
+  "observed_at_utc": "2026-10-15T09:46:04.545040+00:00",
+  "runtime_candidate_commit": "6056cddc6fe0c11ab631e2d80b7e8df71a2498f9",
+  "source_ref": "264c073cfe779b76a5a7f001480149fb784f0591",
+  "cases": {
+    "approve": {
+      "execution_binding": {
+        "observed_at_utc": "2026-10-15T09:19:02.956175+00:00",
+        "observation": "immediately after native harness launch; checkout HEAD and source backup are separate observations",
+        "candidate_commit": "6056cddc6fe0c11ab631e2d80b7e8df71a2498f9",
+        "module_sha256": {
+          "scripts/validate_native_copy_lifecycle.py": "d04acaf0c1f911a2837720222bc33d6dca683d0788c984f6d445b907d6598831",
+          "app/store.py": "8179841ddcd45f7819f0313c424a0eb63f5cae33fc93c44f12b6dd6953fd1327",
+          "app/email_store.py": "e3f72fb845104430514972038a936fcedd71f8c72695a1d82198bda76f625f37",
+          "app/action_storage.py": "5fc0787a1ab89be57b489f318b2821243d085a40a26e4083c140fd3e798cfac4",
+          "app/action_email_storage.py": "12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c",
+          "app/action_email_definitions.py": "edde1bd647c5c04a515f6cf107390b3bc02dedbec1b0b02a32b00ef26469b4bf",
+          "app/worker.py": "faaaa314d14e72d71472172dc5a6bb5b9d8e5c71d92e990dbc35beee01ef29dd",
+          "app/consumer_agent.py": "d729837555521f17c3046ec3be1e82abf09bcadc37481e83bce54e199a44176b",
+          "app/audit_agent.py": "aa5eee84db51f39beff8a910f1ac342c3aedc5921a76110fde1ea8455a414ab8",
+          "app/system_executor.py": "61850795c77645d7714e6ba6541b9ea3c84a15f367b63433b3728d2fbc6e9606",
+          "app/system_action_handlers.py": "00f7a7cab6bd3a6773f101f4254432f3a6ff6b5acdadc2445bbdb7d3f78b87ca"
+        },
+        "case": "approve"
+      },
+      "result": {
+        "case": "approve",
+        "interrupted": false,
+        "source": {
+          "source_ref": "264c073cfe779b76a5a7f001480149fb784f0591",
+          "production_head_after": "264c073cfe779b76a5a7f001480149fb784f0591",
+          "observed_at_utc": "2026-10-15T09:15:41.822422+00:00",
+          "bytes": 484073472,
+          "store": "2026-10-13.5",
+          "email": 51,
+          "tables": 121,
+          "fk_findings": 1,
+          "sha256": "57c9595a77e71fab6f89a518b68307b490eaf0a2833fc216610611cc5f10060d",
+          "schema_binding_verified": true,
+          "integrity_check": "ok"
+        },
+        "published_pair": {
+          "store": "2026-10-14.1",
+          "email": 52,
+          "action_types": 29,
+          "retired_email_tables": 13
+        },
+        "native_baseline_phase": "post_email_publication",
+        "task_id": 405033,
+        "conversation_id": "native-copy-acceptance:bc7078f1-8a33-430b-bbef-9dc4d2340e36",
+        "status": "done",
+        "completed": true,
+        "native_invocations": [
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "19c15c5a33dab87b6f2728ae8b197f924ee37a979cf896dda67cddc142a20755"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "a4d10500b5f1dd2f195355dac6dcd2a95f6fbc9f8b34c2a33f1bcad9796a5f22"
+          }
+        ],
+        "provider_calls": 1,
+        "verification_calls": 1,
+        "runs": [
+          {
+            "id": 361035,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": null,
+            "session_id": "01a13edf-031a-7c40-843a-943f6f33ef42",
+            "start": 0,
+            "end": 42,
+            "native_exists": true,
+            "tool_events": 5,
+            "error": "",
+            "attempts": [
+              {
+                "id": 361036,
+                "status": "completed",
+                "session_id": "01a13edf-031a-7c40-843a-943f6f33ef42",
+                "start": 0,
+                "end": 42
+              }
+            ]
+          },
+          {
+            "id": 361037,
+            "role": "audit",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": 361035,
+            "session_id": "01a13edf-6ef9-7181-8f97-de63aba3d894",
+            "start": 0,
+            "end": 29,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 361038,
+                "status": "completed",
+                "session_id": "01a13edf-6ef9-7181-8f97-de63aba3d894",
+                "start": 0,
+                "end": 29
+              }
+            ]
+          }
+        ],
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "reopen_no_new_invocation": 2,
+        "email_direct": {
+          "context_messages": 1,
+          "prior_context_receipts": 0,
+          "direct_attempts": 1,
+          "direct_status": "done",
+          "provider_result_persisted": true,
+          "history_locator_valid": true
+        },
+        "original_tables_unchanged": 103,
+        "passed": true
+      }
+    },
+    "revision": {
+      "execution_binding": {
+        "observed_at_utc": "2026-10-15T09:27:39.688704+00:00",
+        "observation": "before native harness launch; checkout HEAD and source backup are separate observations",
+        "candidate_commit": "6056cddc6fe0c11ab631e2d80b7e8df71a2498f9",
+        "module_sha256": {
+          "scripts/validate_native_copy_lifecycle.py": "d04acaf0c1f911a2837720222bc33d6dca683d0788c984f6d445b907d6598831",
+          "app/store.py": "8179841ddcd45f7819f0313c424a0eb63f5cae33fc93c44f12b6dd6953fd1327",
+          "app/email_store.py": "e3f72fb845104430514972038a936fcedd71f8c72695a1d82198bda76f625f37",
+          "app/action_storage.py": "5fc0787a1ab89be57b489f318b2821243d085a40a26e4083c140fd3e798cfac4",
+          "app/action_email_storage.py": "12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c",
+          "app/action_email_definitions.py": "edde1bd647c5c04a515f6cf107390b3bc02dedbec1b0b02a32b00ef26469b4bf",
+          "app/worker.py": "faaaa314d14e72d71472172dc5a6bb5b9d8e5c71d92e990dbc35beee01ef29dd",
+          "app/consumer_agent.py": "d729837555521f17c3046ec3be1e82abf09bcadc37481e83bce54e199a44176b",
+          "app/audit_agent.py": "aa5eee84db51f39beff8a910f1ac342c3aedc5921a76110fde1ea8455a414ab8",
+          "app/system_executor.py": "61850795c77645d7714e6ba6541b9ea3c84a15f367b63433b3728d2fbc6e9606",
+          "app/system_action_handlers.py": "00f7a7cab6bd3a6773f101f4254432f3a6ff6b5acdadc2445bbdb7d3f78b87ca"
+        },
+        "case": "revision"
+      },
+      "result": {
+        "case": "revision",
+        "interrupted": false,
+        "source": {
+          "source_ref": "264c073cfe779b76a5a7f001480149fb784f0591",
+          "production_head_after": "264c073cfe779b76a5a7f001480149fb784f0591",
+          "observed_at_utc": "2026-10-15T09:15:41.822422+00:00",
+          "bytes": 484073472,
+          "store": "2026-10-13.5",
+          "email": 51,
+          "tables": 121,
+          "fk_findings": 1,
+          "sha256": "57c9595a77e71fab6f89a518b68307b490eaf0a2833fc216610611cc5f10060d",
+          "schema_binding_verified": true,
+          "integrity_check": "ok"
+        },
+        "published_pair": {
+          "store": "2026-10-14.1",
+          "email": 52,
+          "action_types": 29,
+          "retired_email_tables": 13
+        },
+        "native_baseline_phase": "post_email_publication",
+        "task_id": 405033,
+        "conversation_id": "native-copy-acceptance:d4413a17-1fa8-4c62-b14d-8ec050447ee7",
+        "status": "done",
+        "completed": true,
+        "native_invocations": [
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "466407955d1db3bcfaedd471563ff494725f2b6334cb2b506e34b593b4e61a37"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "346949ffb934448f758b5648c759f80f498ff0607cd5c99a0dddab8fd2488450"
+          },
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "c1e2c3e393b87337200d1a57717e3c0d0243e709674950c0f448cd31c664f9a9"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "648186d75d1986df9a7d449404a954a4cd830062777ed4ca2f51ff4b298f9993"
+          },
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "838bd079afd297b74eb5b6628b9b78d8916443ea9565fad93337b82899f3f5a6"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "09be63a952fc4d7838d106d5d44ff4c05c384b971aa7237ff708eadfa9fa024b"
+          }
+        ],
+        "provider_calls": 1,
+        "verification_calls": 1,
+        "runs": [
+          {
+            "id": 361035,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": null,
+            "session_id": "01a13ee8-38b5-7d53-acff-31974ff288e0",
+            "start": 0,
+            "end": 36,
+            "native_exists": true,
+            "tool_events": 5,
+            "error": "",
+            "attempts": [
+              {
+                "id": 361036,
+                "status": "completed",
+                "session_id": "01a13ee8-38b5-7d53-acff-31974ff288e0",
+                "start": 0,
+                "end": 36
+              }
+            ]
+          },
+          {
+            "id": 361037,
+            "role": "audit",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": 361035,
+            "session_id": "01a13ee8-b48e-7610-9538-e6378bd919a2",
+            "start": 0,
+            "end": 29,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 361038,
+                "status": "completed",
+                "session_id": "01a13ee8-b48e-7610-9538-e6378bd919a2",
+                "start": 0,
+                "end": 29
+              }
+            ]
+          },
+          {
+            "id": 361039,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 1,
+            "parent_id": 361037,
+            "session_id": "01a13ee8-38b5-7d53-acff-31974ff288e0",
+            "start": 0,
+            "end": 67,
+            "native_exists": true,
+            "tool_events": 5,
+            "error": "",
+            "attempts": [
+              {
+                "id": 361040,
+                "status": "completed",
+                "session_id": "01a13ee8-38b5-7d53-acff-31974ff288e0",
+                "start": 36,
+                "end": 67
+              }
+            ]
+          },
+          {
+            "id": 361041,
+            "role": "audit",
+            "status": "completed",
+            "revision": 1,
+            "parent_id": 361039,
+            "session_id": "01a13ee9-76d4-7230-bb4f-b758419bd42b",
+            "start": 0,
+            "end": 29,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 361042,
+                "status": "completed",
+                "session_id": "01a13ee9-76d4-7230-bb4f-b758419bd42b",
+                "start": 0,
+                "end": 29
+              }
+            ]
+          },
+          {
+            "id": 361043,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 2,
+            "parent_id": 361041,
+            "session_id": "01a13ee8-38b5-7d53-acff-31974ff288e0",
+            "start": 0,
+            "end": 98,
+            "native_exists": true,
+            "tool_events": 5,
+            "error": "",
+            "attempts": [
+              {
+                "id": 361044,
+                "status": "completed",
+                "session_id": "01a13ee8-38b5-7d53-acff-31974ff288e0",
+                "start": 67,
+                "end": 98
+              }
+            ]
+          },
+          {
+            "id": 361045,
+            "role": "audit",
+            "status": "completed",
+            "revision": 2,
+            "parent_id": 361043,
+            "session_id": "01a13eea-42f0-7343-85c2-516b47cea277",
+            "start": 0,
+            "end": 29,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 361046,
+                "status": "completed",
+                "session_id": "01a13eea-42f0-7343-85c2-516b47cea277",
+                "start": 0,
+                "end": 29
+              }
+            ]
+          }
+        ],
+        "reviews": [
+          {
+            "id": 773,
+            "decision": "return",
+            "proposal_revision": 0,
+            "candidate_digest": "b7c06bbfe0dabbd37ff671ab9ba4557cb903fc11643677a68c784d06263efd86"
+          },
+          {
+            "id": 774,
+            "decision": "return",
+            "proposal_revision": 1,
+            "candidate_digest": "9e9c5960449b3b7997ed47d37eb3e233f8b6448e605405243fe8afedcb4adbd3"
+          },
+          {
+            "id": 775,
+            "decision": "approve",
+            "proposal_revision": 2,
+            "candidate_digest": "c987531cb465168ac238beb24eb7f295df7facf8cb6f457bc60088ef7fbcb210"
+          }
+        ],
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "reopen_no_new_invocation": 6,
+        "email_direct": {
+          "context_messages": 1,
+          "prior_context_receipts": 0,
+          "direct_attempts": 1,
+          "direct_status": "done",
+          "provider_result_persisted": true,
+          "history_locator_valid": true
+        },
+        "original_tables_unchanged": 103,
+        "passed": true
+      },
+      "target_capacity": {
+        "file_bytes": 506163200,
+        "page_bytes": 506163200,
+        "freelist_bytes": 0,
+        "noninternal_tables": 108,
+        "scope": "post-native synthetic writes; source-versus-target file metadata, not same-facts capacity decomposition"
+      }
+    }
+  },
+  "pending_cases": [
+    "no_action",
+    "technical_retry",
+    "settlement_recovery"
+  ],
+  "limit": "Two native cases complete; no final-head CI, production publication, capacity reduction or full10+1 acceptance."
+}

@@ -3222,3 +3222,47 @@ passed. Both focused runs used explicit basetemps beneath the owned
 and its absence verified. No full file/suite, native CLI, provider, production,
 push, main merge or deploy was run for this test-only repair. Fresh independent
 SPEC/QUALITY review and Linux CI remain separate acceptance steps.
+
+### Root acceptance: precise Linux trace test and two actual native cases
+
+Root accepts5d9bac60 after fresh sequential SPEC and QUALITY PASS. Independent
+reviews verified all9original assertions/6read-prefix entries and the full prior
+AST after removing the real native-query probe and one exact allowed statement.
+SPEC separately executed the real query, confirmed the exact trace and integer,
+and checked8write/argument plus6near-match rejections. Neither repeated the
+implementer two-case RED/GREEN. SQLite documents schema.data_version as a change
+indication query: https://sqlite.org/pragma.html#pragma_data_version .
+
+Earlier CI38705149084 atcfc71b52 completed with2failed,13746passed,118skipped
+and44deselected in4282.84seconds. Its failures were the chronology fixture now
+fixed by authoritative3950/main264 and the exact quoted-main read now covered
+by5d9bac60. This diagnosis and local regression do not constitute final Linux CI.
+
+Actual native approval and revision ran committed6056cddc against the verified
+264source backup. All11recorded runtime/harness hashes remain unchanged at this
+test/document-only successor. Aggregate native evidence is
+`docs/superpowers/specs/2026-10-15-database-redesign-email-actions-native-copy.json`.
+Only native session IDs/ranges and result metadata are retained, no trajectory
+body copy. Source SHA57c9595a77e71fab6f89a518b68307b490eaf0a2833fc216610611cc5f10060d
+remained unchanged in both completed cases.
+
+| Actual case | Native CLI calls | Review/revision evidence | Durable result |
+| --- | ---: | --- | --- |
+| approve |2| Consumer/Audit completed revision0 | done;1fake provider send/verification;1receipt/sent reply/business Attempt |
+| revision |6| return at0, return at1, approve at2 with retained parent/review relations | done;1fake provider send/verification;1receipt/sent reply/business Attempt |
+
+Both cases prove persisted terminal reuse without another invocation, completed
+input compaction/provenance, current Email context/direct attempt/receipt and
+History locator through public APIs, all103original relevant tables preserved,
+and unchanged source/baseline hashes. Both exact owned native working roots were
+removed after aggregate preservation and no-open-handle checks. The one verified
+source snapshot was moved to the next owned case root, checked again by SHA; no
+historical test backups were retained.
+
+No-action, technical-retry and settlement-recovery native cases remain pending.
+The revision target metadata is506163200bytes, zero free pages and108noninternal
+tables versus484073472source bytes. Controlled native writes make this a source/
+post-test target observation, not a same-facts page decomposition. It establishes
+no capacity saving; the prior controlled donor comparison already records growth.
+No real provider send, production write, main merge or deploy occurred. PR90 stays
+draft; final-head CI and full10core-table-plus-ledger implementation remain open.
