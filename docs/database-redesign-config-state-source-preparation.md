@@ -198,3 +198,17 @@ declaration/storage, pure migration/inverse, current caller/paired publication,
 and actual-copy gates each need their own evidence. This source-only oracle
 does not establish target parity, migration readiness, production behavior,
 or a release. It introduces no schema version, audit rule or retention policy.
+
+### Allocator assertion SPEC follow-up
+
+The initial allocator check used a lower bound and would accept a higher
+`sqlite_sequence` value. The test now requires exactly 700, 901 and 901 for
+`managed_skills`, `managed_skill_revisions` and `runtime_skill_configs` in
+each captured variant; the shared expectations also require actual and fresh
+to agree. A temporary `seq + 1` mutant of the same test passed both variants
+with the old assertion (2 passed), then failed both variants with the exact
+assertion (`701 != 700`; 2 expected failures). The unmutated allocator plus
+accepted config metadata checks passed 8 cases in 0.59 seconds, and the full
+new source-contract file passed 19 cases in 14.30 seconds. Ruff, compileall
+and diff checks passed. The temporary mutant was removed by its owned
+`TemporaryDirectory`; no captured declaration or runtime code changed.

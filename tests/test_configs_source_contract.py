@@ -68,6 +68,11 @@ def test_native_text_keys_keep_source_null_and_binary_rules(variant):
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
 def test_three_autoincrement_sequences_and_three_without_rowid_tables(variant):
     with source_db(variant) as db:
+        expected_sequences = {
+            "managed_skills": 700,
+            "managed_skill_revisions": 901,
+            "runtime_skill_configs": 901,
+        }
         for table, columns in (
             ("managed_skills", {"name": "s", "display_name": "S"}),
             ("managed_skill_revisions", {"skill_id": 700, "revision_number": 1,
@@ -89,7 +94,7 @@ def test_three_autoincrement_sequences_and_three_without_rowid_tables(variant):
                     assert insert(db, table, {"id": 901, "status": "bad"}, ignore=True).rowcount == 0
                 else:
                     assert insert(db, table, {"id": 901, **columns, "revision_number": -1}, ignore=True).rowcount == 0
-            assert db.execute("select seq from sqlite_sequence where name=?", (table,)).fetchone()[0] >= (901 if table != "managed_skills" else 700)
+            assert db.execute("select seq from sqlite_sequence where name=?", (table,)).fetchone()[0] == expected_sequences[table]
         for table in ("email_category_description_revisions", "email_model_mode_transitions", "email_model_promotion_configs"):
             with pytest.raises(sqlite3.OperationalError, match="no such column: rowid"):
                 db.execute(f"select rowid from {table}").fetchall()
