@@ -4998,8 +4998,9 @@ def main() -> None:
             inspected_store = AutoReplyStore(settings.db_path)
         else:
             from contextvars import ContextVar
-            db = sqlite3.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True)
-            db.row_factory = sqlite3.Row
+            import sqlite3 as sqlite3_module
+            db = sqlite3_module.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True)
+            db.row_factory = sqlite3_module.Row
             inspected_store = AutoReplyStore.__new__(AutoReplyStore)
             inspected_store.path = settings.db_path
             inspected_store._read_snapshot_connection = ContextVar(
