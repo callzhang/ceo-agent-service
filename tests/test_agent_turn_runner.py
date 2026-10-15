@@ -467,6 +467,44 @@ def test_process_failure_detail_keeps_diagnostics_without_agent_output():
     assert "private business output" not in detail
 
 
+def test_process_failure_detail_redacts_original_lines_before_joining_fields():
+    diagnostic = "access token: load access token: acquiring file lock"
+    process = ProcessRunResult(
+        returncode=1,
+        stdout=json.dumps({
+            "type": "error",
+            "error": {"message": "secret=other-value\nmore diagnostics"},
+        }),
+        stderr="token=secret-value \t\n" + diagnostic,
+    )
+
+    detail = _process_failure_detail(process)
+
+    assert "secret-value" not in detail
+    assert "other-value" not in detail
+    assert diagnostic in detail
+    assert "more diagnostics" in detail
+    assert "[REDACTED]" in detail
+
+
+@pytest.mark.parametrize(("raw", "secret"), [
+    ("Bearer\nabcdefghi", "abcdefghi"),
+    ("Basic\nYWJjZGVmZ2g=", "YWJjZGVmZ2g="),
+    ("token=\nsecret-value", "secret-value"),
+])
+def test_process_failure_detail_keeps_cross_line_credential_redaction(raw, secret):
+    process = ProcessRunResult(
+        returncode=1,
+        stdout=json.dumps({"type": "error", "error": {"message": raw}}),
+        stderr="",
+    )
+
+    detail = _process_failure_detail(process)
+
+    assert secret not in detail
+    assert "[REDACTED]" in detail
+
+
 def test_raise_for_process_failure_attaches_diagnostics_to_runtime_error():
     class Store:
         def get_agent_run(self, run_id: int):

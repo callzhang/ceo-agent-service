@@ -1042,7 +1042,12 @@ def _create_service_worker(settings: WorkerSettings, runtime_refresher, runtime_
     )
 
 
-def _service_command_registry(store: AutoReplyStore, reply_worker, settings: WorkerSettings):
+def _service_command_registry(
+    store: AutoReplyStore,
+    reply_worker,
+    settings: WorkerSettings,
+    runtime_skill_snapshot=None,
+):
     """Bind scheduled service commands to the same operations the CLI runs."""
     from app.agent_cron.commands import ServiceCommandRegistry
     from app.email_scheduled_command import EmailMessageCheckOnceCommand
@@ -1092,7 +1097,7 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
             ),
             "scan-oa-approvals": lambda: (
                 "scan-oa-approvals "
-                f"queued={scan_oa_approvals_command(settings, max_new_items=settings.max_batches)}"
+                f"queued={scan_oa_approvals_command(settings, max_new_items=settings.max_batches, runtime_skill_snapshot=runtime_skill_snapshot)}"
             ),
             "scan-meeting-todos-once": lambda: (
                 "scan-meeting-todos-once "
@@ -1229,7 +1234,9 @@ def run_agent_cron_dispatcher_loop(
     )
     trigger_consumer = ScheduledTaskTriggerConsumer(
         store=store, option_service=options,
-        commands=_service_command_registry(store, reply_worker, settings),
+        commands=_service_command_registry(
+            store, reply_worker, settings, runtime_skill_snapshot
+        ),
     )
     execution_consumer = ScheduledAgentConsumer(
         store=store, option_service=options,
@@ -2711,6 +2718,7 @@ def scan_oa_approvals_command(
     settings: WorkerSettings,
     *,
     max_new_items: int | None = None,
+    runtime_skill_snapshot=None,
 ) -> int:
     from app.task_scanners import scan_pending_oa_approvals
 
@@ -2720,11 +2728,21 @@ def scan_oa_approvals_command(
         ding_robot_name=settings.ding_robot_name,
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
+    from app.agent_cron.commands import current_service_command_consumer_context
+
+    skill_options = None
+    if current_service_command_consumer_context() is not None:
+        if runtime_skill_snapshot is None:
+            runtime_skill_snapshot = _resolve_service_runtime_skills(settings)
+        skill_options = _scheduled_task_option_service(
+            settings, runtime_skill_snapshot
+        )
     queued = scan_pending_oa_approvals(
         store,
         dws,
         lookback_days=settings.oa_pending_scan_lookback_days,
         max_new_items=max_new_items,
+        skill_options=skill_options,
     )
     print(f"scan-oa-approvals queued={queued}", flush=True)
     return queued

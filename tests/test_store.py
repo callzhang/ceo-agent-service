@@ -11293,19 +11293,49 @@ def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     input_id = store.enqueue_work_summary_input("local_file", "file:reference", "{}")
     [claimed] = store.claim_work_summary_inputs(1)
-    store.mark_work_summary_input_skipped(claimed.id, "no usable material")
     store.record_error(
         "work_summary_input",
         str(input_id),
         "task_agent",
         "validation failed",
     )
+    store.mark_work_summary_input_skipped(claimed.id, "no usable material")
 
     assert store.resolve_errors_recovered_by_terminal_work_summary_inputs() == 1
     with store._connect() as db:
         row = db.execute("select resolved_at from errors").fetchone()
     assert row is not None
     assert row["resolved_at"]
+
+
+@pytest.mark.parametrize(
+    "incident_time, expected_count",
+    [
+        ("2026-10-15 06:59:59", 1),
+        ("2026-10-15 07:00:00", 1),
+        ("2026-10-15 07:00:01", 0),
+    ],
+)
+def test_terminal_work_summary_incident_recovery_uses_incident_time(
+    tmp_path, incident_time, expected_count
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    input_id = store.enqueue_work_summary_input("local_file", "file:reference", "{}")
+    [claimed] = store.claim_work_summary_inputs(1)
+    store.record_error("work_summary_input", str(input_id), "task_agent", "validation failed")
+    store.mark_work_summary_input_skipped(claimed.id, "no usable material")
+    with store._connect() as db:
+        db.execute(
+            "update tasks set updated_at='2026-10-15 07:00:00' "
+            "where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            (input_id,),
+        )
+        db.execute("update errors set created_at=?", (incident_time,))
+
+    assert store.resolve_errors_recovered_by_terminal_work_summary_inputs() == expected_count
+    with store._connect() as db:
+        row = db.execute("select resolved_at from errors").fetchone()
+    assert bool(row["resolved_at"]) is (expected_count == 1)
 
 
 def test_terminal_work_input_compacts_atomically_with_adopted_project(tmp_path: Path):

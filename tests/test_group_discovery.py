@@ -12,7 +12,7 @@ from app.group_discovery import (
     GroupDiscoveryService,
     GroupRef,
     MemberRef,
-    ParticipantCoverageEvidence,
+    MemberPrecisionEvidence,
     ProviderCapabilities,
     ProviderScope,
     RetryableProviderError,
@@ -24,11 +24,11 @@ class FakePolicy:
     def build_queries(self, request):
         return (request.subject,)
 
-    def participant_coverage(self, request, members):
+    def member_precision(self, request, members):
         selected = {member.scoped_key for member in request.audience}
         present = len(selected & {member.scoped_key for member in members})
         status = "eligible" if present >= 2 else "ineligible"
-        return ParticipantCoverageEvidence(present, len(selected), status)
+        return MemberPrecisionEvidence(present, len({member.scoped_key for member in members}), status)
 
     def title_score(self, request, title):
         return 1.0 if request.subject in title else 0.0
@@ -258,7 +258,7 @@ def test_candidate_history_denial_preserves_roster_and_remaining_reads(platform,
     assert {c.group for c in result.candidates} == set(groups)
     denied = next(c for c in result.candidates if c.group.external_group_id == "denied")
     assert denied.evidence.members == roster
-    assert denied.evidence.participant_coverage.total == 2
+    assert denied.evidence.member_precision.total == 3
     assert denied.evidence.history_read_denial.code == "restricted"
     assert denied.evidence.history_read_denial.reason == "Access denied"
     assert denied.evidence.discussion is None

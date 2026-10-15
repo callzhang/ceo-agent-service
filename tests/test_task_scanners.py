@@ -1,6 +1,7 @@
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 from app.agent_cron.commands import (
@@ -732,12 +733,28 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
 
     dws = FakeDws()
     store = AutoReplyStore(tmp_path / "task.sqlite3")
+    from app.agent_cron.models import ScheduledTaskSkillRef
+
+    skill_names = ("dingtalk-oa-approval", "stardust-oa-finance-review")
+    scheduled_task = store.create_scheduled_task(
+        migration_key="oa-review-skill-refresh-test",
+        name="OA review",
+        command="scan-oa-approvals",
+        prompt="Use $dingtalk-oa-approval and $stardust-oa-finance-review.",
+        cron_expression="0 * * * * *",
+        timezone_name="UTC",
+        skill_refs=tuple(
+            ScheduledTaskSkillRef(
+                skill_source="operation", skill_name=name, position=position
+            )
+            for position, name in enumerate(skill_names)
+        ),
+    )
     context = ServiceCommandConsumerContext(
-        scheduled_task_id=7,
+        scheduled_task_id=scheduled_task.id,
         scheduled_task_run_id=11,
         prompt=(
-            "使用 $dingtalk-oa-approval 与 $stardust-oa-finance-review "
-            "审阅真实 DingTalk OA。"
+            "Use $dingtalk-oa-approval and $stardust-oa-finance-review."
         ),
         skill_names=("dingtalk-oa-approval", "stardust-oa-finance-review"),
         skill_protocol="# OA review skills",
@@ -753,11 +770,23 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     implementations = {
         option.name: (lambda: "unused") for option in SERVICE_COMMAND_OPTIONS
     }
+    class CurrentSkillOptions:
+        def list_managed_skill_options(self):
+            return ()
+
+        def resolve_operation_skill(self, name):
+            return SimpleNamespace(
+                path=Path(f"/current/{name}/SKILL.md"),
+                sha256=f"current-{name}",
+                content=f"current body for {name}",
+            )
+
     implementations["scan-oa-approvals"] = lambda: str(
         scan_pending_oa_approvals(
             store,
             dws,
             now=datetime.fromisoformat("2026-07-27T09:30:00+08:00"),
+            skill_options=CurrentSkillOptions(),
         )
     )
 
@@ -798,7 +827,16 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert "procInstId=proc-1&taskId=102648910080" in task.oa_url
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
     payload = json.loads(task.trigger_message_json)
-    assert payload["raw_payload"]["scheduled_consumer"] == context.to_payload()
+    bound_context = payload["raw_payload"]["scheduled_consumer"]
+    assert bound_context["scheduled_task_id"] == scheduled_task.id
+    assert bound_context["scheduled_task_run_id"] == context.scheduled_task_run_id
+    assert [item["name"] for item in bound_context["skill_materials"]] == list(skill_names)
+    assert [item["content"] for item in bound_context["skill_materials"]] == [
+        f"## Operation Skill: {name}\nsource: /current/{name}/SKILL.md\n"
+        f"sha256: current-{name}\n\ncurrent body for {name}"
+        for name in skill_names
+    ]
+    assert context.skill_materials[0].content == "approval material"
     from app.agent_cli import build_role_server
 
     for role in ("consumer", "audit"):
@@ -807,7 +845,9 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
             execution_generation=task.execution_generation,
         )
         read = server._tool_manager.get_tool("read_task_skill").fn
-        for material in context.skill_materials:
+        for material in ServiceCommandConsumerContext.from_payload(
+            bound_context
+        ).skill_materials:
             assert read(material.name)["content"] == material.content
 
 

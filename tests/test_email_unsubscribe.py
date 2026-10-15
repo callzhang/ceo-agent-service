@@ -525,6 +525,31 @@ def test_unsubscribe_result_text_is_redacted_bounded_and_digest_is_full_text() -
     assert digest != short_digest
 
 
+def test_unsubscribe_result_preserves_lines_and_benign_diagnostics_when_redacting():
+    diagnostic = "access token: load access token: acquiring file lock"
+    raw = diagnostic + "\r\nsecret=other-value\x00\n退订成功\n"
+
+    result, digest = normalize_unsubscribe_result_text(raw)
+
+    expected = diagnostic + "\n[REDACTED]\n退订成功\n"
+    assert result == expected
+    assert digest == sha256(expected.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize(("raw", "secret"), [
+    ("Bearer\nabcdefghi", "abcdefghi"),
+    ("Basic\nYWJjZGVmZ2g=", "YWJjZGVmZ2g="),
+    ("token=\nsecret-value", "secret-value"),
+])
+def test_unsubscribe_result_keeps_cross_line_credential_redaction(raw, secret):
+    result, digest = normalize_unsubscribe_result_text(raw + "\n")
+
+    assert secret not in result
+    assert "[REDACTED]" in result
+    assert result.endswith("\n")
+    assert digest == sha256(result.encode("utf-8")).hexdigest()
+
+
 TOKEN_URL = "https://news.example.com/unsubscribe?token=private-token"
 RUNTIME_PLAN = build_versioned_email_action_plan(
     action_plan_version=1,

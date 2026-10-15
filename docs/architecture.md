@@ -695,10 +695,11 @@ updater 正常停止服务后才备份和切换检出，重启时由既有任务
 群不可发送时保留失败，不能静默换成组织者或本人。私聊入口拒绝本人及已核验别名；
 职务、HR 身份和私聊本身均不构成披露授权，身份检查也不替模型证明业务理由真实。
 群标题相似、部分参会人重合或近期活跃本身不构成业务承接证据。
+裁员、减员和人员优化的存在、进展、时间及执行安排本身就是人员敏感信息；没有姓名、名单或人数不构成脱敏。共享消息受众合同和会议/人员 Skill 要求逐一核对完整群成员（含未参会者）对实际正文的披露权限；业务相关、历史讨论、职务、参会人重合和人员准确率均不授予权限。任何成员未授权或权限未知时，业务群正文、标题、问题及任务提及均排除该敏感内容及其间接暗示；只有独立核验的授权受众才能接收，找不到时保留人员事项未解决，不转发本人兜底。敏感分类和内容授权由 Agent 根据证据判断，不增加运行时关键词过滤或比例授权阈值。
 找群先核对会议材料里明确提及的讨论群，再从结论、行动和负责人提炼主题，分别以原文中文
 业务词、英文术语、会议标题和核心议题查群及群内消息。预置候选或首次搜索零命中不等于穷尽；
 候选须核对近期同工作线讨论、行动承接人、受众和可发送性，并在决策中说明来源与业务承接关系。
-搜索结果先按会议标题/摘要与群名筛选，再用完整日历名册的参会人覆盖率缩小候选；群成员读取不再依赖会议是否有完整日历名册。候选保留真实群成员 IDs 和人数，会议参会人覆盖率单独记录，不把会议人数当群人数。平台中立的发现服务只返回候选及证据，不决定最终目标或发送；近期消息截取和历史送达只是发现线索，Agent 仍需核验完整相关讨论与当前受众，不得按搜索顺序截断候选或仅凭词项匹配判断披露范围。
+搜索结果按会议标题/摘要与群名筛选并读取完整群成员。成员匹配统一使用准确率 `member_precision = 匹配参会人数 / 完整群成员数`（3/N），不再使用参会人召回率或原有“至少两人且覆盖60%参会人”的过滤条件。业务讨论和主题仍先于成员准确率排序，准确率用于同等业务证据的候选比较，不能覆盖实际业务归属或替代披露权限。候选保留完整成员 IDs、群人数、匹配人数、准确率及参考参会名单是否完整；历史投递只记录次数，不标记为已验证受众。平台中立的发现服务只返回候选及证据，不决定最终目标或发送；近期消息截取和历史送达只是发现线索，Agent 仍需核验完整相关讨论与当前受众，不得按搜索顺序截断候选或仅凭词项匹配判断披露范围。
 
 DWS 明确的保密群历史拒绝由适配器转换为候选级 `GroupHistoryReadDenied`，保留该群 ID、成员证据、代码及原因，讨论内容/分数保持未知，并继续核验其他候选。全部拒绝仍为明确 `history_read_denied`，不变成无群、空历史、可发送或自动私聊依据。拒绝证据到达 Agent 不解除权限；无法核实受众或内容时仍保留真实失败。临时及未知 provider 故障保持原失败/重试语义。
 多个合理群不是人工选择条件，由 Agent 按本次议题和行动归属排序，不能用宽泛群凑数，也不能把敏感内容送给无授权受众。
@@ -869,7 +870,7 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
-OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`、`success=true` 识别成功；流程操作记录的数字时间按 Unix 毫秒解析，字符串时间按带时区 ISO 或钉钉本地时间解析。成功响应只允许进入只读对账；旧回执若没有 `accepted_at`，只有在上述成功字段通过校验时才以持久化的 `response_received_at` 作为接受边界。完成仍要求原任务已取消、同一审批人唯一写入精确备注的 `REDIRECT_PROCESS`、目标节点出现对应新任务，且全部时间落在派发和接受边界内。证据不完整时保留 uncertain，恢复不重发退回。
+OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`、`success=true` 识别成功；流程操作记录的数字时间按 Unix 毫秒解析，字符串时间按带时区 ISO 或钉钉本地时间解析。若 OpenAPI 操作记录只有秒级时间，读回同一实例的 DWS 结构化审批流水，并按操作类型、操作人及同一秒唯一关联其毫秒 `operationTime`；有多条匹配或来源不完整时仍保留 uncertain，不能放宽派发时间边界。成功响应只允许进入只读对账；旧回执若没有 `accepted_at`，只有在上述成功字段通过校验时才以持久化的 `response_received_at` 作为接受边界。完成仍要求原任务已取消、同一审批人唯一写入精确备注的 `REDIRECT_PROCESS`、目标节点出现对应新任务，且全部时间落在派发和接受边界内。证据不完整时保留 uncertain，恢复不重发退回。
 
 candidate_executions 保存租约，candidate_action_attempts 在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
 
@@ -2096,6 +2097,8 @@ Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000�
 
 OA pending scans carry the complete scheduled Consumer wrapper, including exact frozen Skill materials, into the claimed reply input. Consumer and Audit read those original bodies through read_task_skill; the scanner must not use the Task extraction projection that omits skill_materials. Task extraction sources retain their existing body-free scheduled context. This changes input delivery only, not Skill contents, task classification, audit policy, routes or sessions; old inputs are not rebuilt.
 
+Each newly enqueued OA review round re-materializes the currently selected Skill references from the current scheduled-task configuration and the service's loaded managed-Skill snapshot. Managed Skills use the newest available revision for the selected Skill identity; operation Skills are read from their current authorized source. The resulting complete bodies are frozen in that new trigger's scheduled Consumer wrapper. Retries and corrections of an existing round continue to use that round's saved input, and previously saved trigger/run history is never rewritten. This changes which Skill revision a new OA review round receives; it does not change approval permissions, business thresholds, or action gates.
+
 Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files.
 
 
@@ -2234,6 +2237,8 @@ constraint remain unchanged. Existing Task identity validators and provider,
 Skill/source, session, correction and Audit contracts are preserved. Consumer/Audit
 schema text is byte-identical. See docs/task-schema-title-formatting-validation.md.
 
+会议消息新增 `message_title`，由 Agent 按实际接收受众核验：安全时可沿用会议原题，否则使用中性业务标题。正文首行与推送标题均只取此字段，不再自动拼接可能含人员方案信息的 `source.title`；没有已核验标题的持久化决策使用中性的“会议跟进”。原会议标题仍留在来源记录中用于追溯。
+
 Task Agent 当前每轮已经完整提交仓库中的 Work Tracking Skill，Codex 命令复用现有
 `inlined_skill_names` 元数据，由适配器把已有路径筛选和同名隐藏规则合成一份
 原生 `skills.config` 数组，避免重复配置键覆盖。仅隐藏同名安装副本的目录项。完整当前正文、
@@ -2247,3 +2252,6 @@ Continuation no longer inherits the service process directory. Workbench inserts
 its existing model/MCP timeout options after the located exec/resume command so
 global options remain intact. Native session IDs, source, schema, credentials,
 permissions and route policy are unchanged. See `docs/codex-resume-workspace-validation.md`.
+Attempt current failure descriptions use only the latest Agent turn or the persisted final task/execution stop. A later completed turn supersedes earlier technical failures in the current-stop projection; historical runs remain available in the runtime trajectory and are never rewritten. A final Audit return/reject keeps its actual summary, and accepted but unverified System actions retain their uncertain execution diagnosis.
+
+Audit field assertions are first bound to the exact current candidate. Only their sensitivity-check copy reuses the existing strict configured service callback-pair validation; original assertion values, candidate digests and persisted results are unchanged. Other Audit prose, malformed pairs and nonconfigured URLs retain credential detection. Fresh and recovered Audit results use the same check. Audit context identifies the service-prepared DingTalk signature and feedback postfix so Consumer is not asked to remove content the service reattaches.

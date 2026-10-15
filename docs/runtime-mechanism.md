@@ -940,7 +940,7 @@ Audit Task 在完整候选旁附上服务从同一候选 JSON 确定性生成的
 
 钉钉引用回复由服务使用 DWS `chat +messages-reply` 投递；该入口核验原消息、发送者与会话一致性，且适用于已确认的单聊会话。投递仍沿原业务对象的幂等键和回执核验，不因引用回复失败自动改发普通消息。
 
-会议总结的业务群候选由正文中的业务词与标题共同检索，排除听记摘要里的时间标签、图片链接等元数据。平台中立的共享群发现服务先按标题/摘要与群名筛选，再用完整日历名册的参会人覆盖率缩小候选；唯一或少量通过这两层筛选的群才读取近期消息并交给决策 Agent 做完整业务承接核验。当前运行时只有 DingTalk/DWS 适配器，Lark 和 Slack 需要各自 Provider 的认证、读取和外部读回验证后才能启用。发现服务不选择最终目标，也不把 Provider 故障降级成“找不到群”。没有标题命中时仍保留候选做实时名册检查，不能按搜索接口的原始返回顺序截断候选。排序优先考虑群名是否对应摘要主题，再参考讨论片段；词项交集只是检索线索，Agent 必须核对实际讨论、行动负责人和受众。参会人覆盖率只证明受众交集，不证明业务归属，不能单独强制选群。历史投递仍需本次实时成员覆盖达到门槛，且须与当前议题一致；此前已发送的总结不会因路由修复自动重发。
+会议总结的业务群候选由正文中的业务词与标题共同检索，排除听记摘要里的时间标签、图片链接等元数据。平台中立的共享群发现服务按标题/摘要与群名筛选，读取完整成员，并以 `member_precision=匹配参会人数/完整群成员数`（3/N）代替参会人召回率。移除至少两人且覆盖60%参会人的过滤条件；业务讨论、主题优先排序，准确率只用于同等业务证据的候选比较。候选保留完整成员 IDs、群人数、匹配人数、准确率及参考参会名单完整性，再交给 Agent 核验业务承接与实际披露授权。当前运行时只有 DingTalk/DWS 适配器，Lark 和 Slack 需要各自 Provider 的认证、读取和外部读回验证后才能启用。发现服务不选择最终目标，也不把 Provider 故障降级成“找不到群”。没有标题命中时仍保留候选做实时名册检查，不能按搜索接口的原始返回顺序截断候选。候选排序依次参考讨论片段分数、标题/摘要与群名的主题分数、人员准确率；词项交集只是检索线索，Agent 必须核对实际讨论、行动负责人和受众。成员准确率仅描述参会人与完整群成员的交集，不证明业务归属或披露权限。历史投递只报告次数，不再赋予 verified_recurring_group 标记，仍须核验当前实际内容和完整受众；此前已发送的总结不会因路由修复自动重发。
 
 候选群消息读取明确返回 DWS `code=1001`、业务原因「该群为保密群，无法获取消息记录」，且 `retryable_external_dependency=false` 时，适配器保留原始拒绝，不包装成瞬时错误。会议任务记录 `meeting_group_discovery` 失败并释放执行锁，不继续自动重试；权限或可读取的可信来源恢复后才走正式恢复。该拒绝既不是空消息结果，也不允许跳过该群而改投其他群或组织者。未知读取错误以及 provider 明确标记可重试的故障仍沿原有重试路径处理。
 
@@ -1328,7 +1328,7 @@ schema 判断写操作，因此各自失效过一次：
 
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
-OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`、`success=true` 识别成功；流程操作记录的数字时间按 Unix 毫秒解析，字符串时间按带时区 ISO 或钉钉本地时间解析。成功响应只允许进入只读对账；旧回执若没有 `accepted_at`，只有在上述成功字段通过校验时才以持久化的 `response_received_at` 作为接受边界。完成仍要求原任务已取消、同一审批人唯一写入精确备注的 `REDIRECT_PROCESS`、目标节点出现对应新任务，且全部时间落在派发和接受边界内。证据不完整时保留 uncertain，恢复不重发退回。
+OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`、`success=true` 识别成功；流程操作记录的数字时间按 Unix 毫秒解析，字符串时间按带时区 ISO 或钉钉本地时间解析。若 OpenAPI 操作记录只有秒级时间，读回同一实例的 DWS 结构化审批流水，并按操作类型、操作人及同一秒唯一关联其毫秒 `operationTime`；有多条匹配或来源不完整时仍保留 uncertain，不能放宽派发时间边界。成功响应只允许进入只读对账；旧回执若没有 `accepted_at`，只有在上述成功字段通过校验时才以持久化的 `response_received_at` 作为接受边界。完成仍要求原任务已取消、同一审批人唯一写入精确备注的 `REDIRECT_PROCESS`、目标节点出现对应新任务，且全部时间落在派发和接受边界内。证据不完整时保留 uncertain，恢复不重发退回。
 
 原生群消息和直接用户消息在 provider 接受、但本地回执尚未保存的中断后，恢复读取原精确目标，并比对持久化审核正文、本人发送者、未撤回、dispatch 时间下界及唯一消息身份，匹配后补存回执而不重派。新 action attempt 在调用 provider 前原子保存 UTC 毫秒 dispatch 时间；旧无时区秒时间不能作为精确归属边界，保持 uncertain。provider 只返回秒时间时，同秒不足以证明在 dispatch 后的消息也保持 uncertain；没有向下取整时间来扩大匹配。空页或多匹配不是无效果证明。文档评论和 OA 评论恢复读取原 node/process instance 并保存只读诊断；尚无已验证的 author/time/body/stable-ID 联合归属契约时，保留 uncertain，不凭相似正文补记成功或再次发送。
 
@@ -1714,8 +1714,8 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 
 - 一场会议可能被分成几段录制，每段各有自己的 taskUuid。同名且相邻两段间隔不超过两小时算同一场会议（由间隔决定，不按自然日切分，跨零点的会议因此保持完整）。后到的录制并入已有任务：转写与摘要接到第一段之后，会议结束时间顺延到最后一段，任务重开并**对整场会议重新生成总结**，而不是补一段增量。此时标题标注「第二次总结」。只有发送前已保存了另一条旧消息的凭证，才会在新总结发送成功后撤回旧消息；首次发送以及同一条消息的日历备注重试都不撤回自身。provider 拒绝撤回不算会议失败。
 
-- 会议总结在 Agent 决策前，以日历组织者的完整名称通过当前 DingTalk 组织目录解析稳定身份；只有唯一精确姓名或昵称命中才回填组织者及同名唯一参会人，供业务 fallback 与敏感私信共同使用。模糊、多候选或冲突身份不回填。日历中缺少稳定 ID 的其他参会人也按同一规则做唯一姓名/昵称补全，避免 HR 只有显示名而无法被识别。服务用当前 DWS 群搜索格式检索会议标题和摘要正文里的业务词，再读取候选群近期讨论，把去重后的实时候选及讨论片段交给 Agent；候选仍需核对受众与业务承接，不能仅凭群名、词项重合或参会人覆盖发送。群搜索失败或结果不完整时任务重试，不将依赖故障说成“找不到群”并私聊组织者。敏感内容按受众边界投递：如果 DWS 实时群发现证明目标是 HR 专属或已匹配的群，且讨论是会议中 HR 参会人的共同事项而非针对具体个人，Agent 可以把敏感详情与公开结论合并为一条 HR 群消息，并将敏感私信置空；针对具体个人、群受众不明确或含非授权成员时，仍发送去敏感的业务群消息与独立敏感私信，无法确认敏感收件人时发给当前负责人本人。进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
-- 会议跟进的钉钉消息标题取会议标题，不取群名或私聊收件人名；该标题只到达推送横幅和会话列表，聊天窗口里看不到，所以正文首行以 Markdown 一级标题（`# 会议标题`）写会议名，第二行以斜体呈现时间副标题（`*时间：…*`），二次总结另起斜体说明行。时间按 Asia/Shanghai 呈现：Minutes 交过来的时间戳是 UTC，直接格式化会把上午八点的会写成零点。Agent 的 `final_message` 只承载结论、行动和待确认事项，不重复会议标题和时间。正文用 Markdown 结构化：小节用加粗标签（如 **结论**、**后续行动**、**待确认**），多条并列事项用 `- ` 列表并在列表前空一行；钉钉这些消息以 `--markdown` 发送，加粗、标题和列表都按 Markdown 渲染（Derek 2026-09-24 确认渲染）。发送目标仍由已核实的受众决定，标题不参与路由或投递幂等键。
+- 会议总结在 Agent 决策前，以日历组织者的完整名称通过当前 DingTalk 组织目录解析稳定身份；只有唯一精确姓名或昵称命中才回填组织者及同名唯一参会人，供业务 fallback 与敏感私信共同使用。模糊、多候选或冲突身份不回填。日历中缺少稳定 ID 的其他参会人也按同一规则做唯一姓名/昵称补全，避免 HR 只有显示名而无法被识别。服务用当前 DWS 群搜索格式检索会议标题和摘要正文里的业务词，再读取候选群近期讨论，把去重后的实时候选及讨论片段交给 Agent；候选仍需核对受众与业务承接，不能仅凭群名、词项重合或参会人覆盖发送。群搜索失败或结果不完整时任务重试，不将依赖故障说成“找不到群”并私聊组织者。敏感内容按实际披露权限投递：裁员、减员及人员优化方案本身属于人员敏感信息，不因没有具体姓名而成为业务内容。必须对完整当前群成员逐一核验实际内容的授权；HR群名、职务、业务相关及参会人重合都不能代替授权。权限未知或缺失时从业务群消息中排除相应敏感内容，只能向独立核验的授权受众拆分；无法确认时保留人员跟进未解决，不私聊本人兜底。进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
+- 会议跟进的钉钉消息标题取 Agent 按实际受众核验的 `message_title`，原会议标题只有在该受众有权获知时才能沿用，不取群名或私聊收件人名；该标题只到达推送横幅和会话列表，聊天窗口里看不到，所以正文首行以 Markdown 一级标题（`# message_title`）写已核验标题，第二行以斜体呈现时间副标题（`*时间：…*`），二次总结另起斜体说明行。时间按 Asia/Shanghai 呈现：Minutes 交过来的时间戳是 UTC，直接格式化会把上午八点的会写成零点。Agent 的 `final_message` 只承载结论、行动和待确认事项，不重复会议标题和时间。正文用 Markdown 结构化：小节用加粗标签（如 **结论**、**后续行动**、**待确认**），多条并列事项用 `- ` 列表并在列表前空一行；钉钉这些消息以 `--markdown` 发送，加粗、标题和列表都按 Markdown 渲染（Derek 2026-09-24 确认渲染）。发送目标仍由已核实的受众决定，标题不参与路由或投递幂等键。
 - 这一恢复规则适用于所有任务：普通服务重启只释放已经停止的 worker 租约，保留同一任务的执行代次、已准备消息和外部回执；恢复 worker 从这些事实继续。若运维明确完成了运行时/路由修复，则服务修复重试创建新的 execution generation 和新的 session 绑定，但仍复用同一业务对象及外部动作幂等事实；用户业务反馈重跑则按反馈闭环复用兼容 session。
 - 外部动作的 operation、target 和 provider result identifier（若 provider 返回）会保留用于去重；缺少标识属于 provider/Agent 失败，不转换为额外状态。
 - WeChat reader 由独立 launchd job 自动保持运行；worker 连续三次 IPC 超时后主动 kickstart 该 job，处理“进程仍在但 IPC 已卡住”的情况。worker 只恢复 reader 进程，不启动 WeChat 主应用，也不重放消息。
@@ -2311,6 +2311,14 @@ prose such as `access token: load access token: acquiring file lock` as a secret
 while retaining detection for delimited values such as `api_key=...;`. Known
 credential formats, sensitive-field context, entropy checks and outbound
 credential validation are unchanged.
+
+Process diagnostic redaction preserves each original line boundary before joining
+separate error fields, while retaining the same field-level whitespace-spanning
+credential patterns. Unsubscribe result normalization retains the existing full-
+text redaction and applies the same detector to original normalized lines before
+rejoining them. It preserves final newlines, URL/path redaction, the complete
+redacted-text digest and UTF-8 byte bound. Credential patterns and policies do
+not change; concatenation must not erase a credential's original end boundary.
 
 ### Daily Report Source Identity
 
@@ -2981,6 +2989,8 @@ Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000�
 
 OA pending scans carry the complete scheduled Consumer wrapper, including exact frozen Skill materials, into the claimed reply input. Consumer and Audit read those original bodies through read_task_skill; the scanner must not use the Task extraction projection that omits skill_materials. Task extraction sources retain their existing body-free scheduled context. This changes input delivery only, not Skill contents, task classification, audit policy, routes or sessions; old inputs are not rebuilt.
 
+OA review round binding (2026-10-15): when the scheduled OA scanner enqueues a new review input, it reads the current scheduled-task Skill selection again. For each selected managed Skill it resolves the newest available revision within the service's loaded runtime snapshot; selected operation Skills are read from their current authorized files. These exact bodies are frozen in the new OA trigger wrapper. Retries and corrections reuse their existing trigger snapshot; historical inputs and runs are immutable. A binding failure leaves the OA scan unadvanced and records the reason, rather than silently falling back to stale Skill content. Approval permissions, business thresholds and action gates do not change.
+
 Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files.
 
 
@@ -3124,6 +3134,14 @@ constraint remain unchanged. Existing Task identity validators and provider,
 Skill/source, session, correction and Audit contracts are preserved. Consumer/Audit
 schema text is byte-identical. See docs/task-schema-title-formatting-validation.md.
 
+### 会议人员方案披露与成员准确率（2026-10-15）
+
+裁员、减员、人员优化的存在、进展、时间、名单复核、交接及替代培养安排本身均属人员敏感信息，没有个人姓名或人数也不得当作普通业务内容。共享消息受众合同及会议/人员 Skill 要求对完整当前群成员（含非参会者）逐一核验实际正文的披露权限；业务相关、历史讨论、HR/管理职务及参会人重合都不能代替授权。权限未知或缺失时，业务群标题、正文、待确认问题和任务提及均排除敏感内容及其间接暗示；不同内容仅向独立核验的授权受众拆分，无合适受众时保留人员跟进未解决，不转发本人兜底。人员匹配采用3/N（匹配参会人数/完整群人数），不再使用参会人召回率；任何比例都不自动授权。Agent 负责基于证据做敏感分类与授权判断，代码不增加关键词过滤或任意比例授权门槛。原投递键和已确认回执恢复机制保持不变，已发送历史消息不会因本修复自动重发或撤回。
+
+会议消息新增 `message_title`，由 Agent 按实际接收受众核验：安全时可沿用会议原题，否则使用中性业务标题。正文首行与推送标题均只取此字段，不再自动拼接可能含人员方案信息的 `source.title`；没有已核验标题的持久化决策使用中性的“会议跟进”。原会议标题仍留在来源记录中用于追溯。
+
+标题合同升级不会改写旧的已准备正文：旧决策未核验标题时采用中性标题；如已有未确认的准备正文与之不符，沿现有正文一致性检查停止，需通过原有重新决策流程生成新版本。已确认的精确回执仍按原动作核对，不重发以获取新标题。发布前需核对旧版已准备但未确认的会议动作。
+
 Task Agent 当前每轮已经完整提交仓库中的 Work Tracking Skill，Codex 命令复用现有
 `inlined_skill_names` 元数据，由适配器把已有路径筛选和同名隐藏规则合成一份
 原生 `skills.config` 数组，避免重复配置键覆盖。仅隐藏同名安装副本的目录项。完整当前正文、
@@ -3137,3 +3155,6 @@ Continuation no longer inherits the service process directory. Workbench inserts
 its existing model/MCP timeout options after the located exec/resume command so
 global options remain intact. Native session IDs, source, schema, credentials,
 permissions and route policy are unchanged. See `docs/codex-resume-workspace-validation.md`.
+Attempt current failure descriptions use only the latest Agent turn or the persisted final task/execution stop. A later completed turn supersedes earlier technical failures in the current-stop projection; historical runs remain available in the runtime trajectory and are never rewritten. A final Audit return/reject keeps its actual summary, and accepted but unverified System actions retain their uncertain execution diagnosis.
+
+Audit field assertions are first bound to the exact current candidate. Only their sensitivity-check copy reuses the existing strict configured service callback-pair validation; original assertion values, candidate digests and persisted results are unchanged. Other Audit prose, malformed pairs and nonconfigured URLs retain credential detection. Fresh and recovered Audit results use the same check. Audit context identifies the service-prepared DingTalk signature and feedback postfix so Consumer is not asked to remove content the service reattaches.

@@ -91,6 +91,10 @@ OA 审阅下载的附件、OCR 中间文件和转换结果只能放在本次运�
 
 ## 工具顺序
 
+### OA 退回回执未确认时的只读核对
+
+若已有 OA 退回执行结果为 `external_action_uncertain`，不得再次发起退回。按原动作身份读取同一实例的 detail、records、tasks，并核对原 task 是否已取消、当前审批人是否一致、流水是否唯一匹配原动作的 `REDIRECT_PROCESS` 与完整备注、目标 activity 是否生成对应新 task。OpenAPI 的流水时间若只有秒级，应以 DWS 结构化流水中同实例、同操作类型、同操作人的毫秒 `operationTime` 唯一补足精度；不能唯一关联、证据缺失或时间不在原派发与接受边界内时，继续保留未确认状态。秒级时间不能向下取整或扩展派发边界。此核对只确认原动作是否送达，不授权新的审批动作。
+
 服务中的 Consumer/Audit 没有 shell 或任意 DWS 命令执行器，只调用角色目录中具名的只读 `agent_cli` 工具。Consumer 提议审批动作，Audit 只审核；System Executor 才通过固定的具名操作执行和回读。下列命令是交互式会话的操作参考，不能在服务角色里当作工具替代品。附件正文通过 `read_dingtalk_drive_file` 读取；若 PDF 需 OCR，只有当前审批材料已获准发送至配置的 OCR 服务时才调用 OCR Skill。返回路径只在当前 Agent CLI 进程存活期间有效。所需读取/OCR 能力不可用时，报告技术阻塞，不能当作申请人漏交材料。
 
 交互式会话优先使用 `dws`，所有命令加 `--format json`。

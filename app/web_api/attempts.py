@@ -876,7 +876,14 @@ def build_attempt_detail(
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
         audit_explanation = attempt.codex_reason or attempt.send_error
-    what_happened = build_what_happened(agent_runs, store=store)
+    stop_reason = None
+    if attempt.send_status == "failed" and (not agent_runs or agent_runs[-1].status != "failed"):
+        stop_reason = {
+            "kind": "execution" if system_execution and system_execution["status"] in {"failed", "uncertain", "retry"} else "rule",
+            "code": attempt.send_error or attempt.codex_reason,
+            "sentence": attempt.audit_summary or audit_explanation,
+        }
+    what_happened = build_what_happened(agent_runs, store=store, stop_reason=stop_reason)
     action_pills = [{"label": _attempt_action_label_text(attempt), "status": attempt.send_status}]
     if attempt.oa_action.strip():
         action_pills.append({"label": f"🧾 {attempt.oa_action.strip()}", "status": attempt.oa_action})

@@ -413,6 +413,7 @@ def scan_pending_oa_approvals(
     page_size: int = OA_PENDING_PAGE_SIZE_MAX,
     max_pages: int = 10,
     max_new_items: int | None = None,
+    skill_options: Any = None,
 ) -> int:
     previous_state = store.get_daily_scan_state(OA_PENDING_SCANNER)
     previous_cursor = previous_state["cursor_json"] if previous_state is not None else "{}"
@@ -602,6 +603,23 @@ def scan_pending_oa_approvals(
     process_revisions: dict[str, str] = {}
     queued_days: dict[str, str] = dict(previous_queued_days)
     scheduled_consumer = current_service_command_consumer_context()
+    skill_binding_checked = False
+
+    def bind_current_oa_skills_for_new_round() -> None:
+        nonlocal scheduled_consumer, skill_binding_checked
+        if skill_binding_checked or scheduled_consumer is None or skill_options is None:
+            return
+        from app.agent_cron.context import ScheduledAgentContextBuilder
+
+        scheduled_task = store.get_scheduled_task(
+            scheduled_consumer.scheduled_task_id
+        )
+        if scheduled_task is None:
+            raise ValueError("selected OA scheduled task is unavailable")
+        scheduled_consumer = ScheduledAgentContextBuilder(
+            skill_options
+        ).refresh_oa_review_context(scheduled_consumer, scheduled_task)
+        skill_binding_checked = True
     for approval in approvals:
         process_instance_id = str(
             getattr(approval, "process_instance_id", "") or ""
@@ -667,6 +685,16 @@ def scan_pending_oa_approvals(
             or previous_queued_days.get(process_instance_id) == scan_date
         ):
             continue
+        try:
+            bind_current_oa_skills_for_new_round()
+        except ValueError as exc:
+            store.set_daily_scan_state(
+                OA_PENDING_SCANNER,
+                last_success_at="",
+                cursor_json=previous_cursor,
+                last_error=f"could not bind current OA Skills: {exc}",
+            )
+            return 0
         queued_days[process_instance_id] = scan_date
         title = str(getattr(approval, "title", "") or "").strip()
         process_name = str(getattr(approval, "process_name", "") or "").strip()

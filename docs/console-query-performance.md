@@ -185,3 +185,30 @@ A final bounded64MiB/2MiB connection-cache experiment reduced RSS but did not
 complete the required reverse-order and concurrent equivalence comparison
 within90s. No cache setting change was published. The experimental database,
 queries and measurement files are disposable task artifacts.
+
+## Remaining host contention and authorized cleanup
+
+A subsequent633f5e59 readback returned Status12.897s and frontend History16.537s
+after that supervisor had already run16minutes. Those observations cannot be
+attributed to startup alone. Native process accounting located56 orphaned
+local CEO evaluation helpers aged6–7days, all parent1, with only loopback
+LISTEN sockets and no established clients. Their aggregate ri_phys_footprint
+was9.902GiB, including compressed/swapped accounting rather than only resident
+RAM;29 working directories were in a previously cleaned Trash tree. The user
+explicitly authorized SIGTERM for that exact PID list, separately from the
+earlier temporary pause. No current service, current test or other application
+was included. Process start identities, parent1 and no-client sockets were
+rechecked immediately before cleanup; the first3 and then remaining53 exited.
+All56 original identities were absent afterward, without SIGKILL or data writes.
+
+The current runtime6c44b082 had just returned Status4.105s and frontend History
+7.017s before cleanup. With the same supervisor9899 after cleanup, sequential
+HTTP200 readback was Status2.854/4.553s, History20 4.369/2.313s, History1001.194s,
+failed History1.344s, month chart3.846s and Attention0.501s. History counts were
+35370 with20/100 rows as requested, failed count13, and the month chart6914 events.
+Status remained healthy with0 violations and13 queues. A1-second native paging
+sample after cleanup showed1531 swap-in pages and0 swap-out pages (16KiB/page),
+compared with14616/22876 at the earlier high-contention sample. These are bounded
+observations, not an all-load latency guarantee. They identify historical helper
+resource retention as a concrete source of pressure alongside the repaired
+query plans; the cleanup was not a change to audit or health classification.

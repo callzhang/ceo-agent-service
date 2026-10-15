@@ -367,6 +367,25 @@ class OaRevertHandler(OaDecisionHandler):
             or source.get("business_id") != detail["businessId"]
             or not isinstance(source.get("tasks"), list) or not isinstance(source.get("operation_records"), list)):
             return unresolved
+        native_records = self.dws.read_oa_approval_records(process_id)
+        native_result = native_records.get("result") if isinstance(native_records, dict) else None
+        precise_records = native_result.get("operationRecords") if isinstance(native_result, dict) else None
+        if (not isinstance(native_records, dict) or native_records.get("success") is not True
+            or not isinstance(precise_records, list)):
+            return unresolved
+        precise_events = []
+        for item in precise_records:
+            if not isinstance(item, dict):
+                return unresolved
+            operation_type, author = item.get("operationType"), item.get("userId")
+            instant = self._event_time(item.get("operationTime"))
+            if instant is None:
+                return unresolved
+            precise_events.append((
+                operation_type if isinstance(operation_type, str) else "",
+                author if isinstance(author, str) else "",
+                instant,
+            ))
         old = [task for task in source["tasks"] if isinstance(task, dict)
             and str(task.get("taskid")) == action.target["task_id"]]
         if len(old) != 1 or old[0].get("task_status") != "CANCELED":
@@ -379,11 +398,20 @@ class OaRevertHandler(OaDecisionHandler):
             instant = self._event_time(record.get("date"))
             if instant is None:
                 return unresolved
-            event_times.append(instant)
             operation_type = record.get("operation_type")
+            author = record.get("userid")
+            if isinstance(record.get("date"), str) and instant.microsecond == 0:
+                same_second = [precise for event_type, event_author, precise in precise_events
+                    if event_type == operation_type and event_author == author
+                    and int(precise.timestamp()) == int(instant.timestamp())]
+                if len(same_second) > 1:
+                    return unresolved
+                if same_second:
+                    instant = same_second[0]
+            event_times.append(instant)
             if isinstance(operation_type, str) and operation_type and operation_type != "REDIRECT_PROCESS":
                 continue
-            author, remark = record.get("userid"), record.get("remark")
+            remark = record.get("remark")
             if isinstance(author, str) and author and author != principal:
                 continue
             if isinstance(remark, str) and remark and remark != action.payload["remark"]:

@@ -11,6 +11,7 @@ from app.agent_cron.commands import (
     ServiceCommandSkillMaterial,
 )
 from app.agent_cron.models import ScheduledTaskRun
+from app.agent_cron.models import ScheduledTask, ScheduledTaskSkillRef
 from app.agent_runtime_contracts import RuntimeKind, RuntimeRoute
 from app.managed_skills import ManagedSkillRevision
 from app.skill_files import SkillDocument
@@ -29,6 +30,8 @@ class ScheduledContextOptions(Protocol):
     ) -> ManagedSkillRevision: ...
 
     def resolve_operation_skill(self, name: str) -> SkillDocument: ...
+
+    def list_managed_skill_options(self): ...
 
 
 def validate_scheduled_execution_availability(
@@ -204,6 +207,78 @@ class ScheduledAgentContextBuilder:
 
     def __init__(self, options: ScheduledContextOptions) -> None:
         self._options = options
+
+    def refresh_oa_review_context(
+        self,
+        prior: ServiceCommandConsumerContext,
+        scheduled_task: ScheduledTask,
+    ) -> ServiceCommandConsumerContext:
+        """Bind the current selected OA Skills for a newly discovered review.
+
+        This only creates a new immutable input snapshot. Existing trigger
+        payloads and retries continue to use the material they already carry.
+        """
+        if (
+            scheduled_task.id != prior.scheduled_task_id
+            or scheduled_task.command != "scan-oa-approvals"
+        ):
+            raise ValueError("OA review Skill refresh does not match its task")
+
+        managed_options = {
+            item.skill_id: item
+            for item in self._options.list_managed_skill_options()
+        }
+        current_refs: list[ScheduledTaskSkillRef] = []
+        for ref in scheduled_task.skill_refs:
+            if ref.skill_source != "managed":
+                current_refs.append(ref)
+                continue
+            option = managed_options.get(ref.managed_skill_id)
+            if option is None or option.name != ref.skill_name:
+                raise ValueError(
+                    f"selected OA managed Skill is unavailable: {ref.skill_name}"
+                )
+            revisions = tuple(
+                item for item in option.revisions if item.available
+            )
+            if not revisions:
+                raise ValueError(
+                    f"selected OA managed Skill has no available revision: {ref.skill_name}"
+                )
+            latest = max(revisions, key=lambda item: item.revision_number)
+            current_refs.append(
+                ScheduledTaskSkillRef(
+                    skill_source="managed",
+                    skill_name=ref.skill_name,
+                    managed_skill_id=ref.managed_skill_id,
+                    managed_revision_id=latest.revision_id,
+                    position=ref.position,
+                    scheduled_task_id=ref.scheduled_task_id,
+                )
+            )
+
+        protocols, _skill_facts = self._materialize_skills(tuple(current_refs))
+        skill_names = tuple(ref.skill_name for ref in current_refs)
+        selected = ", ".join(f"`{name}`" for name in skill_names)
+        protocol = (
+            f"Selected frozen task Skills: {selected}. Before applying or "
+            "reviewing an applicable selected Skill, call "
+            "`agent_cli.read_task_skill(name)` to read its exact task-bound "
+            "content. You must read each applicable selected Skill before "
+            "deciding or reviewing the task."
+        )
+        return ServiceCommandConsumerContext(
+            scheduled_task_id=prior.scheduled_task_id,
+            scheduled_task_run_id=prior.scheduled_task_run_id,
+            prompt=scheduled_task.prompt,
+            skill_names=skill_names,
+            skill_protocol=protocol,
+            skill_materials=tuple(
+                ServiceCommandSkillMaterial(name=name, content=content)
+                for name, content in zip(skill_names, protocols, strict=True)
+            ),
+            skill_protocol_source="generated_discovery",
+        )
 
     def build_consumer_context(
         self, run: ScheduledTaskRun

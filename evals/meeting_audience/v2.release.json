@@ -1,0 +1,59 @@
+{
+  "original_config_id": 18,
+  "revisions": [
+    {
+      "name": "ceo-meeting-work",
+      "skill_id": 4,
+      "old_revision_id": 142,
+      "revision_id": 167,
+      "sha256": "bded378210a24cedf4fc0464ccd5cecc416bba4291164f66f96f5332f476686e",
+      "supersedes_draft_revision_id": 165,
+      "installed_path": "/Users/derek/.agents/skills/ceo-meeting-work/SKILL.md",
+      "installed_hash_verified": true
+    },
+    {
+      "name": "ceo-personnel-communication",
+      "skill_id": 6,
+      "old_revision_id": 6,
+      "revision_id": 166,
+      "sha256": "507a0b3ad72345cb8a78d1e6d076a85d14eaee51b98335018c1227d0935f8d78",
+      "installed_path": "/Users/derek/.agents/skills/ceo-personnel-communication/SKILL.md",
+      "installed_hash_verified": true
+    }
+  ],
+  "new_config_id": 19,
+  "config_parent_id": 18,
+  "scheduled_task_id": 2,
+  "old_task_version": 7,
+  "new_task_version": 8,
+  "active_config_id": 19,
+  "active_task_version": 8,
+  "loaded_receipt_ids": [
+    4084,
+    4085
+  ],
+  "deployment_head": "131ae6a8e289cb63638c17e9f345d5c9fc17ad84",
+  "healthz": true,
+  "supervisor_pid": 87961,
+  "worker_load_pids": [
+    87978,
+    87981
+  ],
+  "meeting_queue_before": {
+    "failed": 2,
+    "no_action": 85,
+    "sent": 571,
+    "skipped": 72
+  },
+  "meeting_queue_after": {
+    "failed": 2,
+    "no_action": 85,
+    "sent": 571,
+    "skipped": 72
+  },
+  "attention_total": 20,
+  "history_total": 35363,
+  "readback_utc": "2026-10-15T07:45:04Z",
+  "pending_meeting_jobs": 0,
+  "processing_meeting_jobs": 0
+}

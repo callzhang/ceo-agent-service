@@ -81,7 +81,7 @@ def meeting_followup_message(
     # A horizontal rule separates the title/time header from the body. The blank
     # line before "---" is required: without it Markdown reads the rule as a
     # setext underline and turns the time line into a heading.
-    return f"{_meeting_followup_header(source)}\n\n---\n\n{content.strip()}"
+    return f"{_meeting_followup_header(source, title=decision.message_title)}\n\n---\n\n{content.strip()}"
 
 
 class MeetingDeliveryDws(Protocol):
@@ -337,7 +337,7 @@ def deliver_meeting_alignment(
         if not _prepared_content_matches(sensitive_prepared, sensitive_body):
             raise MeetingDeliveryError("prepared meeting body does not match sensitive content")
     message_text = prepared.final_body
-    message_title = f"会议跟进｜{source.title}"
+    message_title = f"会议跟进｜{decision.message_title}"
     try:
         if target_kind == "group":
             send_result = message_sender.send_meeting_alignment_prepared(
@@ -433,7 +433,7 @@ def _deliver_sensitive_private_message(
             prepared,
             conversation_id=None,
             user_id=recipient.user_id.strip(),
-            title=f"会议跟进｜{source.title}",
+            title=f"会议跟进｜{decision.message_title}",
         ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry("sensitive meeting message send failed") from exc
@@ -776,19 +776,17 @@ def _meeting_local(value: str) -> datetime:
     return moment.astimezone(_MEETING_DISPLAY_TIME_ZONE)
 
 
-def _meeting_followup_header(source: MeetingSource) -> str:
+def _meeting_followup_header(source: MeetingSource, *, title: str) -> str:
     started = _meeting_local(source.started_at)
     ended = _meeting_local(source.ended_at)
     if started.date() == ended.date():
         time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%H:%M}"
     else:
         time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%Y-%m-%d %H:%M}"
-    # The model is told the sending layer names the meeting, so it never repeats
-    # the title in the body. The sending layer was only printing the time, which
-    # left every follow-up arriving in a group without saying which meeting it
-    # came from.
+    # The decision owns the audience-approved title; raw source titles can
+    # disclose a personnel plan even when the outgoing body is sanitized.
     lines = []
-    title = " ".join(source.title.split())
+    title = " ".join(title.split())
     if title:
         # The meeting name is the message title: a Markdown heading, so DingTalk
         # renders it larger than the body and the follow-up says which meeting it

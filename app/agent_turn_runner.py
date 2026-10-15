@@ -428,7 +428,13 @@ def _process_failure_detail(process: ProcessRunResult) -> str:
     def add(value: object) -> None:
         if not isinstance(value, str):
             return
-        normalized = " ".join(value.split())
+        # Keep original line ends and whitespace-spanning field patterns before
+        # diagnostics from separate fields are joined.
+        lines = (
+            redact_credentials(" ".join(line.split()))
+            for line in value.splitlines()
+        )
+        normalized = redact_credentials(" ".join(line for line in lines if line))
         if normalized and normalized not in parts:
             parts.append(normalized)
 
@@ -460,7 +466,6 @@ def _process_failure_detail(process: ProcessRunResult) -> str:
     detail = " | ".join(parts)
     if not detail:
         return ""
-    detail = redact_credentials(detail)
     detail = redact_forbidden_leak_markers(detail)
     return detail[:1000]
 
@@ -750,6 +755,7 @@ class AgentTurnProcess(Generic[ResultT]):
         parse_result: Callable[[str], ResultT],
         persist_conversation_session: bool,
         prepare_result: Callable[[ResultT], ResultT] | None = None,
+        result_contains_sensitive_value: Callable[[ResultT], bool] | None = None,
         expected_actions: tuple[dict[str, object], ...] = (),
         on_progress: Callable[[], None] | None = None,
         image_paths: list[Path] | None = None,
@@ -759,6 +765,9 @@ class AgentTurnProcess(Generic[ResultT]):
         invocation_facts: dict[str, object] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
         required_capabilities = required_capabilities | {ROLE_BOUND_AGENT_TOOLS}
+        sensitive_result = result_contains_sensitive_value or (
+            lambda result: _contains_sensitive_value(result.model_dump(mode="json"))
+        )
         line_count = 0
         saw_json = False
         primary_turn_started = False
@@ -997,7 +1006,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     ) from exc
                 if run.role is AgentRole.CONSUMER:
                     raise CompletedRuntimeResultBlockedError("completed_consumer_candidate_unavailable")
-                if _contains_sensitive_value(result.model_dump(mode="json")):
+                if sensitive_result(result):
                     raise ResultParseError("agent_result_contains_sensitive_value")
                 active_attempt = completed_attempt
                 observed_session_id = completed_attempt.session_id
@@ -1414,9 +1423,7 @@ class AgentTurnProcess(Generic[ResultT]):
             # Prepared results may legitimately contain the service's signed
             # feedback callbacks from an earlier revision. Validate those only
             # after preparation, where the exact configured pair is sanitized.
-            if prepare_result is None and _contains_sensitive_value(
-                result.model_dump(mode="json")
-            ):
+            if prepare_result is None and sensitive_result(result):
                 raise ResultParseError("agent_result_contains_sensitive_value")
             if (
                 route.runtime_kind is RuntimeKind.CLAUDE_CLI
