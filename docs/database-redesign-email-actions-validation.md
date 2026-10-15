@@ -2692,3 +2692,25 @@ published predecessor 5e52cafc, retaining exact rows, counts, ordering and
 page comparison plus a one-row page-size assertion. Historical schema fixture
 sources remain 0441. This is local integration evidence; CI, publication,
 deployment and the full10+1 gate remain open.
+
+### Task7 current-main independent integration acceptance
+
+Root accepts34ead3a4 after fresh sequential SPEC/QUALITY PASS. Both independently
+confirmed normal merge parents,49of59 incoming paths byte-identical and the
+remaining expected two runtime/three docs/five test combinations. Seven central
+schema/storage/release/field-map files stay byte-identical to the candidate.
+No old cache/private-switch/prewarm references remain in the inspected closure.
+SPEC additionally verified160 terminal-state cases across all eight terminal
+statuses and four subject states, newer/older IDs and mismatched matching keys;
+public terminal IDs preceded the subjects physically, so insertion order could
+not simulate the result. Its independent query-plan probe confirmed key pruning
+and single status-map materialization.
+
+The mixed predecessor oracle proves exact six-field tuples (id, source_table,
+source_id, status, context, summary), totals, order and pages; it does not assert
+every OperationLog field. The original79pass/2fail integration run was followed
+by six corrected cost cases and two final mixed-History/Email-plan cases, all
+passing. Existing limits and exact tuple equality were not relaxed. Owned probe
+and test roots were cleaned. CI and renewed latest-copy/native evidence for
+this merged tree, PR/publication/live readback, and the full10+1 goal remain
+open. No production schema or provider action occurred in this acceptance.
