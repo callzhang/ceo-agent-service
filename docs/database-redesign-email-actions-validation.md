@@ -2827,3 +2827,40 @@ and do not merge main pending Derek's direct approval of the final result.
 
 The owned focused-test root was removed after this aggregate receipt was
 recorded; no historical test DB/archive is retained. Full10+1 remains open.
+
+### Exact main 633 integration (2026-10-15)
+
+The Email candidate worktree at `2ca1a5ed9ba34adca4a6cc6fe11d63fca8e8ab5f`
+merged exact `origin/main` `633f5e59d8235826b747a2afc55b3217dd0d8611`
+through a normal merge, recorded at `411d81764d25fa9fdea6719db7d9e0f33d17c6bf`.
+The incoming 48-file increment is retained. Three text conflicts were resolved:
+`app/audit_web.py` keeps candidate-aware Email availability and adds main's
+per-reader Status timing wrapper; `docs/agent-claims.md` and
+`docs/runtime-mechanism.md` retain both branches' independent entries. No other
+incoming file needed conflict resolution.
+
+Every incoming `app/` and `launchd/` file is byte-equal to `633f5e59`, except
+`app/action_storage.py`, `app/quality_gate.py` and `app/audit_web.py`, which
+contain pre-existing candidate behavior. The new
+`REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL` assignment, `_check_reply_attempts`
+function and `_read_status_queue` function are AST-equal to main. The first two
+coexist with candidate Email29 schema and source variant selection; the last
+wraps the candidate Email queue reader without changing its availability rule.
+
+Bounded incoming tests passed: 86 tests across quality scan cost, inline Task
+Skill selection, Task schema annotations, launchd classification, Status reader
+timing, business Skill composition and Agent role boundaries (31.49 seconds);
+11 selected Audit/native and changed prompt tests passed with 98 deselected
+(96.94 seconds); 21 candidate Status/Email consumer/current-plan tests passed
+(230.54 seconds). The third group ran slowly under shared-machine load and
+finished without failure. The exact known CI 38692215658 remaining failures
+belong to separate fixture/constructor work and were not broadened into this
+integration. No provider, native CLI, production, push, PR or deploy action
+occurred here.
+
+The incoming `app/prompt_schema.py` at line 24 has a trailing blank line at
+EOF. Default `git diff --check` reports this inherited 633 warning; its bytes
+were preserved. `git -c core.whitespace=-blank-at-eof diff --cached --check`
+reported no other merge whitespace issue. Local post-merge working tree was
+clean before this evidence entry. Root-owned fresh SPEC, then QUALITY review,
+copy/native proof, CI and publication remain open.
