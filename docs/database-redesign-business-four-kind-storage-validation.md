@@ -66,3 +66,21 @@ migration/inverse, copied-database acceptance, production readback, push or depl
 is certified by this storage-unit acceptance. The 158 unproved historical bodies
 remain a separate final-retirement dependency; this unit neither copies nor
 retires them. The approved ten-core-table-plus-ledger redesign remains incomplete.
+
+
+## Isolated Email candidate reconciliation
+
+Normal merge `29502cd2` incorporates Email candidate
+`09bc0721f1ad978285bfd10896e0d0d43be8e4f7` into this Business feature branch.
+Only the claim ledger conflicted; both sides' rows were retained. The Email
+delta from the shared base contains test/harness/document changes and no
+application storage changes. This includes the previously accepted copied-Task
+ID isolation for later real CLI verification; no CLI or provider was invoked
+by this reconciliation.
+
+After the merge, `python -m pytest -q tests/test_native_copy_lifecycle_harness.py
+tests/test_business_storage.py -p no:cacheprovider` passed **429 tests in
+18.43 seconds**. The worktree was clean before recording this receipt. This
+verifies the combined selected tests, not Business constructor integration or
+a migration. Email PR90 remains a separate draft, and no main merge, push or
+deployment was performed.
