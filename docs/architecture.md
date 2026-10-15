@@ -1,5 +1,19 @@
 # CEO Agent Service Architecture
 
+Console History counts and orders compact source keys through an inline union,
+then hydrates the requested page within one database read snapshot. It has no
+page-result cache or background page refresh: page size and newly committed
+records are reflected by the current query. Overview Attention computes the
+latest public Attempt ID set once per message key; the Attempt queue explicitly
+materializes its reused current-row projection once per SQL statement. These
+are equivalent read-plan changes with unchanged lifecycle, counts, filtering,
+ordering and external actions. Status-dependent History reads compute later
+terminal Attempt IDs as a materialized per-message maximum inside the status
+expression, preserving pruning for key-only pagination. Each chart uses one
+read snapshot and reuses its current-task/delivery reads for repeated failed
+message keys only within that request. Evidence is in
+`docs/console-query-performance.md`.
+
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
 revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override

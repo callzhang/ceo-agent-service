@@ -2798,7 +2798,7 @@ def _email_action_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
     current_plan = """
         from email_actions as a
-        join email_classifications as c on c.id=a.classification_id
+        cross join email_classifications as c on c.id=a.classification_id
         where a.action_plan_id=c.current_action_plan_id
           and c.status='processed'
     """
@@ -3068,7 +3068,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             select channel, conversation_id, trigger_message_id
             from ({REPLY_ATTEMPT_COMMON_SQL})
             group by channel, conversation_id, trigger_message_id
-        ), current as (
+        ), current as materialized (
             select
                 a.id,
                 a.channel,
@@ -3078,7 +3078,6 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                 a.trigger_message_id,
                 a.agent_run_id,
                 a.updated_at,
-                a.send_error,
                 case
                     when lower(a.send_status)='needs_human'
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'skipped'
@@ -3178,15 +3177,21 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """
     rows = db.execute(
         current_attempts
-        + """
+        + f"""
             select
                 live_status as status,
                 count(*) as count,
                 max(updated_at) as latest_updated_at,
                 max(case
-                    when live_status='failed'
-                     and trim(coalesce(send_error, ''))<>''
-                    then updated_at || char(31) || send_error
+                    when live_status='failed' then (
+                        select case
+                            when trim(coalesce(failure.send_error, ''))<>''
+                            then current.updated_at || char(31) || failure.send_error
+                            else ''
+                        end
+                        from ({REPLY_ATTEMPT_COMMON_SQL}) as failure
+                        where failure.id=current.id
+                    )
                     else ''
                 end) as latest_error
             from current
@@ -5520,6 +5525,16 @@ def _history_chart_payload(
     hours: int = HISTORY_CHART_HOURS,
     now: datetime | None = None,
 ) -> dict[str, object]:
+    with store.read_snapshot():
+        return _history_chart_payload_in_snapshot(store, hours=hours, now=now)
+
+
+def _history_chart_payload_in_snapshot(
+    store: AutoReplyStore,
+    *,
+    hours: int,
+    now: datetime | None,
+) -> dict[str, object]:
     local_tz = datetime.now().astimezone().tzinfo
     local_now = now.astimezone(local_tz) if now else datetime.now(local_tz)
     bucket_count = max(1, hours)
@@ -5540,6 +5555,8 @@ def _history_chart_payload(
     projected_statuses = store.list_reply_attempt_operation_statuses(
         [attempt.id for attempt in attempts]
     )
+    failed_tasks: dict[tuple[str, str, str], ReplyTask | None] = {}
+    failed_deliveries: dict[int, object | None] = {}
     for attempt in attempts:
         created_at = _parse_utc_timestamp(attempt.created_at)
         if created_at is None:
@@ -5557,13 +5574,19 @@ def _history_chart_payload(
         )
         if event_label == "Failed":
             from app.attempt_projection import project_attempt_status
-            task = store.get_reply_task_for_message(
-                attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel,
-            )
-            delivery = (
-                store.get_wechat_delivery_for_task(task.id)
-                if task is not None and attempt.channel == "wechat" else None
-            )
+            key = (attempt.channel, attempt.conversation_id, attempt.trigger_message_id)
+            if key not in failed_tasks:
+                failed_tasks[key] = store.get_reply_task_for_message(
+                    attempt.conversation_id,
+                    attempt.trigger_message_id,
+                    channel=attempt.channel,
+                )
+            task = failed_tasks[key]
+            delivery = None
+            if task is not None and attempt.channel == "wechat":
+                if task.id not in failed_deliveries:
+                    failed_deliveries[task.id] = store.get_wechat_delivery_for_task(task.id)
+                delivery = failed_deliveries[task.id]
             event_label = _history_lifecycle_label(
                 project_attempt_status(attempt, task, [], delivery=delivery)
             )

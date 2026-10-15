@@ -53,7 +53,6 @@ def test_history_hydrates_bodies_only_for_requested_page(
         limit=limit,
         offset=offset,
         source_tables=("reply_attempts",),
-        _skip_history_cache=True,
     )
     assert total == 8
     assert rows == expected
@@ -201,7 +200,6 @@ def test_failed_history_uses_source_candidates_without_changing_results(
         limit=100,
         source_tables=source_tables,
         statuses=("failed",),
-        _skip_history_cache=True,
     )
 
     assert actual_total == expected_total == 2
@@ -219,7 +217,6 @@ def test_failed_history_uses_source_candidates_without_changing_results(
         limit=1,
         source_tables=source_tables,
         statuses=("failed",),
-        _skip_history_cache=True,
     )
     assert page_total == expected_total
     assert page_rows == expected_rows[:1]
@@ -268,6 +265,49 @@ def test_history_latest_attempt_query_work_is_bounded_by_task_count(tmp_path):
         finally:
             db.set_progress_handler(None, 0)
     assert len(rows) == 240
+    assert steps < 100_000
+
+
+def test_history_page_key_query_prunes_unused_display_projection(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "history-key-page.sqlite3")
+    with store._connect() as db:
+        for number in range(480):
+            insert_action(db, "reply_attempts", {
+                "conversation_id": f"history-{number}",
+                "conversation_title": "History",
+                "trigger_message_id": str(number),
+                "trigger_sender": "sender",
+                "trigger_text": "body",
+                "action": "agent_run",
+                "sensitivity_kind": "general",
+                "send_status": "skipped",
+            })
+
+    steps = 0
+    original_open_connection = store._open_connection
+
+    def instrumented_connection():
+        nonlocal steps
+        db = original_open_connection()
+
+        def count_steps():
+            nonlocal steps
+            steps += 1000
+            return 0
+
+        db.set_progress_handler(count_steps, 1000)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", instrumented_connection)
+    total, rows = store.list_operation_logs_with_count(
+        limit=20,
+        offset=1,
+        source_tables=("reply_attempts", "work_updates"),
+    )
+
+    assert total == 480
+    assert len(rows) == 20
+    assert {row.source_table for row in rows} == {"reply_attempts"}
     assert steps < 100_000
 
 
@@ -321,7 +361,7 @@ def test_history_latest_attempt_keeps_only_current_generation_and_last_task_atte
                    "and record_type='reply_attempts'", (str(ids[4]),))
 
     total, rows = store.list_operation_logs_with_count(
-        limit=20, source_tables=("reply_attempts",), _skip_history_cache=True
+        limit=20, source_tables=("reply_attempts",)
     )
     assert total == 4
     assert {item.source_id for item in rows} == {ids[1], ids[3], ids[4], ids[6]}

@@ -12377,7 +12377,6 @@ def _history_status(store, attempt_id: int) -> str:
     _total, rows = store.list_operation_logs_with_count(
         limit=200,
         source_tables=("reply_attempts",),
-        _skip_history_cache=True,
     )
     row = next(
         row
@@ -12420,7 +12419,6 @@ def test_the_resolution_appends_and_never_rewrites_the_failure(tmp_path):
     _total, rows = store.list_operation_logs_with_count(
         limit=200,
         source_tables=("reply_attempts",),
-        _skip_history_cache=True,
     )
     row = next(row for row in rows if row.source_id == attempt_id)
     assert "runtime_provider_unreachable" in row.detail
@@ -12490,7 +12488,7 @@ def _attempt(store, *, trigger: str, status: str, error: str = "") -> int:
 
 def _projected(store, attempt_id: int) -> str:
     _total, rows = store.list_operation_logs_with_count(
-        limit=500, source_tables=("reply_attempts",), _skip_history_cache=True
+        limit=500, source_tables=("reply_attempts",)
     )
     return next(r.status for r in rows if r.source_id == attempt_id)
 

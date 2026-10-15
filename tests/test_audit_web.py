@@ -3914,21 +3914,6 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
         release_render.set()
 
 
-def test_audit_startup_does_not_prewarm_store_history(monkeypatch, tmp_path):
-    started = threading.Event()
-
-    def slow_prewarm(self, *, source_tables):
-        del self, source_tables
-        started.set()
-        raise AssertionError("History scans must be deferred until requested")
-
-    monkeypatch.setattr(AutoReplyStore, "warm_history_page_cache", slow_prewarm)
-    app = create_audit_app(tmp_path / "worker.sqlite3")
-    with TestClient(app) as client:
-        assert client.get("/healthz").json()["ok"] is True
-        assert not started.is_set()
-
-
 def test_recent_html_cache_refreshes_after_ttl():
     now = [0.0]
 
