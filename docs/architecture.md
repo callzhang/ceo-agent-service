@@ -89,6 +89,16 @@ native event/result projection. File I/O never extends these writer leases.
 运行或历史 Attempt。当前任务的失败状态优先于历史 completed 展示。未知投递使用技术失败／
 uncertain 执行状态，不生成管理者业务决策问题。
 
+`reconcile-failed-reply-chat-readback --task-id ...` is an explicit, one-task
+maintenance path for a historical reply whose send is already present in the
+sent-reply ledger but whose provider task can no longer be queried. It reads
+only that conversation around the recorded send time and requires the exact
+query range plus complete, untruncated, failure-free native history, one exact
+outgoing body quoting the original trigger, and a sender matching the authenticated principal. `--apply` records that evidence
+against the same approved candidate, external action and generation in one
+CAS transaction, then settles the task. It never sends or comments. Preview is
+read-only; incomplete, conflicting or multi-action evidence remains unresolved.
+
 Consumer 与 Audit 的实际只读工具目录提供 `read_dingtalk_group_members` 和
 `read_dingtalk_user_profiles`。群成员读取使用 DWS 原生有界自动分页，原样保留真人、
 机器人、完整性、桶、续页和失败信息；企业资料读取只接收已核实的组织 userId，

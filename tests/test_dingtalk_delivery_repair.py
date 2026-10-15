@@ -8,7 +8,11 @@ import pytest
 from app.agent_contracts import ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator
 from app.attempt_projection import project_attempt_status
-from app.dingtalk_delivery_repair import apply_delivery_reverification
+from app.dingtalk_delivery_repair import (
+    apply_delivery_reverification,
+    apply_native_chat_readback,
+    collect_native_chat_readback,
+)
 from app.run_storage import AGENT_RUN_SQL
 from app.system_executor import ActionOutcome, SystemExecutor
 from tests.test_agent_orchestrator import ScriptedAudit, ScriptedConsumer, candidate, task_and_context
@@ -95,6 +99,119 @@ def test_restart_recovery_keeps_confirmed_recorded_delivery(tmp_path):
         db.execute("update tasks set status='failed' where record_type='reply_tasks' and id=?", (task.id,))
     assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
     assert store.get_reply_task(task.id).status == "done"
+
+
+def _native_chat_proof(task, sent, *, mutation=""):
+    row = {
+        "conversationId": task.conversation_id,
+        "messageId": "outgoing-message-1",
+        "sender": "Principal",
+        "senderId": "principal-open-id",
+        "createTime": "2026-10-15 10:00:00",
+        "text": sent.reply_text,
+        "quotedMessage": {"messageId": task.trigger_message_id},
+    }
+    payload = {
+        "contractVersion": "im.message-list.v1",
+        "messages": [row],
+        "count": 1,
+        "complete": True,
+        "partial": False,
+        "hasMore": False,
+        "failures": [],
+        "failedCount": 0,
+        "paginationKnown": True,
+        "truncated": False,
+        "truncatedByPageLimit": False,
+        "truncatedByResultLimit": False,
+        "pagesFetched": 1,
+        "queryRange": {
+            "startTime": "2026-10-15T09:55:00+08:00",
+            "endTime": "2026-10-15T10:05:00+08:00",
+            "order": "asc",
+        },
+    }
+    if mutation == "partial":
+        payload["complete"] = False
+    elif mutation == "wrong_sender":
+        row["senderId"] = "other-user"
+    elif mutation == "wrong_text":
+        row["text"] = "different body"
+    elif mutation == "wrong_quote":
+        row["quotedMessage"]["messageId"] = "different-trigger"
+    return {
+        "task_id": task.id,
+        "payload": payload,
+        "queried_at": "2026-10-15T02:00:00Z",
+        "start": "2026-10-15T09:55:00+08:00",
+        "end": "2026-10-15T10:05:00+08:00",
+        "principal_user_id": "principal-user-id",
+        "principal_open_dingtalk_id": "principal-open-id",
+    }
+
+
+def test_exact_complete_native_chat_readback_closes_without_resending(tmp_path):
+    store, task, _context, _driver, handler, receipt, _execution = historical_receipt(tmp_path)
+    assert apply_delivery_reverification(store, proof(receipt, "ambiguous"))
+    sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+    readback = _native_chat_proof(task, sent)
+
+    assert apply_native_chat_readback(store, readback)
+    assert store.get_reply_task(task.id).status == "done"
+    assert handler.sends == 1
+    result = json.loads(store.get_candidate_external_action(receipt["external_action_key"])["provider_result_json"])
+    assert result["verification"]["source"] == "native_chat_readback"
+    assert result["verification"]["message_id"] == "outgoing-message-1"
+    assert result["verification_repair"]["native_chat_readback"]["quoted_trigger_id"] == task.trigger_message_id
+    assert not apply_native_chat_readback(store, readback)
+
+
+def test_native_chat_readback_queries_exact_conversation_without_write_tools(tmp_path):
+    store, task, _context, _driver, _handler, _receipt, _execution = historical_receipt(tmp_path)
+    sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+
+    class ReadOnlyDws:
+        dws_bin = "dws"
+
+        def __init__(self):
+            self.command = None
+
+        def run_json(self, command):
+            self.command = command
+            payload = _native_chat_proof(task, sent)["payload"]
+            payload["queryRange"] = {
+                "startTime": command[command.index("--start") + 1],
+                "endTime": command[command.index("--end") + 1],
+                "order": "asc",
+            }
+            return payload
+
+        def get_current_user_id(self):
+            return "principal-user-id"
+
+        def get_user_profile(self, user_id):
+            assert user_id == "principal-user-id"
+            return SimpleNamespace(open_dingtalk_id="principal-open-id")
+
+    dws = ReadOnlyDws()
+    proof = collect_native_chat_readback(store, dws, task.id)
+    assert "--conversation-id" in dws.command
+    assert task.conversation_id in dws.command
+    assert "--page-all" in dws.command
+    assert "--no-reactions" in dws.command
+    assert not any("send" in part or "comment" in part for part in dws.command)
+    assert proof["principal_open_dingtalk_id"] == "principal-open-id"
+
+
+@pytest.mark.parametrize("mutation", ["partial", "wrong_sender", "wrong_text", "wrong_quote"])
+def test_native_chat_readback_refuses_incomplete_or_mismatched_proof(tmp_path, mutation):
+    store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)
+    assert apply_delivery_reverification(store, proof(receipt, "ambiguous"))
+    sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+
+    with pytest.raises(ValueError):
+        apply_native_chat_readback(store, _native_chat_proof(task, sent, mutation=mutation))
+    assert store.get_reply_task(task.id).status == "failed"
 
 
 @pytest.mark.parametrize("state", ["ambiguous", "failed"])

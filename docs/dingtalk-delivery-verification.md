@@ -131,3 +131,21 @@ Ruff and diff checks pass. No whole live-tree test suite was run.
 Readback at 2026-10-14T07:27:13.212635+00:00: main PID 73677, healthz ok, service running, quality health healthy with 0 violations; Attention 12 groups and History 20 items readable. Reply task failure count15 equals prior3 plus the12 explicit uncertainty corrections. Reply, meeting and scheduled dispatcher jobs are running/requeued through normal recovery; active business jobs have not all finished. Native history availability remains separate (29 readable, 442 unavailable).
 
 The normal backup workflow now retains a verified 2026-10-14 production backup reflecting the corrected receipts. Task-owned temporary copies, captured query files and diagnostic samples have been removed after readback; correction provenance remains in the production receipts and this acceptance record.
+
+## Native conversation readback settlement
+
+For a historical task whose original outgoing reply is already present in
+`sent_replies` but whose provider send task is unavailable, the supported
+recovery is `reconcile-failed-reply-chat-readback --task-id <id>` followed by
+explicit `--apply` only when the preview shows one exact match. The command
+queries the original conversation around the persisted send time and requires
+the live `im.message-list.v1` completeness fields (`complete`, `partial`,
+`hasMore`, `failures`, `failedCount`, pagination and truncation flags, count,
+and exact query range), the original quoted trigger, exact persisted body, and
+authenticated current sender identity. It binds that proof to one currently
+approved single-action candidate, external receipt, task generation and
+settled execution under a write transaction. Original provider output,
+verification history, candidate execution/action state and task failure are
+retained in repair provenance. It does not call a send/comment action or alter
+Agent run and historical Attempt rows. Any mismatch leaves the task failed;
+reapplying an already-settled proof is a no-op.

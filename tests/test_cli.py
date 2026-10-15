@@ -69,6 +69,14 @@ def test_email_unsubscribe_cancellation_requires_exact_identity_and_explicit_app
         build_parser().parse_args(["cancel-failed-email-unsubscribe", "--task-id", "77"])
 
 
+def test_native_chat_readback_is_explicitly_previewed_before_apply():
+    arguments = ["reconcile-failed-reply-chat-readback", "--task-id", "1"]
+    preview = build_parser().parse_args(arguments)
+    assert preview.task_id == 1
+    assert preview.apply is False
+    assert build_parser().parse_args([*arguments, "--apply"]).apply is True
+
+
 def test_task_project_repair_commands_parse_required_paths():
     plan = build_parser().parse_args(
         [
