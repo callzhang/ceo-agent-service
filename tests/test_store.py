@@ -1,3 +1,4 @@
+from tests.test_email_legacy_schema import published_source as published_source
 import errno
 import hashlib
 import importlib.util
@@ -4394,17 +4395,17 @@ def test_store_repairs_missing_required_table_despite_current_schema_version(
         ).fetchone() == (1,)
 
 
-def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path) -> None:
-    from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_store19
+def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path, published_source) -> None:
+    from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
     from app.task_storage import WORKBENCH_TURN_SQL
 
     db_path = tmp_path / "source13-workbench.sqlite3"
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Leases','codex')")
         db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,lease_owner,lease_expires_at)
             values('turn','parent','request',1,'kept','running','original-owner','2026-10-13 00:00:00')""")
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
         columns = {str(row[1]) for row in db.execute("pragma table_info(tasks)")}

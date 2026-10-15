@@ -1,3 +1,4 @@
+from tests.test_email_legacy_schema import published_source as published_source
 import json
 import hashlib
 import sqlite3
@@ -11,7 +12,7 @@ import app.store as store_module
 import app.workbench.store as workbench_store_module
 from app.workbench.models import ConfirmationStatus, TurnStatus
 from app.task_storage import task_physical_id, task_id_expression, insert_task, WORKBENCH_TURN_SQL
-from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_store19
+from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
 from app.workbench.store import WorkbenchConflictError, WorkbenchStore
 
 
@@ -64,14 +65,14 @@ def _waiting_confirmation(store: WorkbenchStore):
     return task, turn.id, confirmation
 
 
-def test_source13_migration_preserves_user_text_and_private_resume_context(tmp_path: Path):
+def test_source13_migration_preserves_user_text_and_private_resume_context(tmp_path: Path, published_source):
     db_path = tmp_path / "workbench.sqlite3"
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Analyse sales','codex')")
         db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,resume_context)
             values('turn','parent','request-1',1,'Compare regions','completed','private receipt')""")
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     migrated = WorkbenchStore(db_path)
     assert migrated.get_turn("turn").user_text == "Compare regions"
     assert "resume_context" not in migrated.get_turn("turn").model_dump()
@@ -152,7 +153,7 @@ def test_store_repairs_missing_required_point_nine_index(tmp_path: Path):
     assert index is not None
 
 
-def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp_path: Path):
+def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp_path: Path, published_source):
     db_path = tmp_path / "workbench.sqlite3"
     task_id = "00000000-0000-4000-8000-000000000011"
     attachment_id = "00000000-0000-4000-8000-000000000012"
@@ -160,14 +161,14 @@ def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp
     directory.mkdir(parents=True)
     attachment_path = directory / attachment_id
     attachment_path.write_bytes(b"legacy")
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,'Attachment upgrade','codex')", (task_id,))
         db.execute("""insert into workbench_attachments(id,task_id,client_request_id,filename,media_type,size_bytes,content_sha256,storage_path)
             values(?,?,'original-request','legacy.png','image/png',6,?,?)""",
             (attachment_id, task_id, hashlib.sha256(b"legacy").hexdigest(), str(attachment_path)))
         before = db.execute("select id,client_request_id,content_sha256,filename,media_type,size_bytes,storage_path,created_at from workbench_attachments").fetchone()
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     migrated = WorkbenchStore(db_path)
     with migrated._connect() as db:
         after = tuple(db.execute("select id,client_request_id,content_sha256,filename,media_type,size_bytes,storage_path,created_at from workbench_attachments").fetchone())
@@ -183,13 +184,13 @@ def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp
 
 
 def test_source13_migration_preserves_stable_per_task_sequence(
-    tmp_path: Path,
+    tmp_path: Path, published_source,
 ):
     db_path = tmp_path / "workbench.sqlite3"
     first_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
     second_id = "00000000-0000-4000-8000-000000000001"
     task_id = "source-parent"
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,'Legacy order','codex')", (task_id,))
         db.execute("""insert into workbench_turns
             (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
@@ -199,7 +200,7 @@ def test_source13_migration_preserves_stable_per_task_sequence(
             values(?,?,?,?,?,?,?)""", (second_id,task_id,'legacy-second','second','failed',2,'2026-08-13 00:00:00'))
 
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     upgraded = WorkbenchStore(db_path)
     turns = upgraded.list_turns(task_id)
     with upgraded._connect() as db:
@@ -285,11 +286,11 @@ def test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition(
 
 
 def test_source13_confirmation_controls_survive_migration_and_existing_recovery(
-    tmp_path: Path,
+    tmp_path: Path, published_source,
 ):
     db_path = tmp_path / "workbench.sqlite3"
     confirmation_id = "source-confirmation"
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Analyse sales','codex')")
         db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status)
             values('turn','parent','request',1,'Compare regions','waiting_confirmation')""")
@@ -297,7 +298,7 @@ def test_source13_confirmation_controls_survive_migration_and_existing_recovery(
             values(?,'turn','reviewed_cli','Executive group','Send update','External message','{}','pending')""", (confirmation_id,))
 
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     migrated = WorkbenchStore(db_path)
     assert migrated.get_confirmation(confirmation_id).status is ConfirmationStatus.PENDING
     assert migrated.reconcile_unquiesced_proposers() == 1
@@ -323,12 +324,12 @@ def test_source13_confirmation_controls_survive_migration_and_existing_recovery(
 
 
 def test_source13_blank_proposer_recovery_is_once_across_turn_states(
-    tmp_path: Path,
+    tmp_path: Path, published_source,
 ):
     db_path = tmp_path / "workbench.sqlite3"
     turns = {}
     confirmations = []
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         for label, status in (("waiting", "waiting_confirmation"), ("queued", "queued"), ("running", "running"), ("completed", "completed")):
             task_id, turn_id, confirmation_id = f"task-{label}", f"turn-{label}", f"confirmation-{label}"
             db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,?,'codex')", (task_id,label))
@@ -344,7 +345,7 @@ def test_source13_blank_proposer_recovery_is_once_across_turn_states(
         confirmations.append(duplicate_id)
 
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     migrated = WorkbenchStore(db_path)
     assert all(migrated.get_confirmation(item).status is ConfirmationStatus.PENDING for item in confirmations)
     assert migrated.reconcile_unquiesced_proposers() == 5

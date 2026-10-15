@@ -1,5 +1,7 @@
 """Meeting Store readers preserve public IDs across typed storage."""
 
+from tests.test_email_legacy_schema import published_source as published_source
+
 from datetime import datetime, timezone
 import sqlite3
 
@@ -10,7 +12,7 @@ from app.store import AutoReplyStore
 from app.task_storage import insert_task, task_id_expression
 from tests.test_meeting_task_storage import meeting_source
 from tests.test_task_storage_readers import original_rows_source13
-from tests.workbench_caller_fixtures import advance_source16_to_store17, advance_source17_to_store19
+from tests.workbench_caller_fixtures import advance_source16_to_store17, advance_source17_to_current_store
 
 
 def _job(store: AutoReplyStore, *, legacy_key: int, status: str = "pending") -> int:
@@ -176,11 +178,11 @@ def test_meeting_run_public_id_can_differ_from_physical_and_wrong_type_is_exclud
     assert store.has_later_meeting_alignment_run(700, 900)
 
 
-def test_historical_orphan_preserves_public_job_id_without_a_ghost_parent(tmp_path):
+def test_historical_orphan_preserves_public_job_id_without_a_ghost_parent(tmp_path, published_source):
     path = tmp_path / "source.db"
-    original_rows_source13(path, meeting_source)
+    original_rows_source13(path, published_source, meeting_source)
     advance_source16_to_store17(path)
-    advance_source17_to_store19(path)
+    advance_source17_to_current_store(path, published_source)
     store = AutoReplyStore(path)
 
     orphan = store.get_meeting_alignment_run_metadata(2298)

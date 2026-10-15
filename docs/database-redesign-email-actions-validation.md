@@ -2615,3 +2615,26 @@ unchanged. No redundant rerun followed independent source/AST/archive checks.
 The remaining current source13 callers still require complete coherent old-source
 assembly and official paired publication. Full Task7, CI/deployment and10+1 stay
 open; no runtime, production or provider change is claimed.
+
+### Task7 source13 current-caller fixture preparation (2026-10-14)
+
+The selected source13 current callers now construct Email51 with the published
+0441 EmailStore before source13 business rows are inserted, and use the archived
+Store for unrelated auxiliary declarations. The only Email declaration adjusted
+afterward is the empty unsubscribe-claims table, using its independently frozen
+actual SQL and indexes. Archived delivery and Store reply migrations then reach
+Store19; a separate archived cold open verifies the complete Store19/Email51
+pair before the official paired release publishes current Store20/Email52. The
+fixture asserts the actual_no_memory_fk/actual source pair. Current business
+assertions, the Meeting missing-parent rows, and malformed-source refusal stay
+intact. The source fingerprint now orders genuine WITHOUT ROWID Email seed tables
+by their declared primary keys.
+
+The first focused run passed14 and failed2 in archived Email v25 initialization:
+both retained intentional Meeting orphans tripped its global foreign-key check.
+Moving native Email51 initialization ahead of source13 row insertion resolved
+that fixture timing issue. The exact selected16 cases then passed in56.47s;
+the final empty-claims precondition was checked by one selected passing case.
+Scoped Ruff, diff, and AST comparisons of every selected business assertion
+and nonselected test function passed. This is local test-fixture evidence only;
+Task7, CI, deployment and full10+1 remain open.

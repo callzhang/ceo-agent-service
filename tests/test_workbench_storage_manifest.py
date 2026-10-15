@@ -1,3 +1,4 @@
+from tests.test_email_legacy_schema import published_source as published_source
 import sqlite3
 
 import pytest
@@ -9,10 +10,10 @@ from tests.workbench_schema_fixtures import full_source_database, fingerprint, S
 
 
 def test_actual_source_declarations_initialize_transactionally_and_idempotently(
-    tmp_path,
+    tmp_path, published_source,
 ):
     path = tmp_path / "source.db"
-    db = full_source_database(path, tmp_path / "auxiliary.db")
+    db = full_source_database(path, tmp_path / "auxiliary.db", published_source)
     db.execute('begin immediate')
     migrate_workbench_schema(db)
     from app.action_storage import migrate_action_schema
@@ -30,8 +31,8 @@ def test_actual_source_declarations_initialize_transactionally_and_idempotently(
     db.execute("update service_state set value='2026-10-13.3' where key='store_schema_version'")
     db.commit()
     db.close()
-    from tests.workbench_caller_fixtures import advance_source17_to_store19
-    advance_source17_to_store19(path)
+    from tests.workbench_caller_fixtures import advance_source17_to_current_store
+    advance_source17_to_current_store(path, published_source)
     store = AutoReplyStore(path)
     with store._connect() as db:
         assert workbench_schema_is_current(db)
