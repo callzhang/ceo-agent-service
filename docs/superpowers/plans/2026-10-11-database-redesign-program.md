@@ -18,10 +18,15 @@ caller/fresh factory/validator/paired release plan6119b024. Its coherent
 implementationb13a01d0 now has fresh sequential SPEC and QUALITY acceptance;
 root33 focused checks pass in2.37s, alongside the implementer's132-case paired
 suite. This selects the local unpublished Provider path, not production.
-Actual121-to104 source-copy/cold-old-code/native proof remains outstanding.
-Separate ancestor Business/Email CI38769762524 failed28 tests and nine setup
-cases, with14361 passing; scoped closure is underway in its own worktree before
-reconciliation. No old production table has been removed. Full10+1 remains open.
+Actual121-to104 source-copy/current inverse/genuine7dad cold writes/reforward
+now passes all four committed harness cases atfd3ba699. Root rehashed the frozen
+source unchanged; evidence is in the Provider validation and copy receipt. Five
+real native reply lifecycle branches with fake outbound are running separately.
+The paired target active pages increased32129024 bytes versus that frozen
+source, so table reduction is not capacity acceptance. Separate ancestor
+Business/Email CI38769762524 failed28 tests and nine setup cases, with14361
+passing; scoped closure887cd377 is pushed and replacement38785796782 remains
+in progress. No old production table has been removed. Full10+1 remains open.
 
 ## Latest unpublished Business/Email acceptance, 2026-10-15
 

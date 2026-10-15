@@ -291,3 +291,38 @@ index or page-layout causes. No VACUUM or new retention policy was applied.
 Table consolidation has not established capacity recovery. The receipt lists
 all121 source and104 target table row counts and table/index allocations;
 it is an offline frozen-input observation, not current production measurement.
+
+
+## Actual four-case source-copy acceptance, 2026-10-15
+
+The committed harness atfd3ba699 completed all four cases successfully:
+paired actual Provider/Business/Email publication, independent actual Email-only
+SQL boundary, genuine published-fresh SQL-legal source, and published-fresh
+application-shaped source. The receipt is
+`superpowers/specs/2026-10-15-provider-business-email-copy-acceptance.json`.
+It identifies21 proof paths and their SHA256 values, finite module hashes,
+whole-app clean guard, genuine archived7dad dependencies and unchanged
+production HEAD7dad before/after. Root independently rehashed the frozen input
+before/after to970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320;
+this is the older485212160-byte input captured15:35:24 UTC, not a new live capture.
+The new owned harness temporary root was removed and absence checked. The four
+previously rejected temporary cleanups remain separate and untouched.
+
+The paired actual source has121 tables and target104. All72142 Provider
+observations and55 folder generations enter the exact typed fact comparison.
+Current public writes prove scan/move, authoritative missing, later unchanged
+scan with generation advance, and direct signals with both times unchanged.
+The current-fact inverse restores original source DDL. Genuine old7dad public
+scan, flag and read writes then survive reforward, yielding72144 observations
+and57 folder generations. Business42 fields,15 children,19 translated FKs,
+21 unchanged FKs,13 allocator waters, six hidden ROWIDs, Email144 fields,
+old action/receipt history and unrelated table values retain their original
+proof gates. The source's one pre-existing FK finding is preserved rather
+than reported clean or repaired.
+
+All four cases returned passed. The run made no provider calls, native Agent
+CLI calls or production writes. Real native lifecycle acceptance has now been
+started separately on new copies with in-memory outbound delivery; its result
+is still pending. The preceding capacity measurement remains an increase,
+not space-recovery acceptance. Full ten-core-plus-ledger completion, replacement
+CI and final production approval remain outstanding.

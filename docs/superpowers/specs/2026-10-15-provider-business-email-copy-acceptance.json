@@ -1,0 +1,295 @@
+{
+  "status": "passed",
+  "scope": "combined Provider2/Business4/Email13 paired copy and three Email-only SQL-boundary cases",
+  "observed_at_utc": "2026-10-15T19:12:54.624031+00:00",
+  "published_source_ref": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "schema_binding_ref": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "executed_candidate_commit": "fd3ba699f9e745390e4bad4d14dc065e8379a63f",
+  "candidate_module_sha256": {
+    "app/store.py": "394cc4a52631029f7ac0d33a37c4654f8374b47784c5cf37e945666f9cac7ea8",
+    "app/email_store.py": "723e2a847e68d0f67074376cb80c8e6787795b3a0dc2d75bec508c317d8bedef",
+    "app/action_storage.py": "5fc0787a1ab89be57b489f318b2821243d085a40a26e4083c140fd3e798cfac4",
+    "app/action_email_storage.py": "12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c",
+    "app/action_email_definitions.py": "edde1bd647c5c04a515f6cf107390b3bc02dedbec1b0b02a32b00ef26469b4bf",
+    "app/action_email_schema_release.py": "cab9b146bdac754a0c94aea8ca8a8cc8ef02ec73f2f40305e992b7c025bbe6c6",
+    "app/store_schema_release.py": "60079684637e007a72c879e690f3acf23f34e156635fe6cc80bb1d392f6b8c45",
+    "app/business_definitions.py": "6c59db58e1c34e6632e814f6f87c864fa998490d92ca81557d301d87247eebe7",
+    "app/business_storage.py": "95ba1e4288db9388e9b7be75938444ce0b4fd96fae0f4afb873f79b5bcc9b79e",
+    "app/business_schema_release.py": "2f61b469c0f65742e946f90533ac9ca4639775d44238c7c09e1719b5f0379e78",
+    "app/project_context_service.py": "0390af16db7da0b3a4d0f39833d8c6bdd1ce35e4dd56e43c7c8b1ec54c262a1d",
+    "app/provider_state_definitions.py": "ad77ed82e1f88e093976afa82bc7cd3f3ddecb270a2295a4b8c18d88a5a8561a",
+    "app/provider_state_storage.py": "ae9042e2a303fc374df942f57e3666a4c95157cd2405884e0736b04cf963e061",
+    "app/provider_state_schema_release.py": "7422971f430892d6e89ce7d7d24dc97f17954f3352d62bbc97704eee9a7873e5",
+    "app/task_semantic_models.py": "feb1576846412936882f4afaba141483deee075c74843167523c955a839759ff",
+    "app/email_classifier_contracts.py": "e6f79ca2f3360e5cae078c62d7aa463dc96646964b2dc660fff4488806be376f",
+    "app/email_unsubscribe.py": "3524c6bb6ee4f0d724328ba65ba2c9076fb977aad7ab2999d0ec6b1d4707cfd9",
+    "app/audit_web.py": "6d1c9ca5d52cd65456ab90d2257f10e1ca1c6deddd34696fb02052890bbe2160"
+  },
+  "candidate_module_hash_scope": "Finite named core and direct-import modules; the clean Git guard covers the entire candidate app/ tree.",
+  "candidate_proof_sha256": {
+    "scripts/validate_action_email_copy.py": "0b9efd2867ae24085945ec9033e1cf417293ae5fc797d9e39e5cfaf4bb0fa0a7",
+    "tests/test_email_action_copy_proof.py": "7c0f376eb5623693921ea3ac1870596db215f0505a697faf1d49f9359290d9d1",
+    "tests/test_business_copy_proof.py": "64c3b18f66e9cd91b7e98e50f0c6725bc020c115ed56276fdce36d8b4d538c43",
+    "tests/test_provider_state_copy_proof.py": "ffc9c3f3e61aa86a8a5adc2fa41b9fbddcaed1199b7cddb920e5d5d97b93e7dd",
+    "tests/test_business_schema_release.py": "cf7b32fb85483539a926d8920870e06516c89d33bb99c18ee714a86b55006062",
+    "tests/test_provider_state_schema_release.py": "c2a9f147b11655de1395c3ff54704bffd3903e5203cb6f71c955df05764b5c8b",
+    "tests/test_provider_state_source.py": "1b43e7ea9eb5ae51cf6a901e9724ebb96881964b076ef447554bbe6c5c128a1e",
+    "scripts/validate_native_copy_lifecycle.py": "dbff93078bf66c56a71a50c0aa8985663bd717fae17e6bfc26147f8767d7dd04",
+    "tests/test_native_copy_lifecycle_harness.py": "f4a7bfcdc59e5a03f63d81dace7f7cb1c1fab5e9e8a73836a051ffc69ba15349",
+    "app/action_storage.py": "5fc0787a1ab89be57b489f318b2821243d085a40a26e4083c140fd3e798cfac4",
+    "app/action_email_storage.py": "12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c",
+    "app/action_email_definitions.py": "edde1bd647c5c04a515f6cf107390b3bc02dedbec1b0b02a32b00ef26469b4bf",
+    "app/action_email_schema_release.py": "cab9b146bdac754a0c94aea8ca8a8cc8ef02ec73f2f40305e992b7c025bbe6c6",
+    "app/store_schema_release.py": "60079684637e007a72c879e690f3acf23f34e156635fe6cc80bb1d392f6b8c45",
+    "app/business_definitions.py": "6c59db58e1c34e6632e814f6f87c864fa998490d92ca81557d301d87247eebe7",
+    "app/business_storage.py": "95ba1e4288db9388e9b7be75938444ce0b4fd96fae0f4afb873f79b5bcc9b79e",
+    "app/business_schema_release.py": "2f61b469c0f65742e946f90533ac9ca4639775d44238c7c09e1719b5f0379e78",
+    "app/provider_state_definitions.py": "ad77ed82e1f88e093976afa82bc7cd3f3ddecb270a2295a4b8c18d88a5a8561a",
+    "app/provider_state_storage.py": "ae9042e2a303fc374df942f57e3666a4c95157cd2405884e0736b04cf963e061",
+    "app/provider_state_schema_release.py": "7422971f430892d6e89ce7d7d24dc97f17954f3352d62bbc97704eee9a7873e5",
+    "docs/superpowers/specs/2026-10-15-database-redesign-business-email-published-source.json": "6662b78bb97898f7d392b56455dedd0927e11d25e53c0538f020a92a8c771598"
+  },
+  "published_old_module_sha256": {
+    "app/store.py": "525374f5d6ff65df16540daeecd1be84f59544ccb740b7444daddc7f8e49d585",
+    "app/email_store.py": "262b41745c2afd5f535c2cd3043b147f14aaf60ffd6496ea0b6862299c893062",
+    "app/action_storage.py": "9096a34f4faa134260faf2162f93549e5c1e224338c228a8587c24d6c0c7e87d",
+    "app/store_schema_release.py": "d0605e18dcbeffcbda904d2177559db5ff312ad3e203f07c0ab30447b8605c8f",
+    "app/project_context_service.py": "e4dbf277e083edf1d06ba5617d451914a353fbeb3183d141f70fa1538507d424",
+    "app/task_semantic_models.py": "feb1576846412936882f4afaba141483deee075c74843167523c955a839759ff",
+    "app/email_classifier_contracts.py": "e6f79ca2f3360e5cae078c62d7aa463dc96646964b2dc660fff4488806be376f",
+    "app/email_unsubscribe.py": "3524c6bb6ee4f0d724328ba65ba2c9076fb977aad7ab2999d0ec6b1d4707cfd9",
+    "app/audit_web.py": "52fb2f2846f04e40b639c687435ff5b36e18c98f02173a23d17814a205cb2939"
+  },
+  "published_old_dependency_sha256": {
+    "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json": "bb1eed5fef2f5a4f1f5b1a02d0a0ce0ec88d3943d316b1619a5a9b049f977cf6"
+  },
+  "production_head_before": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "production_head_after": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "source_binding": "Non-atomic checkout HEAD and SQLite online backup observations",
+  "cases": {
+    "paired_actual_online_backup": {
+      "paired_default_constructors": true,
+      "target_public_writes": true,
+      "old_public_cold_writes": true,
+      "current_fact_inverse": true,
+      "reforward_current_facts": true,
+      "source_tables": 121,
+      "target_tables": 104,
+      "preserved_fk_findings": 1,
+      "business_current_public_ids": {
+        "task": 595,
+        "anchor": 51,
+        "project": 51,
+        "project_context_revision": 7
+      },
+      "business_old_public_ids": {
+        "task_id": 596,
+        "anchor_id": 52,
+        "project_id": 52,
+        "context_id": 8,
+        "email_cold_read": true,
+        "preexisting_tasks": 595
+      },
+      "business_source_summary": {
+        "variant": "actual",
+        "parent_counts": {
+          "task": 594,
+          "project": 32,
+          "anchor": 50,
+          "project_context_revision": 6
+        },
+        "child_counts": {
+          "business_task_evidence": 897,
+          "business_task_date_evidence": 0,
+          "business_task_events": 893,
+          "business_project_evidence": 33,
+          "business_task_dingtalk_links": 0,
+          "business_task_follow_ups": 0,
+          "business_task_todo_sync_outbox": 0,
+          "business_task_relations": 0,
+          "business_work_cluster_tasks": 16,
+          "business_task_anchor_links": 97,
+          "business_project_candidates": 10,
+          "business_attention_items": 8,
+          "business_attention_tasks": 18,
+          "business_attention_proposal_tasks": 18,
+          "business_legacy_links": 0
+        },
+        "sequence_water_count": 13,
+        "fk_finding_count": 1,
+        "facts_sha256": "e7e8272430bcfce091f77049f0cf28d762a95d987cdd375983812e2e1b34eee1",
+        "declarations_sha256": "3c6e62bcb10ca6ef0ab76f1b7fd947e8ce788b6ae12e1507d49958b391cc348b"
+      },
+      "business_final_summary": {
+        "variant": "actual",
+        "parent_counts": {
+          "task": 596,
+          "project": 34,
+          "anchor": 52,
+          "project_context_revision": 8
+        },
+        "child_counts": {
+          "business_task_evidence": 897,
+          "business_task_date_evidence": 0,
+          "business_task_events": 893,
+          "business_project_evidence": 33,
+          "business_task_dingtalk_links": 0,
+          "business_task_follow_ups": 0,
+          "business_task_todo_sync_outbox": 0,
+          "business_task_relations": 0,
+          "business_work_cluster_tasks": 16,
+          "business_task_anchor_links": 97,
+          "business_project_candidates": 10,
+          "business_attention_items": 8,
+          "business_attention_tasks": 18,
+          "business_attention_proposal_tasks": 18,
+          "business_legacy_links": 0
+        },
+        "sequence_water_count": 13,
+        "fk_finding_count": 1,
+        "facts_sha256": "b7ad112881bd3efa1f8594f5c550e7ed118c71ed5b6530b1627c77f72dc8d6f1"
+      },
+      "provider_current_public_writes": {
+        "scan_move": true,
+        "authoritative_missing": true,
+        "unchanged_repeated_scan": true,
+        "generation_advanced_on_repeat": true,
+        "direct_signals": true,
+        "observation_time_unchanged": true,
+        "generation_times_unchanged": true
+      },
+      "provider_old_public_writes": {
+        "provider_public_scan": true,
+        "provider_public_flag": true,
+        "provider_public_read": true,
+        "provider_time_unchanged": true
+      },
+      "provider_source_summary": {
+        "variant": "actual",
+        "counts": {
+          "email_provider_observations": 72142,
+          "email_provider_folder_observation_generations": 55
+        },
+        "facts_sha256": "3fa4c656fe6218be5873b071b226750476df9a1c7a413b95f281a0487ece1a03",
+        "declarations_sha256": "a8fcf9f4c28e27e358eb24a731e55f09974ce9a8ed0b9419c148696e668bf3ce"
+      },
+      "provider_final_summary": {
+        "variant": "actual",
+        "counts": {
+          "email_provider_observations": 72144,
+          "email_provider_folder_observation_generations": 57
+        },
+        "facts_sha256": "6e6d07d5cd64b314bf5093aabb84524d399b2160bb73f525a13b8f450f6f8c29"
+      }
+    },
+    "actual_online_backup_sql_boundary": {
+      "variant": "actual",
+      "initial_tables": 121,
+      "target_tables": 108,
+      "source_counts_after_fixture_seed": {
+        "email_action_plans": 9973,
+        "email_actions": 10369,
+        "email_action_attempts": 12371,
+        "email_unsubscribe_cancellations": 1,
+        "email_unsubscribe_claims": 1091,
+        "email_unsubscribe_continuations": 0,
+        "email_unsubscribe_effects": 1178,
+        "email_unsubscribe_receipts": 1091,
+        "email_unsubscribe_steps": 827,
+        "email_direct_retry_requests": 1,
+        "email_feedback_requests": 1413,
+        "email_reply_dispatch_claims": 0,
+        "email_reply_receipts": 1
+      },
+      "baseline_fk_findings": 1,
+      "current_fact_inverse": true,
+      "old_public_feedback_replay": true,
+      "old_public_receipt_write": true,
+      "old_public_direct_attempt_completion": true,
+      "old_public_failed_visibility": true,
+      "old_history_source_id": true,
+      "old_public_unsubscribe_skip": true,
+      "old_public_explicit_retry": true,
+      "sql_legal_null_plan_rows": 0,
+      "reforward_values_types_locators_waters_equal": true
+    },
+    "published_old_fresh_sql_legal": {
+      "variant": "fresh_candidate",
+      "initial_tables": 121,
+      "target_tables": 108,
+      "source_counts_after_fixture_seed": {
+        "email_action_plans": 2,
+        "email_actions": 4,
+        "email_action_attempts": 0,
+        "email_unsubscribe_cancellations": 0,
+        "email_unsubscribe_claims": 0,
+        "email_unsubscribe_continuations": 0,
+        "email_unsubscribe_effects": 0,
+        "email_unsubscribe_receipts": 0,
+        "email_unsubscribe_steps": 0,
+        "email_direct_retry_requests": 0,
+        "email_feedback_requests": 0,
+        "email_reply_dispatch_claims": 0,
+        "email_reply_receipts": 1
+      },
+      "baseline_fk_findings": 0,
+      "current_fact_inverse": true,
+      "old_public_feedback_replay": false,
+      "old_public_receipt_write": false,
+      "old_public_direct_attempt_completion": false,
+      "old_public_failed_visibility": false,
+      "old_history_source_id": false,
+      "old_public_unsubscribe_skip": false,
+      "old_public_explicit_retry": false,
+      "sql_legal_null_plan_rows": 2,
+      "reforward_values_types_locators_waters_equal": true
+    },
+    "published_old_fresh_application": {
+      "variant": "fresh_candidate",
+      "initial_tables": 121,
+      "target_tables": 108,
+      "source_counts_after_fixture_seed": {
+        "email_action_plans": 2,
+        "email_actions": 4,
+        "email_action_attempts": 0,
+        "email_unsubscribe_cancellations": 0,
+        "email_unsubscribe_claims": 0,
+        "email_unsubscribe_continuations": 0,
+        "email_unsubscribe_effects": 0,
+        "email_unsubscribe_receipts": 0,
+        "email_unsubscribe_steps": 0,
+        "email_direct_retry_requests": 0,
+        "email_feedback_requests": 0,
+        "email_reply_dispatch_claims": 0,
+        "email_reply_receipts": 1
+      },
+      "baseline_fk_findings": 0,
+      "current_fact_inverse": true,
+      "old_public_feedback_replay": true,
+      "old_public_receipt_write": true,
+      "old_public_direct_attempt_completion": true,
+      "old_public_failed_visibility": true,
+      "old_history_source_id": true,
+      "old_public_unsubscribe_skip": true,
+      "old_public_explicit_retry": true,
+      "sql_legal_null_plan_rows": 0,
+      "reforward_values_types_locators_waters_equal": true
+    }
+  },
+  "checks": {
+    "temporary_copies_cleaned": true,
+    "production_mutations": 0,
+    "provider_calls": 0,
+    "native_cli_calls": 0
+  },
+  "limit": "Offline owned copies only; paired Provider/Business/Email target constructor and public-DAO proof is not native role, CI, production publication or live provider acceptance. The three independent SQL-boundary cases cover Email only.",
+  "root_frozen_source_attestation": {
+    "sha256_before": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "sha256_after": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "source_file_bytes": 485212160,
+    "source_capture_utc": "2026-10-15T15:35:24.512765+00:00",
+    "source_scope": "Older frozen published-source backup, not a new atomic live production capture",
+    "owned_harness_root_absent_after": true,
+    "capacity_receipt": "2026-10-15-provider-business-email-capacity.json"
+  }
+}
