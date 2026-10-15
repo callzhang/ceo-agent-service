@@ -2743,3 +2743,23 @@ consumer tests. Scoped Ruff and `git diff --check` passed. These are local
 integration results; the separate whole-copy/native proof, final Task2–6
 matrix, independent review, CI and publication gates are tracked by the root
 task and are not asserted here. No push, production write or deploy was made.
+
+
+### Task7 latest-main integration independent acceptance
+
+Root accepts the two normal merges ff5b8f95 and f258115a and evidence a654b522
+after fresh sequential SPEC then QUALITY PASS. Incoming native Audit binding,
+Task identity descriptions, terminal artifact cleanup and actionable human
+decisions in Attention remain exact main behavior. The finite Email source
+projection and current-plan/retry conditions remain; ten inspected central
+schema/storage/release/History/field-map files are byte-identical to1921c343.
+Both sides of claim/architecture/runtime conflicts were retained. Independent
+review was read-only; the245/249/112 passing tests are implementer results,
+not independently repeated suites. No new audit, authorization or retention
+policy was introduced by these merges.
+
+The exact29-file Task2–6 focused matrix, refreshed7301 source-copy proof and
+real native Consumer/Audit approval/revision with in-memory providers are now
+running against this unchanged runtime. Their results, CI, publication and
+production readback remain open. No production schema or real test delivery
+has occurred. The full10+1 target remains incomplete.
