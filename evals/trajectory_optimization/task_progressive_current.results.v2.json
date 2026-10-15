@@ -1,0 +1,127 @@
+{
+  "version": 2,
+  "status": "rejected_tool_host_disabled_no_reference_delivery",
+  "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T03-06-37-01a13f07-2ea4-7c52-9e69-94ca307880c5.jsonl",
+  "native_sha256": "7b3c838fb81511e7d2f62a0ddacce26becad175aa2f0c51ab62d39177567fdea",
+  "phases": [
+    {
+      "phase": "cold",
+      "session_id": "01a13f07-2ea4-7c52-9e69-94ca307880c5",
+      "submissions": 1,
+      "input_chars": [
+        16661
+      ],
+      "counts": {
+        "projects": 1,
+        "tasks": 0,
+        "attention": 0,
+        "quick_check": "ok"
+      },
+      "ranges": [
+        [
+          0,
+          21
+        ]
+      ],
+      "outputs": [
+        {
+          "line": 18,
+          "sha256": "3591e7c1a4e925395da8b75011925341b92d37dcb4c4bde5c89410fe6120363f",
+          "native_schema_valid": true,
+          "pydantic_valid": true
+        }
+      ],
+      "tools": [
+        {
+          "line": 11,
+          "name": "exec",
+          "arguments": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md && printf '\\\\n---SKILL---\\\\n' && sed -n '1,260p' .agents/skills/ceo-work-tracking/SKILL.md && printf '\\\\n---PROJECTS---\\\\n' && sed -n '1,260p' .agents/skills/ceo-work-tracking/references/projects.md && printf '\\\\n---ASSESSMENT---\\\\n' && sed -n '1,300p' .agents/skills/ceo-work-tracking/references/assessment.md && printf '\\\\n---RESULT---\\\\n' && sed -n '1,260p' .agents/skills/ceo-work-tracking/references/result.md && printf '\\\\n---EVIDENCE---\\\\n' && sed -n '1,240p' .agents/skills/ceo-work-tracking/references/evidence.md\",\"workdir\":\"/private/tmp/ceo-task-direct-skill.oKN4JA/candidate\",\"yield_time_ms\":10000,\"max_output_tokens\":30000});\ntext(r.output);"
+        }
+      ],
+      "source_returns": [
+        {
+          "line": 13,
+          "chars": 26,
+          "truncation_markers": [],
+          "host_disabled_error": true,
+          "complete_files": {
+            "SKILL.md": false,
+            "references/assignment.md": false,
+            "references/result.md": false,
+            "references/evidence.md": false,
+            "references/projects.md": false,
+            "references/assessment.md": false,
+            "references/service.md": false
+          }
+        }
+      ]
+    },
+    {
+      "phase": "risk",
+      "session_id": "01a13f07-2ea4-7c52-9e69-94ca307880c5",
+      "submissions": 2,
+      "input_chars": [
+        14980,
+        11593
+      ],
+      "counts": {
+        "projects": 1,
+        "tasks": 1,
+        "attention": 1,
+        "quick_check": "ok"
+      },
+      "ranges": [
+        [
+          21,
+          37
+        ],
+        [
+          37,
+          51
+        ]
+      ],
+      "outputs": [
+        {
+          "line": 34,
+          "sha256": "ef337b066fdd54f4fbb40ea1e9996d0b4e662fcb65fc7198aa4118f040eafb71",
+          "native_schema_valid": true,
+          "pydantic_valid": false,
+          "errors": [
+            {
+              "loc": [
+                "task_decisions",
+                0
+              ],
+              "msg": "Value error, suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+            }
+          ],
+          "candidate_fields": [
+            {
+              "action": "record_candidate",
+              "transition": "none",
+              "owner_kind": "individual",
+              "owner_relation": "unknown",
+              "formal_basis": null,
+              "status": null,
+              "business_relevance": null
+            }
+          ]
+        },
+        {
+          "line": 48,
+          "sha256": "e4146c8f0c2aec8410990efdf38eee58797fa759462ee3849b77955a646ff3a7",
+          "native_schema_valid": true,
+          "pydantic_valid": true
+        }
+      ],
+      "tools": []
+    }
+  ],
+  "limits": [
+    "No runtime, installed Skill or native global configuration change.",
+    "Current Task schema and existing correction policy unchanged.",
+    "Reject this feature flag as a progressive-reading solution."
+  ],
+  "feature_override": "features.code_mode_host=false; eval-only, native default unchanged",
+  "reason": "Native model still invokes functions.exec, but tool returns code-mode host is disabled. Applied counts and corrected valid JSON do not prove reference delivery."
+}
