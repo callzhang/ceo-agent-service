@@ -248,3 +248,20 @@ and accepted a dirty fixture. After adding the exact path, the report contains
 21 proof hashes and rejects that dirty fixture; all nine focused report and
 guard cases pass. This changes only proof attribution, not Provider data or
 migration behavior.
+
+
+### Independent copied-source harness acceptance
+
+Fresh SPEC accepted both synthetic proof follow-ups at4d3f6927 (six direct
+cases passed in0.64s). QUALITY independently ran68 focused cases in138.57s
+and found one proof-attribution gap: the literal Provider fixture imported by
+the proof tests was absent from the manifest. Commitfbbb22a2 adds exactly that
+fixture path to the existing clean Git guard and SHA256 list. The regressions
+were RED before the fix (manifest20 rather than21 entries and dirty fixture
+accepted), then nine report/dirty-path cases passed. Fresh SPEC reran nine in
+0.24s; fresh QUALITY reran nine in0.17s and accepted the narrow fix. This is
+harness acceptance, not the actual-copy result. Root has started the committed
+actual four-case source-copy proof atfd3ba699 against the frozen970a909a input;
+it remains in progress at this recording. The initial direct-script command
+omitted PYTHONPATH and stopped at import before any database operation; the
+corrected invocation uses PYTHONPATH=.
