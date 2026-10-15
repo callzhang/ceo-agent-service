@@ -1391,8 +1391,10 @@ def run(source, source_ref, repo):
                     "app/action_email_schema_release.py", "app/store_schema_release.py",
                     "app/business_definitions.py", "app/business_storage.py",
                     "app/business_schema_release.py", "app/project_context_service.py",
-                    "app/task_semantic_models.py")
-    guard_paths = tuple(dict.fromkeys((*proof_paths, *module_paths)))
+                    "app/task_semantic_models.py", "app/email_classifier_contracts.py",
+                    "app/email_unsubscribe.py", "app/audit_web.py")
+    # Git sees both tracked edits and untracked files under the whole imported app tree.
+    guard_paths = (*proof_paths, "app")
     assert not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain", "--",
                                         *guard_paths], text=True).strip(), "proof code is uncommitted"
     candidate_hashes = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
@@ -1463,6 +1465,7 @@ def run(source, source_ref, repo):
             "observed_at_utc":datetime.now(timezone.utc).isoformat(),
             "published_source_ref":source_ref,"schema_binding_ref":PUBLISHED_SCHEMA_REF,
             "executed_candidate_commit":candidate_commit,"candidate_module_sha256":candidate_hashes,
+            "candidate_module_hash_scope":"Finite named core and direct-import modules; the clean Git guard covers the entire candidate app/ tree.",
             "candidate_proof_sha256":proof_hashes,
             "published_old_module_sha256":old_hashes,
             "published_old_dependency_sha256":old_dependencies,

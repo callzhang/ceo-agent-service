@@ -451,7 +451,8 @@ def bounded_run(tmp_path, monkeypatch):
         for name in (*("app/" + p for p in ("store.py", "email_store.py",
                      "action_storage.py", "action_email_storage.py",
                      "action_email_definitions.py", "project_context_service.py",
-                     "task_semantic_models.py")), proof.SOURCE_ARCHIVE_PATHS[1]):
+                     "task_semantic_models.py", "email_classifier_contracts.py",
+                     "email_unsubscribe.py", "audit_web.py")), proof.SOURCE_ARCHIVE_PATHS[1]):
             payload = b"published source"
             entry = tarfile.TarInfo(name)
             entry.size = len(payload)
@@ -484,11 +485,16 @@ def test_final_production_head_change_keeps_all_completed_case_evidence(bounded_
     assert report["production_head_after"] == "published-next"
     assert report["published_source_ref"] == source_ref
     assert report["executed_candidate_commit"] == "candidate-commit"
-    assert len(report["candidate_module_sha256"]) == 12
+    assert len(report["candidate_module_sha256"]) == 15
+    assert {"app/email_classifier_contracts.py", "app/email_unsubscribe.py",
+            "app/audit_web.py"}.issubset(report["candidate_module_sha256"])
+    assert "app/process_runner.py" not in report["candidate_module_sha256"]
+    assert "finite" in report["candidate_module_hash_scope"].lower()
+    assert "app/" in report["candidate_module_hash_scope"]
     assert len(report["candidate_proof_sha256"]) == 13
     assert proof.BINDING_RELATIVE in report["candidate_proof_sha256"]
     assert report["scope"] == "combined Business4/Email13 paired copy and three Email-only SQL-boundary cases"
-    assert len(report["published_old_module_sha256"]) == 7
+    assert len(report["published_old_module_sha256"]) == 10
     assert report["cases"] == {
         "paired_actual_online_backup": {"paired": True},
         "actual_online_backup_sql_boundary": {"case": 0},
@@ -553,11 +559,33 @@ def test_latest_copy_rejects_dirty_executed_module_or_binding(bounded_run, monke
     original = proof.subprocess.check_output
 
     def dirty_if_checked(command, **kwargs):
-        if "status" in command and path in command:
-            return f" M {path}\n"
+        if "status" in command:
+            pathspecs = command[command.index("--") + 1:]
+            if any(path == spec or path.startswith(f"{spec.rstrip('/')}/")
+                   for spec in pathspecs):
+                return f" M {path}\n"
         return original(command, **kwargs)
 
     monkeypatch.setattr(proof.subprocess, "check_output", dirty_if_checked)
+    with pytest.raises(AssertionError, match="proof code is uncommitted"):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
+
+
+def test_latest_copy_guards_app_module_outside_finite_hash_list(bounded_run, monkeypatch):
+    source, source_ref, repo, heads = bounded_run
+    path = "app/process_runner.py"
+    original = proof.subprocess.check_output
+
+    def dirty_if_app_tree_checked(command, **kwargs):
+        if "status" in command:
+            pathspecs = command[command.index("--") + 1:]
+            assert path not in pathspecs
+            if "app" in pathspecs:
+                return f" M {path}\n"
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(proof.subprocess, "check_output", dirty_if_app_tree_checked)
     with pytest.raises(AssertionError, match="proof code is uncommitted"):
         run(source, source_ref, repo)
     assert heads == ["published-next"]

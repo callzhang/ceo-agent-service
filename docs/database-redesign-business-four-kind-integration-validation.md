@@ -106,3 +106,14 @@ executed modules and the binding, and requires the supplied archive ref plus
 both binding production HEADs to equal the published `7dadc492` commit.
 The fourteen focused coordinator and negative tests pass after the correction.
 The root-owned copied production run and its receipts remain separate evidence.
+
+The remaining copied-proof QUALITY issue was an incomplete app import guard:
+three direct imports were absent from the finite hash report, and other app
+modules could change locally without failing the preflight. A new regression
+for dirty `app/process_runner.py`, outside the finite hash list, failed before
+the correction and passed after it. The Git clean check now covers the whole
+candidate `app/` tree plus the finite proof paths, including the binding JSON.
+The report hashes the original named core modules and the three direct imports
+(`email_classifier_contracts.py`, `email_unsubscribe.py`, `audit_web.py`) and
+labels this as a finite list. Nine focused guard/report checks passed; no
+copied-production or native run was performed for this correction.
