@@ -14,6 +14,7 @@ from app.dingtalk_delivery_repair import (
     collect_native_chat_readback,
     native_reply_text_matches,
 )
+from app.action_storage import delete_action, update_action
 from app.run_storage import AGENT_RUN_SQL
 from app.system_executor import ActionOutcome, SystemExecutor
 from tests.test_agent_orchestrator import ScriptedAudit, ScriptedConsumer, candidate, task_and_context
@@ -171,6 +172,73 @@ def test_exact_complete_native_chat_readback_closes_without_resending(tmp_path):
     assert result["verification"]["message_id"] == "outgoing-message-1"
     assert result["verification_repair"]["native_chat_readback"]["quoted_trigger_id"] == task.trigger_message_id
     assert not apply_native_chat_readback(store, readback)
+
+
+def _legacy_native_readback_case(tmp_path):
+    store, task, _context, _driver, handler, receipt, execution = historical_receipt(tmp_path)
+    assert apply_delivery_reverification(store, proof(receipt, "ambiguous"))
+    reviewed = store.current_reviewed_candidate(task.id, task.execution_generation)
+    attempts = store.list_candidate_action_attempts(execution["id"])
+    legacy_attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title="",
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text="", action="reply", sensitivity_kind="", send_status="completed",
+        channel=task.channel,
+    )
+    with store._immediate_write_transaction() as db:
+        update_action(db, "reply_attempts", legacy_attempt_id, {
+            "agent_run_id": reviewed["consumer_run_id"],
+            "send_status": "completed", "permission_action": "", "reviewed_at": None,
+            "audit_tool_events_json": "[]", "audit_documents_json": "[]",
+        })
+        for row in attempts:
+            delete_action(db, "candidate_action_attempts", row["id"])
+        delete_action(db, "candidate_executions", execution["id"])
+        delete_action(db, "candidate_reviews", reviewed["review_id"])
+        delete_action(db, "review_candidates", reviewed["id"])
+    sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+    readback = _native_chat_proof(task, sent)
+    return store, task, handler, receipt, readback
+
+
+def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_audit(tmp_path):
+    store, task, handler, receipt, readback = _legacy_native_readback_case(tmp_path)
+    assert apply_native_chat_readback(store, readback)
+    assert store.get_reply_task(task.id).status == "done"
+    assert handler.sends == 1
+    result = json.loads(store.get_candidate_external_action(receipt["external_action_key"])["provider_result_json"])
+    assert result["verification"]["source"] == "native_chat_readback"
+    assert result["verification_repair"]["approval_reconstructed"] is False
+    assert result["verification_repair"]["settlement_basis"] == "verified_existing_legacy_reply_delivery"
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from actions where record_type='review_candidates' and legacy_key=?",
+            (str(task.id),),
+        ).fetchone()[0] == 0
+    assert not apply_native_chat_readback(store, readback)
+
+
+@pytest.mark.parametrize("mutation", ["permission", "receipt_target"])
+def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_path, mutation):
+    store, task, _handler, receipt, readback = _legacy_native_readback_case(tmp_path)
+    with store._immediate_write_transaction() as db:
+        if mutation == "permission":
+            attempt = db.execute(
+                "select legacy_key from actions where record_type='reply_attempts' "
+                "and json_extract(payload_json,'$.agent_run_id')=?",
+                (receipt["first_agent_run_id"],),
+            ).fetchone()
+            update_action(db, "reply_attempts", int(attempt["legacy_key"]), {
+                "permission_action": "approve",
+            })
+        else:
+            update_action(db, "external_action_results", receipt["external_action_key"], {
+                "target_identifiers_json": "{}",
+            })
+
+    with pytest.raises(ValueError, match="legacy reply lacks"):
+        apply_native_chat_readback(store, readback)
+    assert store.get_reply_task(task.id).status == "failed"
 
 
 def test_native_chat_readback_accepts_exact_native_quoted_sender_prefix(tmp_path):

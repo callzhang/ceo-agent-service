@@ -40,6 +40,18 @@ identity, settles the same execution/task and compacts only that settled input.
 The command has no send/comment path; previews are read-only and every mismatch
 or incomplete response leaves the task unresolved.
 
+Historical tasks from before persisted Audit candidates were introduced use a
+separate evidence contract, not a reconstructed approval: the task must have no
+candidate in any generation, exactly one completed legacy reply Attempt with no
+permission or Audit evidence, and one completed Agent run bound to the exact
+task generation. The existing sent-reply row and external receipt must match
+the same business key and exact conversation/trigger target. After the same
+complete native readback proves the outgoing message, the transaction records
+delivery verification and closes only the task; it does not create candidate,
+review, execution, or approval records and does not rewrite the historical
+Attempt. Any approval trace, ambiguous identity, or mismatched target keeps the
+task unresolved.
+
 Startup reply-task projection recovery performs candidate discovery on read-only
 connections and applies bounded batches in short SQLite write transactions. The
 failed-current-run repair rechecks only the candidate task IDs, generations and
