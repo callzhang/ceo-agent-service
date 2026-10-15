@@ -32,8 +32,8 @@ from app.business_schema_release import (
 
 PUBLISHED_SCHEMA_REF = "7dadc492c1c62d5b0624f2f97dd0c89f4f358646"
 PRODUCTION_ROOT = Path.home() / "Services/ceo-agent-service"
-BINDING = (Path(__file__).resolve().parents[1] / "docs/superpowers/specs/"
-           "2026-10-15-database-redesign-business-email-published-source.json")
+BINDING_RELATIVE = "docs/superpowers/specs/2026-10-15-database-redesign-business-email-published-source.json"
+BINDING = Path(__file__).resolve().parents[1] / BINDING_RELATIVE
 SOURCE_ARCHIVE_PATHS = (
     "app", "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json",
 )
@@ -1373,25 +1373,28 @@ def _paired_case(path, oldroot, repo):
 
 def run(source, source_ref, repo):
     binding = json.loads(BINDING.read_text())
-    assert binding["production_checkout_head_after"] == PUBLISHED_SCHEMA_REF
+    assert (source_ref == PUBLISHED_SCHEMA_REF
+            == binding["production_checkout_head_before"]
+            == binding["production_checkout_head_after"]), "published source ref mismatch"
     production_before = subprocess.check_output(["git", "-C", str(PRODUCTION_ROOT), "rev-parse", "HEAD"], text=True).strip()
     assert production_before == source_ref
-    assert subprocess.check_output(["git", "-C", str(repo), "merge-base", PUBLISHED_SCHEMA_REF,
-                                    source_ref], text=True).strip() == PUBLISHED_SCHEMA_REF
     candidate_commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     proof_paths = ("scripts/validate_action_email_copy.py", "tests/test_email_action_copy_proof.py",
                    "tests/test_business_copy_proof.py", "tests/test_business_schema_release.py",
                    "app/action_storage.py", "app/action_email_storage.py",
                    "app/action_email_definitions.py", "app/action_email_schema_release.py",
                    "app/store_schema_release.py", "app/business_definitions.py",
-                   "app/business_storage.py", "app/business_schema_release.py")
-    assert not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain", "--",
-                                        *proof_paths], text=True).strip(), "proof code is uncommitted"
+                   "app/business_storage.py", "app/business_schema_release.py",
+                   BINDING_RELATIVE)
     module_paths = ("app/store.py", "app/email_store.py", "app/action_storage.py",
                     "app/action_email_storage.py", "app/action_email_definitions.py",
                     "app/action_email_schema_release.py", "app/store_schema_release.py",
                     "app/business_definitions.py", "app/business_storage.py",
-                    "app/business_schema_release.py")
+                    "app/business_schema_release.py", "app/project_context_service.py",
+                    "app/task_semantic_models.py")
+    guard_paths = tuple(dict.fromkeys((*proof_paths, *module_paths)))
+    assert not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain", "--",
+                                        *guard_paths], text=True).strip(), "proof code is uncommitted"
     candidate_hashes = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
                         for name in module_paths}
     proof_hashes = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()

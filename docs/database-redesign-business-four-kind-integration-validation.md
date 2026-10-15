@@ -93,3 +93,16 @@ fixtures passed 2 tests. A synthetic Business actual/fresh image test also
 covers target edits, deletion, project and child rebind, inverse and reforward.
 The root-owned actual production-source copy, real native lifecycle, combined
 CI, main merge, push and deploy remain separate pending evidence.
+
+## Task 4 harness reproducibility correction
+
+Independent QUALITY review found that the copied-database coordinator checked
+some proof files for uncommitted changes but omitted `store.py`, `email_store.py`,
+`project_context_service.py`, `task_semantic_models.py` and the source binding
+JSON, even though they affect the proof. It also allowed a descendant archive
+ref while applying the exact `7dadc492` binding. Five dirty-input and one
+descendant-ref regressions first failed. The harness now guards and hashes all
+executed modules and the binding, and requires the supplied archive ref plus
+both binding production HEADs to equal the published `7dadc492` commit.
+The fourteen focused coordinator and negative tests pass after the correction.
+The root-owned copied production run and its receipts remain separate evidence.
