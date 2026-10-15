@@ -393,7 +393,8 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "业务承接证据" in prompt
     assert "内容优先于参会人数" in prompt
     assert "final_message 只写正文" in prompt
-    assert "不要重复会议标题或时间" in prompt
+    assert "不要重复标题或时间" in prompt
+    assert "发送层只加 message_title 和时间" in prompt
     assert "用 Markdown 把正文结构化" in prompt
     assert "`- ` 列表" in prompt
 

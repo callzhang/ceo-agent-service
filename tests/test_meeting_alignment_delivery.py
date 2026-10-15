@@ -149,6 +149,7 @@ def send_decision(*, target="group", mention_names=None):
     return MeetingAlignmentDecision.model_validate(
         {
             "action": "send",
+            "message_title": "上线评审",
             "audience_scope": "personal" if target == "direct" else "business",
             "trigger_reasons": ["unresolved_disagreement"],
             "topics": [
@@ -1365,13 +1366,38 @@ def test_followup_header_says_when_a_meeting_is_summarised_again():
     Saying so in the header is the service's job, not the model's: a second
     follow-up that looks identical to the first reads as a duplicate.
     """
-    first = meeting_alignment_delivery._meeting_followup_header(meeting_source())
+    first = meeting_alignment_delivery._meeting_followup_header(meeting_source(), title="上线评审")
     again = meeting_alignment_delivery._meeting_followup_header(
-        meeting_source().model_copy(update={"resummary": True})
+        meeting_source().model_copy(update={"resummary": True}), title="上线评审"
     )
 
     assert first == "# 上线评审\n*时间：2026-07-14 09:00-10:00*"
     assert again == first + "\n*说明：第二次总结，已合并后续录制内容*"
+
+
+def test_business_delivery_does_not_reinsert_sensitive_source_title():
+    source = meeting_source().model_copy(update={"title": "人员优化方案与项目交付"})
+    decision = send_decision().model_copy(update={
+        "message_title": "项目交付跟进", "final_message": "项目清单已确认。",
+        "mention_names": [],
+    })
+    dws = FakeDws()
+    result = deliver_meeting_alignment(decision, source, dws)
+    assert source.title not in result.message_text
+    assert "人员优化" not in result.message_text
+    assert result.message_text.startswith("# 项目交付跟进\n")
+    assert dws.sent[0]["title"] == "会议跟进｜项目交付跟进"
+
+
+def test_unreviewed_old_decision_title_is_neutral_instead_of_source_title():
+    source = meeting_source().model_copy(update={"title": "人员优化名单复核"})
+    decision = send_decision().model_dump()
+    decision.pop("message_title", None)
+    body = meeting_alignment_delivery.meeting_followup_message(
+        MeetingAlignmentDecision.model_validate(decision), source
+    )
+    assert body.startswith("# 会议跟进\n")
+    assert source.title not in body
 
 
 def test_followup_header_names_the_meeting_it_came_from():
@@ -1382,7 +1408,8 @@ def test_followup_header_names_the_meeting_it_came_from():
     arrived without saying which meeting produced it.
     """
     header = meeting_alignment_delivery._meeting_followup_header(
-        meeting_source().model_copy(update={"title": "唐总Boehringer Ingelheim  friday试用"})
+        meeting_source().model_copy(update={"title": "唐总Boehringer Ingelheim  friday试用"}),
+        title="唐总Boehringer Ingelheim  friday试用"
     )
 
     assert header.splitlines()[0] == "# 唐总Boehringer Ingelheim friday试用"
@@ -1401,7 +1428,7 @@ def test_followup_header_prints_a_utc_meeting_in_beijing_time():
                 "started_at": "2026-09-24T00:00:00+00:00",
                 "ended_at": "2026-09-24T00:59:36+00:00",
             }
-        )
+        ), title="上线评审"
     )
 
     assert "*时间：2026-09-24 08:00-08:59*" in header

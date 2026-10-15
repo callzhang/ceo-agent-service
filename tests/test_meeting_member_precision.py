@@ -5,13 +5,13 @@ from app.meeting_alignment import _search_meeting_group_candidates
 from app.meeting_alignment_models import MeetingSource
 
 
-def discover(rosters, *, participant_count=3, complete=True):
+def discover(rosters, *, participant_count=3, complete=True, unresolved=False):
     source = MeetingSource.model_validate({
         "meeting_id": "precision", "title": "项目进展", "status": "ended",
         "started_at": "2026-10-01T09:00:00+08:00",
         "ended_at": "2026-10-01T10:00:00+08:00",
         "participants": [
-            {"name": f"P{i}", "user_id": f"u{i}", "open_dingtalk_id": f"p{i}"}
+            {"name": f"P{i}", "user_id": f"u{i}", "open_dingtalk_id": "" if unresolved and i == participant_count - 1 else f"p{i}"}
             for i in range(participant_count)
         ],
         "attendee_evidence": "calendar", "attendee_roster_complete": complete,
@@ -59,3 +59,9 @@ def test_incomplete_meeting_roster_still_reports_group_denominator_and_gap():
     assert candidate["member_precision"] == "2/3"
     assert candidate["reference_audience_complete"] is False
     assert candidate["member_roster_complete"] is True
+
+
+def test_complete_calendar_with_unresolved_identity_is_incomplete_reference():
+    [candidate] = discover({"partial": {"p0", "p1", "other"}}, unresolved=True)
+    assert candidate["member_precision"] == "2/3"
+    assert candidate["reference_audience_complete"] is False

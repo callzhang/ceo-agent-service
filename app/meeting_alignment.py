@@ -928,6 +928,7 @@ def _search_meeting_group_candidates(
         audience_is_complete=(
             source.attendee_evidence == "calendar"
             and source.attendee_roster_complete
+            and len(participants) == len(source.participants)
             and len(participants) >= 2
         ),
         source_context={

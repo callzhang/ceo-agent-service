@@ -415,6 +415,14 @@ class MeetingAlignmentDecision(StrictModel):
             "不得是当前用户或其已核验别名；只有个人完整日历 1:1 名册解析不出 user_id 时才写 \"\"。"
         )
     )
+    message_title: str = Field(
+        default="会议跟进", min_length=1,
+        description=(
+            "面向实际接收受众核验后的消息标题，同时用于正文首行和推送。"
+            "仅在该受众有权知道原会议标题时沿用原题；否则写中性业务标题。"
+            "裁员、减员、人员优化本身即敏感，没有名单也不得在业务标题中暗示。"
+        ),
+    )
     final_message: str = Field(
         description=(
             "必须非空；按实际内容、业务目的和披露范围核验近期讨论、完整当前群成员、稳定身份、"

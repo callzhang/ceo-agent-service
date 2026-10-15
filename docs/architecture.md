@@ -2232,3 +2232,5 @@ descriptions, literal JSON values, strict required fields and every validation
 constraint remain unchanged. Existing Task identity validators and provider,
 Skill/source, session, correction and Audit contracts are preserved. Consumer/Audit
 schema text is byte-identical. See docs/task-schema-title-formatting-validation.md.
+
+会议消息新增 `message_title`，由 Agent 按实际接收受众核验：安全时可沿用会议原题，否则使用中性业务标题。正文首行与推送标题均只取此字段，不再自动拼接可能含人员方案信息的 `source.title`；没有已核验标题的持久化决策使用中性的“会议跟进”。原会议标题仍留在来源记录中用于追溯。

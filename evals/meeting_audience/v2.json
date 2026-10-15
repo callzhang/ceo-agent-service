@@ -208,7 +208,8 @@
         "conversation_id": "pilot-group"
       },
       "expected_private_user_id": null,
-      "public_forbidden_marker": "W-20"
+      "public_forbidden_marker": "W-20",
+      "source_title": "人员优化W-20与项目交付"
     },
     {
       "id": "explicit_full_committee_authorization_allows_personnel_plan",

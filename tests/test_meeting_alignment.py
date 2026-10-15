@@ -859,6 +859,7 @@ def consumer_send_decision() -> MeetingAlignmentDecision:
     return MeetingAlignmentDecision.model_validate(
             {
                 "action": "send",
+                "message_title": "上线评审",
                 "audience_scope": "business",
             "trigger_reasons": ["unresolved_disagreement"],
             "topics": [
