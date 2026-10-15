@@ -3067,3 +3067,37 @@ comparison, not another raw backup. Full source-copy/current-fact inverse/
 old-code/reforward and actual native approval/revision evidence remain pending
 for this new source. PR90 stays draft; no main merge, deployment or real
 provider sending was performed by these verification steps.
+
+### Exact f264 copied-data completion with production drift, 2026-10-15
+
+Committed candidate cfc71b52276d387ec0195117ab46ba6caed7c9d9 completed all four
+owned offline cases against the verified483508224-byte source captured from
+production f264d32e4aff13d2e7e0a91424d8ab2422857948. The aggregate evidence is
+`docs/superpowers/specs/2026-10-15-database-redesign-email-actions-f264-copy.json`.
+Its exact five candidate module hashes still match the working tree. The
+source SHA remains1336c4e1e89db321e47c3057bc40bea6360e505580c77ccf14246d7538b52861.
+
+The paired real constructors, target public writes, current-fact inverse,
+genuine old-code cold reads/writes and reforward all completed. Actual-source
+SQL boundary, genuine published-code fresh SQL-legal NULL and fresh application
+variants also completed. They retain native values/types, public locators,
+allocator waters and unrelated facts. Actual source/target table counts are
+121/108 and the original one FK finding is retained; both fresh variants have
+zero original FK findings. False old-public flags in the SQL-legal-NULL case
+mean those application-invalid fixtures intentionally exercise SQL only. They
+are not substituted for the separate fresh-application case.
+
+Production advanced to264c073cfe779b76a5a7f001480149fb784f0591 during execution.
+The repaired coordinator preserved all completed evidence, returned explicit
+`production_changed`, and exited1. This is completed exact-source proof, not
+a current-production acceptance PASS. The incoming increment changes the
+incident chronology test and OA return readback, not these five storage modules;
+normal integration and focused checks remain required. The source capture and
+checkout observations are non-atomic and that limit remains in the report.
+
+The proof's owned temporary root was automatically removed and absence verified.
+No provider or native CLI was called; no production mutation, merge or deployment
+was performed. Source raw data remains only in the latest active verified backup
+for subsequent native acceptance, not in this aggregate evidence. Capacity growth
+remains unresolved; this proof does not establish a space saving, final CI, native
+acceptance or the full ten-core-table-plus-ledger goal.

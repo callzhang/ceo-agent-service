@@ -1,0 +1,138 @@
+{
+  "status": "production_changed",
+  "scope": "offline Email13 SQL boundary and real paired copy/public APIs",
+  "observed_at_utc": "2026-10-15T09:08:13.066611+00:00",
+  "published_source_ref": "f264d32e4aff13d2e7e0a91424d8ab2422857948",
+  "schema_binding_ref": "eb797e6bd35de695c269054a2e697af8fde2baa5",
+  "executed_candidate_commit": "cfc71b52276d387ec0195117ab46ba6caed7c9d9",
+  "candidate_module_sha256": {
+    "app/store.py": "8179841ddcd45f7819f0313c424a0eb63f5cae33fc93c44f12b6dd6953fd1327",
+    "app/email_store.py": "e3f72fb845104430514972038a936fcedd71f8c72695a1d82198bda76f625f37",
+    "app/action_storage.py": "5fc0787a1ab89be57b489f318b2821243d085a40a26e4083c140fd3e798cfac4",
+    "app/action_email_storage.py": "12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c",
+    "app/action_email_definitions.py": "edde1bd647c5c04a515f6cf107390b3bc02dedbec1b0b02a32b00ef26469b4bf"
+  },
+  "published_old_module_sha256": {
+    "app/store.py": "db68fce768bd3813801466706687d8ded8d12963266c5e9bb642102383692e8a",
+    "app/email_store.py": "262b41745c2afd5f535c2cd3043b147f14aaf60ffd6496ea0b6862299c893062",
+    "app/action_storage.py": "9096a34f4faa134260faf2162f93549e5c1e224338c228a8587c24d6c0c7e87d"
+  },
+  "published_old_dependency_sha256": {
+    "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json": "bb1eed5fef2f5a4f1f5b1a02d0a0ce0ec88d3943d316b1619a5a9b049f977cf6"
+  },
+  "production_head_before": "f264d32e4aff13d2e7e0a91424d8ab2422857948",
+  "production_head_after": "264c073cfe779b76a5a7f001480149fb784f0591",
+  "source_binding": "Non-atomic checkout HEAD and SQLite online backup observations",
+  "cases": {
+    "paired_actual_online_backup": {
+      "paired_default_constructors": true,
+      "target_public_writes": true,
+      "old_public_cold_writes": true,
+      "current_fact_inverse": true,
+      "reforward_current_facts": true,
+      "source_tables": 121,
+      "target_tables": 108,
+      "preserved_fk_findings": 1
+    },
+    "actual_online_backup_sql_boundary": {
+      "variant": "actual",
+      "initial_tables": 121,
+      "target_tables": 108,
+      "source_counts_after_fixture_seed": {
+        "email_action_plans": 9949,
+        "email_actions": 10345,
+        "email_action_attempts": 12338,
+        "email_unsubscribe_cancellations": 1,
+        "email_unsubscribe_claims": 1090,
+        "email_unsubscribe_continuations": 0,
+        "email_unsubscribe_effects": 1177,
+        "email_unsubscribe_receipts": 1090,
+        "email_unsubscribe_steps": 826,
+        "email_direct_retry_requests": 1,
+        "email_feedback_requests": 1413,
+        "email_reply_dispatch_claims": 0,
+        "email_reply_receipts": 1
+      },
+      "baseline_fk_findings": 1,
+      "current_fact_inverse": true,
+      "old_public_feedback_replay": true,
+      "old_public_receipt_write": true,
+      "old_public_direct_attempt_completion": true,
+      "old_public_failed_visibility": true,
+      "old_history_source_id": true,
+      "old_public_unsubscribe_skip": true,
+      "old_public_explicit_retry": true,
+      "sql_legal_null_plan_rows": 0,
+      "reforward_values_types_locators_waters_equal": true
+    },
+    "published_old_fresh_sql_legal": {
+      "variant": "fresh_candidate",
+      "initial_tables": 121,
+      "target_tables": 108,
+      "source_counts_after_fixture_seed": {
+        "email_action_plans": 2,
+        "email_actions": 4,
+        "email_action_attempts": 0,
+        "email_unsubscribe_cancellations": 0,
+        "email_unsubscribe_claims": 0,
+        "email_unsubscribe_continuations": 0,
+        "email_unsubscribe_effects": 0,
+        "email_unsubscribe_receipts": 0,
+        "email_unsubscribe_steps": 0,
+        "email_direct_retry_requests": 0,
+        "email_feedback_requests": 0,
+        "email_reply_dispatch_claims": 0,
+        "email_reply_receipts": 1
+      },
+      "baseline_fk_findings": 0,
+      "current_fact_inverse": true,
+      "old_public_feedback_replay": false,
+      "old_public_receipt_write": false,
+      "old_public_direct_attempt_completion": false,
+      "old_public_failed_visibility": false,
+      "old_history_source_id": false,
+      "old_public_unsubscribe_skip": false,
+      "old_public_explicit_retry": false,
+      "sql_legal_null_plan_rows": 2,
+      "reforward_values_types_locators_waters_equal": true
+    },
+    "published_old_fresh_application": {
+      "variant": "fresh_candidate",
+      "initial_tables": 121,
+      "target_tables": 108,
+      "source_counts_after_fixture_seed": {
+        "email_action_plans": 2,
+        "email_actions": 4,
+        "email_action_attempts": 0,
+        "email_unsubscribe_cancellations": 0,
+        "email_unsubscribe_claims": 0,
+        "email_unsubscribe_continuations": 0,
+        "email_unsubscribe_effects": 0,
+        "email_unsubscribe_receipts": 0,
+        "email_unsubscribe_steps": 0,
+        "email_direct_retry_requests": 0,
+        "email_feedback_requests": 0,
+        "email_reply_dispatch_claims": 0,
+        "email_reply_receipts": 1
+      },
+      "baseline_fk_findings": 0,
+      "current_fact_inverse": true,
+      "old_public_feedback_replay": true,
+      "old_public_receipt_write": true,
+      "old_public_direct_attempt_completion": true,
+      "old_public_failed_visibility": true,
+      "old_history_source_id": true,
+      "old_public_unsubscribe_skip": true,
+      "old_public_explicit_retry": true,
+      "sql_legal_null_plan_rows": 0,
+      "reforward_values_types_locators_waters_equal": true
+    }
+  },
+  "checks": {
+    "temporary_copies_cleaned": true,
+    "production_mutations": 0,
+    "provider_calls": 0,
+    "native_cli_calls": 0
+  },
+  "limit": "Offline owned copies only; paired target constructor/public-DAO proof is not native role, CI, production publication or live provider acceptance."
+}
