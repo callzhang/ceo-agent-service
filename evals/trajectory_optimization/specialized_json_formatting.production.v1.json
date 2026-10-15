@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "production_ref": "afd78131ffb9bdf50ef145a2cc115708143630e2",
+  "formal_deploy": "deployed832da02e ->afd78131",
+  "production_source_sha256": {
+    "app/meeting_alignment_agent.py": "e6ee7629338ef2af868b1d6ccc451b5cbe3e52928f46f118fc58ec52cf5ababa",
+    "app/email_classifier_agent.py": "50baeaf6fc3b5c6445ecb652a3b99dab7e22a14fe41efbbd6b6a68e234b54fc1",
+    "app/task_agent.py": "f63c59b13b28fd16e52bd598dab8071a56d0e5b6ce80a6914cf9ade3a3c18180"
+  },
+  "source_matches_reviewed": true,
+  "process_pid_ppid_elapsed": [
+    "40832 1 00:34",
+    "40835 40832 00:34",
+    "40836 40832 00:34",
+    "40837 40832 00:34"
+  ],
+  "readback": [
+    {
+      "path": "/healthz",
+      "http": 200,
+      "seconds": 0.033,
+      "ok": true,
+      "status": "ok"
+    },
+    {
+      "path": "/api/console/status",
+      "http": 200,
+      "seconds": 1.165,
+      "summary": {
+        "queue_count": 13,
+        "pending": 3,
+        "processing": 1,
+        "failed": 23,
+        "retryable": 0,
+        "attention": 17
+      },
+      "service_pid": "40832"
+    },
+    {
+      "path": "/api/console/attention?page_size=2",
+      "http": 200,
+      "seconds": 0.498,
+      "items": 15
+    },
+    {
+      "path": "/api/console/history?page_size=2&include_chart=false",
+      "http": 200,
+      "seconds": 1.27,
+      "items": 2
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer&route_name=codex_oauth",
+      "http": 200,
+      "seconds": 0.17,
+      "status": "available",
+      "mode": "current",
+      "task_id": null
+    }
+  ],
+  "boundary": "Source/new process/API readback only, not new specialized native business-task outcomes. Settings public Consumer preview only; held Task Settings/native schema/provider and Audit ownership proposal not implemented."
+}
