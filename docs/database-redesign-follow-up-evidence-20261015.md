@@ -139,3 +139,26 @@ observation/generation behavior and exact whitespace-bearing typed values.
 Independent QUALITY review and actual copied-database execution are pending.
 No production deployment or final eleven-table acceptance follows from these
 intermediate checks.
+
+
+## Native weekly historical-version investigation
+
+The separate metadata-only weekly historical source receipt records15 remaining
+source rows (373943 UTF-8 body bytes,177 attached signals) across five known
+DingTalk nodes. Native readonly version metadata lists103 versions with all
+metadata pagination complete. Of those,97 unique versions had exact requested/
+returned version binding. None matched an expected frozen Markdown hash, so
+no remaining source row is accepted as an exact provider-original recovery.
+This is a bounded negative search, not proof of permanent unavailability:
+three listed versions were unattempted and three otherwise successful replies
+lacked the required historical-version binding.
+
+Actual historical body reads were101, exceeding the100-call bound byone.
+An exploratory fetch was omitted from the running counter; the researcher
+corrected the count and stopped all provider reads. Source SHA256 before and
+after remained970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320.
+The receipt records executed module hashes and coverage rather than raw bodies.
+No source edit, version revert, permissions change, send, database write or
+body retirement occurred. Current-source matches for four other weekly rows
+are separate root observations and are not counted as historical recovery of
+these fifteen. They cannot justify deleting the unproved originals.
