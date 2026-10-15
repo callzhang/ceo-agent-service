@@ -56,3 +56,20 @@ does not increase historical coverage. The other 158 of 188 bodies remain
 unproved. No source body was retired. Provenance persistence, existing caller
 conversion, exact target fields/constraints and forward/inverse migration
 verification remain subsequent work. Nothing here was pushed, merged or deployed.
+
+
+## Bounded original orchestrator-source probe, 2026-10-15
+
+Root independently checked the two unproved console/service-data-repair source
+documents (IDs8 and30) against the existing original orchestrator session
+01a122e3-0bec-73b3-b7aa-c0be8e731a61. Exact full-body plain, UTF-8 JSON string
+literal and ASCII JSON string literal searches found no matches in the recorded
+unchanged native prefixes. The per-file bound was256MiB; this was one identified
+original session, not a broad scan. Source body hash/bytes matched the earlier
+frozen artifact in process memory; no body, native copy or database was saved.
+The metadata-only receipt is
+`superpowers/specs/2026-10-15-business-console-source-probe.json`.
+
+This adds no recovered provenance and proves no general source unavailability.
+The previous30 verified/158 unproved result and body-retirement blocker remain
+unchanged; no source reader, caller, storage or provider behavior was changed.
