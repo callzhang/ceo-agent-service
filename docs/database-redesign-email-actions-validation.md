@@ -3101,3 +3101,68 @@ was performed. Source raw data remains only in the latest active verified backup
 for subsequent native acceptance, not in this aggregate evidence. Capacity growth
 remains unresolved; this proof does not establish a space saving, final CI, native
 acceptance or the full ten-core-table-plus-ledger goal.
+
+### Fixed main264 integration into the Email candidate, 2026-10-15
+
+This bounded integration starts from clean candidate
+`57d8c238c94e9dc148fe78a3389732bcbed67d05`, records its exact incoming-path claim
+in `ad2e4282`, then normally merges only
+`264c073cfe779b76a5a7f001480149fb784f0591`. The incoming range starts at the
+previously accepted main `6c44b082dfac035da8ed6020c7a49a60cf70fda6`: 888ad28f
+cleanup/Console documentation, f264d32e OA round Skill refresh, authoritative
+3950df62 Store incident chronology fixtures and 264c073c OA millisecond return
+readback. No later main increment is included. The sole conflict was the claims
+append; both sides and the new claim are retained. Architecture/runtime retain
+all candidate statements and the exact incoming behavior paragraphs.
+
+All ten incoming paths outside shared docs and mixed `tests/test_store.py` are
+byte-identical to main264, including the bundled OA Skill, five runtime files
+and four test files. Both changed Store test functions (the original chronology
+case and three parameterized timestamp controls) have AST-identical source to
+main264; every other preexisting candidate Store test function/class is retained.
+No duplicate fixture correction or assertion/clock-boundary relaxation was added.
+All1790 uninvolved tracked candidate blobs remain identical to57d8c238 (excluding
+the incoming paths and this owned validation append). Shared architecture/runtime
+composition exactly equals the candidate document plus incoming main paragraph
+changes. A first inventory attempt stopped on Git-quoted Unicode filenames; the
+completed check uses NUL-delimited tree paths and verifies Git blob hashes.
+
+The five storage module SHA-256 values still equal the completed f264 aggregate:
+
+- `app/store.py`: `8179841ddcd45f7819f0313c424a0eb63f5cae33fc93c44f12b6dd6953fd1327`
+- `app/email_store.py`: `e3f72fb845104430514972038a936fcedd71f8c72695a1d82198bda76f625f37`
+- `app/action_storage.py`: `5fc0787a1ab89be57b489f318b2821243d085a40a26e4083c140fd3e798cfac4`
+- `app/action_email_storage.py`: `12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c`
+- `app/action_email_definitions.py`: `edde1bd647c5c04a515f6cf107390b3bc02dedbec1b0b02a32b00ef26469b4bf`
+
+Focused verification command, exit0, **98 passed in48.42s**:
+
+```sh
+python -m pytest -q --basetemp=/tmp/ceo-email-main264.YgLaGZ \
+  tests/test_oa_review_skill_binding.py tests/test_oa_return_readback.py \
+  tests/test_task_scanners.py \
+  tests/test_scheduled_agent_consumer.py::test_context_uses_exact_snapshot_and_rejects_unsupported_thinking \
+  tests/test_scheduled_agent_consumer.py::test_context_rejects_remote_runtime_for_local_service_task \
+  tests/test_scheduled_agent_consumer.py::test_scheduled_orchestrator_pins_parent_execution_mode_for_both_roles \
+  tests/test_scheduled_agent_consumer.py::test_legacy_scheduled_execution_protocol_remains_explicit_custom \
+  tests/test_cli.py::test_scan_oa_approvals_command_honors_enabled_and_lookback \
+  tests/test_cli.py::test_service_command_registry_binds_the_catalog_to_service_operations \
+  tests/test_cli.py::test_oa_pending_scan_loop_runs_on_its_own_interval \
+  tests/test_store.py::test_terminal_work_summary_input_resolves_its_own_error \
+  tests/test_store.py::test_terminal_work_summary_incident_recovery_uses_incident_time
+```
+
+Scoped `ruff check` passed on the five incoming runtime Python files and five
+incoming Python test files. Working-tree and staged `git diff --check` passed.
+The explicit newly created basetemp above was resolved to its exact
+`/private/tmp/ceo-email-main264.YgLaGZ` target, removed only after test completion,
+and absence verified. No guessed pytest root was touched.
+
+This is local integration evidence only. The four completed cfc/f264 copied-data
+cases and their `production_changed` result remain historical exact-source
+evidence; they were not rerun or promoted to current-production acceptance.
+No full copy, native proof, real provider call, production edit/test/restart,
+push, main merge or deploy occurred. The existing cfc remote CI38705149084 is
+owned by root and is not claimed as validation of this integration. Fresh
+sequential SPEC/QUALITY, final CI/native/publication and full10+1 acceptance
+remain separate gates.

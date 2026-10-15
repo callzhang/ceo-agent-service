@@ -1422,11 +1422,11 @@ def build_role_server(
     )
 
     def read_task_skill(name: str) -> dict[str, str]:
-        """Read an exact selected Skill frozen in this task's original input.
+        """Read an exact selected Skill frozen in this task's input.
 
         Pass a Skill name from the scheduled prompt catalog. The returned content
-        is the immutable managed revision or operation snapshot saved when the
-        scheduled command ran; this lookup never rereads an installed Skill file.
+        is the immutable managed revision or operation snapshot saved for this
+        review input; this lookup never rereads an installed Skill file.
         """
         return _read_bound_task_skill(db_path, task_id, artifact_generation, name)
 
