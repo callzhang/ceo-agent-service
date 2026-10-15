@@ -1400,6 +1400,53 @@ def test_unreviewed_old_decision_title_is_neutral_instead_of_source_title():
     assert source.title not in body
 
 
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_cross_version_prepared_title_is_never_resent(confirmed):
+    source = meeting_source().model_copy(update={"title": "人员优化方案与项目交付"})
+    old = send_decision(mention_names=[]).model_dump()
+    old.pop("message_title", None)
+    old["final_message"] = "项目清单已确认。"
+    decision = MeetingAlignmentDecision.model_validate(old)
+    dws = FakeDws()
+    store = _MemoryPostfixStore()
+    sender = ServiceMessageSender(store=store, dingtalk=dws)
+    key = "old-prepared-sensitive-title"
+    # Exact old-format bytes, not a body regenerated with the current renderer.
+    prepared = sender.prepare_meeting_alignment(
+        delivery_key=key, target_kind="group", target_id="cid-first",
+        body="# 人员优化方案与项目交付\n*时间：2026-07-14 09:00-10:00*\n\n---\n\n项目清单已确认。",
+    )
+    if confirmed:
+        receipt = {"result": {"openMessageId": "original-confirmed"}}
+        store.record_outbound_postfix_receipt("dingtalk", key, receipt)
+        result = deliver_meeting_alignment(decision, source, dws,
+            message_sender=sender, delivery_key=key)
+        assert result.send_result == receipt
+        assert result.message_text == prepared.final_body
+    else:
+        with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
+            deliver_meeting_alignment(decision, source, dws,
+                message_sender=sender, delivery_key=key)
+    assert dws.sent == []
+
+
+def test_split_private_notification_also_uses_reviewed_title():
+    source = meeting_source().model_copy(update={"title": "其他保密人员事项与项目交付"})
+    payload = send_decision(mention_names=[]).model_dump()
+    payload.update(message_title="项目交付跟进", final_message="项目清单已确认。",
+        sensitive_private_message={
+            "target": {"kind": "direct", "conversation_id": "", "direct_user_id": "u-a",
+                "title": "A", "candidates": []},
+            "message": "仅向A披露已核验的人员方案。", "reason": "该方案仅授权A接收。",
+            "recipient_evidence": ["独立核验A对该人员方案的披露权限。"],
+        })
+    dws = FakeDws()
+    deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), source, dws)
+    assert len(dws.sent) == 2
+    assert {message["title"] for message in dws.sent} == {"会议跟进｜项目交付跟进"}
+    assert all(source.title not in message["text"] for message in dws.sent)
+
+
 def test_followup_header_names_the_meeting_it_came_from():
     """A follow-up lands in a group that holds many meetings' messages.
 

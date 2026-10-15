@@ -433,7 +433,7 @@ def _deliver_sensitive_private_message(
             prepared,
             conversation_id=None,
             user_id=recipient.user_id.strip(),
-            title=f"会议跟进｜{source.title}",
+            title=f"会议跟进｜{decision.message_title}",
         ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry("sensitive meeting message send failed") from exc
