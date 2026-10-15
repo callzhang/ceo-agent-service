@@ -84,3 +84,28 @@ tests/test_business_storage.py -p no:cacheprovider` passed **429 tests in
 verifies the combined selected tests, not Business constructor integration or
 a migration. Email PR90 remains a separate draft, and no main merge, push or
 deployment was performed.
+
+
+## Planned inverse allocator correction: independent root control
+
+The complete integration plan remains unapproved while its caller/bootstrap/
+copy code is expanded. Its specific allocator defect is corrected at
+`e265f7fc`: inverse first captures current public waters, drops Business,
+removes only the four manual `business:kind` sqlite_sequence aliases, then
+restores source rows and current old-name waters. SQLite does not remove those
+manual aliases merely by dropping the table. The regression's high Project
+uses the high Anchor, and the high context revision uses that high Project.
+
+After the original SPEC reviewer accepted this bounded P1 correction, root
+independently loaded the exact committed normative module, frozen fresh-source
+generator and regression in a private process. Future alias/index declarations
+were patched only into that process; repository application files were unchanged.
+Removing only the alias-cleanup loop produced the expected RED at the regression's
+alias-absence assertion. With the committed correction, the exact test passed:
+all four kinds populated, four independently advanced/deleted-high waters,
+forward, current-fact inverse, successful source recapture and reforward.
+`/private/tmp/ceo-business-p1-proof.6lt10waf` was removed and absence asserted.
+
+This is native planning-code RED/GREEN evidence. It is not an installed migration,
+an actual production-copy Business run, cold application acceptance or approval
+of the still-incomplete full integration plan.
