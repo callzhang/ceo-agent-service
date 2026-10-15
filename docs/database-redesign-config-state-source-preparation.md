@@ -497,3 +497,18 @@ and account tests passed **99 cases in 49.50 seconds** before the final
 failure-identity assertion was added. The final assertion's focused rerun
 passed; Ruff, Python compilation and diff check passed. Target declaration,
 migration, inverse and release-copy gating remain separate decisions.
+
+#### Receipt reader readback SPEC correction
+
+Fresh SPEC found that the initial oracle checked `list_runtime_skill_load_receipts`
+and `latest_runtime_skill_load_receipt_for_pid` by ID only, so its full-reader
+claim was stronger than its assertions. The archived success and failure
+scripts now capture each reader's complete DTO and the persisted row's
+`id`, `config_id`, `pid`, `loaded_json`, `error` and `created_at`; assertions
+compare every field, exact UTF-8 body bytes and SQLite TEXT type. A temporary
+captured-reader-body mutation passed the former ID-only success test (1 pass)
+and failed the new full assertion on `loaded_json` (1 expected failure). The
+mutant was removed, and the unmodified four-case source oracle passed in
+31.63 seconds. Each pytest invocation used a new task-owned `/tmp` parent
+and `--basetemp`; the parent was absent after the run. This changes tests and
+source preparation only, without any target or runtime policy change.

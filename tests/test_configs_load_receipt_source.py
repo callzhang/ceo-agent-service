@@ -140,6 +140,12 @@ latest = store.latest_runtime_skill_load_receipt_for_pid(8123)
 with sqlite3.connect(p) as db:
     rows = db.execute("select id,typeof(loaded_json),loaded_json,error from "
                       "runtime_skill_load_receipts where config_id=? order by id", (config.id,)).fetchall()
+    full_rows = db.execute(
+        "select id,config_id,pid,loaded_json,error,created_at from "
+        "runtime_skill_load_receipts where config_id=? order by id", (config.id,)
+    ).fetchall()
+listed_payload = [r.__dict__.copy() for r in listed]
+latest_payload = latest.__dict__.copy()
 print(json.dumps({"empty": [empty_receipt.id,empty_receipt.loaded_json,empty_receipt.error],
                   "before": before.status,
                   "config": [config.id,store.get_runtime_skill_config(config.id).status],
@@ -147,7 +153,8 @@ print(json.dumps({"empty": [empty_receipt.id,empty_receipt.loaded_json,empty_rec
                   "bindings": [[b.skill_id,b.enabled,b.load_order] for b in
                                store.list_runtime_skill_bindings(config.id)],
                   "listed_ids": [r.id for r in listed], "latest_id": latest.id,
-                  "rows": rows}))
+                  "listed": listed_payload, "latest": latest_payload,
+                  "rows": rows, "full_rows": full_rows}))
 ''')
     assert result["empty"][1:] == ["{}", ""]
     assert result["before"] == "active"
@@ -160,6 +167,13 @@ print(json.dumps({"empty": [empty_receipt.id,empty_receipt.loaded_json,empty_rec
     assert len(ids) == len(set(ids)) == 2
     assert result["listed_ids"] == ids
     assert result["latest_id"] == ids[-1]
+    fields = ("id", "config_id", "pid", "loaded_json", "error", "created_at")
+    persisted = [dict(zip(fields, row, strict=True)) for row in result["full_rows"]]
+    assert result["receipts"] == persisted
+    assert result["listed"] == persisted
+    assert result["latest"] == persisted[-1]
+    assert all(row["config_id"] == result["config"][0] and
+               row["pid"] == 8123 and row["created_at"] for row in persisted)
     for receipt, (row_id, value_type, body, error) in zip(
         result["receipts"], result["rows"], strict=True,
     ):
@@ -203,6 +217,10 @@ failed = store.record_runtime_skill_load_failure(config.id, pid=8124, error="loa
 with sqlite3.connect(p) as db:
     persisted = db.execute("select typeof(loaded_json),loaded_json,error,pid "
                            "from runtime_skill_load_receipts where id=?", (failed.id,)).fetchone()
+    full_row = db.execute(
+        "select id,config_id,pid,loaded_json,error,created_at from "
+        "runtime_skill_load_receipts where id=?", (failed.id,)
+    ).fetchone()
 before_count = db.execute("select count(*) from runtime_skill_configs").fetchone()[0]
 try:
     store.create_runtime_skill_config(
@@ -215,10 +233,14 @@ with sqlite3.connect(p) as db:
     after_count = db.execute("select count(*) from runtime_skill_configs").fetchone()[0]
 print(json.dumps({"rejections": rejections, "after_reject": after_reject,
                   "failure": failed.__dict__, "persisted": persisted,
+                  "full_row": full_row,
                   "status": store.get_runtime_skill_config(config.id).status,
                   "latest_id": store.latest_runtime_skill_load_receipt_for_pid(8124).id,
+                  "latest": store.latest_runtime_skill_load_receipt_for_pid(8124).__dict__,
                   "other_id": other_receipt.id,
                   "listed_ids": [r.id for r in store.list_runtime_skill_load_receipts(config.id)],
+                  "listed": [r.__dict__ for r in store.list_runtime_skill_load_receipts(config.id)],
+                  "config_id": config.id,
                   "invalid_config": invalid_config,
                   "config_counts": [before_count, after_count]}))
 ''')
@@ -233,6 +255,13 @@ print(json.dumps({"rejections": rejections, "after_reject": after_reject,
     assert result["latest_id"] == result["failure"]["id"]
     assert result["other_id"] != result["failure"]["id"]
     assert result["listed_ids"] == [result["failure"]["id"]]
+    fields = ("id", "config_id", "pid", "loaded_json", "error", "created_at")
+    persisted = dict(zip(fields, result["full_row"], strict=True))
+    assert persisted == result["failure"] == result["latest"]
+    assert result["listed"] == [persisted]
+    assert persisted["config_id"] == result["config_id"]
+    assert persisted["pid"] == 8124 and persisted["created_at"]
+    assert persisted["loaded_json"].encode("utf-8") == b"{}"
     assert result["invalid_config"] == (
         "runtime Skill binding references invalid managed Skill revision"
     )
