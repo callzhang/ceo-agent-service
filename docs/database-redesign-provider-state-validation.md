@@ -224,3 +224,17 @@ whole-source Provider row counts, genuine old-code writes on the actual source,
 native CLI/provider-double behavior, replacement CI, publication or live
 readback. No actual database, real Provider, network, production checkout,
 push, PR, main branch or deployment was touched.
+
+### SPEC follow-up on the synthetic Provider proof
+
+A later public scan repeats the same Archive observation with unchanged
+source-shaped values. The harness compares all nine values and their SQLite
+types before and after that scan: its `observed_at` remains at the prior
+observation time while the Archive folder generation advances to the new scan
+time. The subsequent direct flag write still leaves both times unchanged.
+Direct actual and fresh DDL cases now include whitespace-bearing observation
+identity, folder name, category, JSON text and timestamp, plus a matching
+folder generation; the full image comparison carries those exact values and
+types through forward, current-fact inverse and reforward. Six direct and two
+paired focused tests passed after this follow-up. Actual copied-source and
+native CLI acceptance remain pending.

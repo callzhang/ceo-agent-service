@@ -7,20 +7,40 @@ from app.provider_state_schema_release import (
 )
 from scripts import validate_action_email_copy as proof
 from tests.test_provider_state_schema_release import _seed
-from tests.test_provider_state_source import OBS, GEN, T2, source_db
+from tests.test_provider_state_source import OBS, GEN, T2, insert_observation, source_db
 
 
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
 def test_provider_image_preserves_values_types_and_current_facts(variant):
     with source_db(variant) as db:
         _seed(db)
+        insert_observation(
+            db, account="account-w", identity="  spaced identity  ",
+            provider_folder_id="  folder  ", provider_folder_name="  Folder Name  ",
+            category_key="  legal  ", important_signals_json=' [ "flagged" ] ',
+            observed_at=" 2026-10-15T10:00:00+00:00 ",
+        )
+        db.execute(
+            f"insert into {GEN}(account_id,provider_folder_id,observed_at) values(?,?,?)",
+            ("account-w", "  folder  ", " 2026-10-15T10:00:00+00:00 "),
+        )
         db.commit()
         source = proof._provider_source_image(db)
         assert source["variant"] == variant
         assert set(source["facts"]) == {OBS, GEN}
         assert len(source["facts"][OBS][0]) == 9
         assert len(source["facts"][GEN][0]) == 3
-        assert sum(len(rows) for _, rows in source["facts"].values()) == 6
+        assert sum(len(rows) for _, rows in source["facts"].values()) == 8
+        observation_fields, observation_rows = source["facts"][OBS]
+        spaced = next(row for row in observation_rows if row[0] == "account-w")
+        assert spaced[observation_fields.index("stable_message_identity")] == "  spaced identity  "
+        assert spaced[observation_fields.index("provider_folder_name")] == "  Folder Name  "
+        assert spaced[observation_fields.index("important_signals_json")] == ' [ "flagged" ] '
+        assert spaced[len(observation_fields) + observation_fields.index("provider_folder_name")] == "text"
+        generation_fields, generation_rows = source["facts"][GEN]
+        spaced_generation = next(row for row in generation_rows if row[0] == "account-w")
+        assert spaced_generation[generation_fields.index("provider_folder_id")] == "  folder  "
+        assert spaced_generation[len(generation_fields) + generation_fields.index("observed_at")] == "text"
         db.execute("begin immediate")
         apply_provider_state_migration(db, {
             "variant": source["variant"], "tables": source["declarations"],

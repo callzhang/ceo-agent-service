@@ -64,7 +64,9 @@ Moved Provider rows and Business parents/rebuilt children have separate
 source-shaped value/type proofs; all other ordinary tables retain the
 unchanged-row proof. Current Provider scan, flag and generation writes are
 restricted to synthetic fixture identities while original Provider rows remain
-intact. After current-fact inverse, a cold subprocess imports the published old
+intact. A later repeated observation keeps its exact values, types and earlier
+observation time while its folder generation moves to the later scan time.
+After current-fact inverse, a cold subprocess imports the published old
 code for Provider, Task, Anchor, Project, context and Email writes. The three
 separate SQL-boundary cases remain Email-only. The native copied-DB harness
 requires the exact combined Provider and Business target declarations before

@@ -66,7 +66,9 @@ and SQLite types, the four Business parents, fifteen retained child tables,
 hidden ROWIDs, thirteen sequence waters and FK findings through publication,
 public writes, current-fact inverse, genuine cold old-code writes and
 re-publication. Provider declarations and original rows are checked separately
-from unrelated tables. Three additional SQL-boundary cases cover Email only.
+from unrelated tables. A later same-valued scan proves that folder generation
+time advances while observation facts and time remain unchanged. Three
+additional SQL-boundary cases cover Email only.
 This is candidate validation, not a production migration or native Agent result.
 
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`

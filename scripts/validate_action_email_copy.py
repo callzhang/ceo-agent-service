@@ -1201,7 +1201,33 @@ def _current_provider_public_writes(path, seeded):
         authoritative_folders=(f"{account}:INBOX", f"{account}:Archive"),
         observed_at="2026-10-14T02:02:00+00:00",
     )
+    named_observation = ",".join(map(_quote, OBSERVATION_FIELDS))
+    typed_observation = ",".join(f"typeof({_quote(field)})" for field in OBSERVATION_FIELDS)
     with closing(sqlite3.connect(path)) as db:
+        repeated_before = db.execute(
+            f"select {named_observation},{typed_observation} from main.provider_state "
+            "where record_type='observation' and account_id=? and stable_message_identity=?",
+            (account, first),
+        ).fetchone()
+        archive_generation_before = db.execute(
+            "select observed_at from main.provider_state where record_type='folder_generation' "
+            "and account_id=? and provider_folder_id='Archive'", (account,),
+        ).fetchone()
+    email.record_current_provider_observations(
+        [observation(first, "Archive")], unavailable_folders=(),
+        authoritative_folders=(f"{account}:Archive",),
+        observed_at="2026-10-14T02:03:00+00:00",
+    )
+    with closing(sqlite3.connect(path)) as db:
+        repeated_after = db.execute(
+            f"select {named_observation},{typed_observation} from main.provider_state "
+            "where record_type='observation' and account_id=? and stable_message_identity=?",
+            (account, first),
+        ).fetchone()
+        archive_generation_after = db.execute(
+            "select observed_at from main.provider_state where record_type='folder_generation' "
+            "and account_id=? and provider_folder_id='Archive'", (account,),
+        ).fetchone()
         before = db.execute(
             "select observed_at,important_signals_json from main.provider_state "
             "where record_type='observation' and account_id=? and stable_message_identity=?",
@@ -1212,7 +1238,13 @@ def _current_provider_public_writes(path, seeded):
             "where record_type='folder_generation' and account_id=? order by provider_folder_id",
             (account,),
         ))
+    assert repeated_before == repeated_after
+    assert archive_generation_before == ("2026-10-14T02:02:00+00:00",)
+    assert archive_generation_after == ("2026-10-14T02:03:00+00:00",)
     assert before == ("2026-10-14T02:02:00+00:00", "[]")
+    assert email.get_provider_classification_state(first_id)["observed_at"] == (
+        "2026-10-14T02:03:00+00:00"
+    )
     assert email.record_provider_important_signals(account, first, ["\\Flagged"])
     assert email.get_provider_classification_state(first_id)["starred"] is True
     assert email.get_provider_classification_state(second_id)["state"] == "unavailable"
@@ -1230,6 +1262,7 @@ def _current_provider_public_writes(path, seeded):
     assert after == (before[0], '["\\\\Flagged"]')
     assert generation_after == generation_before
     return {"scan_move": True, "authoritative_missing": True,
+            "unchanged_repeated_scan": True, "generation_advanced_on_repeat": True,
             "direct_signals": True, "observation_time_unchanged": True,
             "generation_times_unchanged": True}
 
