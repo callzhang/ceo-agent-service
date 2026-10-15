@@ -37,6 +37,8 @@ Identity: `PROC-053E56DA-97A6-4888-82FF-2890B75A752D`; status `partial`; source 
 
 Verified facts/evidence: customer-confirmed delivery; settlement condition; cost confirmation versus payment amount; effective contract; CRM number; invoice, settlement statement, payee and contract consistency; account details. Missing policy: current-template binding, exceptions including advance/overseas/tax, authorization and action map. Applicant question: “请补充本次结算对应的客户验收、结算单、有效合同及 CRM 编号链接。” Human escalation: source owner must confirm exceptions, authority and final action.
 
+**Evidence provenance (supplier payment):** quote tracker fields exactly and inspect the underlying customer message before assigning meaning. “已回复邮件”表示有回复记录，但不等于客户验收；若表格这样标注，不能表述为“未回复邮件”。 If the reply content is not available or does not state acceptance, say “已记录客户回复，验收内容尚未核实”; do not claim acceptance. A submitted attachment that the reviewer cannot read because of access, parser, OCR or client limits is a reviewer-side blocker: **不能把审核方无法读取归为申请人未提交，也不能单独作为退回或拒绝付款的理由**. Assess other independently readable evidence separately; if a sourced customer-acceptance condition remains unverified after checking accessible evidence, state that substantive gap without presenting the reading failure as its cause or repeatedly requesting an unreadable copy.
+
 Actions: generic decision table (see the shared execution contract above).
 
 ## external_expense_payment
