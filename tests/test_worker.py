@@ -594,6 +594,11 @@ def agent_prompt(worker: DingTalkAutoReplyWorker) -> str:
     return agent_runner(worker).calls[0][2].render()
 
 
+def _prompt_json_section(prompt: str, title: str):
+    section = prompt.split(f"\n{title}\n", 1)[1]
+    return json.JSONDecoder().raw_decode(section)[0]
+
+
 def script_no_action(worker: DingTalkAutoReplyWorker, *, count: int = 1) -> None:
     runner = agent_runner(worker)
     for index in range(count):
@@ -7410,7 +7415,7 @@ def test_single_chat_rendered_schedule_asks_for_readable_calendar_detail(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert '"kind": "dingtalk_calendar"' in agent_prompt(worker)
+    assert 'dingtalk_calendar' in {material["kind"] for material in _prompt_json_section(agent_prompt(worker), "Raw material references and exact read commands")}
     assert "dws calendar event list --start" in agent_prompt(worker)
     assert final_sent(dws) == []
     assert dws.dings == []
@@ -8942,7 +8947,7 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
     prompt = assert_calendar_agent_contract(worker, dws)
     assert "客户升级问题决策" in prompt
     assert "dws calendar event list --start" in prompt
-    assert '"kind": "dingtalk_calendar_conflict"' in prompt
+    assert 'dingtalk_calendar_conflict' in {material["kind"] for material in _prompt_json_section(prompt, "Raw material references and exact read commands")}
     assert "产品周会" in prompt
     assert final_sent(dws) == []
     assert worker.store.has_seen("msg-1") is False
@@ -9233,7 +9238,7 @@ def test_calendar_document_reference_is_exposed_to_agent_for_reading(
     assert len(agent_runner(worker).calls) == 1
     prompt = assert_calendar_agent_contract(worker, dws)
     assert "Raw material references and exact read commands" in prompt
-    assert '"kind": "dingtalk_doc"' not in prompt
+    assert 'dingtalk_doc' not in {material["kind"] for material in _prompt_json_section(prompt, "Raw material references and exact read commands")}
     assert doc_url not in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
@@ -9710,7 +9715,7 @@ def test_structured_approval_card_is_processed_by_audit_agent(
 
     assert len(agent_runner(worker).calls) == 1
     assert "dws oa +list-pending --format json" not in agent_prompt(worker)
-    assert '"read_commands": []' in agent_prompt(worker)
+    assert any(item["read_commands"] == [] for item in _prompt_json_section(agent_prompt(worker), "Raw material references and exact read commands"))
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
@@ -10155,7 +10160,7 @@ def test_ai_minutes_permission_request_is_auto_approved_without_codex_or_reply(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert '"kind": "dingtalk_minutes"' in agent_prompt(worker)
+    assert 'dingtalk_minutes' in {material["kind"] for material in _prompt_json_section(agent_prompt(worker), "Raw material references and exact read commands")}
     assert "dws minutes get info --id minutes-1 --format json" in agent_prompt(worker)
     assert final_sent(dws) == []
     assert dws.added_minutes_permissions == []
@@ -10735,7 +10740,7 @@ def test_bare_dingtalk_approval_wrapper_reaches_audit_agent(
 
     assert len(agent_runner(worker).calls) == 1
     assert "dws oa +list-pending --format json" not in agent_prompt(worker)
-    assert '"read_commands": []' in agent_prompt(worker)
+    assert any(item["read_commands"] == [] for item in _prompt_json_section(agent_prompt(worker), "Raw material references and exact read commands"))
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
@@ -10774,9 +10779,9 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     assert "Recent conversation context" in prompt
     assert "CEO Agent Prompt" not in prompt
     assert "你是 Alex 的钉钉自动回复分身" not in prompt
-    assert '"conversation_title": "Friday"' in prompt
+    assert _prompt_json_section(prompt, "Original trigger")["conversation_title"] == 'Friday'
     assert "@Alex Chen(明哥) @晓民 这个怎么处理？" in prompt
-    assert '"sender": "quoted_message"' in prompt
+    assert any(item["sender"] == 'quoted_message' for item in _prompt_json_section(prompt, "Recent conversation context"))
     assert "这个ACL表看一下" in prompt
     assert "前面上下文" in prompt
 
@@ -10972,7 +10977,7 @@ def test_lark_doc_link_is_passed_to_codex_as_material_reference(
     assert len(agent_runner(worker).calls) == 1
     prompt = agent_prompt(worker)
     assert "Raw material references and exact read commands" in prompt
-    assert '"kind": "lark_doc"' in prompt
+    assert 'lark_doc' in {material["kind"] for material in _prompt_json_section(prompt, "Raw material references and exact read commands")}
     assert canonical_doc_url in prompt
     assert f"lark-cli docs +fetch --doc {canonical_doc_url}" in prompt
     assert "--doc-format markdown --format json --as bot" in prompt
@@ -11084,7 +11089,7 @@ def test_single_chat_file_material_no_reply_retries_without_worker_read(
     assert len(agent_runner(worker).calls) == 1
     first_prompt = agent_prompt(worker)
     assert "Raw material references and exact read commands" in first_prompt
-    assert '"kind": "dingtalk_file"' in first_prompt
+    assert 'dingtalk_file' in {material["kind"] for material in _prompt_json_section(first_prompt, "Raw material references and exact read commands")}
     assert "02_下一步推进建议.md" in first_prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
@@ -11129,8 +11134,8 @@ def test_single_chat_mixed_minutes_and_doc_material_retries_for_doc(
     assert dws.doc_info_calls == []
     assert len(agent_runner(worker).calls) == 1
     first_prompt = agent_prompt(worker)
-    assert '"kind": "dingtalk_minutes"' in first_prompt
-    assert '"kind": "dingtalk_doc"' in first_prompt
+    assert 'dingtalk_minutes' in {material["kind"] for material in _prompt_json_section(first_prompt, "Raw material references and exact read commands")}
+    assert 'dingtalk_doc' in {material["kind"] for material in _prompt_json_section(first_prompt, "Raw material references and exact read commands")}
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
@@ -11304,8 +11309,8 @@ def test_referenced_file_message_is_passed_to_codex_without_worker_read(
     prompt = agent_prompt(worker)
     assert "Raw material references and exact read commands" in prompt
     assert "02_下一步推进建议.md" in prompt
-    assert '"kind": "dingtalk_file"' in prompt
-    assert '"read_commands": []' in prompt
+    assert 'dingtalk_file' in {material["kind"] for material in _prompt_json_section(prompt, "Raw material references and exact read commands")}
+    assert any(item["read_commands"] == [] for item in _prompt_json_section(prompt, "Raw material references and exact read commands"))
     assert "建议正文：先明确客户边界" not in prompt
 
 
@@ -11338,7 +11343,7 @@ def test_referenced_file_message_includes_drive_download_command(
     assert dws.search_document_calls == []
     assert dws.download_doc_calls == []
     prompt = agent_prompt(worker)
-    assert '"reference": "HSW 平台业务流程、规则与自动化测试规格.md"' in prompt
+    assert any(item["reference"] == 'HSW 平台业务流程、规则与自动化测试规格.md' for item in _prompt_json_section(prompt, "Raw material references and exact read commands"))
     assert (
         '"dws drive download --node Exel2BLV5z6a2P64hPj2OwkzJgk9rpMq '
         "--output <local-path> --format json"
@@ -11675,7 +11680,7 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     prompt = agent_prompt(worker)
     assert codex.calls == []
     assert agent_runner(worker).calls[0][2].image_paths == ()
-    assert '"kind": "dingtalk_image"' in prompt
+    assert 'dingtalk_image' in {material["kind"] for material in _prompt_json_section(prompt, "Raw material references and exact read commands")}
     assert "msg-image-1" in prompt
     assert "dws chat message download-media --type mediaId" in prompt
     assert "resource download unavailable" not in prompt
@@ -13646,7 +13651,7 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
     assert "先定优先级，再确认谁负责、什么时候交付、怎么验收。" not in prompt
     assert "先看岗位匹配" not in prompt
     assert "cid-style-1" not in prompt
-    assert '"conversation_title": "Friday"' in prompt
+    assert _prompt_json_section(prompt, "Original trigger")["conversation_title"] == 'Friday'
     assert "## Context Facts" in prompt
     assert "### Execution stage" in prompt
     assert "## Runtime Invariants" not in prompt

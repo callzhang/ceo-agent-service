@@ -131,3 +131,17 @@ snapshot the original and new functions returned identical empty issues:
 before implementation; all 83 scan-cost/quality tests passed afterward, with
 18 scan-cost cases independently rerun. No global health-result cache or
 check policy changed.
+
+The subsequent complete Quality run on `832da02e` (38685363962) exposed 33
+failures: the same 15 Email doubles and 18 prompt assertions depending on
+pretty-printed JSON whitespace. The latter span Worker, context provenance,
+and trace-compaction tests. All 18 reproduced RED, then passed after parsing
+the exact named JSON sections and asserting the original business fields.
+Timestamp checks now bind their values to the exact message ID. Negative kind,
+empty read-command, source provenance and raw-payload assertions remain.
+The trace unit fixtures also use repository seed prompt configuration instead
+of the operator's saved local prompt, and their Audit wire valid sample follows
+the current transport schema while retaining compact/raw validation equivalence
+and extra-field rejection. All ten trace/provenance cases passed; independent
+review accepted the semantic assertions. No runtime contract, timeout, skip or
+expected business outcome changed in this test-only repair.
