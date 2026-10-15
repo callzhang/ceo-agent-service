@@ -33,6 +33,8 @@ def test_supplier_payment_unreadable_submitted_evidence_stays_a_reviewer_blocker
         assert "do not ask the applicant to resubmit the same unreadable file" in text
         assert "without a stamp on each related attachment" in text
         assert "A blank signature page alone is not a reason to return" in text
+        assert "only when independently verified as applicant-resolvable material omissions" in text
+        assert "never because the reviewer cannot read a submitted item" in text
 
 
 def test_supplier_payment_tracker_status_is_not_customer_acceptance_evidence() -> None:
