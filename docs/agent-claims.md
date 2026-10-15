@@ -1,5 +1,4 @@
-| codex-email13-main7dad-integration-20261015 | Isolated Email-actions worktree: normal merge exact 7dadc492c1c62d5b0624f2f97dd0c89f4f358646; incoming runtime/Attempt/session/prompt changes and docs; own append docs/database-redesign-email-actions-validation.md and this claim; relocate only branch-added claim rows into existing top candidate block | Preserve candidate finite action SQL, old/current declarations and migration bytes; retain every literal claim row and multiplicity and incoming EOF; focused tests and module/blob proof only. No push, CI, native flow, source-copy proof, main merge or deploy. | integration in progress 2026-10-15; fresh sequential SPEC/QUALITY remains root-owned |
-
+| codex-email13-main7dad-integration-20261015 | Isolated Email-actions worktree: normal merge exact 7dadc492c1c62d5b0624f2f97dd0c89f4f358646; incoming runtime/Attempt/session/prompt changes and docs; own append docs/database-redesign-email-actions-validation.md and this claim; relocate only branch-added claim rows into existing top candidate block | Preserve candidate finite action SQL, old/current declarations and migration bytes; retain every literal claim row and multiplicity and incoming EOF; focused tests and module/blob proof only. No push, CI, native flow, source-copy proof, main merge or deploy. | locally verified 2026-10-15: 188 passed/4 skipped161.30s plus18 passed47.44s;33 incoming blobs exact;26 storage/declaration/release modules unchanged; Store four-method AST only; scoped Ruff/diff clean; owned tmp removed/absence verified; fresh sequential SPEC/QUALITY remains root-owned |
 | codex-email13-history-query-repair | Isolated Email-actions worktree: app/store.py generic History key query and two later/superseding Attempt status lookups only; tests/test_store_history_pagination.py narrow regressions; scoped docs/runtime-mechanism.md, docs/architecture.md, docs/database-redesign-email-actions-validation.md; own claim row | Project compact per-source History keys before combined sort; share one grouped terminal maximum across two Attempt status cases, preserving filters/order/total/status/identity and failed-only dispatch. Regression-first; no schema/policy/UI/provider/native/production/CI/push/deploy or root-owned evidence JSON. | local14 focused passed; fault probe8 body reads for1 page under deliberately eager key SQL; source None/empty/duplicate/unknown and long-trigger cases pass; Ruff/diff clean; one unrelated retired Email fixture failure recorded; fresh SPEC then QUALITY pending 2026-10-14 |
 | codex-email13-task5c2-historical-source | Email-actions isolated worktree: tests/test_email_unsubscribe_direct.py two schema49 source functions; tests/test_email_reply_delivery.py v7/v8 two source functions; tests/test_email_worker.py v29 one source function; tests/test_email_task_adapter.py six v25 source functions; tests/test_email_legacy_schema.py four explicit fixed0441 source groups; scoped docs/database-redesign-email-actions-validation.md and this claim only | Execute eleven original historical functions and all 56 parameter cases against fixed0441 app/tests rather than false downgrades of current Email52. Preserve original test bodies/decorators in source and existing four historical groups/helper; retain H-only helpers and necessary imports; root additionally approved removing exactly four provably unused H-only imports. No current test body, runtime or CI change. | locally verified 2026-10-14: four new groups4pass12.76s/56nested, all eight groups8pass25.06s/105nested; four current files collect408 and wrapper8, no current execution; scoped Ruff/diff/AST and owned temp cleanup; fresh SPEC/QUALITY pending |
 | codex-email13-task5c1-web-api-current | Email-actions isolated worktree: tests/test_email_web_api.py exact 13 current physical SQL test functions, shared `_signal_failed_move_plan`, local future-ledger route test, historical whole-app test removal and current whole-app paired refusal; tests/test_email_legacy_schema.py one explicit fixed0441 web source group; scoped docs/database-redesign-email-actions-validation.md, docs/architecture.md, docs/runtime-mechanism.md, and this claim only | Convert current fixtures to finite Email29 projections/identity writers, preserve HTTP/lineage/retry/privacy and no-repair assertions; run the original whole-app isolation assertion in genuine0441 source, and state current paired constructor refusal without fallback. No other H groups, runtime, worker/other tests, native/provider/production/CI/push/deploy. | locally verified 2026-10-14: original20 RED15fail5pass; initial whole API180pass1fail caused approved H/current split; final Web API181 plus legacy4 entrances =185 passed42.80s, nested40/6/2/1 source cases; scoped Ruff/diff and owned temp cleanup; fresh SPEC then QUALITY pending |
@@ -131,31 +130,18 @@
 | codex-email13-linux-data-version-trace-20261015 | Isolated Email-actions worktree: tests/test_email_store.py exact DELETE-journal constructor trace test; own append docs/database-redesign-email-actions-validation.md and this claim row | Reproduce exact Linux quoted-main read through native SQLite; accept only that exact no-argument read in existing test whitelist. Preserve all journal/schema/transaction/DDL/DML assertions. No runtime, broad tests, provider, production, push, main or deploy. | locally verified 2026-10-15: exact2trace RED1 failed/1 passed11.39s; GREEN2passed14.55s; original assertion/prefix ASTs retained, eight write/argument controls still rejected; scoped Ruff/diff clean; owned tmp removed/absence verified; independent SPEC/QUALITY and Linux CI pending |
 | codex-email13-linux-review-and-native-two-case-acceptance | Own appends in Email validation/capacity docs; new aggregate2026-10-15 native-copy JSON and bounded Email-cache findings doc; this claim only | Accept sequential SPEC/QUALITY of5d9bac60; preserve actual6056/264 approve and two-revision native receipts, exact source hashes,103-table preservation and temporary cleanup; record unresolved506.2MB target and three pending native cases/final CI. No runtime/schema/publication change. | root aggregate evidence 2026-10-15 |
 | codex-email13-final-native-and-retention-source-evidence | Own appends in Email validation/capacity/cache and remaining-input source docs; existing2026-10-15 native aggregate; new source byte/index metrics JSON and bounded business-core metadata/map note; this claim only | Record all five actual generic native cases/cleanup and current cache/input/index findings; correct the already-removed provider lookup opportunity; preserve source-only business preparation limits, pending final CI, unresolved capacity and full10+1 scope. | root evidence finalization 2026-10-15 |
-
 | codex-email13-main-integration-20261014 | Isolated Email-actions worktree: normal merge of fetched main ff4d36234; app/audit_web.py current Email status projection; app/store.py History cache removal and compact key/terminal query conflicts; tests/test_status_snapshot_projection.py, tests/test_store_history_pagination.py, tests/test_email_action_external_consumers.py stale private cache calls and immediate-predecessor oracle; scoped architecture/runtime/Email validation and this claim | Preserve candidate finite Email29/storage semantics and all incoming main improvements, resolve only proven conflicts, run focused verification. No schema migration, production, provider, native, push, PR, CI or deploy. | locally verified 2026-10-14: initial scoped 79 pass/2 fail with diagnosed VM/cache-oracle causes; corrected six cost checks and exact predecessor History/queue plan passed; scoped Ruff/diff clean; owned temp roots removed; independent acceptance and full10+1 pending |
-
 | codex-email13-metadata-repair-5b0 | Email-actions worktree: app/action_storage.py narrow finite Email-only auxiliary metadata comparison; app/store.py exact current-known-repair permission; app/email_store.py pre-Store readonly metadata check/imports; new tests/test_email_action_metadata_repair.py; architecture/runtime/scoped Email validation and own claim | Restore original Email missing-metadata refusal without broadening Store repair. Derive32 objects from same-variant29 minus16 names; preserve generic factory, source/inverse/DDL/writers, provider column and old Store repairs, 5A consumers. No5B1/production/provider/native CLI/env/fullsuite/CI/push/deploy. | locally verified 2026-10-14: genuine0441 native10 refusal classes; target32 missing-object closure; RED1 failure then GREEN34+13+1 passing selections; original Store/provider repairs retained; scoped Ruff/diff clean; explicit owned tmp removed and absence verified; fresh sequential SPEC then QUALITY pending |
-
 | codex-email13-coupled-activation-f | Email-actions worktree: app/store.py constructor/source/current manifest/bootstrap suffix and version/imports; app/email_store.py constructor/current initializer and version/imports; app/action_email_schema_release.py paired worker/atomic apply interface; app/store_schema_release.py exact coordinator selection; existing selector only if paired-refusal closure requires it; new tests/test_email_action_callers.py including original provider-observation important_signals_json current-repair oracle/regression; tests/test_email_action_schema_release.py exact obsolete staging assertion; tests/test_email_current_schema.py exact obsolete staging assertion; tests/test_email_pipeline.py six current cases/12 source-shaped projection reads; tests/test_email_action_validation.py::test_public_readonly_cancellation_preview_closes_shape_dependency exact real coordinator fixture hunk plus confined startup tests; scoped architecture/runtime/Email validation/plan and own claim | Approved full coupled F: Store2026-10-14.1/Email52, exact19/51 source via coordinator only, current29 real defaults, fresh locking/failure boundary and caller/protocol tests. Preserve known current repairs, source/native NULL and current-fact inverse. No Task5/6, production/provider/native CLI/env/fullsuite/push/deploy/VACUUM. | locally verified 2026-10-14: initial47 F cases within119 passes/one retired staging fixture failure; preview rerun1 pass; added48th F existing-repair RED then3-case GREEN; separate pipeline/protocol/current schema82 passes; scoped Ruff/diff clean; both owned tmp roots removed/absence verified; sequential SPEC then QUALITY pending, whole branch non-deployable until remaining gates |
-
 | codex-email13-target-validation-e2 | Email-actions worktree: app/email_store.py current three validators, target metadata filtering/imports; app/action_email_storage.py finite external blocker declaration/install interface; new tests/test_email_action_validation.py; scoped architecture/runtime/Email validation appendices; own claim | E2 only target29 shape/durable reads with original retained required coverage and policy; historical maps/cached helper unchanged. No F constructor/default/marker/selector/coordinator, providers/native CLI/production/push/deploy. | locally verified 2026-10-14:29 scoped passes in43.02s, genuine source policy/NULL/error and read-only preview comparison; retained required coverage/source maps unchanged; sequential SPEC then QUALITY pending |
-
 | codex-email13-current-seeds-e1 | Email-actions worktree: app/email_store.py exact v19→20 category insertion and v33→34 promotion/revision seed factoring plus private unselected fresh-seed entry point; new tests/test_email_current_seeds.py; scoped architecture/runtime/Email validation appendices; own claim | E1 only: preserve genuine fresh51 final facts, legacy conversion, UUID/clock/revision semantics and caller transactions. No E2 validators/metadata or F constructors/markers/default selection; no providers/native CLI/production/push/deploy. | locally verified 2026-10-14: genuine archived fresh0→51 seed facts equal; 12 scoped passes in3.32s; historical migration AST expansion exact; E1 only, sequential SPEC then QUALITY pending |
-
 | codex-email13-reply-dao-4d | Email-actions worktree: app/email_store.py seven remaining reply claim/receipt methods and exact finite locator imports/constants; new tests/test_email_action_reply_dao.py; scoped architecture/runtime/Email validation appendices; own claim | Partial unpublished group4D using accepted finite projections/writers, preserving original owner/CAS/snapshot/receipt enrichment and transaction semantics. No helper expansion unless separately confirmed; no E/F constructors/validators/versions/selectors, SMTP activation, provider/native CLI/production/push/deploy. | locally verified 2026-10-14: real-method RED/GREEN; 14 primary targeted passes plus1 confined native-NULL pass; claim4432 to4432 VM with600 same-family+3000 unrelated rows; no helper changes; sequential SPEC then QUALITY pending |
-
 | codex-email13-dao-4c-acceptance | Email-actions worktree: scoped Email plan/validation and redesign program status, ownclaim | Root records sequential independent SPEC/QUALITY acceptance of9ecf1c25 partial unsubscribe DAO; no runtime/default/production changes. | completed 2026-10-14; observed critical SPEC and distinct6-case QUALITY checks passed; nextD only, E/F and full10+1 open |
-
 | codex-email13-unsubscribe-dao-4c | Email-actions worktree: app/email_store.py current six-family unsubscribe reads/writes and C portions of mixed methods plus confirmed two mixed reply-receipt READ projections only; app/action_storage.py exact continuation-conflict insert option only; new tests/test_email_action_unsubscribe_dao.py; scoped append-only Email validation/architecture/runtime docs; own claim row | Partial unpublished group4C preserving lifecycle/owner/phase/effect/receipt/cancellation semantics via accepted finite writers, exact continuation UPSERT, public source identities and original transaction boundaries. No D writes/validators/constructors/versions/selectors/providers/production/native CLI/push/deploy. | locally verified 2026-10-14: helper/read RED, 13 C cases and 189 focused regression passes; actual claim4542 to4542 VM with600 same-family plus3000 unrelated rows; Ruff/diff clean; sequential SPEC then QUALITY pending |
-
 | codex-email13-dao-4b-acceptance | Email-actions worktree: scoped Email plan/validation and redesign program status, ownclaim only | Root records independently accepted1e54ce25 partial five-family DAO unit; no default activation, runtime edits or production action. | completed 2026-10-14; sequential SPEC/QUALITY13-case runs and extra boundary probes passed; full Task4/10+1 still open |
-
 | codex-email13-plan-direct-dao-4b | Email-actions worktree: app/email_store.py current five-family plan/direct/feedback/retry reads and writes plus shared reply-in-flight and unsubscribe-receipt dependency read guards; app/action_storage.py exact Email action insert conflict option only; new tests/test_email_action_plan_direct_dao.py; scoped append-only Email validation/architecture/runtime docs; own claim row | Partial unpublished group4B using finite projections/writers, original writer transactions/CAS, source identities and exact plan/type DO NOTHING. No constructors, validators, markers, selectors, C/D writes, providers, production, native CLI, push or deploy. | locally verified 2026-10-14: helper/read RED then 13 source-vs-target DAO cases and 176 scoped regression passes; typed poll5751 to5752 VM with3000 unrelated actions; Ruff/diff clean; sequential SPEC then QUALITY pending |
-
 | codex-email13-protocol-4a-acceptance | Email-actions worktree: scoped Email plan and validation acceptance, own claim row only | Root records sequential SPEC and QUALITY acceptance of unselected paired protocol 2fead6ee; no constructor/DAO/marker selection or production action. | completed 2026-10-14; independent protocol tests and lifecycle probes passed; full Task4 remains open |
-
 | codex-email13-paired-protocol-4a | Email-actions worktree: new app/action_email_schema_release.py, new tests/test_email_action_schema_release.py; scoped append-only docs/database-redesign-email-actions-validation.md, docs/architecture.md, docs/runtime-mechanism.md; own claim row | Unselected pure paired source capture, atomic DDL/marker protocol and current-fact inverse using caller-supplied test target pair. No target allocation, selectors, constructors, DAO, provider, production, push or deploy. Root approved sequential preparation; final activation remains coupled. | locally verified 2026-10-14: missing-module RED; 53 protocol cases and 216 focused regression passes; Ruff/diff clean; sequential SPEC then QUALITY pending |
-
 | codex-followup-sync-target-plan | Email-actions worktree: new docs/superpowers/plans/2026-10-14-database-redesign-followup-sync-plan.md; new docs/superpowers/specs/2026-10-14-database-redesign-followup-sync-field-map.csv; own claim row only | Bounded executable target plan and exact 150-field mapping for approved nine follow-up/Todo-sync families. Documentation only; no runtime/tests/source artifacts/versions/provider/native CLI/production/push/deploy. | locally prepared 2026-10-14: exact 150-row source/default/type coverage and AST 0 production/50 test create calls verified; root independent review pending |
 
 | codex-history-ci-main-integration | Publication worktree: tests/test_oa_comment_readback.py exact merge conflict, scoped History validation and ownclaim | Preserve independently reviewed538bf7ee tests plus newer834b8348 content digest assertion and startup-query increment through normal merge; targeted verification before replacement CI. No new runtime behavior or schema. | locally verified 2026-10-14: independent SPEC/QUALITY accepted538, normal main merge retained stronger digest assertion,110 scoped cases and Ruff/diff passed; replacement CI pending |
@@ -169,20 +155,6 @@
 | codex-credential-diagnostic-value-boundary-20261015 | app/leak_check.py (generic key/value credential candidate boundary only); tests/test_leak_check.py (diagnostic false-positive and delimited-secret regressions only); docs/runtime-mechanism.md (credential predicate behavior only); this claim row | User-approved fix for Attempt 15465: preserve credential rejection while distinguishing diagnostic prose from delimited key/value secret text. Keep known-format, field-context and entropy checks. No DWS access or result-acceptance change. | locally verified 2026-10-15: 34 focused tests and Ruff pass; deployment pending |
 
 | codex-audit-service-owned-candidate-binding-20261015 | Main checkout: app/agent_wire_contracts.py (Audit transport binding only); app/audit_agent.py (candidate-bound parser context); app/agent_turn_runner.py (use same bound parser for completed-result recovery and remove post-parse echo binding); app/agent_context.py (wire contract prompt); tests/test_audit_agent.py, tests/test_audit_field_facts.py, tests/test_agent_contracts.py and focused recovery assertions; docs/architecture.md and docs/runtime-mechanism.md; own claim row | User-approved isolated fix for Attempt 15503: Audit no longer authors candidate_digest/proposal_revision; service binds exact already-verified candidate context during parse, including recovery. Preserve strict source, current candidate, revision, full-field and sensitive-content checks; reject unexpected legacy binding fields. No budget, routing, authorization, external action or OA replay changes. | active 2026-10-15 |
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 | codex-console-status-sql-20261014 | Main checkout: app/store.py (`list_current_unresolved_problem_attempt_summaries` latest-ID query only); app/audit_web.py (`_reply_attempt_queue_snapshot` and `_email_action_queue_snapshot` SQL only); new tests/test_status_attempt_query_cost.py; tests/test_status_snapshot_projection.py (scoped queue semantics/performance cases); this claim row | Remove observed repeated historical Attempt scans in Status Attention and repeated current Attempt evaluation in queue summary, with source-equivalent results and bounded SQLite work. No index/schema, cache, API contract, policy, provider, push, or deploy changes. Root owns docs and final integration. | implementation verified 2026-10-14; 92 integrated regressions, 169 endpoint checks, 36 recovery checks; independent read-only review accepted; formal release/readback pending |
 
@@ -1519,112 +1491,24 @@ reverts committed work they did not author.
 | codex-mail-source-readers-release | Isolated mail-source-readers-release checkout: app/agent_cli.py mail readers only; app/wechat/codex_safety.py mail tool entries; tests/test_agent_cli_mail_sources.py; own architecture/runtime paragraphs and release validation | Reconcile independently verified native readonly mail sources with current main. No PR31/78 schema/prompt/provider or Audit policy change. | RED9 thenGREEN109 and Ruff; readonly review no blocker; published30cb7e76, normal deploy succeeded, PID74472 and source/health/queue/Attention/History verified; no live mailbox query 2026-10-13 |
 
 | codex-frozen-skill-metadata-release | Isolated frozen-skill-metadata-release checkout: app/business_skills.py discovery only; prompt_composition/Consumer/Audit/preview frozen metadata plumbing; focused source/assembly tests; own architecture/runtime/validation docs | Reconcile existing exact frozen SHA and compact name/use/read-entry draft on latest main. Preserve full Skill sources, custom overrides, historical snapshots, result policy, routes and session binding; no native schema/provider draft. | RED8; GREEN92+175,4 native skips; readonly review no blocker; 829→567 chars, stable fingerprint and both native Task messages verified; published9a2a23fc with source/health/queues/Attention/History/public Settings readback; no new business run 2026-10-13 |
-
-
 | codex-oa-pdf-reader-responsibility-20261014 | User Skill: /Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md only; no application code or repository behavior changes | Align OA guidance so a submitted PDF that the reviewer cannot read because of access/parser/OCR/client limits is treated as a reviewer-side blocker, never applicant fault or standalone return/refusal; preserve pending approval and distinguish independently verified source defects. Capture only this Skill revision. | verified 2026-10-14: pressure scenario passes for unread PDF, OCR failure, erroneous prior returns, independent file defects and source access denial; runtime Skill revision 54 readback matches file |
 
 | codex-phase5e-final-main-reconcile | Phase5e-resume: normal merge of origin/main dec96517, E validation and own claim row | Preserve concurrent native diagnostics and DingTalk receipt repairs before E publication. No new runtime edits, policies, source mapping or provider actions. | verified 2026-10-14; merge0f69b0d2 retained both claim sets, 78 focused receipt/Store/release tests pass; E persistence modules unchanged, full merged-head CI required |
-
-
-
-
-
 
 | codex-phase5e-merged-native-evidence | Phase5E-resume: evals/database_redesign/phase5e_native_copy.v1.json; appended E validation acceptance; own claim row | Root persists already completed a0 merged-main real CLI approval and settlement-recovery proof, keeping earlier scripted proof separately bound. No new runtime, provider or production operation. | recorded 2026-10-14; a0 native approval/recovery passed, original scripted c47 binding retained; three failed merged-head CI fixtures repaired separately, final CI/publication still pending |
 
 | codex-phase5e-ci-fixture-acceptance | Phase5E-resume: appended E validation and own claim row | Root records sequential independent SPEC then QUALITY acceptance of5a635f6f fixtures and a0 native evidence; normal main doc merge retained. No runtime/provider/production change. | accepted locally 2026-10-14; SPEC3+10checks/mutation probes, QUALITY12checks/verifier+evidence probes; new complete CI required |
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 | codex-phase5e-main-test-reconciliation | Phase5E-resume: normal merge a59ed63e, tests/test_cli.py conflict only; appended E validation/own claim | Preserve concurrent main's equivalent real-verifier fixtures without duplicate aliases; no runtime or schema change. | locally accepted5851ccdb 2026-10-14; independent SPEC2/QUALITY12checks and forbidden-provider probes, app/frontend/scripts identity to2bf; final exact-head CI next |
 
 | codex-phase5e-post-recovery-source-refresh | Phase5E-resume: evals/database_redesign/phase5e_constructor_copy.v1.json and phase5e_native_copy.v1.json; appended E validation; own claim | Root refreshes actual source/genuine old-code and real CLI approval/recovery proof after normal main d55a21b8 recovery predicates merge. Copy-only provider substitutes, metadata/native references only; no production migration or real send. | recorded 2026-10-14; copy/native74ac actualD55 passed, d601 last2startupguard supplementalbinding independently accepted; finalCI/publication pending |
-
-
-
-
-
-
-
 
 | codex-history-query-publication | Publication worktree: History validation acceptance/publication paragraphs and own claim only; push/review/normal deploy of reviewed query fix | Root records sequential independent SPEC/QUALITY of 59f757a0 then exact-head CI and live History readback. No schema or unrelated implementation edits. | active 2026-10-14 |
 | codex-native-input-evidence-release | Isolated native-input-evidence-release tree: app/agent_runtime_router.py native Claude ranges and compact schema formatting; app/task_agent.py existing source mismatch error; focused routed/schema/citation tests; architecture/runtime and acceptance docs | Reconcile three independently reviewed deterministic fixes with current main. Preserve concurrent commits; no Task wrapper/Skill/schema-selector/UI draft, provider patch, retry policy or permission changes. | published3a2dc414 and formal deploy 2026-10-14;326 tests/review;exact code/PID/health/queues/Attention/Settings readback;History timed out25/45s,complete acceptance pending |
 
 | codex-history-bounded-readback | Native-input-evidence-release: appended release validation only | Diagnose failed History acceptance using production SQLite URI mode=ro, bounded progress-handler abort and actual current query generation; preserve task records, query semantics and all policies. No Store initialization/migration, provider call, service restart or runtime change. | inspected 2026-10-14;Reply attempts branch slow,precise cause unconfirmed |
 
-
-
-
 | codex-history-live-acceptance-20261014 | Publication acceptance worktree: appended History validation, scoped History readback paragraphs in architecture/runtime, own claim only | Record exact CI/merge/deploy and production read-only API/browser observations; no runtime/schema/provider changes. | recorded 2026-10-14: History list/chart/filter/page/detail and Attention rendered; Status API succeeded but visual page remained loading; degraded health remains; owned tab closed |
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 | claude-calendar-one-to-one | ci/shared-skills/ceo-calendar-invite/SKILL.md; ~/.agents/skills/ceo-calendar-invite/SKILL.md; tests/test_calendar_skill.py | Title-stated 1:1 with one colleague is accepted without asking the inviter for agenda or attendance value; topic-titled two-person meetings stay case by case. Skill text and its test only. | 2026-10-14 |
 | codex-console-history-latency-20261014 | Main checkout: app/store.py (`list_operation_logs_with_count` SQL wrapper only, excluding cache removal); tests/test_store_history_pagination.py (History key query regression only); this claim row | Diagnose and repair cold GET /api/console/history list SQL on a read-only production copy. Preserve full History source, filters, count, order and selected body semantics. Root owns docs and cache; chart agent owns reply status CASE. No schema, provider action, commit, push or deploy. | RED 194000 VM, GREEN focused 38 passed; actual-copy 35323 ordered keys match independent source oracle 2026-10-14 |
 
@@ -1635,20 +1519,16 @@ reverts committed work they did not author.
 
 | codex-specialized-json-formatting | Release tree: meeting_alignment_agent.py schema/source JSON rendering; email_classifier_agent.py classification JSON; task_agent.py WorkItem JSON; dedicated lossless tests, one tests/test_task_agent.py parsed scheduled ID assertion and architecture/runtime/validation | Compact only JSON formatting in existing specialized inputs, preserving full source/model fields, schema and existing prompt framing/policies/session rules. No Audit binding proposal or held Task/provider changes. |published/deployedafd78131;373 tests;source/PIDs/health/queues/Attention/History/publicSettings readback pass;no new business replay |
 
-
 | codex-quality-ci-email-fixtures-20261014 | tests/test_email_worker.py finalizer Store readers; tests/test_task_artifact_cleanup.py Email finalizer cleanup coverage; own claim row | Repair drift after terminal artifact cleanup added a Store task read. Preserve all business assertions and runtime behavior; no skip, policy, timeout, commit, push or deployment. | verified 2026-10-14; original15 tests RED→GREEN; both focused files261passed in230.61s; cleanup11passed; ruff and diff-check pass; current ff4d CI pending; no runtime change |
 
 | codex-task-decision-identity-contract-20261014 | Main checkout: app/task_models.py TaskDecision task_id/target_task_id/identity_proposal/project and TaskIdentityProposal descriptions only; generated app/schemas/task_agent_decision.schema.json; new tests/test_task_decision_identity_contract.py; own claim row | Clarify existing native JSON field semantics after read-only trace of input404912: existing Task scope updates use task_id/update_fields, identity merge uses two distinct persisted Tasks, and new supporting Tasks select their Project. Preserve validators, correction budgets and bad-output rejection. Root owns docs and live recovery; no production writes, commit, push or deploy. | locally verified 2026-10-14: missing-description RED, focused14 GREEN, combined Task Agent277 pass; schema descriptions-only and unchanged validator AST proof; Ruff/diff clean; root live acceptance pending |
 | codex-current-health-quality-root-20261014 | app/quality_gate.py (current unresolved Attempt and health source projection only, after evidence); tests/test_quality_gate.py and tests/test_quality_gate_scan_cost.py (matching regressions); tests/test_system_health_projection.py; diagnostics/recovery command only if verified necessary; docs/architecture.md, docs/runtime-mechanism.md and new docs/system-health-quality-validation.md (this health repair); own claim | User explicitly requests investigating and repairing degraded and following Quality CI through success. Root owns real health evidence, lifecycle-safe scoped repairs, integration/release; dedicated agent owns CI investigation. Preserve original runs, current failures and exact provider receipts; no external replay or approval policy change. | active 2026-10-14 |
-
-
 
 | codex-quality-scan-identical-values-20261014 | app/quality_gate.py (`_check_runtime_attempt_invariants` per-scan identical-value reuse only); tests/test_quality_gate_scan_cost.py; docs/runtime-mechanism.md (related performance sentence only); own claim | Reuse the unchanged credential/path predicate result for identical strings within one scan; retain all seven fields, full runtime history, per-row violation counts and fresh next-scan prefix configuration. No global cache, policy, provider, data, commit or deploy changes. | verified 2026-10-14: RED duplicate calls; GREEN 83 focused tests; actual read-only same-snapshot HEAD 8.460s / candidate 2.365s with identical issues; root review and publication pending |
 
 | codex-snapshot-connect-timing-20261015 | Main checkout: app/store.py _connect snapshot-reuse branch only; new tests/test_store_snapshot_connect_timing.py; docs/runtime-mechanism.md SQLite timing sentence; own claim row | Extend existing >=1s slow sqlite context stderr timing/caller diagnostics to reused read_snapshot connections without changing queries, connection ownership, transactions, reuse, error propagation, or other staged work. Root owns review/publication/deploy. | locally verified 2026-10-15: RED4 failed/1 passed for missing snapshot timing; GREEN10 focused/adjacent passed; nested reuse, threshold and both generic/SQLite exception identity and connection ownership preserved; Ruff/diff clean; root review pending |
 
 | codex-quality-ci-json-assertions-20261014 | tests/test_worker.py; tests/test_trace_prompt_compaction.py; tests/test_agent_context_provenance.py; own claim row | Align18 failed formatting-dependent prompt assertions with parsed JSON fields while preserving all business checks. No runtime behavior, timeout, skip, commit or push. | verified;83218nodesRED36.66s;worker14semanticcasesGREEN;trace/provenance10passed3.34s;seedconfiguration isolated;Auditwire fixture aligned to2ae;ruff/diffcheck0 |
-
 
 | codex-quality-ci-specialized-json-20261014 | tests/test_meeting_alignment.py; tests/test_task_guidance_dedup.py; tests/test_task_project_centered_eval.py; own claim row | Align6specialized prompt assertions revealed by completedff4dCI with parsed exact JSON fields, retaining all audience/read-only/source/side-effect checks. No runtime, policy, skips or timeout changes. | verified;6exactnodesRED8.12s→GREEN19.08s;ruff3files/diffcheck0;all audience/source/read-only/send checks preserved |
 
@@ -1662,11 +1542,12 @@ reverts committed work they did not author.
 
 | codex-quality-ci-audit-wire-fixtures-20261014 | tests/test_agent_runtime_worker.py native wire adapter; tests/e2e/test_consumer_audit_live.py deterministic audit transport; tests/test_consumer_agent.py service-binding instruction assertion; own claim | Align synthetic native Audit output with service-owned revision/digest contract. Preserve domain binding, lifecycle, receipt and side-effect assertions and strict wire validator. | verified;ae08CI38failures;CIseedcopies40scenariosGREEN168.11s including2forbidden-echo controls;localoldprompt pollution separately identified;ruff/diffcheck0;independentpeeraccepted |
 
-| codex-meeting-personnel-precision-20261015 | Isolated /private/tmp/ceo-meeting-personnel-precision-20261015: app/group_discovery.py, active meeting discovery/prompt/shared audience contract, meeting model/schema/delivery safe title and bundled meeting/personnel skills; focused tests and synthetic paired eval; scoped architecture/runtime docs | User-authorized sensitive organization-level workforce plans and full-roster authorization; replace attendee recall with matched members / group size. Preserve native Agent semantic judgment, no keyword filtering or arbitrary percentage authorization threshold. | verified 417 focused tests; fixed-corpus baseline5/6 versus candidate6/6 plus independent full-output semantic acceptance; released131ae6a8; config19 active meeting167/personnel166; exact worker hashes and health/queues/Attention/History read back 2026-10-15 |
-
-| codex-task-inline-skill-once | Release worktree: app/task_agent.py Task factory metadata only; tests/test_task_agent.py native selection assertion; focused validation/docs | Reuse proven classifier native name suppression for full inline current Task Skill, retaining task catalog scope, complete current input, output contract, sessions and permissions. No global Skill edits or progressive source draft. | RED1 then247GREEN;four anonymous native turns single-pass and same-session;catalog variability explicitly retained;readonly corrected review accepted;publication pending |
+| codex-task-inline-skill-once | Release worktree: app/task_agent.py Task factory metadata only; tests/test_task_agent.py native selection assertion; focused validation/docs | Reuse proven classifier native name suppression for full inline current Task Skill, retaining task catalog scope, complete current input, output contract, sessions and permissions. No global Skill edits or progressive source draft. | RED1 then247GREEN;four anonymous native turns single-pass and same-session;catalog variability explicitly retained;published633f5e59;formal deploy/source/PIDs/health/queues/Attention/History/publicSettings verified |
 
 | codex-task-inline-selection-composition | Release tree: business_skills.py native selector composition; codex_runtime_adapter.py and agent_runtime_router.py factory transport; focused tests and same scoped docs | Review found duplicate same-key CLI arrays replacing the original selection. Compose path selectors and inline-name suppression once at adapter boundary, preserving existing no-selection classifier behavior. | originalfactoryRED2;helperRED1;corrected157GREEN;nativev2cold/resume+frozenB/C/B/C accepted;initialv1held |
+
+| codex-resume-workspace-20261015 | Release tree: app/codex_runner.py resume cwd; workbench/codex_runtime.py existing overlay positions for global options; dedicated regression and affected exact command assertions; architecture/runtime/validation | Full short-Skill native trajectory proves resume changes from task workspace to service checkout because resume omits cd. Pass native global cd exactly as existing Consumer role uses; preserve session/config/permissions/routes. | originalRED1;182focusedGREEN plus3combined;readonlyreview and one actual sameSID nativecwd/schema/Pydantic acceptance;published3fc5fdae;formal deploy/source/newPIDs/health/Status/Attention/History/publicSettings verified |
+| codex-meeting-personnel-precision-20261015 | Isolated /private/tmp/ceo-meeting-personnel-precision-20261015: app/group_discovery.py, active meeting discovery/prompt/shared audience contract, meeting model/schema/delivery safe title and bundled meeting/personnel skills; focused tests and synthetic paired eval; scoped architecture/runtime docs | User-authorized sensitive organization-level workforce plans and full-roster authorization; replace attendee recall with matched members / group size. Preserve native Agent semantic judgment, no keyword filtering or arbitrary percentage authorization threshold. | verified 417 focused tests; fixed-corpus baseline5/6 versus candidate6/6 plus independent full-output semantic acceptance; released131ae6a8; config19 active meeting167/personnel166; exact worker hashes and health/queues/Attention/History read back 2026-10-15 |
 
 
 
@@ -1674,10 +1555,21 @@ reverts committed work they did not author.
 
 | codex-quality-diagnostic-redaction-boundaries-20261015 | app/agent_turn_runner.py _process_failure_detail.add only; app/email_unsubscribe.py normalize_unsubscribe_result_text only; corresponding focused tests; docs/runtime-mechanism.md and docs/system-health-quality-validation.md redaction normalization note; own claim | Preserve existing redaction on each original diagnostic/page line before whitespace collapse, field concatenation and byte bounding after633 exposes two unchanged regression failures. Keep leak_check predicate, existing fail inputs/assertions, sensitive-field context, digest, path/URL redaction and all authorization/outbound policy unchanged. Separate from fixture-only parameter repair. | verified;old2RED/new2RED;reviewcrossline6RED→final209GREEN30.67s;predicate/originalfixturesunchanged;separatefromadapterfixtures;peeraccepted;publicationpending |
 
-
-
 | codex-quality-ci-store-incident-time-fixture-20261015 | tests/test_store.py terminal work-input incident fixture and deterministic timestamp boundary controls; own claim only | Correct a test that creates its incident after terminal recovery, which only passed within the same SQLite timestamp second. Preserve runtime recovery predicates; explicitly verify older/equal/newer incidents. | verified;deterministiccrosssecondRED;original+older/equal/newer4GREEN5.04s;ruff0;peeraccepted;runtimeunchanged |
 
+| codex-attempt-current-failure-20261015 | app/audit_web.py _agent_failure_reason_text only; app/attempt_what_happened.py stopped_because only; app/web_api/attempts.py current stop projection only; new tests/test_attempt_current_failure.py; scoped architecture/runtime docs | Display the latest run or persisted execution stop rather than resolved historical retries for15507/15465. Preserve original runs, task state, audit policy, receipts and outbound behavior. | active |
 
+| codex-audit-service-postfix-20261015 | app/audit_agent.py bound assertion sensitivity check; app/agent_turn_runner.py existing sensitivity callback fresh/recovery; app/agent_context.py Audit postfix provenance only; new tests/test_audit_service_postfix.py; scoped architecture/runtime docs | Fix user-reported15507 misclassification of exact bound service callback assertions and repeated requests to delete a service-added postfix. Reuse unchanged configured-pair validator and credential predicate; do not alter candidate, digest, policy, outbound execution or historical approval. | active |
 
+| codex-attempt-bound-task-projection-20261015 | app/web_api/attempts.py stable bound task lookup; tests/test_attempt_current_failure.py exact accepted-action reconciliation regression; scoped architecture/runtime docs | Resolve original run task ID instead of obsolete OA scanner message key, preserving immutable historical run rows and actual verified receipts. No new effect, audit policy or task lifecycle change. | verified;native15465readback+existing executor reconciliation0dispatch;backupquickcheckok;REDoldkeyprojection;62focusedGREEN52.24s;Ruff0 |
 
+| codex-quality-ci-oa-manifest-digest-20261015 | ci/consumer-system-contract-release.json OA Skill new_sha256 only; own claim row | Correct stale release digest after committed OA return reconciliation; retain old digest, Skill bytes, all tests and runtime policy. | verified;264c CI single failure;exact original assertion RED1failed2.55s exit1;manifest-only correction;focused file12passed17.51s exit0;diffcheck0;no Skill/test/runtime edits |
+
+| codex-attention-audit-session-20261015 | Isolated attention-audit-session worktree: app/store.py set_agent_run_session; app/agent_turn_runner.py runtime session binding only; new tests/test_audit_session_handoff.py; scoped architecture/runtime docs | Repair confirmed task404947 Audit idle-timeout fresh-session persistence failure using the existing Consumer handoff behavior; preserve runtime attempt history, role context, candidate binding and external execution. | deployed d1d766cd: exact idle-timeout RED; GREEN90 focused and independent245/4skip; Ruff/diff clean; scoped review no findings; PID37810/web37815 health/queues/History/Attention12 readback; historical task404947 recovery awaiting explicit reply scope |
+| codex-progressive-delivery-evidence-20261015 | docs/task-progressive-current-main-validation.md; evals/trajectory_optimization/task_progressive_current.{cases,results}.v2.json; task_project_docs.native_local.v1.json; own claim only | Preserve completed anonymous native host-disabled negative control and local bootstrap-budget disproof; no runtime/Skill/config changes or provider probes. | terminal native originals/schema/Pydantic checked;host flag rejected;local budget hypothesis disproved;metadata only |
+
+| codex-attention-settled-bound-task-20261015 | Isolated attention-audit-session worktree: app/store.py three current unresolved Attempt readers; new tests/test_attention_settled_bound_task.py; scoped architecture/runtime docs | Exclude historical failed Attempts whose original run binds a currently done/skipped Task after OA scanner trigger-key changes. Preserve raw Attempt/run/receipt records, failed tasks and valid needs_human. | verified: RED2failed1passed; GREEN53 focused; Ruff/diff clean; read-only production preview12→11 removes15465only and retains15508/15201; independent scoped review no findings; publication pending |
+| codex-attempt-current-generation-failure-tests-20261015 | New tests/test_attempt_current_generation_failure.py only; this claim row | RED integration coverage for an old Attempt whose owning task later enters a new failed generation, with and without a new Agent run, plus a current SystemExecution uncertain/failed after approved Audit and a settled task after an Audit return. Assert current stop projection and immutable old Attempt; no runtime code, provider action, policy or existing test edits. | Verified: initial RED 4 expected assertion failures in 15.52s, then GREEN 4 passed in 20.89s; current SystemExecution uncertain/failed RED 2 expected failures in 14.76s, final GREEN 6 passed in 15.15s; own ruff check passed; bounded read-only projection review found no blocker |
+
+| codex-attempt-current-generation-stop-20261015 | app/web_api/attempts.py current-generation failure and stop projection only; scoped architecture/runtime docs; independent tests owned by attempt15465_trace | Keep current state and stop evidence in the same execution generation; retain historical runs and reviewed execution details with their original identities. No task lifecycle, approval, dispatch or credential-policy change. | verified;independent4RED+2RED→6GREEN15.15s;existing62GREEN57.55s;Ruff0;readonlyreviewaccepted |
+| codex-independent-removal-judgment-20261015 | app/consumer_agent.py shared Consumer/Audit decision-quality prompt only; tests/test_consumer_agent.py prompt regressions; docs/architecture.md; docs/runtime-mechanism.md; own claim row | Align Consumer/Audit prompts with the accepted score gate and independently assess another person's request to delete content. Do not treat the request as authority or correctness evidence; missing facts are ask-back, missing tool capability is failed. No DecisionOption schema/lifecycle change or external deletion. | verified;Consumer+Audit files 181 passed,4 skipped;diffcheck0 |

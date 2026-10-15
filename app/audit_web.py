@@ -11779,7 +11779,8 @@ def _agent_failure_reason_text(
 ) -> str:
     if attempt.send_status != "failed":
         return ""
-    failures = [run for run in agent_runs if run.status == "failed"]
+    # Earlier failed turns can have recovered within this same generation.
+    failures = [run for run in agent_runs[-1:] if run.status == "failed"]
     lines: list[str] = []
     for run in failures:
         try:
@@ -11829,7 +11830,8 @@ def _agent_failure_reason_text(
             lines.append(stored_summary)
         else:
             lines.append(_failure_code_explanation(stored_code))
-        lines.append("该旧记录未保留字段级错误；后续失败会保存安全的校验字段和阶段。")
+        if not agent_runs:
+            lines.append("该旧记录未保留字段级错误；后续失败会保存安全的校验字段和阶段。")
     return "\n".join(lines)
 
 

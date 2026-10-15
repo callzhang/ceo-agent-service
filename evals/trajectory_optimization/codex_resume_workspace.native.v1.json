@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "session_id": "01a13e6f-d6c6-7301-86e1-a27306cd0d77",
+  "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T00-21-19-01a13e6f-d6c6-7301-86e1-a27306cd0d77.jsonl",
+  "native_sha256": "a492f46a363201c3ed79a69cd3ea4e4f535a0ab31f6f692fae13d45f4324a6a7",
+  "range": [
+    50,
+    64
+  ],
+  "contexts": [
+    {
+      "line": 55,
+      "cwd": "/private/tmp/ceo-task-progressive-current.h73Db9/candidate"
+    }
+  ],
+  "outputs": [
+    {
+      "line": 61,
+      "schema_valid": true,
+      "pydantic_valid": true,
+      "sha256": "adc13f22d074b5f8fa884ee515ece39cb545a5ed5683c7ffac31cf17d8f5447b"
+    }
+  ],
+  "schema_sha256": "05b8c4e15d7b2a967d9b1fe1af26ad7dd847d8f5d4c23b4ccf47cf6423ee0c97",
+  "same_prior_user_input_sha256": "e62075f1918c0476358c6f56bdf24960ca386e7ebb6b24c197e550f6c5fe607a",
+  "code_ref": "1279f4ed",
+  "boundary": "One authorized readonly Codex OAuth continuation using actual Task factory/adapter/runner args, same prior anonymous Task user input; no Store apply, production data, business MCP or external operation."
+}

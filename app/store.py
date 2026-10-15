@@ -12703,7 +12703,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         *,
         owner: str,
         transcript_start_line: int = 0,
-        allow_consumer_session_handoff: bool = False,
+        allow_session_handoff: bool = False,
         now: str | datetime | None = None,
     ) -> AgentRun:
         if not codex_session_id.strip():
@@ -12728,8 +12728,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("agent run does not exist")
             current_session_id = str(current["codex_session_id"] or "")
             replace_session = (
-                allow_consumer_session_handoff
-                and current["role"] == AgentRole.CONSUMER.value
+                allow_session_handoff
                 and bool(current_session_id)
                 and current_session_id != codex_session_id
             )
@@ -25219,7 +25218,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
-                        and attempt_run.execution_generation<>current_task.execution_generation
+                        and (
+                            attempt_run.execution_generation<>current_task.execution_generation
+                            or current_task.status in ('done', 'skipped')
+                        )
                   )
                   and not exists (
                       select 1
@@ -25345,7 +25347,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
-                        and attempt_run.execution_generation<>current_task.execution_generation
+                        and (
+                            attempt_run.execution_generation<>current_task.execution_generation
+                            or current_task.status in ('done', 'skipped')
+                        )
                   )
                   and not exists (
                       select 1
@@ -25456,7 +25461,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       join ({REPLY_TASK_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
-                        and attempt_run.execution_generation<>current_task.execution_generation
+                        and (
+                            attempt_run.execution_generation<>current_task.execution_generation
+                            or current_task.status in ('done', 'skipped')
+                        )
                   )
                   and not exists (
                       select 1

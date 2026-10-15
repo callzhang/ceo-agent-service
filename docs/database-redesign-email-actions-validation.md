@@ -3301,3 +3301,65 @@ Final-head CI is pending submission. EarliercfcCI has2known failures, both now
 source-addressed by main3950chronology and5d9trace regression, but its failure
 receipt is not promoted to success. PR90 stays draft. Capacity reduction,
 production publication and full10core-tables-plus-ledger are still unfulfilled.
+
+
+## Pinned main7dad integration, 2026-10-15 (local only)
+
+Starting candidate `4509e35cf4a5b99c2754458dd6e37887c03aa806` integrated exactly
+`7dadc492c1c62d5b0624f2f97dd0c89f4f358646` through a normal merge after claim
+commit `abfb044c`. Code and both runtime documents auto-merged; only claims
+conflicted. All 145 candidate branch-added claim rows (including this unit) are
+retained literally with their multiplicities at the existing top candidate
+block. The rest is the exact incoming-main document, including its EOF and the
+other owner's updated shared status. No workflow or attributes changed.
+
+The 33 incoming paths outside the five shared auto-merged/conflicted paths are
+byte-identical to the pinned main blobs. Every path unaffected by that incoming
+increment remains byte-identical to the starting candidate. All 26 existing
+storage/declaration/release module blobs are unchanged, including old/current
+Email factories, source capture, forward/current-fact inverse and the paired
+coordinator. The native lifecycle harness is unchanged too. The Store AST changed
+only `set_agent_run_session` and the three current unresolved Attempt readers;
+its top-level assignments/imports are unchanged. Incoming Store and audit-web
+patches reverse cleanly from the merged candidate, preserving all earlier finite
+Email action projections. This merge changes no schema or persistence shape.
+
+Selected SHA-256 bindings after integration:
+
+| Module | SHA-256 |
+| --- | --- |
+| app/action_storage.py | 5fc0787a1ab89be57b489f318b2821243d085a40a26e4083c140fd3e798cfac4 |
+| app/action_email_definitions.py | edde1bd647c5c04a515f6cf107390b3bc02dedbec1b0b02a32b00ef26469b4bf |
+| app/action_email_storage.py | 12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c |
+| app/action_email_schema_release.py | ddb5d4f30403b878972f07387c583bac4b549a4ad60526943b44ade805622a43 |
+| app/email_store.py | e3f72fb845104430514972038a936fcedd71f8c72695a1d82198bda76f625f37 |
+| app/email_current_schema.py | 28a57fc531408ad9c11b0dabfbfd3b266d8b41675e5a866287077059d4195777 |
+| app/email_classification_schema.py | 1dc0b37896aff86987a3ca6e724269a849b23e688f23fd55e2dd6e44a66447f7 |
+| app/email_schema_release.py | c03d4cb92c678e91c90f17c4f2ec85326d45acf6adb19e3627730b36f2ba7f6d |
+| app/store_schema_release.py | 60079684637e007a72c879e690f3acf23f34e156635fe6cc80bb1d392f6b8c45 |
+| app/store.py (four non-schema methods changed) | d97777d46cfe17f6c0091a66b5c629778c882f54375758c1bded4d5bd0741b21 |
+
+Fresh checks used `/Users/derek/miniforge3/bin/python` in this isolated worktree:
+
+```sh
+python -m pytest -q tests/test_attempt_current_failure.py tests/test_attempt_current_generation_failure.py tests/test_attention_settled_bound_task.py tests/test_audit_service_postfix.py tests/test_audit_session_handoff.py tests/test_codex_resume_workspace.py tests/test_consumer_agent.py -k 'not intentionally_unselected' --basetemp=/tmp/ceo-email-main7dad.7JizRd/pytest-main
+# 188 passed, 4 skipped in 161.30s
+python -m pytest -q tests/test_email_action_external_consumers.py tests/test_email_action_callers.py::test_real_store_only_creates_full_parent_and29_and_accepts_older_kind_with_fk tests/test_email_action_callers.py::test_real_fresh_orders_current_reopen_and_classification_action tests/test_codex_runner.py::test_builds_resume_command tests/test_codex_runner.py::test_codex_command_read_only_resume_inherits_native_user_config tests/test_codex_runtime_adapter.py::test_adapter_builds_equivalent_route_command_options tests/test_workbench_codex_runtime.py::test_codex_resume_command_keeps_provider_reference_process_private --basetemp=/tmp/ceo-email-main7dad.7JizRd/pytest-email
+# 18 passed in 47.44s
+```
+
+Scoped Ruff on all 20 changed Python runtime/test files passed. Staged and working
+`git diff --check` passed. The exact owned temporary root above was removed and
+its absence verified after tests ended; no raw proof copy was created.
+
+Incoming Consumer/Audit outcome and removal instructions, Audit callback-pair
+sensitivity inspection and context, Audit idle-session persistence, and Codex
+resume workspace handling affect actual Agent inputs/adoption/runtime. The five
+native cases/15 CLI calls at6056/b670 and the four-case cfc/f264 copy results stay
+truthful historical receipts; they do not establish native behavior at this
+merged runtime. A fresh native approve/revision comparison after review can test
+those changed paths. No real native flow or repeated SQL copy proof ran here.
+Fresh sequential SPEC/QUALITY, final CI, capacity reduction, publication/live
+readback and full10core-plus-ledger completion remain separate outstanding
+work. No push, CI trigger, main merge, provider send or production/deploy action
+was performed by this integration unit.

@@ -572,5 +572,11 @@
     "Confirmed cause: factory appended a second skills.config array and replaced original explicit path selection; candidate catalog expanded. This candidate was not published.",
     "Shared AGENTS remains CLI-owned and read by both arms; no project-doc setting changed."
   ],
-  "cold_service_inputs_equal_after_owned_path_normalization": true
+  "cold_service_inputs_equal_after_owned_path_normalization": true,
+  "fixture_cleanup": {
+    "path": "/private/tmp/ceo-task-inline-once.r9tYOd",
+    "bytes": 5363871,
+    "native_originals_preserved": true,
+    "terminal_phases_verified": 6
+  }
 }

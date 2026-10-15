@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "status": "held_incomplete_reference_delivery_and_first_pass_validation",
+  "native_path": "/Users/derek/.codex/sessions/2026/10/15/rollout-2026-10-15T00-21-19-01a13e6f-d6c6-7301-86e1-a27306cd0d77.jsonl",
+  "native_sha256": "0da50c12eb6e8c69f1bec65cb3d50691b5926e96ba68cd375eddff960b9e1b2f",
+  "local_package_tests": {
+    "passed": 2,
+    "seconds": 2.02
+  },
+  "phases": [
+    {
+      "phase": "cold",
+      "session_id": "01a13e6f-d6c6-7301-86e1-a27306cd0d77",
+      "submissions": 1,
+      "input_chars": [
+        16668
+      ],
+      "counts": {
+        "projects": 1,
+        "tasks": 0,
+        "attention": 0,
+        "quick_check": "ok"
+      },
+      "ranges": [
+        [
+          0,
+          22
+        ]
+      ],
+      "outputs": [
+        {
+          "line": 19,
+          "sha256": "c675dae407ec56d37e15562adeadf49c326c017ed79e2cd0e82194f5d9ef5dbe",
+          "native_schema_valid": true,
+          "pydantic_valid": true
+        }
+      ],
+      "tools": [
+        {
+          "line": 11,
+          "name": "exec",
+          "arguments": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md && sed -n '1,260p' .agents/skills/ceo-work-tracking/SKILL.md && sed -n '1,240p' .agents/skills/ceo-work-tracking/references/projects.md && sed -n '1,220p' .agents/skills/ceo-work-tracking/references/assessment.md && sed -n '1,220p' .agents/skills/ceo-work-tracking/references/result.md && sed -n '1,180p' .agents/skills/ceo-work-tracking/references/evidence.md\",workdir:\"/private/tmp/ceo-task-progressive-current.h73Db9/candidate\",yield_time_ms:10000,max_output_tokens:30000}); text(r.output);\n"
+        }
+      ],
+      "source_returns": [
+        {
+          "line": 14,
+          "chars": 39825,
+          "truncation_markers": [
+            "Warning: truncated output (original token count: 10575)",
+            "Writ…575 tokens truncated…stead of silently choosing a convenient source."
+          ],
+          "complete_files": {
+            "SKILL.md": false,
+            "references/assignment.md": false,
+            "references/result.md": true,
+            "references/evidence.md": true,
+            "references/projects.md": false,
+            "references/assessment.md": true,
+            "references/service.md": false
+          }
+        }
+      ]
+    },
+    {
+      "phase": "risk",
+      "session_id": "01a13e6f-d6c6-7301-86e1-a27306cd0d77",
+      "submissions": 2,
+      "input_chars": [
+        15267,
+        11593
+      ],
+      "counts": {
+        "projects": 1,
+        "tasks": 1,
+        "attention": 1,
+        "quick_check": "ok"
+      },
+      "ranges": [
+        [
+          22,
+          38
+        ],
+        [
+          38,
+          50
+        ]
+      ],
+      "outputs": [
+        {
+          "line": 35,
+          "sha256": "abb6044fd40b466918acbeddd5111931d5e11b2ba7f281c8cf8b3bec000b24fc",
+          "native_schema_valid": true,
+          "pydantic_valid": false,
+          "errors": [
+            {
+              "loc": [
+                "task_decisions",
+                0
+              ],
+              "msg": "Value error, suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+            }
+          ],
+          "candidate_fields": [
+            {
+              "action": "record_candidate",
+              "transition": "none",
+              "owner_kind": "unknown",
+              "owner_relation": "unknown",
+              "formal_basis": null,
+              "status": null,
+              "business_relevance": null
+            }
+          ]
+        },
+        {
+          "line": 47,
+          "sha256": "0e6316c7764d47e6e0e372f94b4a7b19260146bb8cb3d4113e5530f1bf41819b",
+          "native_schema_valid": true,
+          "pydantic_valid": true
+        }
+      ],
+      "tools": []
+    }
+  ],
+  "limits": [
+    "Current main runtime, eval-only short source body and source-origin metadata. No runtime or installed Skill change.",
+    "No claim clipping caused the separate business validation error.",
+    "No all-provider, compaction or reference-version freshness acceptance."
+  ],
+  "cold_input_comparison": {
+    "baseline_chars": 39036,
+    "candidate_chars": 16668,
+    "exact_after_only_source_replacement_and_owned_paths": true,
+    "baseline_full_skill_occurrences": 1,
+    "candidate_complete_entry_occurrences": 1
+  },
+  "source_fixture_commit": "be4b6494",
+  "source_fixture_path": "evals/trajectory_optimization/task-progressive-skill"
+}

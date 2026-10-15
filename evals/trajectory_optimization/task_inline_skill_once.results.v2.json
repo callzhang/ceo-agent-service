@@ -559,5 +559,11 @@
     "Initial double-array candidate v1 is held; v2 composes one exact array. Native debug catalog control and review are recorded separately; no total-token or rate claim.",
     "Shared AGENTS remains CLI-owned and read by both arms; no project-doc setting changed."
   ],
-  "cold_service_inputs_equal_after_owned_path_normalization": true
+  "cold_service_inputs_equal_after_owned_path_normalization": true,
+  "fixture_cleanup": {
+    "path": "/private/tmp/ceo-task-inline-once.r9tYOd",
+    "bytes": 5363871,
+    "native_originals_preserved": true,
+    "terminal_phases_verified": 6
+  }
 }
