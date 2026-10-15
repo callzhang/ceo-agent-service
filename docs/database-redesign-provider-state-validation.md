@@ -265,3 +265,29 @@ actual four-case source-copy proof atfd3ba699 against the frozen970a909a input;
 it remains in progress at this recording. The initial direct-script command
 omitted PYTHONPATH and stopped at import before any database operation; the
 corrected invocation uses PYTHONPATH=.
+
+
+### Paired-target capacity observation during four-case acceptance
+
+A separate read-only capture of the already completed paired target is in
+`superpowers/specs/2026-10-15-provider-business-email-capacity.json`. The harness
+had advanced to its independent actual Email-only boundary case. All read
+handles closed; each database file hash before/after matched. This records the
+completed first paired case's output, not a final success receipt for all four.
+The target includes controlled acceptance writes and inverse/reforward layout.
+
+| Observation | Frozen source | Paired target |
+| --- | ---: | ---: |
+| Noninternal tables | 121 | 104 |
+| File/page bytes | 485212160 | 543625216 |
+| Free-list bytes | 0 | 26284032 |
+| Active page bytes | 485212160 | 517341184 |
+| Provider source2 / target1 table plus index bytes | 24956928 | 34275328 |
+
+Active pages increased32129024 bytes; file size increased58413056 bytes.
+The Provider family comparison increases9318400 bytes, with controlled new
+facts included. This observation does not isolate codec, key, generated-column
+index or page-layout causes. No VACUUM or new retention policy was applied.
+Table consolidation has not established capacity recovery. The receipt lists
+all121 source and104 target table row counts and table/index allocations;
+it is an offline frozen-input observation, not current production measurement.
