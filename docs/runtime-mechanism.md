@@ -18,6 +18,20 @@ historical completion in the Console. Unknown historical delivery is a technical
 verification failure, not a needs_human business choice. No maintenance runs in
 read paths or startup.
 
+For a historical native reply with an existing sent-reply row but an unavailable
+provider task, `reconcile-failed-reply-chat-readback --task-id ...` performs a
+bounded, paginated read of the original conversation around `sent_at`. A
+complete result must contain exactly one message matching the conversation,
+the recorded query range, quoted trigger, exact persisted body, and authenticated
+sender identity. The native page ledger must be complete, non-partial,
+failure-free, and untruncated. The
+explicit `--apply` then rechecks the failed task, generation, approved
+single-action candidate, uncertain external receipt and inactive execution
+inside one immediate transaction. It records the readback digest and message
+identity, settles the same execution/task and compacts only that settled input.
+The command has no send/comment path; previews are read-only and every mismatch
+or incomplete response leaves the task unresolved.
+
 Startup reply-task projection recovery performs candidate discovery on read-only
 connections and applies bounded batches in short SQLite write transactions. The
 failed-current-run repair rechecks only the candidate task IDs, generations and
