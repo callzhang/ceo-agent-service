@@ -207,9 +207,9 @@ def test_four_kind_deleted_high_waters_inverse_and_reforward():
         db.execute("insert into business_anchors(id,anchor_type,anchor_ref,title) "
                    "values(114,'project','high','high')")
         db.execute("insert into business_projects(id,canonical_anchor_id,title,registry_source) "
-                   "values(115,-14,'high','synthetic')")
+                   "values(115,114,'high','synthetic')")
         db.execute("insert into business_project_context_revisions("
-                   "id,project_id,context_json,evidence_json) values(116,-15,'{}','[]')")
+                   "id,project_id,context_json,evidence_json) values(116,115,'{}','[]')")
         for kind, table in reversed(tuple(SOURCE_PARENTS.items())):
             db.execute(f"delete from {table} where id=?", ({
                 "task": 111, "anchor": 114, "project": 115,
