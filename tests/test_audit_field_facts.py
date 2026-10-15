@@ -92,4 +92,7 @@ def test_new_native_feedback_cannot_omit_its_observation_classification():
     native_output = json.dumps({"type": "item.completed", "item": {
         "type": "agent_message", "text": json.dumps(payload)}})
     with pytest.raises(ResultParseError):
-        parse_audit_agent_wire_result(native_output)
+        parse_audit_agent_wire_result(
+            native_output, proposal_revision=0,
+            candidate_digest=candidate_digest(candidate()),
+        )

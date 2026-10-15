@@ -146,8 +146,6 @@ class _AuditFeedbackWire(AuditFeedback):
 
 class _AuditWire(_WireBase):
     outcome: Literal["approve", "return", "reject", "failed"]
-    proposal_revision: int = Field(ge=0)
-    candidate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evidence_refs: list[str] = Field(default_factory=list)
     feedback: _AuditFeedbackWire | None
 
@@ -157,16 +155,16 @@ class AuditAgentWireResult(RootModel[_AuditWire]):
 
     @model_validator(mode="after")
     def validate_result_conversion(self) -> "AuditAgentWireResult":
-        self.to_result()
+        self.to_result(proposal_revision=0, candidate_digest="0" * 64)
         return self
 
-    def to_result(self) -> AuditAgentResult:
+    def to_result(self, *, proposal_revision: int, candidate_digest: str) -> AuditAgentResult:
         payload = self.root
         return AuditAgentResult.model_validate({
             "outcome": payload.outcome,
             "summary": payload.summary,
-            "proposal_revision": payload.proposal_revision,
-            "candidate_digest": payload.candidate_digest,
+            "proposal_revision": proposal_revision,
+            "candidate_digest": candidate_digest,
             "evidence_refs": payload.evidence_refs,
             "feedback": payload.feedback,
             "risk": payload.risk,
@@ -186,9 +184,14 @@ def parse_consumer_agent_wire_result(raw: str) -> ConsumerAgentResult:
         raise ResultParseError("consumer wire result does not match the strict schema") from exc
 
 
-def parse_audit_agent_wire_result(raw: str) -> AuditAgentResult:
+def parse_audit_agent_wire_result(
+    raw: str, *, proposal_revision: int, candidate_digest: str,
+) -> AuditAgentResult:
     try:
-        return parse_typed_agent_result(raw, AuditAgentWireResult).to_result()
+        return parse_typed_agent_result(raw, AuditAgentWireResult).to_result(
+            proposal_revision=proposal_revision,
+            candidate_digest=candidate_digest,
+        )
     except ResultParseError:
         raise
     except (ValidationError, ValueError) as exc:

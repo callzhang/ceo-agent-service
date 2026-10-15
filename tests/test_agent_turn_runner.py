@@ -256,35 +256,6 @@ def _audit_result(proposal_revision: int) -> AuditAgentResult:
     )
 
 
-def test_audit_result_proposal_revision_is_bound_from_the_run():
-    """The run row owns proposal_revision; a retyped echo is overwritten, not failed."""
-    fail_calls: list[object] = []
-
-    class Store:
-        def fail_agent_run(self, *args, **kwargs):
-            fail_calls.append((args, kwargs))
-
-    runner = object.__new__(AgentTurnProcess)
-    runner.store = Store()
-    runner.owner = "test-owner"
-    runner.task = SimpleNamespace(id=383511)
-    run = SimpleNamespace(id=11776, proposal_revision=0)
-
-    echoed = _audit_result(3)
-    bound = runner._bind_audit_result(run, echoed)
-
-    assert bound.proposal_revision == 0
-    assert bound is not echoed
-    assert echoed.proposal_revision == 3
-    assert bound.feedback == echoed.feedback
-    assert bound.outcome is echoed.outcome
-    assert fail_calls == []
-
-    matching = _audit_result(0)
-    assert runner._bind_audit_result(run, matching) is matching
-    assert fail_calls == []
-
-
 def test_runner_wire_contract_has_no_application_recovery_evidence_fields():
     execute_parameters = inspect.signature(AgentTurnProcess.execute).parameters
     assert not {
