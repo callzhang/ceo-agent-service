@@ -3469,3 +3469,23 @@ unchanged, so these are corrected test expectations rather than a runtime fix.
 Compact evidence is `docs/superpowers/specs/2026-10-15-email-final-ci-resume-regression.json`.
 The failed run remains a failure; a replacement submitted-head CI run is required.
 No extra real CLI, database-copy, provider send, main merge or deployment occurred.
+
+### Follow-up CI meeting Memory lease fixture, 2026-10-15
+
+CI38736466402 reported 1 failed and 13795 passed. Its sole failure was
+`test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write`: the
+heartbeat could read fake time before the writer advanced it by eight seconds,
+renew to the original ten-second expiry, then allow the intruder's claim at
+twelve seconds. The resulting `lost_lease=1` was a valid consequence of that
+test schedule. No runtime lease behavior was changed.
+
+The test now forces the heartbeat to reach its clock first, holds that clock
+read until the writer advances by eight seconds, then waits for a successful
+renewal before probing the intruder at twelve seconds. This makes the old
+failure schedule deterministic: with the clock gate absent, the exact target
+test failed with `completed=0, lost_lease=1`; with the gate, the target and two
+adjacent lease tests passed (3 passed). Every observed renewal must succeed;
+the intruder must claim zero events; the final count must stay unchanged after
+the processing call returns, and no lease thread may remain. The full meeting
+Memory write test file passed (44 tests). Ruff and diff checks passed. This is
+local test evidence only; replacement CI is pending.

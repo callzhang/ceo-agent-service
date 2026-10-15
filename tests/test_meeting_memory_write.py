@@ -578,10 +578,15 @@ def test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write(
     _store_sent_job(store)
     current_time = datetime.fromisoformat("2026-09-15T10:00:00+00:00")
     clock_lock = threading.Lock()
+    heartbeat_clock_entered = threading.Event()
+    writer_advanced = threading.Event()
     renewed = threading.Event()
     renewal_results: list[bool] = []
 
     def clock() -> datetime:
+        if threading.current_thread().name.startswith("meeting-memory-lease-"):
+            heartbeat_clock_entered.set()
+            assert writer_advanced.wait(timeout=2)
         with clock_lock:
             return current_time
 
@@ -612,7 +617,9 @@ def test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write(
             self.intruder_claim_count = -1
 
         def __call__(self, **_kwargs):
+            assert heartbeat_clock_entered.wait(timeout=2)
             advance(8)
+            writer_advanced.set()
             assert renewed.wait(timeout=1)
             advance(4)
             self.intruder_claim_count = len(
@@ -639,9 +646,10 @@ def test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write(
     assert outcome.completed == 1
     assert outcome.lost_lease == 0
     assert writer.intruder_claim_count == 0
-    assert renewal_results == [True]
+    assert renewal_results and all(renewal_results)
+    final_renewals = tuple(renewal_results)
     time.sleep(0.03)
-    assert renewal_results == [True]
+    assert tuple(renewal_results) == final_renewals
     assert not any(
         thread.name.startswith("meeting-memory-lease-")
         for thread in threading.enumerate()
