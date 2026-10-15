@@ -362,6 +362,67 @@ previously rejected cleanup targets were not retried.
 This establishes the five reply branches on the frozen-input candidate.
 Other task types retain their prior separately scoped evidence; no production
 publication or live provider delivery is claimed. Draft PR93 is attached and
-Quality38795211969 is running on exact66745228. The successful ancestor
+Quality38795211969 failed on exact66745228; its terminal result is below. The successful ancestor
 Business/Email CI38785796782 at887cd377 remains separate evidence. Full10+1
 and final capacity acceptance remain open.
+
+## Provider exact-head terminal CI, 2026-10-15
+
+Quality run `38795211969` at
+`66745228c2925783673485f3dcbb436c00e2a9c4` completed with failure. The Python
+summary is **10 failed, 14,476 passed, 118 skipped, 44 deselected, 40 warnings
+in 5,290.45 seconds**. The terminal result was read using the authenticated
+GitHub CLI; no retry or cancellation was issued.
+
+Nine failures are in `tests/test_email_action_validation.py`: two current
+validator positive controls, retained-contract/optional-history coverage,
+translated-blocker target manifest, reply two-claim semantics, reply receipt
+semantics, unsubscribe continuation-journal validation, read-only savepoint
+preservation, and completed retry/feedback ledgers. One failure is
+`tests/test_native_copy_additional_harness.py::test_prepare_publishes_current_pair_before_store_open_and_reserves_task_ids`.
+The unsubscribe case explicitly reports the required provider-state declaration
+missing or malformed; that diagnostic alone does not establish whether the
+test fixture or runtime validator is wrong. Bounded source inspection and local
+reproduction are required before changing either.
+
+`npm test` runs lint, Python tests, then frontend tests with `&&`; this failed
+Python stage therefore supplies no successful frontend result. The later build
+and browser steps are not accepted by this run. Prior successful ancestor CI,
+actual-copy proof and native lifecycle evidence remain separately scoped.
+The later configs source/storage and documentation commits were not part of
+this exact-head CI. Local relevant Provider runtime and the two failing test
+files have no delta from this CI head at the time of triage. No main merge,
+production migration or deployment is authorized by a partial pass count.
+
+Bounded independent triage reproduced three representative nodes unchanged:
+three failures in 145.12 seconds, with a newly owned pytest temporary directory
+removed and its absence checked. The direct-plan, reply and unsubscribe DAO
+converted-copy fixtures call only `migrate_email_action_schema`; they retain
+the old Provider tables despite the current validator's required target.
+The real paired release already invokes `apply_provider_state_migration` in
+the same transaction. The additional harness mismatch is the single missing
+expected key `retired_provider_tables: 2`, which its sibling lifecycle harness
+test already expects. The proposed repair is confined to those three fixtures
+and one expected dictionary, preserving source processes and all corruption
+and business assertions. No patched GREEN result is established yet.
+
+## Bounded test-only CI fixture repair, 2026-10-15
+
+Commit `925905d9` changes only four test files. The direct-plan, reply and
+unsubscribe copied-target fixtures now capture the genuine archived Provider
+source declarations and call `apply_provider_state_migration` after the Email
+conversion inside the same existing target transaction. Their archived source
+processes and source database remain unchanged. The additional native harness
+expects the published pair's `retired_provider_tables: 2`, as its sibling
+lifecycle harness already does. Business and corruption assertions were not
+weakened; the direct-plan fixture comment now describes its DAO-method scope.
+
+The complete `test_email_action_validation.py`, additional native harness,
+and three adjacent DAO files passed together: **58 passed in 188.09 seconds**.
+The run used `/tmp/provider-ci-fixture.FFvtPX/pytest` as its owned base temp;
+the task-owned root was removed and its absence asserted. Ruff on all four
+changed files and `git diff --check` passed. This local GREEN resolves the
+reproduced fixture failure path, but is not a replacement CI receipt. No app,
+schema, validator, source fixture JSON, real database, provider, native CLI,
+network push, main merge or deployment was changed or exercised by the repair.
+Fresh sequential SPEC and QUALITY review remain pending.

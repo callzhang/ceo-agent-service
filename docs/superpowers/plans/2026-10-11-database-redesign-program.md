@@ -57,7 +57,12 @@ source unchanged; evidence is in the Provider validation and copy receipt. Five
 real native reply lifecycle branches with fake outbound now pass atc0afd584:
 13 CLI starts (one expected failure),11 sessions,four fake sends,zero real
 sends; all99 original ordinary tables remain unchanged. Draft PR93 and
-Provider Quality38795211969 at66745228 remain separate in-progress CI.
+Provider Quality38795211969 at66745228 completed with ten failures,
+14476 passes,118 skips and44 deselections in5290.45 seconds. Independent
+triage reproduced three representative failures: the converted Email test
+fixtures omit Provider conversion, and one native-copy manifest assertion
+omits `retired_provider_tables: 2`. The test-only repair and replacement CI
+are pending; this failed run supplies no frontend/build/browser acceptance.
 The paired target active pages increased32129024 bytes versus that frozen
 source, so table reduction is not capacity acceptance. Separate ancestor
 Business/Email CI38769762524 failed28 tests and nine setup cases, with14361
