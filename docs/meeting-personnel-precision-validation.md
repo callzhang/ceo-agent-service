@@ -80,7 +80,7 @@ fix is covered separately by the integrated delivery regressions.
 
 The two production Skills are independently bound in runtime config18 and the
 meeting schedule: meeting revision142 and personnel revision6. Changing the
-repository copies alone does not update them. Exact reviewed revisions165/166
+repository copies alone does not update them. Exact reviewed revisions167/166
 were created and hash-read back through the existing Settings API without
 changing active bindings. Publication must update the existing runtime config
 and scheduled task2 references with their normal parent/version checks, export
@@ -94,6 +94,24 @@ still reconcile without replay. Cross-version tests use literal old-format
 bytes, not the current renderer. Pre-release production inventory found zero
 processing/ready_to_send meeting jobs; recheck before deployment.
 
-Production deployment and final readback: pending.
+Normal deployment succeeded: production moved633f5e59 to131ae6a8, with
+supervisor PID87961. healthz returned ok/status=ok. Runtime Skill config19 is
+active. Worker load receipts4084/4085 (PIDs87978/87981) contain the exact meeting
+revision167 and personnel revision166 hashes, with no load errors. Scheduled
+task2 is version8 and references meeting167. Comparing config18 versus19 confirms
+only the two requested revision IDs changed; all other bindings, enabled flags,
+load order and purposes are identical.
+
+Status, Attention and bounded History returned valid data. Meeting queue counts
+remain sent571, failed2, no_action85, skipped72, with no pending or processing
+meeting jobs. The two pre-existing meeting source-read failures were not changed.
+No historical meeting messages were resent. Attention total20 and History
+count35363 are readback observations, not claims that unrelated historical
+problems were repaired. Exact release facts: evals/meeting_audience/v2.release.json.
+
+The installed Management Weekly Meeting section/reference was preserved before
+synchronizing only these two native Skill packages with sync_bundled_skill.
+The package/revision tests were rerun after preservation:75 passed. No tests ran
+in the production checkout or during the restart.
 
 Publication preparation found an already-installed Management Weekly Meeting subsection and reference, absent from the active142/repository baseline. Preserve those exact existing bytes in a separate reconciliation commit and in the released meeting Skill; no weekly rules were changed. Native disclosure scenarios are unrelated to management-weekly preparation.
