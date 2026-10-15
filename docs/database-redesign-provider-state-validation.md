@@ -105,3 +105,17 @@ This acceptance is synthetic and unselected. Current callers, fresh schema
 factory, exact schema validators and paired release wiring are next; actual
 source-copy, genuine old-code cold writes/reforward and publication remain
 unverified for this Provider unit. Full10+1 is still incomplete.
+
+
+## Read-only actual-source preflight, 2026-10-15
+
+Root executed the accepted pure capture/dependency preflight on the immutable
+15:35UTC source image, opened mode=ro with query_only and one read transaction.
+It accepted the actual variant with72142 observations and55 generations,
+Store`2026-10-13.5`/Email51. Production checkout observations before and after
+remained7dadc492; these and the older source capture are distinct observations.
+Metadata-only proof is in
+`superpowers/specs/2026-10-15-provider-state-source-preflight.json`.
+This confirms source declaration/dependency compatibility only; no forward,
+inverse, real-copy target comparison, cold old-code or current caller proof
+was executed by this read-only preflight.
