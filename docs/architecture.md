@@ -2097,6 +2097,8 @@ Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000�
 
 OA pending scans carry the complete scheduled Consumer wrapper, including exact frozen Skill materials, into the claimed reply input. Consumer and Audit read those original bodies through read_task_skill; the scanner must not use the Task extraction projection that omits skill_materials. Task extraction sources retain their existing body-free scheduled context. This changes input delivery only, not Skill contents, task classification, audit policy, routes or sessions; old inputs are not rebuilt.
 
+Each newly enqueued OA review round re-materializes the currently selected Skill references from the current scheduled-task configuration and the service's loaded managed-Skill snapshot. Managed Skills use the newest available revision for the selected Skill identity; operation Skills are read from their current authorized source. The resulting complete bodies are frozen in that new trigger's scheduled Consumer wrapper. Retries and corrections of an existing round continue to use that round's saved input, and previously saved trigger/run history is never rewritten. This changes which Skill revision a new OA review round receives; it does not change approval permissions, business thresholds, or action gates.
+
 Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files.
 
 

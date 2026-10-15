@@ -1716,7 +1716,7 @@ def test_scan_oa_approvals_command_honors_enabled_and_lookback(
         (
             tmp_path / "worker.sqlite3",
             "FakeDwsClient",
-            {"lookback_days": 3, "max_new_items": 5},
+            {"lookback_days": 3, "max_new_items": 5, "skill_options": None},
         )
     ]
     assert capsys.readouterr().out == "scan-oa-approvals queued=7\n"
