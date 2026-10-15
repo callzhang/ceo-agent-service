@@ -11,6 +11,7 @@ from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_pres
 from app.attempt_what_happened import build_what_happened, stopped_because
 from app.web_api.common import json_safe, normalize_display_value
 from app.run_storage import AGENT_RUN_SQL
+from app.agent_contracts import parse_persisted_consumer_result
 
 from app.action_storage import (
     CANDIDATE_REVIEW_SQL,
@@ -263,8 +264,6 @@ def _consumer_result_payload(
     if consumer_run is not None and str(getattr(consumer_run, "status", "") or "") != "failed":
         raw_result = str(getattr(consumer_run, "adopted_result_json", "") or "")
         if raw_result.strip():
-            from app.agent_contracts import ConsumerAgentResult
-
             try:
                 parsed_result = _stored_json(raw_result, {})
                 if isinstance(parsed_result, dict):
@@ -277,7 +276,7 @@ def _consumer_result_payload(
                     if "confidence" in hydrated_result and "risk" in hydrated_result:
                         hydrated_result.setdefault("rule_coverage", 1.0)
                         hydrated_result.setdefault("information_completeness", 1.0)
-                    result = ConsumerAgentResult.model_validate(hydrated_result)
+                    result = parse_persisted_consumer_result(hydrated_result)
                 else:
                     result = None
             except ValueError:

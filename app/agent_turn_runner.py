@@ -18,6 +18,7 @@ from app.agent_contracts import (
     AuditOutcome,
     ConsumerAgentResult,
     ConsumerOutcome,
+    parse_persisted_consumer_result,
 )
 from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
@@ -966,7 +967,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 adopted = self.store.adopted_candidate_for_consumer_run(run.id)
                 if adopted is None:
                     raise CompletedRuntimeResultBlockedError("completed_consumer_candidate_unavailable")
-                result = cast(ResultT, ConsumerAgentResult.model_validate_json(adopted["candidate_json"]))
+                result = cast(ResultT, parse_persisted_consumer_result(adopted["candidate_json"]))
                 return AgentTurnRunResult(
                     run_id=run.id, result=result,
                     transcript_start_line=persisted_run.transcript_start_line,

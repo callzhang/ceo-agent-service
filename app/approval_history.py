@@ -10,6 +10,7 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ConsumerOutcome,
     ProposedAction,
+    parse_persisted_consumer_result,
 )
 from app.historical_agent_results import HistoricalAuditExecutionResult
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
@@ -99,7 +100,7 @@ def resolve_approval_history_result(
     latest_result = None
     if latest_consumer is not None:
         try:
-            latest_result = ConsumerAgentResult.model_validate_json(
+            latest_result = parse_persisted_consumer_result(
                 latest_consumer.adopted_result_json
             )
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
@@ -135,7 +136,7 @@ def resolve_approval_history_group_result(
     latest_consumer_invalid = False
     if latest_completed_consumer is not None:
         try:
-            ConsumerAgentResult.model_validate_json(
+            parse_persisted_consumer_result(
                 latest_completed_consumer.adopted_result_json
             )
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
@@ -266,7 +267,7 @@ def _consumer_results(
     results: dict[int, ConsumerAgentResult] = {}
     for run in consumers:
         try:
-            results[run.id] = ConsumerAgentResult.model_validate_json(run.adopted_result_json)
+            results[run.id] = parse_persisted_consumer_result(run.adopted_result_json)
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
             continue
     return results

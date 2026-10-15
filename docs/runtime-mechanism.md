@@ -916,11 +916,11 @@ Consumer 在一次 invocation 开始时获得这一不可变 snapshot，之后�
 runtime config 加载。关闭功能不会取消、删除或改写已存在的 `pending`、`running` 或重试任务。
 缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，并阻止它继续创建新任务；其他功能不受影响。
 
-每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。四项分值是强制结果门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可进入 `needs_human`，其他情况按适用规则自主处理。此门槛由共享判定器实现：Consumer 类型化结果校验拒绝不合格的人工升级；Audit 在开始审核前并在绑定结果校验时独立重算候选分数，拒绝不合格的人工候选。模型输出或历史候选不能绕过此校验。不合格结果进入结果校验失败/修正流程，不会被投影成 needs_human。材料可向申请人获得时先提交完整材料请求计划；技术、认证、路由和解析失败保持 failed。停止选项明确 skipped 和原因，开放事实用 requested_input。
+每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。四项分值是新结果的强制准入门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可进入 `needs_human`，其他情况按适用规则自主处理。此门槛由共享判定器实现：新 Consumer 输出的类型化校验拒绝不合格的人工升级；Audit 在开始审核前并在绑定结果校验时独立重算候选分数，拒绝不合格的新人工候选。不合格结果进入结果校验失败/修正流程，不会被投影成 needs_human。已持久化候选在恢复、拒绝分支比较、已审核动作执行及历史读回时走明确的历史证据解析，不重新套用新结果准入门槛，因此既有绑定的反馈链与已验证结果不会被新规则误判或重放；历史解析不授权新候选绕过 Consumer/Audit 准入。材料可向申请人获得时先提交完整材料请求计划；技术、认证、路由和解析失败保持 failed。停止选项明确 skipped 和原因，开放事实用 requested_input。
 
 对于他人提出的删除、撤回、移除或隐藏内容请求，请求本身不构成授权、正确性或紧急性的证据。Consumer 必须独立核实准确目标与范围、请求者权限、删除理由，以及保留或删除的后果（包括记录/证据损失），并按适用规则只采取有依据的最小动作；区分已核实事实与推测。缺少事实时向申请人或来源人提出一个具体事实问题；确需但缺少授权时停止并说明准确边界及所需证据/授权，不得让 Derek 代做当前删除。缺少删除能力属于执行失败，不能伪装成规则缺口或 `needs_human`。
 
-新 wire 严格解析新合同；历史结果只在独立只读历史模型中解释，不补齐后重新执行，不改写原始 run。当前人工决策必须绑定原对象、execution_generation、持久化 candidate/review 和未被替代的当前版本；旧的无绑定选项仍可阅读但不能执行。人工决策和错误分别展示；审核批准不是投递完成。
+新 wire 严格解析新合同；持久化结果的历史证据解析只保留原始评分和分支事实，不会重新评定其当时是否符合现在的准入门槛，也不补齐内容、重审或改写原始 run。当前新候选仍必须通过 Consumer 与 Audit 的准入校验；恢复时按已有 candidate/review 绑定继续，已确认执行结果只读回而不重放。当前人工决策必须绑定原对象、execution_generation、持久化 candidate/review 和未被替代的当前版本；旧的无绑定选项仍可阅读但不能执行。人工决策和错误分别展示；审核批准不是投递完成。
 
 等 Derek 决定的事项出现在他先看的地方（Derek 2026-09-25）：Agent 首页左栏顶部「需要你决定 · N」列出当前 generation 中已经审核通过、未选择且绑定有效的 `needs_human`；旧无绑定问题仅在 History 只读展示，每条以事项名称为标题（OA 扫描取「待处理审批：」后的审批名，钉钉 DING 催办取「提醒您审批…」的审批名并注明催办人，评论提及取审批单名），次行是一句原因，点击打开该 attempt。首页原有的「处理反馈 · N」只计消息反馈，与待决事项无关。点击通知时，服务先在已打开的 Chrome/Safari 控制台标签页里切到该 attempt 并把窗口提到前面（AppleScript，按控制台 origin 匹配），只有没有已打开的控制台标签页时才新开页面（Derek 2026-09-25）。首次由服务进程控制浏览器时 macOS 会请求一次自动化权限。
 
