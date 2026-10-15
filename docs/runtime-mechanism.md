@@ -2305,6 +2305,13 @@ bounded attempt handling to operate. It is not a CLI execution outage. The
 credential predicate and rejection itself remain unchanged; no unsafe result
 is accepted and no content-feedback cycle is consumed by a parse failure.
 
+Generic credential key/value text requires the value to end at the string boundary
+or an explicit comma/semicolon delimiter. This avoids treating ordinary diagnostic
+prose such as `access token: load access token: acquiring file lock` as a secret,
+while retaining detection for delimited values such as `api_key=...;`. Known
+credential formats, sensitive-field context, entropy checks and outbound
+credential validation are unchanged.
+
 ### Daily Report Source Identity
 
 Daily report `handled_today` facts retain their original conversation ID,
@@ -2973,6 +2980,8 @@ Consumer 通用 Skill 约定只规定独立选择并应用适用 Skill；每轮 
 Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000，用于完整交付已请求的消息字段；该设置冷启动和续会话均保留。不提高全局输出限额，不改变消息查询参数、窗口工具、正文或分流/审核规则；长目录与文件读取保持各自现有单工具设置。
 
 OA pending scans carry the complete scheduled Consumer wrapper, including exact frozen Skill materials, into the claimed reply input. Consumer and Audit read those original bodies through read_task_skill; the scanner must not use the Task extraction projection that omits skill_materials. Task extraction sources retain their existing body-free scheduled context. This changes input delivery only, not Skill contents, task classification, audit policy, routes or sessions; old inputs are not rebuilt.
+
+Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files.
 
 
 ### 第五期A：候选与执行存储合并

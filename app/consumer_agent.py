@@ -155,6 +155,11 @@ Call direct read MCP tools where available. Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
 Use only stable provider identities established by the current source for the
 exact operation; a similarly named business object is not identity evidence.
+For DingTalk reads in service Consumer/Audit turns, call the declared
+`mcp__agent_cli` read tools directly. Never run local `dws` commands through
+shell; command examples in product Skills describe interactive sessions and
+are not service-role execution instructions. If the matching read tool is not
+declared, report that exact capability as unavailable.
 Preserve concrete provider error codes and source context when a read fails.
 When a required DWS, MCP, or other external-source read actually fails because
 the dependency is unavailable, return failed with error_code
@@ -921,6 +926,10 @@ def audit_developer_sections(
         core,
         capability_instructions=(
             "Use the capabilities available to the calling Agent. Apply the applicable "
+            "For DingTalk reads in service Consumer/Audit turns, call declared "
+            "mcp__agent_cli read tools directly; never run local dws commands through "
+            "shell. Product Skill CLI examples are for interactive sessions only. "
+            "If the read tool is not declared, report that capability as unavailable. "
             "business and operation Skills to the typed candidate. The application does "
             "not inspect command names, MCP tools, receipt formats, or readback procedures; "
             "those are runtime capabilities. When acceptance depends on dynamic external state "

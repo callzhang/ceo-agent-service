@@ -248,6 +248,7 @@ class AgentTaskContext:
             ),
             "Original trigger\n" + _json(trigger),
             "Recent conversation context\n" + _json(messages),
+            "Service Consumer/Audit turns must use direct agent_cli MCP tools for DingTalk reads; never execute local dws commands through shell. Skill CLI examples are for interactive sessions only.\n"
             "Raw material references and exact read commands\n" + _json(materials),
         ]
         if self.channel == "dingtalk":

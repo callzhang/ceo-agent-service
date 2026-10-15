@@ -10,6 +10,7 @@ from app.agent_runtime_contracts import (
     runtime_route_surface_capabilities,
 )
 from app.dws_client import DwsClient
+from app.consumer_agent import AGENT_CAPABILITY_INSTRUCTIONS, audit_developer_sections
 from app.native_cli_metadata import AgentReadOnlyViolationError
 from app.service_codex_config import ServiceMcpServer, service_mcp_config_options
 from app.system_action_handlers import native_dws_handlers
@@ -111,6 +112,17 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
     assert "list_task_artifacts" in consumer_tools + audit_tools
     assert "send_approved_dingtalk_message" not in consumer_tools + audit_tools
     assert "unsubscribe_email" not in consumer_tools + audit_tools
+
+
+def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
+    audit = "\n".join(section.text for section in audit_developer_sections("rules"))
+
+    for instructions in (AGENT_CAPABILITY_INSTRUCTIONS, audit):
+        normalized = instructions.replace("`", "").lower()
+        assert "call" in normalized
+        assert "mcp__agent_cli" in normalized
+        assert "never run local dws commands through" in normalized
+        assert "interactive sessions" in normalized
 
 
 def test_codex_manifest_restricts_direct_third_party_tools() -> None:

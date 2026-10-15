@@ -153,3 +153,35 @@ actual latency improvement still requires the live post-restart comparison.
 The experimental three-index metadata query is not published: it adds about
 20% VM work and its single-run wall-clock gain was not stable. No database
 schema, unregistered index or new query cache is introduced by this repair.
+
+## Interactive release readback
+
+Formal deployment moved production from86772bcd to27575931. The installed
+plist was backed up and read back byte-for-byte, changed only ProcessType,
+and compared as a parsed dictionary with every other key unchanged. launchctl
+then reported `spawn type = interactive (4)`, supervisor26590 and HTTP26608.
+This confirms the native setting was actually reloaded.
+
+Initial startup readback returned Status in8.673/11.365s and History with its
+chart in25.800s; the resource classification alone is not proof of eliminating
+all host contention. After recovery, sequential frontend-equivalent requests
+(`include_chart=0`) returned History20 in4.193/2.391s, History100 in1.486s,
+page2 in2.512s, and Status in2.937s. All returned200; the page sizes were20/100/20
+and total35332. A separate month chart returned in10.029s with6930 events.
+Browser readback showed100 selected,1–100 of35332, the completed6930-event
+month chart, and healthy on Settings. The temporary acceptance tab was closed.
+These measurements show the earlier minute-scale timeout was removed in this
+release; response times still depend on startup and host CPU/I/O contention.
+
+The live Status health check at2026-10-15T06:53:10.860593Z was healthy with
+zero violations,46 readable native delivery results and474 unavailable.
+Meeting Memory had no pending/due/delayed/processing/retryable/failed or ghost
+records. Persisted input404912 remained done after the restart, its recovered
+Task run360429 completed, and WeChat delivery137 remained intentionally skipped
+with its original pre-send failure retained. Historical queue failures and
+Attention decisions remain visible and were not converted to success.
+
+A final bounded64MiB/2MiB connection-cache experiment reduced RSS but did not
+complete the required reverse-order and concurrent equivalence comparison
+within90s. No cache setting change was published. The experimental database,
+queries and measurement files are disposable task artifacts.
