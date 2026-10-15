@@ -204,3 +204,22 @@ tuple. All four original repair/replay scenarios passed on the real shared
 633 HEAD in7.73s; strict lifecycle, bounded repair and receipt assertions remain.
 Independent review accepted the two-line test-only change. The other two
 failures concern redaction normalization and are repaired separately.
+
+## Preserve original redaction boundaries
+
+The two other633 failures reproduced locally with their original inputs and
+assertions unchanged. Process diagnostics joined a terminal stderr assignment
+with a later error field before redaction; unsubscribe normalization passed
+multiple original lines as one unit. Both lost end boundaries recognized by
+the already-approved detector. Redaction now preserves those original line
+units and retains the existing field/full-text cross-line matching. The
+credential predicate, flags and context choices are unchanged.
+
+Two new benign-diagnostic/trailing-whitespace/final-newline/digest controls
+first failed. Review found that an initial line-only draft lost Bearer, Basic
+and assignment recognition across lines; six additional controls reproduced
+that draft defect, which was repaired before publication. The final three
+focused files passed209 cases in30.67s, including every original failed case,
+all eight new controls and existing detector tests. No old credential fixture
+or safety assertion was changed. Runtime and fixture-only repairs are kept
+in separate commits. No full local suite was run against the live service.

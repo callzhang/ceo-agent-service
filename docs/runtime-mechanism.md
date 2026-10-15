@@ -2312,6 +2312,14 @@ while retaining detection for delimited values such as `api_key=...;`. Known
 credential formats, sensitive-field context, entropy checks and outbound
 credential validation are unchanged.
 
+Process diagnostic redaction preserves each original line boundary before joining
+separate error fields, while retaining the same field-level whitespace-spanning
+credential patterns. Unsubscribe result normalization retains the existing full-
+text redaction and applies the same detector to original normalized lines before
+rejoining them. It preserves final newlines, URL/path redaction, the complete
+redacted-text digest and UTF-8 byte bound. Credential patterns and policies do
+not change; concatenation must not erase a credential's original end boundary.
+
 ### Daily Report Source Identity
 
 Daily report `handled_today` facts retain their original conversation ID,

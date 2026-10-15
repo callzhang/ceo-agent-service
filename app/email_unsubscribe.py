@@ -79,10 +79,11 @@ def normalize_unsubscribe_result_text(value: str) -> tuple[str, str]:
         for character in normalized
         if character in {"\n", "\t"} or ord(character) >= 32
     )
-    redacted = redact_credentials(
-        normalized,
-        "[REDACTED]",
-        credential_context=True,
+    # Preserve cross-line patterns before applying the same rules at line ends.
+    redacted = redact_credentials(normalized, "[REDACTED]", credential_context=True)
+    redacted = "\n".join(
+        redact_credentials(line, "[REDACTED]", credential_context=True)
+        for line in redacted.split("\n")
     )
     redacted = _PRIVATE_RESULT_URL.sub("[REDACTED_URL]", redacted)
     redacted = _PRIVATE_RESULT_PATH.sub("[REDACTED_PATH]", redacted)
