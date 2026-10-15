@@ -3266,3 +3266,38 @@ post-test target observation, not a same-facts page decomposition. It establishe
 no capacity saving; the prior controlled donor comparison already records growth.
 No real provider send, production write, main merge or deploy occurred. PR90 stays
 draft; final-head CI and full10core-table-plus-ledger implementation remain open.
+
+### All five generic native cases completed; final CI still separate
+
+The remaining no_action, technical_retry and settlement_recovery cases completed
+at committedb670aea4 using the same verified264source. Its app/ and scripts/
+bytes are identical to6056cddc, which executed approve/revision. Every recorded
+11-module hash still matches. The updated2026-10-15native-copy aggregate contains
+all five cases and no pending generic cases.
+
+| Actual case | Native CLI calls | Decisive retained result |
+| --- | ---: | --- |
+| no_action |2| done;0send/verification/receipt/sent reply;1business Attempt; persisted no_action |
+| technical_retry |3| real first CLI exits2 on controlled invalid-start argument; failed run retained; genuine Consumer/Audit retry done;1send/receipt/sent reply/business Attempt |
+| settlement_recovery |2| real Consumer/Audit then saved receipt; exact settlement trigger interrupts; recovery completes using persisted result with no new invocation/send;1receipt/sent reply/business Attempt |
+
+Across all five cases there were15CLI invocations, including the one controlled
+startup failure, and4in-memory generic provider sends. This is not an actual
+provider send or an unplanned model failure. All five verify103original relevant
+tables unchanged, current Email direct/context/attempt/History public persistence,
+source/baseline hashes, completed-input provenance/compaction, and native session
+existence/ranges for completed runs. Email direct results are deterministic
+in-memory DAO fixtures, not a separate real Email-classifier role execution.
+These generic branches do not claim every business task type was rerun natively.
+
+After each case, only aggregate result/binding data was retained and the exact
+owned working root removed after no-open-handle checks. The verified source was
+moved, never accumulated as historical backups. After the final case and closed
+business metadata reader, the last raw source/target/baseline/workspace root was
+removed too; all five native roots were verified absent. No raw native trajectory
+copy was saved; session/range metadata continues to resolve through native Codex.
+
+Final-head CI is pending submission. EarliercfcCI has2known failures, both now
+source-addressed by main3950chronology and5d9trace regression, but its failure
+receipt is not promoted to success. PR90 stays draft. Capacity reduction,
+production publication and full10core-tables-plus-ledger are still unfulfilled.

@@ -1,0 +1,30 @@
+{
+  "source_ref": "264c073cfe779b76a5a7f001480149fb784f0591",
+  "source_sha256": "57c9595a77e71fab6f89a518b68307b490eaf0a2833fc216610611cc5f10060d",
+  "source_observed_at_utc": "2026-10-15T09:15:41.822422+00:00",
+  "indexes": [
+    {
+      "name": "idx_email_provider_observations_folder",
+      "unique": 0,
+      "origin": "c",
+      "columns": [
+        "account_id",
+        "provider_folder_id"
+      ],
+      "bytes": 2297856
+    },
+    {
+      "name": "sqlite_autoindex_email_provider_observations_1",
+      "unique": 1,
+      "origin": "pk",
+      "columns": [
+        "account_id",
+        "stable_message_identity"
+      ],
+      "bytes": 9314304
+    }
+  ],
+  "duplicate_lookup_absent": true,
+  "existing_migration": "app/email_store.py:_migrate_v47_to_v48 removes idx_email_provider_observations_lookup",
+  "limit": "Current index pages; no new deletion or another saving attributed to the already removed lookup."
+}

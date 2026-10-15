@@ -165,8 +165,9 @@ No page cost is allocated to record families by row share.
 Account configuration is small: email_accounts still has2rows and8192combined
 bytes. The72136email_provider_observations are per-message current facts, not
 account settings; they occupy13328384table bytes plus11612160index bytes.
-That distinction does not establish every index as necessary. The approved
-provider duplicate-index work remains a separate measured optimization.
+That distinction does not establish every index as necessary. The previously
+approved duplicate provider lookup removal is already active, as verified below;
+do not count the surviving indexes as that same saving.
 
 The source file grew565248bytes from the exact f264 source used by the completed
 four-case proof. That source has been replaced after verifying the new backup;
@@ -197,3 +198,28 @@ legacy model_text persist outside completed-task input compaction. Their Console
 selected-training, owner-example and thread/recovery consumers need ref-based
 input loading before retirement. No cache was blanked, no provider recoverability
 was assumed, and no field-level reclaimed-size forecast is claimed.
+
+## Confirmed remaining cache/input bytes and already-active provider deduplication
+
+The264owned source contains24416053UTF-8 bytes in8795nonempty message bodies
+and13771112bytes of legacy classification model_text, totaling38187165bytes.
+The source has8919rows in each table. These are value-byte sums, not physical
+page reclamation or confirmed deletion eligibility. Classification Agent result
+JSON separately totals1067554bytes and is a business result, not either cache.
+
+The two table B-trees report11533837 and4383796unused in-page bytes, respectively.
+They are not free-list pages and may reflect ordinary record packing; no claim
+that VACUUM will reclaim their sum is supported. The exact metadata/byte groups
+are in2026-10-15-database-redesign-email-cache-bytes.json.
+
+Meeting source_json totals11001089bytes across730jobs, including76786bytes in
+2failed jobs; OKR source totals2671871bytes across20requests. Existing metadata,
+reopening and exact historical-source questions remain as described in the
+remaining-input source note. No terminal-body deletion was applied.
+
+The provider lookup optimization is already effective: the source contains only
+PK(account_id,stable_message_identity)9314304bytes and folder(account_id,
+provider_folder_id)2297856bytes. idx_email_provider_observations_lookup is absent;
+the existing v47-to-v48 migration removes it. This corrects the earlier wording
+that could imply another future saving from that already removed index. Current
+index metadata is2026-10-15-database-redesign-provider-indexes.json.

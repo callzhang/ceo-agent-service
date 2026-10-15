@@ -62,3 +62,17 @@ blanket terminal-row deletion or a provenance body archive.
 No provider reread, native trajectory copy, schema/data write or deletion was
 performed by this research. The already implemented reply/WSI compaction and
 these remaining inputs are separate acceptance scopes.
+
+## Refreshed264owned-source observation, 2026-10-15
+
+The verified online backup observed2026-10-15T09:15:41.822422+00:00 refreshes
+this historical preparation:730meeting jobs hold11001089UTF-8 source_json bytes
+(571sent/10524626bytes,85no_action/177922,72skipped/221755,2failed/76786).
+Twenty OKR requests retain2671871bytes (19done/2468674,1skipped/203197).
+The exact source SHA/ref and groups are in
+`docs/superpowers/specs/2026-10-15-database-redesign-remaining-input-bytes.json`.
+No private source body or source-ref value is exported.
+
+This is an owned immutable backup observation, not a later live-production count.
+It updates sizes without resolving the original-version/reopening questions
+above. No source_json or okr_source_json was retired or schema-selected.

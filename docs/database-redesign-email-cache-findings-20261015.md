@@ -1,8 +1,10 @@
 # Remaining Email cache retirement: actual caller findings
 
 Read-only source review at6056cddc6fe0c11ab631e2d80b7e8df71a2498f9, using
-only source code and the committed264 per-table aggregate. No provider availability
-check, field-byte measurement, mutation or policy change was made.
+only source code and the committed264 per-table aggregate. That initial review
+made no provider availability check, field-byte measurement, mutation or policy
+change. Subsequent owned-source byte measurements are recorded below; provider
+availability remains unverified.
 
 The two actual text caches are email_messages.normalized_text (readable body
 or legacy synthesized header/body) and email_classifications.model_text
@@ -55,3 +57,13 @@ provider-backed body consumers and selected training; then combine the two Email
 records with direct action/source references and remove duplicate physical fields.
 Retain business labels/results/state/receipts throughout. No size savings, source
 recoverability or complete field map is claimed by this bounded review.
+
+## Subsequent owned-source measurements
+
+At the same immutable264source, normalized_text totals24416053UTF-8 bytes
+(8795nonempty of8919rows); model_text totals13771112bytes. The combined text
+value total is38187165bytes. Exact groups, Agent result bytes and table page
+metadata are in2026-10-15-database-redesign-email-cache-bytes.json. These do
+not establish provider recoverability, per-row retirement eligibility or physical
+savings. Both cache fields still need their actual caller conversions before
+retirement under the approved provenance rule.
