@@ -2231,3 +2231,10 @@ descriptions, literal JSON values, strict required fields and every validation
 constraint remain unchanged. Existing Task identity validators and provider,
 Skill/source, session, correction and Audit contracts are preserved. Consumer/Audit
 schema text is byte-identical. See docs/task-schema-title-formatting-validation.md.
+
+Task Agent 当前每轮已经完整提交仓库中的 Work Tracking Skill，Codex 命令复用现有
+`inlined_skill_names` 元数据，由适配器把已有路径筛选和同名隐藏规则合成一份
+原生 `skills.config` 数组，避免重复配置键覆盖。仅隐藏同名安装副本的目录项。完整当前正文、
+其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
+或共享 AGENTS 配置。该改动消除第二份旧 Skill 的可见入口，尚未把完整正文改成按需读取。
+验证与限制见 `docs/task-inline-skill-once-validation.md`。

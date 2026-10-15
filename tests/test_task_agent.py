@@ -2635,6 +2635,8 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
     assert routed.calls[0]["workload_key"] == "9"
     assert routed.calls[0]["conversation_id"] is None
     command_factory = routed.calls[0]["command_factory"]
+    assert command_factory.skill_names == ("ceo-work-tracking",)
+    assert command_factory.inlined_skill_names == ("ceo-work-tracking",)
     assert command_factory.use_output_schema is True
     assert command_factory.output_schema_path == (
         Path(__file__).resolve().parents[1]

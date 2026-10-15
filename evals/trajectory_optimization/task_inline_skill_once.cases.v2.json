@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "cases_source": "task_schema_titles.release.cases.v1.json",
+  "target_ref": "dedf0b7b + Task inline-name suppression only",
+  "baseline": "Original complete current Skill and unmodified original selected-path array.",
+  "candidate": "Adapter composes original selected-path entries plus exact inline-name suppression in one skills.config array.",
+  "route": "codex_oauth",
+  "clocks": {
+    "cold": "2026-10-14T09:00:00+00:00",
+    "risk": "2026-10-14T09:01:00+00:00"
+  },
+  "acceptance": [
+    "complete native input/tool/result inspection",
+    "cold and same-session risk business application",
+    "exact source facts and schema unchanged",
+    "same-name installed Skill absent only in candidate"
+  ],
+  "limits": "Synthetic readonly/MCP-free Task pipeline; no production replay or all-provider claim."
+}
