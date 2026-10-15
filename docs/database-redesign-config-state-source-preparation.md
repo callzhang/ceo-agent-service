@@ -212,3 +212,18 @@ accepted config metadata checks passed 8 cases in 0.59 seconds, and the full
 new source-contract file passed 19 cases in 14.30 seconds. Ruff, compileall
 and diff checks passed. The temporary mutant was removed by its owned
 `TemporaryDirectory`; no captured declaration or runtime code changed.
+
+
+### Independent configs SOURCE acceptance
+
+Fresh SPEC accepted the bounded source implementation after4c8a287d closes the
+allocator lower-bound gap; its final independent allocator/metadata run passed
+eight cases in0.34s. Fresh QUALITY then independently passed25 new-source/
+accepted-metadata cases in12.48s and26 predecessor trigger cases in0.20s,
+with Ruff and diff checks passing. Both reviewed the genuine archived7dad
+constructor/public callers and the separate declaration-only account blocker
+comparison. This accepts the source oracle at4c8a287d, not target storage or
+an actual migration. The original38-case adjacent run and exact19-case new
+file run remain separate receipts. The118-field figure is metadata coverage;
+behavior is sampled by the specified cases. No production, provider, native
+Agent CLI, policy or schema version change is part of this acceptance.

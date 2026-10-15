@@ -1,6 +1,6 @@
 # Configs Source Contract Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Establish an unselected, executable source behavior oracle for the 15 existing config families and all 118 captured fields before designing their target storage.
 
@@ -33,9 +33,9 @@ No `app/`, `scripts/`, existing tests, source-binding artifact or captured JSON/
 
 **Files:** Create `tests/configs_source_fixtures.py`; create `tests/test_configs_source_contract.py`.
 
-- [ ] **Step 1: Claim these two test files and their later documentation appendix.** Append a unique claim row to `docs/agent-claims.md` before edits. Stage only that row and the files this plan names.
+- [x] **Step 1: Claim these two test files and their later documentation appendix.** Append a unique claim row to `docs/agent-claims.md` before edits. Stage only that row and the files this plan names.
 
-- [ ] **Step 2: Write the first test, importing a fixture that does not yet exist.** Create `tests/test_configs_source_contract.py` with this complete initial content:
+- [x] **Step 2: Write the first test, importing a fixture that does not yet exist.** Create `tests/test_configs_source_contract.py` with this complete initial content:
 
 ```python
 """Unselected native source behavior for the 15 config families."""
@@ -66,9 +66,9 @@ def test_fifteen_config_identities_and_118_fields(variant):
         assert db.execute("pragma quick_check").fetchone() == ("ok",)
 ```
 
-- [ ] **Step 3: Run the RED check.** Run `python -m pytest -q tests/test_configs_source_contract.py::test_fifteen_config_identities_and_118_fields`. Expected: collection fails with `ModuleNotFoundError: No module named 'tests.configs_source_fixtures'`.
+- [x] **Step 3: Run the RED check.** Run `python -m pytest -q tests/test_configs_source_contract.py::test_fifteen_config_identities_and_118_fields`. Expected: collection fails with `ModuleNotFoundError: No module named 'tests.configs_source_fixtures'`.
 
-- [ ] **Step 4: Add the literal-only fixture.** Create `tests/configs_source_fixtures.py` with this complete content. It executes no constructor, fabricated parent or target DDL. The 34 captured tables include the genuine `scheduled_tasks` parent. The external runtime receipt is exercised through the archived constructor in Task 3. Task 3's six account-blocker predicate comparison is declaration-only; the separately existing focused source DML gate reconstructs the captured Email action parents/children and all 13 external triggers with narrow account/message/classification stubs.
+- [x] **Step 4: Add the literal-only fixture.** Create `tests/configs_source_fixtures.py` with this complete content. It executes no constructor, fabricated parent or target DDL. The 34 captured tables include the genuine `scheduled_tasks` parent. The external runtime receipt is exercised through the archived constructor in Task 3. Task 3's six account-blocker predicate comparison is declaration-only; the separately existing focused source DML gate reconstructs the captured Email action parents/children and all 13 external triggers with narrow account/message/classification stubs.
 
 ```python
 """Owned SQLite fixtures from the frozen actual/published-fresh source DDL."""
@@ -125,13 +125,13 @@ def insert(db, table, values, *, ignore=False):
     )
 ```
 
-- [ ] **Step 5: Run the GREEN check and commit the self-contained fixture checkpoint.** Run `python -m pytest -q tests/test_configs_source_contract.py::test_fifteen_config_identities_and_118_fields tests/test_config_state_native_source.py`. Expected: the two parameterized cases plus the six accepted metadata cases pass. Run `ruff check tests/configs_source_fixtures.py tests/test_configs_source_contract.py` and `git diff --check`. Commit only the two new test files and the claim row with `git add tests/configs_source_fixtures.py tests/test_configs_source_contract.py docs/agent-claims.md` then `git commit -m "test: reconstruct configs source behavior fixture"`.
+- [x] **Step 5: Run the GREEN check and commit the self-contained fixture checkpoint.** Run `python -m pytest -q tests/test_configs_source_contract.py::test_fifteen_config_identities_and_118_fields tests/test_config_state_native_source.py`. Expected: the two parameterized cases plus the six accepted metadata cases pass. Run `ruff check tests/configs_source_fixtures.py tests/test_configs_source_contract.py` and `git diff --check`. Commit only the two new test files and the claim row with `git add tests/configs_source_fixtures.py tests/test_configs_source_contract.py docs/agent-claims.md` then `git commit -m "test: reconstruct configs source behavior fixture"`.
 
 ### Task 2: Native keys, allocator and constraints
 
 **Files:** Modify `tests/test_configs_source_contract.py` only. Append the following complete tests after Task 1's function. Run each named node as RED immediately after adding it if its assertion fails; fix an inaccurate expectation against the frozen literal SQL, not by changing the capture or native helper. Then rerun as GREEN. The precise expected behaviors below follow the captured declarations.
 
-- [ ] **Step 1: Add `import sqlite3` and `insert` to the existing fixture import, then add identity and affinity cases.** The fixture import becomes `from tests.configs_source_fixtures import CONFIGS, capture, insert, source_db`.
+- [x] **Step 1: Add `import sqlite3` and `insert` to the existing fixture import, then add identity and affinity cases.** The fixture import becomes `from tests.configs_source_fixtures import CONFIGS, capture, insert, source_db`.
 
 ```python
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
@@ -202,9 +202,9 @@ def test_three_autoincrement_sequences_and_three_without_rowid_tables(variant):
 
 The allocator case must be checked against native behavior during RED/GREEN. In particular, `managed_skill_revisions` has immutable deletion, so no test may bypass that trigger. If SQLite's ignored `CHECK` changes `sqlite_sequence` on the installed SQLite version, assert the observed native high water and keep both actual/fresh variants equal; do not turn it into a proposed target allocator policy. The first `managed_skills` explicit delete/reinsert is permitted only before a revision references that ID.
 
-- [ ] **Step 2: Run the two nodes and reconcile any native version result.** Run `python -m pytest -q tests/test_configs_source_contract.py::test_native_text_keys_keep_source_null_and_binary_rules tests/test_configs_source_contract.py::test_three_autoincrement_sequences_and_three_without_rowid_tables`. Expected after reconciliation: four parameterized cases pass. Keep literal `sqlite_sequence` and `WITHOUT ROWID` evidence in assertions.
+- [x] **Step 2: Run the two nodes and reconcile any native version result.** Run `python -m pytest -q tests/test_configs_source_contract.py::test_native_text_keys_keep_source_null_and_binary_rules tests/test_configs_source_contract.py::test_three_autoincrement_sequences_and_three_without_rowid_tables`. Expected after reconciliation: four parameterized cases pass. Keep literal `sqlite_sequence` and `WITHOUT ROWID` evidence in assertions.
 
-- [ ] **Step 3: Add representative unique/CHECK/FK/cascade tests.** The exact row values below are synthetic and exercise the captured 15-table names; no replacement parent table is created.
+- [x] **Step 3: Add representative unique/CHECK/FK/cascade tests.** The exact row values below are synthetic and exercise the captured 15-table names; no replacement parent table is created.
 
 ```python
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
@@ -239,7 +239,7 @@ def test_category_binding_foreign_keys_and_cascades(variant):
         assert db.execute("pragma foreign_key_check").fetchall() == []
 ```
 
-- [ ] **Step 3a: Add direct invalid-child and uniqueness cases.** This gives DML coverage for the captured internal FK families without inventing external parent declarations; the larger valid Skill/runtime chain is in Task 3.
+- [x] **Step 3a: Add direct invalid-child and uniqueness cases.** This gives DML coverage for the captured internal FK families without inventing external parent declarations; the larger valid Skill/runtime chain is in Task 3.
 
 ```python
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
@@ -312,13 +312,13 @@ def test_native_category_and_binding_checks(variant):
 
 The `email_model_mode_transitions` FK declares `ON DELETE RESTRICT`, while the promotion parent's immutable-delete trigger blocks a real deletion first. The next task asserts both facts. The managed revision and runtime binding cases in Task 3 exercise both unique indexes for each family. The archived scheduled caller below exercises a valid positional Skill reference and its duplicate-position rejection.
 
-- [ ] **Step 4: Run focused GREEN and commit.** Run `python -m pytest -q tests/test_configs_source_contract.py tests/test_config_state_native_source.py`, then `ruff check tests/configs_source_fixtures.py tests/test_configs_source_contract.py` and `git diff --check`. Expected: all focused source cases pass. Commit only `tests/test_configs_source_contract.py` with `git add tests/test_configs_source_contract.py` and `git commit -m "test: pin native configs source constraints"`.
+- [x] **Step 4: Run focused GREEN and commit.** Run `python -m pytest -q tests/test_configs_source_contract.py tests/test_config_state_native_source.py`, then `ruff check tests/configs_source_fixtures.py tests/test_configs_source_contract.py` and `git diff --check`. Expected: all focused source cases pass. Commit only `tests/test_configs_source_contract.py` with `git add tests/test_configs_source_contract.py` and `git commit -m "test: pin native configs source constraints"`.
 
 ### Task 3: Immutable exception, receipt match and source caller semantics
 
 **Files:** Modify `tests/test_configs_source_contract.py`. Use `old_email_copy` from `tests/test_native_copy_lifecycle_harness.py`; it constructs a genuine published `7dad` Store/Email database in `tmp_path`. The subprocess working directory is `path.parent / "published-old"`, with `PYTHONPATH` set to that archive. Public method signatures verified in published source: `EmailStore.update_category_descriptions(category_key, *, core_description, include, exclude, threshold, enabled, description_version, config_version, expected_current_version=None)`; `AutoReplyStore.create_runtime_skill_config(bindings, *, expected_parent_id, feedback_iteration_enabled=None)`; `AutoReplyStore.create_scheduled_task(*, name, cron_expression, timezone_name, ...)`; `AutoReplyStore.create_scheduled_task_run(task_id, *, trigger_kind, scheduled_for, ...)`; `AutoReplyStore.advance_wechat_scope_watermark(account_id,target_type,target_id,sent_at)`.
 
-- [ ] **Step 1: Add `import json` to the test imports, then add native immutable exceptions, uniqueness and the receipt match test.** Append these complete functions. The receipt table is supplied by `old_email_copy`'s genuine archived constructor, never fabricated under its existing name.
+- [x] **Step 1: Add `import json` to the test imports, then add native immutable exceptions, uniqueness and the receipt match test.** Append these complete functions. The receipt table is supplied by `old_email_copy`'s genuine archived constructor, never fabricated under its existing name.
 
 ```python
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
@@ -452,7 +452,7 @@ def test_runtime_activation_requires_exact_genuine_load_receipt(old_email_copy):
         assert db.execute("select status from runtime_skill_configs where id=?", (failed,)).fetchone() == ("load_failed",)
 ```
 
-- [ ] **Step 2: Add the archived public caller test as a single subprocess with JSON output.** The code block below is the complete runner shape; use the existing `old_email_copy` fixture and append it to the new test file. The archived code is imported only in the subprocess, so current unpublished candidate classes cannot silently rewrite the old schema.
+- [x] **Step 2: Add the archived public caller test as a single subprocess with JSON output.** The code block below is the complete runner shape; use the existing `old_email_copy` fixture and append it to the new test file. The archived code is imported only in the subprocess, so current unpublished candidate classes cannot silently rewrite the old schema.
 
 ```python
 def test_published_category_cas_and_scheduled_intern(old_email_copy):
@@ -591,7 +591,7 @@ print(json.dumps({"cas": changed["config_version"], "shared_snapshot": same,
 
 The `pytest_plugins` registration from Task 1 supplies `old_email_copy` to both archived tests without an unused or duplicate import. The block above verifies the caller-owned `BEGIN IMMEDIATE` group: the new snapshot and its temporary run reference both disappear on rollback. The later target plan must retain that atomic boundary.
 
-- [ ] **Step 3: Pin the six predecessor blocker owners and current candidate predicate boundary.** Add `from app.action_email_storage import finite_target_external_sql` to the new test's imports, then append this complete test. It compares declaration predicates only; it neither reinstalls old trigger SQL nor claims a target configs implementation.
+- [x] **Step 3: Pin the six predecessor blocker owners and current candidate predicate boundary.** Add `from app.action_email_storage import finite_target_external_sql` to the new test's imports, then append this complete test. It compares declaration predicates only; it neither reinstalls old trigger SQL nor claims a target configs implementation.
 
 ```python
 def test_six_account_blockers_have_distinct_old_and_current_action_owners():
@@ -619,17 +619,27 @@ def test_six_account_blockers_have_distinct_old_and_current_action_owners():
             assert error in current[name]
 ```
 
-- [ ] **Step 4: Run scoped tests and commit.** Run `python -m pytest -q tests/test_configs_source_contract.py tests/test_config_state_native_source.py tests/test_provider_state_source.py tests/test_storage_scheduled_configs.py`. Expected: source contracts and adjacent scheduling/provider checks pass. Also run `python -m pytest -q tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`; its 13 trigger cases over captured `actual` and `fresh_candidate` Email action declarations yield 26 source DML checks, including the six account update/delete blockers. That test uses narrow account/message/classification stubs and is a predecessor-behavior gate, not a genuine full constructor or new configs target test. Run `ruff check tests/configs_source_fixtures.py tests/test_configs_source_contract.py`, `python -m compileall -q tests/configs_source_fixtures.py tests/test_configs_source_contract.py`, and `git diff --check`. Commit only the new test file with `git add tests/test_configs_source_contract.py` and `git commit -m "test: pin configs caller and immutable source behavior"`.
+- [x] **Step 4: Run scoped tests and commit.** Run `python -m pytest -q tests/test_configs_source_contract.py tests/test_config_state_native_source.py tests/test_provider_state_source.py tests/test_storage_scheduled_configs.py`. Expected: source contracts and adjacent scheduling/provider checks pass. Also run `python -m pytest -q tests/test_email_action_children_source.py::test_each_external_in_flight_trigger_blocks_source_mutation`; its 13 trigger cases over captured `actual` and `fresh_candidate` Email action declarations yield 26 source DML checks, including the six account update/delete blockers. That test uses narrow account/message/classification stubs and is a predecessor-behavior gate, not a genuine full constructor or new configs target test. Run `ruff check tests/configs_source_fixtures.py tests/test_configs_source_contract.py`, `python -m compileall -q tests/configs_source_fixtures.py tests/test_configs_source_contract.py`, and `git diff --check`. Commit only the new test file with `git add tests/test_configs_source_contract.py` and `git commit -m "test: pin configs caller and immutable source behavior"`.
 
 ### Task 4: Documentation and acceptance handoff
 
 **Files:** Append `docs/database-redesign-config-state-source-preparation.md`; update own claim row in `docs/agent-claims.md`.
 
-- [ ] **Step 1: Append the actual test command, count and outcome.** Say explicitly that all 118 fields have accepted literal actual/fresh metadata coverage, while this unselected oracle behaviorally samples named native constraints and callers through synthetic connections and a genuine `7dad` archived constructor. Record the separate 26-case predecessor blocker DML gate and its narrow-stub scope, plus any native-version-specific allocator result. Do not report universal DML proof for every field, target parity, migration/inverse, actual-copy or production readiness.
-- [ ] **Step 2: Record the next atomic closure as future work:** all 15 config families, `scheduled_tasks` and `runs.snapshot_id`/`runs.scheduled_task_id`, `scheduled_task_skill_refs`, `managed_skill_export_receipts` and `runtime_skill_load_receipts` converted to typed `actions` references, the approved empty `email_training_snapshot_observations` FK/trigger retirement, and the six account blocker predicates against current typed `actions`. Distinguish each from this source-only test commit. No new version, audit rule or retention policy is proposed.
-- [ ] **Step 3: Run `git diff --check` and a literal placeholder scan:** `rg -n 'TBD|TODO|implement later|fill in details|Add appropriate|Similar to Task' docs/database-redesign-config-state-source-preparation.md tests/test_configs_source_contract.py tests/configs_source_fixtures.py`. Expected: no plan placeholders in new prose/code. Stage only own appendix and claim row; commit `git add docs/database-redesign-config-state-source-preparation.md docs/agent-claims.md && git commit -m "docs: record configs source contract evidence"`.
-- [ ] **Step 4: Hand off for fresh sequential SPEC then QUALITY review.** Provide commit SHAs and focused test receipts. No implementation unit begins until the source contract is accepted. The next separate plan is target declaration/storage, then pure migration/inverse, then current caller/paired publication with actual-copy gates.
+- [x] **Step 1: Append the actual test command, count and outcome.** Say explicitly that all 118 fields have accepted literal actual/fresh metadata coverage, while this unselected oracle behaviorally samples named native constraints and callers through synthetic connections and a genuine `7dad` archived constructor. Record the separate 26-case predecessor blocker DML gate and its narrow-stub scope, plus any native-version-specific allocator result. Do not report universal DML proof for every field, target parity, migration/inverse, actual-copy or production readiness.
+- [x] **Step 2: Record the next atomic closure as future work:** all 15 config families, `scheduled_tasks` and `runs.snapshot_id`/`runs.scheduled_task_id`, `scheduled_task_skill_refs`, `managed_skill_export_receipts` and `runtime_skill_load_receipts` converted to typed `actions` references, the approved empty `email_training_snapshot_observations` FK/trigger retirement, and the six account blocker predicates against current typed `actions`. Distinguish each from this source-only test commit. No new version, audit rule or retention policy is proposed.
+- [x] **Step 3: Run `git diff --check` and a literal placeholder scan:** `rg -n 'TBD|TODO|implement later|fill in details|Add appropriate|Similar to Task' docs/database-redesign-config-state-source-preparation.md tests/test_configs_source_contract.py tests/configs_source_fixtures.py`. Expected: no plan placeholders in new prose/code. Stage only own appendix and claim row; commit `git add docs/database-redesign-config-state-source-preparation.md docs/agent-claims.md && git commit -m "docs: record configs source contract evidence"`.
+- [x] **Step 4: Hand off for fresh sequential SPEC then QUALITY review.** Provide commit SHAs and focused test receipts. No implementation unit begins until the source contract is accepted. The next separate plan is target declaration/storage, then pure migration/inverse, then current caller/paired publication with actual-copy gates.
 
 ## Self-review of scope
 
 This plan covers every captured config family by accepted literal declaration and 118-field metadata, then behaviorally samples named native identities, SQLite storage/NULL behavior, allocator, uniqueness, CHECKs, FKs, immutable exceptions, runtime load receipt matching, category CAS, scheduled snapshot interning/references/transaction rollback, and WeChat's mutable watermark. It does not claim a DML proof for every field. The literal capture already verifies all indexes/triggers/column ordinals; this oracle adds behavior without repeating the six accepted metadata tests. The six predecessor account blockers receive declaration comparison here and a separate existing 26-case source DML gate on narrow stubs. The five external FK groups belong to later atomic closure; target equivalence, migration, caller selection and publication remain separate work.
+
+
+## Source-unit acceptance
+
+Implemented through4c8a287d and independently accepted by sequential fresh
+SPEC and QUALITY. Latest independent checks: SPEC allocator/metadata8passed;
+QUALITY source/metadata25passed, predecessor trigger26passed, Ruff/diff clean.
+These checked steps establish the bounded unselected source contract only.
+The next target declaration/storage plan remains separate; no target schema,
+migration, caller selection, release or production readiness is claimed.
