@@ -1,4 +1,4 @@
-"""Caller-transaction-owned storage for the unselected provider-state table."""
+"""Caller-transaction-owned storage for the current provider-state table."""
 
 from collections.abc import Mapping, Sequence
 import json

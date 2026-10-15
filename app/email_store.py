@@ -70,6 +70,12 @@ from app.email_category_config import (
 )
 from app.action_email_storage import finite_target_external_sql, create_email_action_external_triggers
 from app.action_email_schema_release import require_current_email_pair
+from app.provider_state_schema_release import provider_state_schema_is_current
+from app.provider_state_definitions import FRESH_OBSERVATION_FIELDS
+from app.provider_state_storage import (
+    mark_authoritative_missing, mark_inactive_accounts, mark_unavailable_folder,
+    update_important_signals, upsert_folder_generations, upsert_observations,
+)
 from app.email_current_schema import create_current_email_non_action_schema, create_current_email_migration_ledger
 from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
@@ -549,22 +555,6 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "folder_label_watermark": ("integer", True, "0"),
         "important_label_watermark": ("integer", True, "0"),
     },
-    "email_provider_observations": {
-        "account_id": ("text", True, None),
-        "stable_message_identity": ("text", True, None),
-        "state": ("text", True, None),
-        "provider_folder_id": ("text", False, None),
-        "provider_folder_name": ("text", False, None),
-        "category_key": ("text", False, None),
-        "important": ("integer", False, None),
-        "important_signals_json": ("text", False, None),
-        "observed_at": ("text", True, None),
-    },
-    "email_provider_folder_observation_generations": {
-        "account_id": ("text", True, None),
-        "provider_folder_id": ("text", True, None),
-        "observed_at": ("text", True, None),
-    },
     "email_training_snapshot_observations": {
         "snapshot_id": ("text", True, None),
         "account_id": ("text", True, None),
@@ -813,19 +803,6 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "folder_label_watermark >= 0",
         "important_label_watermark >= 0",
     ),
-    "email_provider_observations": (
-        "trim(account_id) != ''",
-        "trim(stable_message_identity) != ''",
-        "state in ('available','unavailable','excluded')",
-        "important is null or important in (0, 1)",
-        "important_signals_json is null or json_valid(important_signals_json)",
-        "trim(observed_at) != ''",
-    ),
-    "email_provider_folder_observation_generations": (
-        "trim(account_id) != ''",
-        "trim(provider_folder_id) != ''",
-        "trim(observed_at) != ''",
-    ),
     "email_training_snapshot_observations": (
         "trim(snapshot_id) != ''",
         "trim(account_id) != ''",
@@ -905,11 +882,6 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_unsubscribe_cancellations": ("action_identity",),
     "email_direct_retry_requests": ("action_id", "attempt_number"),
     "email_training_snapshots": ("snapshot_id",),
-    "email_provider_observations": ("account_id", "stable_message_identity"),
-    "email_provider_folder_observation_generations": (
-        "account_id",
-        "provider_folder_id",
-    ),
     "email_training_snapshot_observations": (
         "snapshot_id",
         "account_id",
@@ -1051,10 +1023,6 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_training_observations_provider_truth": (
         "email_training_snapshot_observations",
         ("account_id", "stable_message_identity", "observed_at", "snapshot_id"),
-    ),
-    "idx_email_provider_observations_folder": (
-        "email_provider_observations",
-        ("account_id", "provider_folder_id"),
     ),
     "idx_email_classifier_runtime_model_id": (
         "email_classifier_runtime_samples",
@@ -3185,7 +3153,6 @@ class EmailStore:
             db.execute("begin")
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
-                self._ensure_provider_observation_signal_column(db)
                 if validate_rows:
                     self._validate_durable_state(db)
                 else:
@@ -4667,18 +4634,6 @@ class EmailStore:
             declaration=(
                 "text not null default 'move' "
                 "check(imap_move_mode in ('move', 'copy_as_move'))"
-            ),
-        )
-
-    @classmethod
-    def _ensure_provider_observation_signal_column(cls, db: sqlite3.Connection) -> None:
-        cls._ensure_column(
-            db,
-            table="email_provider_observations",
-            column="important_signals_json",
-            declaration=(
-                "text check(important_signals_json is null or "
-                "json_valid(important_signals_json))"
             ),
         )
 
@@ -6923,6 +6878,8 @@ class EmailStore:
     @classmethod
     def _validate_schema_shape(cls, db: sqlite3.Connection) -> None:
         try:
+            if not provider_state_schema_is_current(db):
+                raise EmailPersistenceCorruption("required provider-state declaration is missing or malformed")
             table_rows = {
                 _schema_identifier(row["name"], field="sqlite_master table name"): row
                 for row in db.execute(
@@ -15287,21 +15244,12 @@ class EmailStore:
         names = tuple(sorted(str(name) for name in signal_names))
         trusted = {"\\flagged", "$important"}
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                update email_provider_observations
-                set important=?, important_signals_json=?
-                where account_id=? and stable_message_identity=?
-                  and state='available'
-                """,
-                (
-                    int(any(name.casefold() in trusted for name in names)),
-                    _json_dump(list(names)),
-                    account_id,
-                    stable_message_identity,
-                ),
+            db.execute("begin immediate")
+            return update_important_signals(
+                db, account_id, stable_message_identity,
+                int(any(name.casefold() in trusted for name in names)),
+                _json_dump(list(names)),
             )
-            return cursor.rowcount == 1
 
     def get_provider_classification_state(
         self, classification_id: int
@@ -15325,11 +15273,13 @@ class EmailStore:
                        observations.provider_folder_name,
                        coalesce(generations.observed_at, observations.observed_at)
                            as observed_at
-                from email_provider_observations as observations
-                left join email_provider_folder_observation_generations as generations
-                  on generations.account_id=observations.account_id
+                from provider_state as observations
+                left join provider_state as generations
+                  on generations.record_type='folder_generation'
+                 and generations.account_id=observations.account_id
                  and generations.provider_folder_id=observations.provider_folder_id
-                where observations.account_id=?
+                where observations.record_type='observation'
+                  and observations.account_id=?
                   and observations.stable_message_identity=?
                 """,
                 (
@@ -15363,12 +15313,14 @@ class EmailStore:
                            coalesce(generations.observed_at, observations.observed_at)
                                as observed_at
                     from email_classifications as classifications
-                    left join email_provider_observations as observations
-                      on observations.account_id=classifications.account_id
+                    left join provider_state as observations
+                      on observations.record_type='observation'
+                     and observations.account_id=classifications.account_id
                      and observations.stable_message_identity=
                          classifications.stable_message_identity
-                    left join email_provider_folder_observation_generations as generations
-                      on generations.account_id=observations.account_id
+                    left join provider_state as generations
+                      on generations.record_type='folder_generation'
+                     and generations.account_id=observations.account_id
                      and generations.provider_folder_id=observations.provider_folder_id
                     where classifications.id=?
                     """,
@@ -15559,91 +15511,21 @@ class EmailStore:
                 )
             db.commit()
             db.execute("begin immediate")
-            db.executemany(
-                """
-                insert into email_provider_observations (
-                    account_id, stable_message_identity, state,
-                    provider_folder_id, provider_folder_name, category_key,
-                    important, important_signals_json, observed_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(account_id, stable_message_identity) do update set
-                    state=excluded.state,
-                    provider_folder_id=excluded.provider_folder_id,
-                    provider_folder_name=excluded.provider_folder_name,
-                    category_key=excluded.category_key,
-                    important=excluded.important,
-                    important_signals_json=excluded.important_signals_json,
-                    observed_at=excluded.observed_at
-                where email_provider_observations.state is not excluded.state
-                   or email_provider_observations.provider_folder_id
-                        is not excluded.provider_folder_id
-                   or email_provider_observations.provider_folder_name
-                        is not excluded.provider_folder_name
-                   or email_provider_observations.category_key is not excluded.category_key
-                   or email_provider_observations.important is not excluded.important
-                   or email_provider_observations.important_signals_json
-                        is not excluded.important_signals_json
-                """,
-                rows,
+            upsert_observations(
+                db, [dict(zip(FRESH_OBSERVATION_FIELDS, row, strict=True)) for row in rows]
             )
             for account_id, folder_id in parsed_authoritative:
-                db.execute(
-                    "update email_provider_observations "
-                    "set state='unavailable', provider_folder_id=null, "
-                    "provider_folder_name=null, category_key=null, important=null, "
-                    "important_signals_json=null, observed_at=? "
-                    "where account_id=? and provider_folder_id=? "
-                    "and not exists (select 1 from current_provider_membership as current "
-                    "where current.account_id=email_provider_observations.account_id "
-                    "and current.provider_folder_id=? "
-                    "and current.stable_message_identity="
-                    "email_provider_observations.stable_message_identity) "
-                    "and (state is not 'unavailable' or provider_folder_id is not null "
-                    "or provider_folder_name is not null or category_key is not null "
-                    "or important is not null or important_signals_json is not null "
-                    "or observed_at is not ?)",
-                    (observed_at, account_id, folder_id, folder_id, observed_at),
-                )
+                mark_authoritative_missing(db, account_id, folder_id, observed_at)
             if active_accounts is not None:
-                db.execute(
-                    "update email_provider_observations "
-                    "set state='unavailable', provider_folder_id=null, "
-                    "provider_folder_name=null, category_key=null, important=null, "
-                    "important_signals_json=null, observed_at=? "
-                    "where not exists (select 1 from current_provider_accounts as active "
-                    "where active.account_id=email_provider_observations.account_id) "
-                    "and (state is not 'unavailable' or provider_folder_id is not null "
-                    "or provider_folder_name is not null or category_key is not null "
-                    "or important is not null or important_signals_json is not null "
-                    "or observed_at is not ?)",
-                    (observed_at, observed_at),
-                )
+                mark_inactive_accounts(db, observed_at)
             for account_id, folder_id in parsed_unavailable:
-                db.execute(
-                    """
-                    update email_provider_observations
-                    set state='unavailable', category_key=null, important=null,
-                        important_signals_json=null,
-                        observed_at=?
-                    where account_id=? and provider_folder_id=?
-                      and (state is not 'unavailable' or category_key is not null
-                           or important is not null
-                           or important_signals_json is not null
-                           or observed_at is not ?)
-                    """,
-                    (observed_at, account_id, folder_id, observed_at),
-                )
-            db.executemany(
-                "insert into email_provider_folder_observation_generations "
-                "(account_id, provider_folder_id, observed_at) values (?, ?, ?) "
-                "on conflict(account_id, provider_folder_id) do update set "
-                "observed_at=excluded.observed_at "
-                "where email_provider_folder_observation_generations.observed_at "
-                "is not excluded.observed_at",
-                (
-                    (account_id, folder_id, observed_at)
+                mark_unavailable_folder(db, account_id, folder_id, observed_at)
+            upsert_folder_generations(
+                db, [
+                    {"account_id": account_id, "provider_folder_id": folder_id,
+                     "observed_at": observed_at}
                     for account_id, folder_id in folder_generations
-                ),
+                ],
             )
 
     @staticmethod

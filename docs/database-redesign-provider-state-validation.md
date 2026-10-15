@@ -119,3 +119,57 @@ Metadata-only proof is in
 This confirms source declaration/dependency compatibility only; no forward,
 inverse, real-copy target comparison, cold old-code or current caller proof
 was executed by this read-only preflight.
+
+## Current caller and paired candidate integration, 2026-10-15
+
+This worktree selects the accepted `provider_state` declaration in the same
+**unpublished** Store `2026-10-14.1`/Email52 candidate that already selects
+Email13 and Business4. It does not add a provider-only marker or intermediate
+release. Fresh Email creates the one provider table and its three partial
+indexes inside Email's existing transaction. The paired coordinator captures
+the frozen actual/fresh provider source declarations together with Email and
+Business, converts all three before updating either marker, verifies the exact
+target declaration, and uses current target facts in the inverse. The source
+Store `2026-10-13.5`/Email51 pair remains the sole predecessor.
+
+Current provider scan publication preserves source input validation, role and
+binding classifications, signal JSON, and the original observation →
+authoritative absence → inactive accounts → unavailable folders → generation
+order. Connection-local membership and optional active-account sets are staged
+before the same immediate writer transaction. The accepted storage routines
+perform set-based reconciliation; `None` and an empty active-account list retain
+their distinct meanings. Signal updates open an explicit caller transaction.
+Classification reads use `record_type` predicates on both observation and
+generation aliases and retain the existing outcome projection and generation
+time overlay. Current shape validation uses the pure migration's exact target
+fingerprint, including generated columns, checks, partial-index keys/predicates,
+triggers and foreign keys, and refuses either old source name as a table or
+view. A matched current pair with malformed provider metadata is refused by
+the read-only selector before constructor cache, WAL or repair. The synthetic
+matched-current damage matrix covers a missing folder partial index, column
+affinity and kind CHECK changes, and mixed old table/view names; both public
+constructors are tested against each with cache and initializer sentinels,
+DELETE journal, database fingerprint/bytes and `-wal` absence.
+
+Synthetic validation so far: source/storage/pure/current provider and current
+Email learning/schema/seeds/index files passed **65** cases in 15.92s. Selected
+provider/fresh/current cases across Email callers, action validation and store
+passed **43** cases in 23.20s. A paired coordinator subset covering provider
+source/target mutation refusal, actual/fresh source declarations, post-forward
+provider writes, inverse, old-source write and reforward, and injected failures
+just after provider forward/inverse passed **38** cases in 101.78s. The
+application source test keeps the genuine published `7dadc492` AST comparison
+for the unchanged projection only; four SQL callers were intentionally retired
+from byte-identical AST comparison and retain behavioral tests. The generation
+rollback injection fires only after the observation has changed to `finance`,
+proving the later generation write caused transaction rollback. These results
+are local synthetic SQLite evidence, not actual-copy acceptance.
+
+The full paired coordinator and caller files passed **132** cases in 569.65s;
+the expanded matched-current constructor damage matrix separately passed five
+cases after that long run started. Ruff, Python compilation and `git diff
+--check` passed for the edited Python files and worktree diff. Fresh independent SPEC
+then QUALITY reviews, actual immutable source-copy conversion, genuine old-code
+cold writes/reforward, native/provider doubles, CI and any publication are
+separate gates. No production database, provider network, outbound action,
+main branch, push or deployment was touched by this integration.

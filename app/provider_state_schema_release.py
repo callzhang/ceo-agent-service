@@ -1,4 +1,4 @@
-"""Unselected source-bound provider-state forward and current-fact inverse.
+"""Source-bound provider-state forward and current-fact inverse.
 
 The caller owns the transaction and release selection. No row snapshot is retained.
 """
@@ -89,8 +89,19 @@ def capture_provider_state_source(db: sqlite3.Connection) -> dict:
 
 
 def _target_shape(db):
+    if any(_present(db, "main", name) for name in SOURCE_TABLES):
+        raise ValueError("provider-state source name remains in target")
     if _fingerprint(_source_declaration(db, TARGET)) != TARGET_FINGERPRINT:
         raise ValueError("unsupported provider-state target declaration")
+
+
+def provider_state_schema_is_current(db: sqlite3.Connection) -> bool:
+    """Recognize only the accepted target declaration without changing the DB."""
+    try:
+        _target_shape(db)
+    except (ValueError, sqlite3.Error):
+        return False
+    return True
 
 
 def _projection(table, fields, kind=None):

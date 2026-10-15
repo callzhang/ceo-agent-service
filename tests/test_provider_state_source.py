@@ -252,16 +252,14 @@ def classification():
     })
 
 
-def test_provider_method_asts_equal_genuine_published_source():
+def test_provider_projection_ast_equal_genuine_published_source():
     current = (ROOT / "app/email_store.py").read_text()
     published = subprocess.check_output(
         ["git", "show", "7dadc492:app/email_store.py"], cwd=ROOT, text=True
     )
-    names = {
-        "record_current_provider_observations", "record_provider_important_signals",
-        "get_provider_classification_state", "get_provider_classification_states",
-        "_provider_state_from_observation",
-    }
+    # The four SQL callers intentionally change with the selected target. The
+    # outcome projection stays byte-for-byte equivalent to the published source.
+    names = {"_provider_state_from_observation"}
 
     def methods(source):
         cls = next(node for node in ast.parse(source).body
@@ -284,18 +282,18 @@ def test_application_identity_refresh_reconciliation_and_projection(tmp_path):
     publish(store, [observation(), observation("message-b", "account-b")],
             accounts=("account-a", "account-b"))
     with store._connect() as db:
-        first = db.execute(f"select rowid,observed_at from {OBS} "
-                           "where account_id='account-a'").fetchone()
+        first = db.execute("select rowid,observed_at from provider_state "
+                           "where record_type='observation' and account_id='account-a'").fetchone()
         assert db.execute("select count(*) from email_classifications").fetchone()[0] == 0
     publish(store, [observation()], T2, accounts=None)
     with store._connect() as db:
-        same = db.execute(f"select rowid,observed_at from {OBS} "
-                          "where account_id='account-a'").fetchone()
-        generation = db.execute(f"select observed_at from {GEN} "
-                                "where account_id='account-a' and provider_folder_id='inbox'"
+        same = db.execute("select rowid,observed_at from provider_state "
+                          "where record_type='observation' and account_id='account-a'").fetchone()
+        generation = db.execute("select observed_at from provider_state "
+                                "where record_type='folder_generation' and account_id='account-a' and provider_folder_id='inbox'"
                                 ).fetchone()[0]
-        other = db.execute(f"select state from {OBS} "
-                           "where account_id='account-b'").fetchone()[0]
+        other = db.execute("select state from provider_state "
+                           "where record_type='observation' and account_id='account-b'").fetchone()[0]
     assert tuple(first) == tuple(same)
     assert first[1] == T1 and generation == T2 and other == "available"
     store.upsert_classification(
@@ -311,10 +309,10 @@ def test_application_identity_refresh_reconciliation_and_projection(tmp_path):
     publish(store, [observation(folder="archive", bound_category_key="finance")],
             "2026-10-15T10:02:00+00:00", accounts=("account-a", "account-b"))
     with store._connect() as db:
-        moved = db.execute(f"select rowid,provider_folder_id from {OBS} "
-                           "where account_id='account-a'").fetchone()
-        assert db.execute(f"select count(*) from {OBS} "
-                          "where account_id='account-a'").fetchone()[0] == 1
+        moved = db.execute("select rowid,provider_folder_id from provider_state "
+                           "where record_type='observation' and account_id='account-a'").fetchone()
+        assert db.execute("select count(*) from provider_state "
+                          "where record_type='observation' and account_id='account-a'").fetchone()[0] == 1
     assert moved[0] == first[0] and moved[1] == "archive"
     assert store.get_provider_classification_state(101)["category_key"] == "finance"
     publish(store, [], "2026-10-15T10:03:00+00:00",
@@ -323,16 +321,16 @@ def test_application_identity_refresh_reconciliation_and_projection(tmp_path):
     publish(store, [], "2026-10-15T10:04:00+00:00",
             unavailable=("account-a:archive",), accounts=("account-a", "account-b"))
     with store._connect() as db:
-        row = db.execute(f"select state,provider_folder_id from {OBS} "
-                         "where account_id='account-a'").fetchone()
+        row = db.execute("select state,provider_folder_id from provider_state "
+                         "where record_type='observation' and account_id='account-a'").fetchone()
     assert tuple(row) == ("unavailable", "archive")
     publish(store, [observation(folder="archive")], "2026-10-15T10:05:00+00:00",
             accounts=("account-a", "account-b"))
     publish(store, [], "2026-10-15T10:06:00+00:00",
             authoritative=("account-a:archive",), accounts=("account-a", "account-b"))
     with store._connect() as db:
-        tombstone = db.execute(f"select state,provider_folder_id from {OBS} "
-                               "where account_id='account-a'").fetchone()
+        tombstone = db.execute("select state,provider_folder_id from provider_state "
+                               "where record_type='observation' and account_id='account-a'").fetchone()
     assert tuple(tombstone) == ("unavailable", None)
     assert store.get_provider_classification_state(101) == {
         "state": "unavailable", "reason": "provider_truth_unavailable",
@@ -341,7 +339,7 @@ def test_application_identity_refresh_reconciliation_and_projection(tmp_path):
     publish(store, [observation()], "2026-10-15T10:07:00+00:00", accounts=None)
     publish(store, [], "2026-10-15T10:08:00+00:00", accounts=())
     with store._connect() as db:
-        assert {row[0] for row in db.execute(f"select state from {OBS}")} == {
+        assert {row[0] for row in db.execute("select state from provider_state where record_type='observation'")} == {
             "unavailable"
         }
 
@@ -357,10 +355,10 @@ def test_application_signals_shape_and_transaction_rollback(tmp_path):
     )
     with store._connect() as db:
         important, signals, observed_at = db.execute(
-            f"select important,important_signals_json,observed_at from {OBS}"
+            "select important,important_signals_json,observed_at from provider_state where record_type='observation'"
         ).fetchone()
         generation_at = db.execute(
-            f"select observed_at from {GEN} where account_id='account-a' "
+            "select observed_at from provider_state where record_type='folder_generation' and account_id='account-a' "
             "and provider_folder_id='inbox'"
         ).fetchone()[0]
     assert important == 1 and json.loads(signals) == [r"\Flagged"]
@@ -376,25 +374,29 @@ def test_application_signals_shape_and_transaction_rollback(tmp_path):
         subject="Synthetic", preview="Synthetic", model_text="Synthetic"
     )
     with store._connect() as db:
-        db.execute(f"update {OBS} set important_signals_json='42'")
+        db.execute("update provider_state set payload_json=json_set(payload_json,'$.important_signals_json','42') where record_type='observation'")
     with pytest.raises(EmailPersistenceCorruption, match="invalid shape"):
         store.get_provider_classification_state(101)
     with store._connect() as db:
-        db.execute(f"update {OBS} set important_signals_json='[]'")
-        before = tuple(db.execute(f"select * from {OBS}").fetchone())
-        generation_before = db.execute(f"select observed_at from {GEN} "
-                                       "where provider_folder_id='inbox'").fetchone()[0]
+        db.execute("update provider_state set payload_json=json_set(payload_json,'$.important_signals_json','[]') where record_type='observation'")
+        before = tuple(db.execute("select * from provider_state where record_type='observation'").fetchone())
+        generation_before = db.execute("select observed_at from provider_state "
+                                       "where record_type='folder_generation' and provider_folder_id='inbox'").fetchone()[0]
         db.execute(
-            f"create trigger reject_provider_generation before update on {GEN} "
+            "create trigger reject_provider_generation before update on provider_state "
+            "when old.record_type='folder_generation' and exists "
+            "(select 1 from provider_state where record_type='observation' "
+            "and account_id='account-a' and stable_message_identity='" + APP_ID + "' "
+            "and category_key='finance') "
             "begin select raise(abort, 'synthetic generation failure'); end"
         )
     with pytest.raises(sqlite3.IntegrityError, match="synthetic generation failure"):
         publish(store, [observation(folder="inbox", bound_category_key="finance")],
                 "2026-10-15T10:03:00+00:00", accounts=("account-a",))
     with store._connect() as db:
-        assert tuple(db.execute(f"select * from {OBS}").fetchone()) == before
-        assert db.execute(f"select observed_at from {GEN} "
-                          "where provider_folder_id='inbox'").fetchone()[0] == generation_before
+        assert tuple(db.execute("select * from provider_state where record_type='observation'").fetchone()) == before
+        assert db.execute("select observed_at from provider_state "
+                          "where record_type='folder_generation' and provider_folder_id='inbox'").fetchone()[0] == generation_before
 
 
 @pytest.mark.parametrize("state", ("unavailable", "excluded"))
@@ -407,7 +409,7 @@ def test_nonavailable_projection_returns_before_signal_shape_validation(tmp_path
     )
     with store._connect() as db:
         db.execute(
-            f"update {OBS} set state=?, important_signals_json='42'",
+            "update provider_state set state=?, payload_json=json_set(payload_json,'$.important_signals_json','42') where record_type='observation'",
             (state,),
         )
     expected = {
@@ -418,6 +420,6 @@ def test_nonavailable_projection_returns_before_signal_shape_validation(tmp_path
     assert store.get_provider_classification_state(101) == expected
     assert store.get_provider_classification_states((101,))[101] == expected
     with store._connect() as db:
-        db.execute(f"update {OBS} set state='available'")
+        db.execute("update provider_state set state='available' where record_type='observation'")
     with pytest.raises(EmailPersistenceCorruption, match="invalid shape"):
         store.get_provider_classification_state(101)

@@ -1,13 +1,15 @@
 # CEO Agent Service Architecture
 
-An unselected `provider_state` storage unit now represents current provider
+The unpublished Store20/Email52 candidate selects `provider_state` for provider
 observations and folder generations as two typed rows in one table. It keeps
 the source's account-scoped composite identities and twelve named fields;
 classification projections may overlay a generation time on an observation.
-Its source-shaped writes, batched upserts and set reconciliation require an
-existing caller transaction. Current Store constructors and provider callers
-continue to use the original two tables. Migration and release selection are
-separate work.
+Its source-shaped writes, batched upserts and set reconciliation run in the
+existing caller transaction. Fresh Email creates this target; current provider
+scan, signal and classification callers use kind-scoped rows. The same paired
+Email/Business coordinator migrates exact Store19/Email51 source declarations,
+then writes both target markers atomically. Current-fact inverse reconstructs
+the two original tables; this candidate has not been published.
 
 The unpublished Store `2026-10-14.1`/Email52 candidate selects the four-kind
 Business storage unit for Task, Project,
@@ -1960,6 +1962,9 @@ Email provider 当前库存以 `(account_id, stable_message_identity)` 主键定
 按账户/文件夹使用独立 `idx_email_provider_observations_folder` 索引。
 Email schema 48 移除覆盖同一身份键的 `observed_at` lookup 索引，
 provider 状态、分类、刷新和外部动作语义不变。主键和文件夹索引仍保留。
+这是已发布 47→48 的历史结构；未发布的 Store20/Email52 候选改用单表
+`provider_state` 的 observation 身份、folder generation 身份及 observation
+folder 三个 partial 索引，不再使用上述两张旧表。
 
 ## Reversible database schema release
 
@@ -2553,8 +2558,9 @@ then creates the retained current nonaction schema, ledger, existing fresh seeds
 back to Store-first and can retry. Store never constructs EmailStore. Current
 reopen and51 migration do not seed existing empty configs/revision histories;
 known coherent-current Store repairs retain their existing route. Email current
-reopen also retains its existing missing `important_signals_json` provider-
-observation column repair before shape validation; this is not a new repair rule.
+reopen validates the exact `provider_state` declaration, including partial
+indexes and source-name absence, before using it. A malformed target is refused
+without recreating the old provider tables or repairing a column.
 
 Paired publication uses a real child process carrying the prepared marker/full
 ledger/declarations/FK binding through stdin, applies the same atomic protocol,
@@ -2597,8 +2603,9 @@ Email auxiliaries. Normal Email construction still invokes Store once outside
 the Email flock. Store's original coherent-current repair permission additionally
 requires these Email objects to be intact, so its generic factory cannot silently
 repair them. The generic factory and existing cache are unchanged. Old Store
-index/route/feedback repairs and Email's existing provider signal-column repair
-remain supported; fresh/Store-first and paired migration behavior stay intact.
+index/route/feedback repairs remain supported; the old Email51 provider signal
+column helper is retired from current reopen. Fresh/Store-first and paired
+migration behavior stay intact.
 This changes no data, authorization, recovery or business policy. Task5A finite
 readers remain unchanged; broader Task5/6/7 acceptance and deployment remain open.
 

@@ -28,6 +28,14 @@ from app.business_schema_release import (
     restore_business_schema,
 )
 from app.task_schema_release import _foreign_keys
+from app.provider_state_schema_release import (
+    SOURCE_TABLES as PROVIDER_SOURCE_TABLES,
+    TARGET as PROVIDER_TARGET,
+    apply_provider_state_migration,
+    capture_provider_state_source,
+    provider_state_schema_is_current,
+    rollback_provider_state_migration,
+)
 
 
 SOURCE_STORE_VERSION = "2026-10-13.5"
@@ -45,21 +53,26 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
         db.execute("begin")
         tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+        names = {row[0] for row in db.execute(
+            "select name from main.sqlite_schema where type in ('table','view')"
+        )}
         marker = db.execute("select value from main.service_state where key=?", (VERSION_KEY,)).fetchone() if "service_state" in tables else None
         store = marker[0] if marker is not None else None
         email = db.execute("select coalesce(max(version),0) from main.email_schema_migrations").fetchone()[0] if "email_schema_migrations" in tables else None
         if (store, email) == (SOURCE_STORE_VERSION, SOURCE_EMAIL_VERSION):
             raise sqlite3.IntegrityError("Store19/Email51 requires the paired schema release before target constructors")
         from app.email_current_schema import _CURRENT_TABLE_SQL
-        email_tables = {"email_classifications", "email_category_configs", "email_category_folder_bindings", *(name for name, _ in _CURRENT_TABLE_SQL), *SOURCE_TABLES}
-        if store is None and email is None and not email_tables.intersection(tables):
+        email_tables = {"email_classifications", "email_category_configs", "email_category_folder_bindings", *(name for name, _ in _CURRENT_TABLE_SQL), *SOURCE_TABLES, *PROVIDER_SOURCE_TABLES, PROVIDER_TARGET}
+        if store is None and email is None and not email_tables.intersection(names):
             # The Store's existing bootstrap-source check separately owns core
             # collisions and partial unversioned bootstrap refusal.
             return
         if store == store_version:
             if email == email_version:
-                return
-            if email is None and not (email_tables - {"email_classifications"}).intersection(tables):
+                if provider_state_schema_is_current(db):
+                    return
+                raise sqlite3.IntegrityError("malformed current provider-state declaration")
+            if email is None and not (email_tables - {"email_classifications"}).intersection(names):
                 return  # Complete Store-first, before Email's fresh transaction.
         raise sqlite3.IntegrityError("unsupported or mixed Store/Email source schema")
 
@@ -84,6 +97,7 @@ def _inverse_metadata(source):
     return {
         **email_inverse_metadata(source),
         "business": business_inverse_metadata(source["business"]),
+        "provider": source["provider"],
     }
 
 
@@ -127,6 +141,7 @@ class ActionEmailSchemaRelease:
         # waters are inputs to conversion, never a stored pre-publication copy.
         current = capture_email_action_source(db)
         current["business"] = capture_business_source(db)
+        current["provider"] = capture_provider_state_source(db)
         if _inverse_metadata(current) != _inverse_metadata(self.source_schema):
             raise ValueError("paired Email/Business source declaration changed")
         self._verify_integrity(db)
@@ -148,6 +163,8 @@ class ActionEmailSchemaRelease:
             db, self.source_schema["business"]["variant"]
         ):
             raise ValueError("paired Business target declaration mismatch")
+        if not provider_state_schema_is_current(db):
+            raise ValueError("paired Provider target declaration mismatch")
         expected = _target_external_sql()
         triggers = tuple(db.execute(
             "select name,sql from main.sqlite_schema where type='trigger' and name in (" +
@@ -170,12 +187,15 @@ class ActionEmailSchemaRelease:
                 self._verify_source(db)
                 email_inverse = migrate_email_action_schema(db)
                 business_inverse = migrate_business_schema(db)
+                apply_provider_state_migration(db, self.source_schema["provider"])
                 if email_inverse != email_inverse_metadata(self.source_schema):
                     raise ValueError("Email captured inverse declaration mismatch")
                 if business_inverse != business_inverse_metadata(
                     self.source_schema["business"]
                 ):
                     raise ValueError("Business captured inverse declaration mismatch")
+                if not provider_state_schema_is_current(db):
+                    raise ValueError("Provider target declaration mismatch")
                 now = datetime.now(timezone.utc).isoformat()
                 db.execute(
                     "update main.service_state set value=?,updated_at=? where key=?",
@@ -209,6 +229,7 @@ class ActionEmailSchemaRelease:
                 self._verify_target(db)
                 restore_business_schema(db, self.source_schema["business"])
                 restore_email_action_schema(db, email_inverse_metadata(self.source_schema))
+                rollback_provider_state_migration(db, self.source_schema["provider"])
                 db.execute(
                     "update main.service_state set value=?,updated_at=? where key=?",
                     (*self.original_version, VERSION_KEY),
@@ -270,6 +291,7 @@ def prepare_action_email_schema_release(
             raise ValueError("Email paired protocol requires the exact Store19/Email51 source")
         source = capture_email_action_source(db)
         source["business"] = capture_business_source(db)
+        source["provider"] = capture_provider_state_source(db)
         release = ActionEmailSchemaRelease(
             root, path, version, versions, source, _foreign_keys(db),
             target_store_version, target_email_version,

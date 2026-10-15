@@ -1,8 +1,9 @@
-"""Unselected DDL-only retained current Email51 schema factory."""
+"""Retained current Email52 non-action schema factory."""
 
 import sqlite3
 
 from app.email_classification_schema import create_current_email_classifications
+from app.provider_state_definitions import PROVIDER_STATE_DDL, PROVIDER_STATE_INDEXES
 from app.email_category_config import (
     ACTIVE_BINDING_INDEX_SQL,
     CATEGORY_CONFIG_TABLE_SQL,
@@ -120,34 +121,6 @@ _CURRENT_TABLE_SQL = (
                     check(folder_label_watermark >= 0),
                 important_label_watermark integer not null default 0
                     check(important_label_watermark >= 0)
-            )""",
-    ),
-    (
-        "email_provider_observations",
-        """CREATE TABLE email_provider_observations (
-                account_id text not null check(trim(account_id) != ''),
-                stable_message_identity text not null
-                    check(trim(stable_message_identity) != ''),
-                state text not null
-                    check(state in ('available','unavailable','excluded')),
-                provider_folder_id text,
-                provider_folder_name text,
-                category_key text,
-                important integer check(important is null or important in (0, 1)),
-                important_signals_json text
-                    check(important_signals_json is null or json_valid(important_signals_json)),
-                observed_at text not null check(trim(observed_at) != ''),
-                primary key(account_id, stable_message_identity)
-            )""",
-    ),
-    (
-        "email_provider_folder_observation_generations",
-        """CREATE TABLE email_provider_folder_observation_generations (
-                account_id text not null check(trim(account_id) != ''),
-                provider_folder_id text not null
-                    check(trim(provider_folder_id) != ''),
-                observed_at text not null check(trim(observed_at) != ''),
-                primary key(account_id, provider_folder_id)
             )""",
     ),
     (
@@ -378,12 +351,6 @@ _CURRENT_INDEX_SQL = (
             """,
     ),
     (
-        "idx_email_provider_observations_folder",
-        """CREATE INDEX idx_email_provider_observations_folder
-            on email_provider_observations(account_id, provider_folder_id)
-            """,
-    ),
-    (
         "idx_email_classifier_runtime_model_id",
         """CREATE INDEX idx_email_classifier_runtime_model_id
             on email_classifier_runtime_samples(model_id, id desc)
@@ -428,10 +395,14 @@ def _create_missing(db: sqlite3.Connection, kind: str, name: str, sql: str) -> N
 
 
 def create_current_email_non_action_schema(db: sqlite3.Connection) -> None:
-    """Create 19 retained tables, 10 indexes, and 19 current triggers."""
+    """Create retained Email tables, provider state, indexes, and triggers."""
     create_current_email_classifications(db)
     for name, sql in _CURRENT_TABLE_SQL:
         _create_missing(db, "table", name, sql)
+    _create_missing(db, "table", "provider_state", PROVIDER_STATE_DDL)
+    for sql in PROVIDER_STATE_INDEXES:
+        name = sql.split(" INDEX ", 1)[1].split(" ON ", 1)[0]
+        _create_missing(db, "index", name, sql)
     _create_missing(db, "table", "email_category_configs", CATEGORY_CONFIG_TABLE_SQL)
     _create_missing(
         db, "table", "email_category_folder_bindings", FOLDER_BINDING_TABLE_SQL

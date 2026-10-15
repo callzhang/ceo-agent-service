@@ -2842,6 +2842,9 @@ Email schema 47→48 在现有初始化事务内删除
 或要求该索引，重复启动不重建它；folder 索引仍为 required schema。
 点查使用原主键，文件夹查询使用原 folder 索引。删除索引释放数据库内部页，
 不代表 SQLite 文件已经缩小；实际文件回收是独立的维护步骤。
+本段是已发布 47→48 的历史行为。未发布的 Store20/Email52 候选将
+两张 provider 表合并为 `provider_state`，以两个身份 partial unique 索引
+和一个 observation-folder partial 索引服务当前查询。
 
 ## Schema publication and failed-start rollback
 
@@ -3421,8 +3424,9 @@ current retained nonactions, ledger, original seeds, translated blockers and52;
 rollback returns to Store-first. No historical0→51/action_plan_json/old13 creation
 runs. Current reopen and source51 migration leave existing empty config/revision
 sets empty. Existing coherent-current Store repair behavior is retained. Email current
-reopen still invokes its original provider-observation `important_signals_json`
-column helper before validation, preserving the existing missing-column repair.
+reopen validates the exact current `provider_state` declaration before durable
+reads. The old Email51 provider-observation signal-column repair is retired;
+malformed marker-correct current targets are refused without repair.
 
 Local tests cover real constructors, both orders/concurrency, child fault/crash,
 current-fact inverse and the actual RepositoryUpdater lifecycle using the newly
@@ -3451,7 +3455,9 @@ before entering its original current-known-repair path. Missing Email auxiliarie
 remain missing without schema/fact/marker/DB-byte or DELETE-journal changes.
 The shared action table/public-ID index and all prior Store repair paths retain
 their existing treatment. Normal Email→Store call count/lock order, current
-provider-signal column repair, fresh orders and coordinator/inverse are unchanged.
+provider-state exact current validation, fresh orders and coordinator/inverse
+remain as described in the current candidate. The old provider signal-column
+repair is retired.
 No general factory, writer, source contract or Task5A consumer was changed.
 This is an unpublished regression correction, not final Task5 acceptance.
 

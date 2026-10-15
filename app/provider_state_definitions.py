@@ -1,4 +1,4 @@
-"""Unselected, finite provider-state table and source-shaped projections."""
+"""Finite current provider-state table and source-shaped projections."""
 
 from app.action_email_definitions import _encoded_value, _encoded_value_check
 
