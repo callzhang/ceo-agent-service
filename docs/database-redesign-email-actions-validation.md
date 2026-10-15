@@ -2659,7 +2659,7 @@ Email51 and no tasks/runs/service_state/scheduled_tasks/workbench_tasks; native
 pre-seeding therefore avoids copying ledger/seed/index data. Its owned database
 root was removed and the archived fixture context closed normally.
 
-The latest origin/main refresh is nowff4d36234a05f33bd9f68119f886b68e1b2b84fd,
+At the earlier Task7 checkpoint, origin/main was ff4d36234a05f33bd9f68119f886b68e1b2b84fd,
 with59 changed files since d06: newer Console query/cache removal, delivery
 repair, input formatting and related evidence. Read-only production checkout
 was5e52cafc8f209986868454d25ea5ba77a6be782c, clean. This supersedes the earlier
@@ -2714,3 +2714,32 @@ passing. Existing limits and exact tuple equality were not relaxed. Owned probe
 and test roots were cleaned. CI and renewed latest-copy/native evidence for
 this merged tree, PR/publication/live readback, and the full10+1 goal remain
 open. No production schema or provider action occurred in this acceptance.
+
+### Latest main integration after Task7 (local candidate)
+
+The candidate normally merged exact pushed main `2ae037a16bf660e8b8b2e190fd2c551ebb6057fe`
+as `ff5b8f95`, then exact pushed main
+`e87fb7d0442c7f71449eb3550a9c9c8d47083cfa` as `f258115a`. The first
+merge combined only the overlapping claim log and the opening candidate/main
+paragraphs in architecture and runtime documentation; the incoming agent/task
+code and tests auto-merged. The second merge auto-combined current
+`app/audit_web.py`, its runtime paragraph and Console assertions. Neither
+incoming increment changed Email or Store schema declarations, paired release,
+source capture, migration, or copy harness code. The candidate Email29/Store20
+and History terminal materialization/cache-removal paths remain in place.
+
+The incoming task identity update clarifies native strict-schema field
+descriptions without changing validators. Audit wire parsing binds digest and
+revision from the already verified candidate context, including completed-turn
+recovery. Email finalizer capture doubles now implement the persisted-task read
+used by terminal artifact cleanup. The later Attention increment counts and
+lists current actionable, Audit-approved human decisions alongside queue
+failures in one snapshot. No new audit, authorization, delivery or recovery
+policy was added by the integration.
+
+Focused post-merge verification passed: 245 task/Audit/artifact contract tests,
+249 full `test_email_worker.py` tests, and 112 Console/Status/Email external
+consumer tests. Scoped Ruff and `git diff --check` passed. These are local
+integration results; the separate whole-copy/native proof, final Task2–6
+matrix, independent review, CI and publication gates are tracked by the root
+task and are not asserted here. No push, production write or deploy was made.
