@@ -2305,6 +2305,13 @@ bounded attempt handling to operate. It is not a CLI execution outage. The
 credential predicate and rejection itself remain unchanged; no unsafe result
 is accepted and no content-feedback cycle is consumed by a parse failure.
 
+Generic credential key/value text requires the value to end at the string boundary
+or an explicit comma/semicolon delimiter. This avoids treating ordinary diagnostic
+prose such as `access token: load access token: acquiring file lock` as a secret,
+while retaining detection for delimited values such as `api_key=...;`. Known
+credential formats, sensitive-field context, entropy checks and outbound
+credential validation are unchanged.
+
 ### Daily Report Source Identity
 
 Daily report `handled_today` facts retain their original conversation ID,

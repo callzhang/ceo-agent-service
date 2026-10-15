@@ -46,6 +46,17 @@ def test_contains_credential_keeps_common_benign_text_readable(benign: str):
     assert not contains_credential(benign)
 
 
+def test_contains_credential_allows_repeated_key_value_diagnostic_phrase():
+    diagnostic = "access token: load access token: acquiring file lock"
+
+    assert not contains_credential(diagnostic)
+    assert redact_credentials(diagnostic) == diagnostic
+
+
+def test_contains_credential_recognizes_delimited_key_value_secret():
+    assert contains_credential("api_key=credential-value-1234; request failed")
+
+
 def test_assert_no_credentials_checks_nested_string_leaves_and_sensitive_keys():
     with pytest.raises(ValueError, match="credential-bearing data is not allowed"):
         assert_no_credentials({"outer": ["safe", {"value": "gho_abcdefghijklmnopqrstuvwxyz"}]})

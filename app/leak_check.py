@@ -46,7 +46,7 @@ _CREDENTIAL_PATTERNS = (
     re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@", re.IGNORECASE),
     re.compile(
         r"\b[A-Za-z0-9_.-]*(?:password|token|api[_-]?key|private[_-]?key|secret)"
-        r"\s*[:=]\s*(?:['\"])?[^\s'\"<>]{4,}",
+        r"\s*[:=]\s*(?:['\"])?[^\s'\"<>]{4,}(?=$|[;,])",
         re.IGNORECASE,
     ),
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", re.IGNORECASE),
