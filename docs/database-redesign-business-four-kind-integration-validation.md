@@ -79,7 +79,7 @@ digests and public IDs, without raw rows.
 
 The preflight is bound to the root-owned metadata-only published-source receipt
 `docs/superpowers/specs/2026-10-15-database-redesign-business-email-published-source.json`:
-`7dadc492` Store19/Email51, 121 ordinary tables, exact Email declarations,
+`7dadc492` Store19/Email51, 121 non-SQLite-internal tables, exact Email declarations,
 the Business `actual` variant and both Business declaration fingerprints.
 Live Business row counts are informational because the service may advance.
 The three other SQL-boundary cases in the script remain Email-only. The native
@@ -117,3 +117,95 @@ The report hashes the original named core modules and the three direct imports
 (`email_classifier_contracts.py`, `email_unsubscribe.py`, `audit_web.py`) and
 labels this as a finite list. Nine focused guard/report checks passed; no
 copied-production or native run was performed for this correction.
+
+## Root copied-source and native acceptance at df72a900
+
+The actual source was captured by SQLite online backup at
+2026-10-15T15:35:24 UTC. The production checkout was `7dadc492` before and
+after capture, Store `2026-10-13.5` / Email51. The immutable input is
+485212160 bytes, SHA-256
+`970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320`.
+Its integrity check passed; its existing single runs/tasks FK finding was
+preserved, not introduced by this unit. Code-HEAD observations and online backup
+are separate observations, not an atomic production-code/database snapshot.
+
+After the scoped guard corrections passed fresh SPEC then QUALITY, root reran
+all four copy cases at exact clean `df72a9005cdc81c2c46ee723c1c16bfbb73074c2`.
+The combined paired case passed publication, four current public Business
+writes, current-fact inverse, four genuine cold published-old-code Business
+writes and Email writes, and re-publication. The three independent Email-only
+SQL-boundary cases also passed. Whole-worktree cleanliness, HEAD and hashes of
+350 tracked application files were equal before/after; the input SHA was
+unchanged. This supersedes the preliminary successful run at `62e16d25`.
+Metadata and exact proof/module hashes are in
+`superpowers/specs/2026-10-15-database-redesign-business-email-copy-acceptance.json`.
+
+Root's eighteen-file focused group passed **1222 tests in 894.16 seconds**.
+Its private pytest root was removed and absence checked. All 138 Python files
+changed against published `7dadc492` passed Ruff and compilation; diff checks
+passed. Independent final integration review found no actionable issue in the
+bounded Business/Email wiring. These focused results are not a combined CI run.
+
+Five owned-copy cases used real Codex CLI0.154.0 and the configured native
+OAuth home; transcript bodies were not copied into evidence or SQLite:
+
+| Case | Real CLI invocations | In-memory provider calls | Verified result |
+|---|---:|---:|---|
+| Reply approval |2|1|done; one persisted receipt and sent result; reopen without a new invocation |
+| Reply revision |4|1|Audit returns R0; Consumer R1 then Audit approve; one receipt; done and reopen |
+| Work summary |1|0|candidate Business Task595, linked source signal, done and compacted input, duplicate enqueue returns the same input |
+| Scheduled execution |2|1|occurrence maps to its execution Task; done and persisted terminal result executed |
+| Workbench |1|0|completed text turn, four native events and reopened provider-session reference |
+
+These are ten invocations and nine distinct native sessions. Every case kept
+the immutable input and post-publication baseline hashes and preserved original
+rows in all100 ordinary row-storage tables. The full target count is105 because
+that count also includes the FTS virtual table and four shadow tables; the row
+comparison deliberately excludes that virtual family. Approval ran at076f3074,
+revision atd64c7376, and the other three atdf72a900. Root verified no difference
+in `app/` or either native harness between those commits and the final copy
+candidate. The scheduled report does not export persisted DB transcript bounds
+or a receipt count; native files were independently located by the exact test
+Task ID and native metadata cwd. Do not extend its evidence beyond its own
+assertions. Native references, exported bounds and range/file hashes are in
+`superpowers/specs/2026-10-15-database-redesign-business-email-native-acceptance.json`.
+There were zero real outbound provider calls.
+
+### Capacity and remaining approved work
+
+On the same immutable input, before any native fixture writes, source121 tables
+became target105 tables. Here table counts mean sqlite_schema tables whose names
+do not start `sqlite_`, including FTS virtual/shadow tables. Source main/page
+bytes485212160 became target507965440, **an increase of22753280 bytes**, with
+zero freelist pages on both. This is structural consolidation, not a space-saving
+acceptance. Moved families gained16027648 data-page bytes and6545408 index-page
+bytes; schema/internal pages account for the remaining180224 bytes. Other user
+table families had zero allocated-page delta. The capacity receipt records every
+table, the57 target actions indexes, the native-baseline provenance, and the
+direction-level approved CSV mapping:
+`superpowers/specs/2026-10-15-database-redesign-business-email-capacity.json`.
+It authorizes no index or historical-row deletion.
+
+The original ten-core-plus-one-ledger design remains the goal. The105-table
+candidate still contains32 old families mapped to actions, eight to business,
+twelve to tasks, thirty-four to configs/provider_state/schedules/state, and
+eight structures approved for retirement. The remaining provenance, emails,+runs, legacy-identity and migration facts also have their approved destinations.
+The net remaining structural reduction is94 tables; this inventory is not
+executable DDL or a claim those families are migrated.
+
+The three additional-case roots were removed and absence checked; all test task
+material directories were checked absent. Two completed native-copy roots,
+`/private/tmp/ceo-native-copy.318hhr_b` and
+`/private/tmp/ceo-native-copy.g2i6unkf`, remain pending direct user response:
+automatic approval rejected their explicit cleanup as requiring approval under
+AskForApproval Never. Their metadata was saved and lsof found no open handles;
+root did not retry deletion through another mechanism. The previously rejected
+`/private/tmp/business-quality.Xj9m3i` cleanup is independently still pending.
+The latest root-owned raw input remains temporary until final evidence and
+cleanup are finished. No historical database/code archive is committed.
+
+Email-only CI38748142018 at82795db4 passed13796 Python tests,729 frontend tests,
+the Workbench build and two browser checks. It is not combined Business coverage.
+A new combined CI result, main merge, production migration/deploy and operational
+readback remain separate gates. No production database write, main merge,
+restart, deployment or real test delivery occurred during this acceptance.
