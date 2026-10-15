@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "scope": "Completed task-owned anonymous v1-v4 temporary databases, copied Skills, inputs and debug files only",
+  "originals": "Native transcript originals verified against committed full or exact-prefix hashes before cleanup; metadata and fixtures pushed in draftPR91",
+  "preflight": "No lsof open processes for any of four roots",
+  "records": [
+    {
+      "path": "/private/tmp/ceo-task-progressive-current.h73Db9",
+      "bytes_removed": 1797971,
+      "removed": true
+    },
+    {
+      "path": "/private/tmp/ceo-task-direct-skill.oKN4JA",
+      "bytes_removed": 1743882,
+      "removed": true
+    },
+    {
+      "path": "/private/tmp/ceo-task-granular.2myfril_",
+      "bytes_removed": 1749573,
+      "removed": true
+    },
+    {
+      "path": "/private/tmp/ceo-task-suggestion-contract.v3fnytao",
+      "bytes_removed": 1786153,
+      "removed": true
+    }
+  ],
+  "retained": "Current v5 anonymous continuation workspace remains under /private/tmp/ceo-task-compact-contract.ied_hjro for further approved regression. No production, held worktree or unrelated data removed."
+}
