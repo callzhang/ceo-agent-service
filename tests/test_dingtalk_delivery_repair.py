@@ -144,6 +144,8 @@ def _native_chat_proof(task, sent, *, mutation=""):
         row["text"] = f"@Someone {sent.reply_text}"
     elif mutation == "extra_prefix":
         row["text"] = f"@{task.trigger_sender} unrelated {sent.reply_text}"
+    elif mutation == "wrong_range":
+        payload["queryRange"]["startTime"] = "2026-10-15T00:55:00Z"
     return {
         "task_id": task.id,
         "payload": payload,
@@ -183,6 +185,21 @@ def test_native_chat_readback_accepts_exact_native_quoted_sender_prefix(tmp_path
     assert apply_native_chat_readback(store, readback)
     assert store.get_reply_task(task.id).status == "done"
     assert handler.sends == 1
+
+
+def test_native_chat_readback_accepts_provider_utc_range_canonicalization(tmp_path):
+    store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)
+    assert apply_delivery_reverification(store, proof(receipt, "ambiguous"))
+    sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+    readback = _native_chat_proof(task, sent)
+    readback["payload"]["queryRange"] = {
+        "startTime": "2026-10-15T01:55:00Z",
+        "endTime": "2026-10-15T02:05:00Z",
+        "order": "asc",
+    }
+
+    assert apply_native_chat_readback(store, readback)
+    assert store.get_reply_task(task.id).status == "done"
 
 
 def test_native_reply_rendering_normalizes_only_whitespace():
@@ -239,6 +256,7 @@ def test_native_chat_readback_queries_exact_conversation_without_write_tools(tmp
 
 @pytest.mark.parametrize("mutation", [
     "partial", "wrong_sender", "wrong_text", "wrong_quote", "wrong_mention", "extra_prefix",
+    "wrong_range",
 ])
 def test_native_chat_readback_refuses_incomplete_or_mismatched_proof(tmp_path, mutation):
     store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)

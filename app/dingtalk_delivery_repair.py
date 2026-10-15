@@ -13,6 +13,19 @@ from app.agent_contracts import SystemExecutionResult
 from app.run_storage import AGENT_RUN_SQL
 
 
+def _same_timestamp_instant(actual: object, expected: object) -> bool:
+    if not isinstance(actual, str) or not isinstance(expected, str):
+        return False
+    try:
+        actual_time = datetime.fromisoformat(actual.replace("Z", "+00:00"))
+        expected_time = datetime.fromisoformat(expected.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if actual_time.tzinfo is None or expected_time.tzinfo is None:
+        return False
+    return actual_time.astimezone(timezone.utc) == expected_time.astimezone(timezone.utc)
+
+
 def native_reply_text_matches(actual: object, sent_body: object, trigger_sender: object) -> bool:
     """Match a stored reply or its exact native quoted-sender rendering."""
     if not isinstance(actual, str) or not isinstance(sent_body, str):
@@ -180,8 +193,10 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
     )):
         raise ValueError("native chat readback metadata is incomplete")
     query_range = payload.get("queryRange")
-    if (not isinstance(query_range, dict) or query_range.get("startTime") != start
-            or query_range.get("endTime") != end or query_range.get("order") != "asc"):
+    if (not isinstance(query_range, dict)
+            or not _same_timestamp_instant(query_range.get("startTime"), start)
+            or not _same_timestamp_instant(query_range.get("endTime"), end)
+            or query_range.get("order") != "asc"):
         raise ValueError("native chat response range does not match the requested read")
 
     with store._immediate_write_transaction() as db:

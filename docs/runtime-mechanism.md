@@ -28,7 +28,9 @@ quoted-sender rendering using the persisted trigger sender and the unchanged
 full body), and authenticated sender identity. The native renderer's
 whitespace-only normalization is shared with the ordinary native reply
 reconciler; all non-whitespace characters, mention name and body content must
-match. Arbitrary prefixes or rewritten content do not match.
+match. UTC range timestamps are compared as timezone-aware instants because
+the provider may canonicalize `+00:00` to `Z`; a different instant is rejected.
+Arbitrary prefixes or rewritten content do not match.
 The native page ledger must be complete, non-partial,
 failure-free, and untruncated. The
 explicit `--apply` then rechecks the failed task, generation, approved
