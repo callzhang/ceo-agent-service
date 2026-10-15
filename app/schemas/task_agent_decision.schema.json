@@ -5,7 +5,6 @@
       "properties": {
         "follow_up_id": {
           "exclusiveMinimum": 0,
-          "title": "Follow Up Id",
           "type": "integer"
         },
         "todo_id": {
@@ -17,8 +16,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Todo Id"
+          ]
         },
         "action": {
           "enum": [
@@ -28,7 +26,6 @@
             "reassign",
             "keep_open"
           ],
-          "title": "Action",
           "type": "string"
         },
         "reason": {
@@ -39,8 +36,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Reason"
+          ]
         },
         "evidence_check": {
           "anyOf": [
@@ -53,8 +49,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Evidence Check"
+          ]
         },
         "next_due_at": {
           "anyOf": [
@@ -64,8 +59,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Next Due At"
+          ]
         },
         "owner_user_id": {
           "anyOf": [
@@ -75,8 +69,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Owner User Id"
+          ]
         },
         "owner_name": {
           "anyOf": [
@@ -86,8 +79,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Owner Name"
+          ]
         },
         "owner_evidence": {
           "anyOf": [
@@ -100,8 +92,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Owner Evidence"
+          ]
         }
       },
       "required": [
@@ -115,26 +106,21 @@
         "owner_name",
         "owner_evidence"
       ],
-      "title": "CompletionFollowUpChange",
       "type": "object"
     },
     "CompletionSearchTrace": {
       "additionalProperties": false,
       "properties": {
         "source_kind": {
-          "title": "Source Kind",
           "type": "string"
         },
         "result": {
-          "title": "Result",
           "type": "string"
         },
         "source_ref": {
-          "title": "Source Ref",
           "type": "string"
         },
         "reason": {
-          "title": "Reason",
           "type": "string"
         },
         "source_created_at": {
@@ -145,8 +131,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Source Created At"
+          ]
         },
         "retrieved_at": {
           "anyOf": [
@@ -156,8 +141,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Retrieved At"
+          ]
         },
         "audit_call_ids": {
           "anyOf": [
@@ -171,8 +155,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Audit Call Ids"
+          ]
         }
       },
       "required": [
@@ -184,7 +167,6 @@
         "retrieved_at",
         "audit_call_ids"
       ],
-      "title": "CompletionSearchTrace",
       "type": "object"
     },
     "CompletionTodoChange": {
@@ -192,7 +174,6 @@
       "properties": {
         "action": {
           "const": "close",
-          "title": "Action",
           "type": "string"
         },
         "todo_id": {
@@ -204,8 +185,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Todo Id"
+          ]
         },
         "business_task_id": {
           "anyOf": [
@@ -216,14 +196,12 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Business Task Id"
+          ]
         },
         "completion_evidence": {
           "additionalProperties": false,
           "properties": {},
           "required": [],
-          "title": "Completion Evidence",
           "type": "object"
         }
       },
@@ -233,7 +211,6 @@
         "business_task_id",
         "completion_evidence"
       ],
-      "title": "CompletionTodoChange",
       "type": "object"
     },
     "DecisionRisk": {
@@ -243,7 +220,6 @@
         "medium",
         "high"
       ],
-      "title": "DecisionRisk",
       "type": "string"
     },
     "FormalTaskBasis": {
@@ -253,7 +229,6 @@
         "external_todo",
         "meeting_action_item"
       ],
-      "title": "FormalTaskBasis",
       "type": "string"
     },
     "ProjectCandidateProposal": {
@@ -261,15 +236,12 @@
       "properties": {
         "cluster_id": {
           "exclusiveMinimum": 0,
-          "title": "Cluster Id",
           "type": "integer"
         },
         "title": {
-          "title": "Title",
           "type": "string"
         },
         "reason": {
-          "title": "Reason",
           "type": "string"
         }
       },
@@ -278,18 +250,15 @@
         "title",
         "reason"
       ],
-      "title": "ProjectCandidateProposal",
       "type": "object"
     },
     "ProjectContext": {
       "additionalProperties": false,
       "properties": {
         "goal": {
-          "title": "Goal",
           "type": "string"
         },
         "scope": {
-          "title": "Scope",
           "type": "string"
         },
         "overall_owner": {
@@ -306,14 +275,12 @@
           "items": {
             "$ref": "#/$defs/ProjectResponsibility"
           },
-          "title": "Responsibilities",
           "type": "array"
         },
         "facts": {
           "items": {
             "$ref": "#/$defs/ProjectFact"
           },
-          "title": "Facts",
           "type": "array"
         }
       },
@@ -324,7 +291,6 @@
         "responsibilities",
         "facts"
       ],
-      "title": "ProjectContext",
       "type": "object"
     },
     "ProjectDecision": {
@@ -339,8 +305,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Anchor Id"
+          ]
         },
         "registration": {
           "anyOf": [
@@ -352,7 +317,7 @@
             }
           ]
         },
-    "context": {
+        "context": {
           "anyOf": [
             {
               "$ref": "#/$defs/ProjectContext"
@@ -361,65 +326,59 @@
               "type": "null"
             }
           ],
-      "description": "Complete current Project snapshot with original proof for each role/fact. Keep unchanged historical citations; null only adds evidence and does not replace context."
-    },
-    "crm_customer_label": {
-      "anyOf": [
-        {
-          "description": "Customer name/alias stated in source evidence, never extracted only by guessing from a Project title.",
-          "type": "string"
+          "description": "Complete current Project snapshot with original proof for each role/fact. Keep unchanged historical citations; null only adds evidence and does not replace context."
         },
-        {
-          "type": "null"
-        }
-      ],
-      "title": "Crm Customer Label"
-    },
-    "crm_customer_evidence": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/SourceCitation"
+        "crm_customer_label": {
+          "anyOf": [
+            {
+              "description": "Customer name/alias stated in source evidence, never extracted only by guessing from a Project title.",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "Exact source citation that explicitly identifies crm_customer_label. CRM identity is resolved separately by read-only exact lookup."
-    },
-    "evidence": {
+        "crm_customer_evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceCitation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Exact source citation that explicitly identifies crm_customer_label. CRM identity is resolved separately by read-only exact lookup."
+        },
+        "evidence": {
           "items": {
             "$ref": "#/$defs/SourceCitation"
           },
           "minItems": 1,
-          "title": "Evidence",
           "type": "array"
         },
         "reason": {
-          "title": "Reason",
           "type": "string"
         }
       },
       "required": [
-    "anchor_id",
-    "registration",
-    "context",
-    "crm_customer_label",
-    "crm_customer_evidence",
-    "evidence",
+        "anchor_id",
+        "registration",
+        "context",
+        "crm_customer_label",
+        "crm_customer_evidence",
+        "evidence",
         "reason"
       ],
-      "title": "ProjectDecision",
       "type": "object"
     },
     "ProjectFact": {
       "additionalProperties": false,
       "properties": {
         "key": {
-          "title": "Key",
           "type": "string"
         },
         "text": {
-          "title": "Text",
           "type": "string"
         },
         "evidence": {
@@ -427,15 +386,12 @@
             "$ref": "#/$defs/SourceCitation"
           },
           "minItems": 1,
-          "title": "Evidence",
           "type": "array"
         },
         "date_type": {
-          "title": "Date Type",
           "type": "string"
         },
         "date_value": {
-          "title": "Date Value",
           "type": "string"
         }
       },
@@ -446,7 +402,6 @@
         "date_type",
         "date_value"
       ],
-      "title": "ProjectFact",
       "type": "object"
     },
     "ProjectProposal": {
@@ -454,16 +409,13 @@
       "description": "Adopt the current authoritative Project definition and register or reuse its identity.",
       "properties": {
         "title": {
-          "title": "Title",
           "type": "string"
         },
         "reason": {
-          "title": "Reason",
           "type": "string"
         },
         "source_excerpt": {
           "description": "Exact current authoritative Project definition to register or reuse, distinct from the Task's action evidence; its source-named title takes precedence over a different stored similar or shorter name.",
-          "title": "Source Excerpt",
           "type": "string"
         },
         "authority": {
@@ -473,7 +425,6 @@
             "department_weekly_report",
             "meeting_decision"
           ],
-          "title": "Authority",
           "type": "string"
         }
       },
@@ -483,22 +434,18 @@
         "source_excerpt",
         "authority"
       ],
-      "title": "ProjectProposal",
       "type": "object"
     },
     "ProjectResponsibility": {
       "additionalProperties": false,
       "properties": {
         "person_user_id": {
-          "title": "Person User Id",
           "type": "string"
         },
         "person_name": {
-          "title": "Person Name",
           "type": "string"
         },
         "responsibility": {
-          "title": "Responsibility",
           "type": "string"
         },
         "evidence": {
@@ -506,7 +453,6 @@
             "$ref": "#/$defs/SourceCitation"
           },
           "minItems": 1,
-          "title": "Evidence",
           "type": "array"
         }
       },
@@ -516,7 +462,6 @@
         "responsibility",
         "evidence"
       ],
-      "title": "ProjectResponsibility",
       "type": "object"
     },
     "ProjectSelector": {
@@ -531,8 +476,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Anchor Id"
+          ]
         },
         "project_decision_index": {
           "anyOf": [
@@ -544,11 +488,9 @@
               "type": "null"
             }
           ],
-          "description": "Zero-based position in this result's project_decisions, never task_decisions or a persisted ID.",
-          "title": "Project Decision Index"
+          "description": "Zero-based position in this result's project_decisions, never task_decisions or a persisted ID."
         }
       },
-      "title": "ProjectSelector",
       "type": "object",
       "required": [
         "anchor_id",
@@ -567,15 +509,12 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Signal Id"
+          ]
         },
         "source_ref": {
-          "title": "Source Ref",
           "type": "string"
         },
         "source_excerpt": {
-          "title": "Source Excerpt",
           "type": "string"
         }
       },
@@ -584,7 +523,6 @@
         "source_ref",
         "source_excerpt"
       ],
-      "title": "SourceCitation",
       "type": "object"
     },
     "TaskAnchorMatchProposal": {
@@ -592,11 +530,9 @@
       "properties": {
         "anchor_id": {
           "exclusiveMinimum": 0,
-          "title": "Anchor Id",
           "type": "integer"
         },
         "reason": {
-          "title": "Reason",
           "type": "string"
         }
       },
@@ -604,7 +540,6 @@
         "anchor_id",
         "reason"
       ],
-      "title": "TaskAnchorMatchProposal",
       "type": "object"
     },
     "TaskAttentionEvidence": {
@@ -619,16 +554,13 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Signal Id"
+          ]
         },
         "source_ref": {
-          "title": "Source Ref",
           "type": "string"
         },
         "source_excerpt": {
           "description": "A contiguous verbatim source quote, preserving punctuation, spaces, and line breaks. Do not join separate spans or paraphrase; use separate evidence entries for separate spans.",
-          "title": "Source Excerpt",
           "type": "string"
         }
       },
@@ -637,7 +569,6 @@
         "source_ref",
         "source_excerpt"
       ],
-      "title": "TaskAttentionEvidence",
       "type": "object"
     },
     "TaskAttentionProposal": {
@@ -649,7 +580,6 @@
             "current_observation",
             "historical_comparison"
           ],
-          "title": "Assessment Basis",
           "type": "string"
         },
         "category": {
@@ -659,24 +589,19 @@
             "decision",
             "push"
           ],
-          "title": "Category",
           "type": "string"
         },
         "title": {
-          "title": "Title",
           "type": "string"
         },
         "why_attention": {
-          "title": "Why Attention",
           "type": "string"
         },
         "current_state": {
           "description": "Project-level risk facts, not per-Task action summaries. This proposal belongs to one Project assessment, not each supporting Task.",
-          "title": "Current State",
           "type": "string"
         },
         "ceo_action": {
-          "title": "Ceo Action",
           "type": "string"
         },
         "material_trigger": {
@@ -689,7 +614,6 @@
             "required_gate",
             "risk_escalation"
           ],
-          "title": "Material Trigger",
           "type": "string"
         },
         "evidence": {
@@ -698,7 +622,6 @@
             "$ref": "#/$defs/TaskAttentionEvidence"
           },
           "minItems": 1,
-          "title": "Evidence",
           "type": "array"
         }
       },
@@ -712,7 +635,6 @@
         "material_trigger",
         "evidence"
       ],
-      "title": "TaskAttentionProposal",
       "type": "object"
     },
     "TaskClusterProposal": {
@@ -727,8 +649,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Cluster Id"
+          ]
         },
         "title": {
           "anyOf": [
@@ -738,8 +659,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Title"
+          ]
         },
         "task_ids": {
           "anyOf": [
@@ -752,8 +672,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Task Ids"
+          ]
         },
         "reason": {
           "anyOf": [
@@ -763,11 +682,9 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Reason"
+          ]
         }
       },
-      "title": "TaskClusterProposal",
       "type": "object",
       "required": [
         "cluster_id",
@@ -788,7 +705,6 @@
             "estimated_deadline_at",
             "next_check_at"
           ],
-          "title": "Kind",
           "type": "string"
         },
         "value": {
@@ -800,16 +716,13 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Value"
+          ]
         },
         "source_ref": {
-          "title": "Source Ref",
           "type": "string"
         },
         "source_excerpt": {
           "description": "Quote only the complete parseable date phrase, not a whole registry row or surrounding action prose.",
-          "title": "Source Excerpt",
           "type": "string"
         },
         "actor_user_id": {
@@ -821,8 +734,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Actor User Id"
+          ]
         },
         "actor_name": {
           "anyOf": [
@@ -833,8 +745,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Actor Name"
+          ]
         }
       },
       "required": [
@@ -845,7 +756,6 @@
         "actor_user_id",
         "actor_name"
       ],
-      "title": "TaskDateEvidence",
       "type": "object"
     },
     "TaskDecision": {
@@ -859,7 +769,6 @@
             "create_task",
             "update_task"
           ],
-          "title": "Action",
           "type": "string"
         },
         "transition": {
@@ -870,7 +779,6 @@
             "update_fields",
             "merge_identity"
           ],
-          "title": "Transition",
           "type": "string"
         },
         "skip_reason": {
@@ -881,8 +789,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Skip Reason"
+          ]
         },
         "task_id": {
           "anyOf": [
@@ -894,8 +801,7 @@
               "type": "null"
             }
           ],
-          "description": "Real existing Task ID required for update_task, including an ordinary scope/content update with transition=update_fields. For merge_identity this is the source Task being merged. New/skip decisions leave it null; never put the ordinary update's Task ID only in target_task_id.",
-          "title": "Task Id"
+          "description": "Real existing Task ID required for update_task, including an ordinary scope/content update with transition=update_fields. For merge_identity this is the source Task being merged. New/skip decisions leave it null; never put the ordinary update's Task ID only in target_task_id."
         },
         "target_task_id": {
           "anyOf": [
@@ -907,8 +813,7 @@
               "type": "null"
             }
           ],
-          "description": "Merge destination only: for merge_identity, the distinct existing Task retained after merging task_id into it. Leave null for ordinary update_fields, promotion, acceptance, new or skip decisions.",
-          "title": "Target Task Id"
+          "description": "Merge destination only: for merge_identity, the distinct existing Task retained after merging task_id into it. Leave null for ordinary update_fields, promotion, acceptance, new or skip decisions."
         },
         "source_excerpt": {
           "anyOf": [
@@ -919,8 +824,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Source Excerpt"
+          ]
         },
         "source_ref": {
           "anyOf": [
@@ -930,8 +834,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Source Ref"
+          ]
         },
         "source_link": {
           "anyOf": [
@@ -942,8 +845,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Source Link"
+          ]
         },
         "source_description": {
           "anyOf": [
@@ -954,8 +856,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Source Description"
+          ]
         },
         "source_group": {
           "anyOf": [
@@ -966,8 +867,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Source Group"
+          ]
         },
         "source_person": {
           "anyOf": [
@@ -978,8 +878,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Source Person"
+          ]
         },
         "evidence_origin": {
           "anyOf": [
@@ -995,8 +894,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Evidence Origin"
+          ]
         },
         "title": {
           "anyOf": [
@@ -1007,8 +905,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Title"
+          ]
         },
         "description": {
           "anyOf": [
@@ -1019,8 +916,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Description"
+          ]
         },
         "formal_basis": {
           "anyOf": [
@@ -1045,8 +941,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Acceptance Polarity"
+          ]
         },
         "acceptance_target_signal_id": {
           "anyOf": [
@@ -1057,8 +952,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Acceptance Target Signal Id"
+          ]
         },
         "status": {
           "anyOf": [
@@ -1074,8 +968,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Status"
+          ]
         },
         "business_relevance": {
           "anyOf": [
@@ -1090,8 +983,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Business Relevance"
+          ]
         },
         "owner_user_id": {
           "anyOf": [
@@ -1101,8 +993,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Owner User Id"
+          ]
         },
         "owner_name": {
           "anyOf": [
@@ -1112,8 +1003,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Owner Name"
+          ]
         },
         "owner_evidence": {
           "anyOf": [
@@ -1136,8 +1026,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Owner Evidence"
+          ]
         },
         "owner_kind": {
           "anyOf": [
@@ -1153,8 +1042,7 @@
               "type": "null"
             }
           ],
-          "description": "Whether the source identifies one individual owner, a team, or no resolvable owner. A team is not sufficient for formal Task creation.",
-          "title": "Owner Kind"
+          "description": "Whether the source identifies one individual owner, a team, or no resolvable owner. A team is not sufficient for formal Task creation."
         },
         "owner_relation": {
           "anyOf": [
@@ -1172,8 +1060,7 @@
               "type": "null"
             }
           ],
-          "description": "How the source connects the named owner to the deliverable. speaker_only means the person merely spoke and is not an assignment.",
-          "title": "Owner Relation"
+          "description": "How the source connects the named owner to the deliverable. speaker_only means the person merely spoke and is not an assignment."
         },
         "date_evidence": {
           "anyOf": [
@@ -1186,8 +1073,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Date Evidence"
+          ]
         },
         "missing_evidence": {
           "anyOf": [
@@ -1200,8 +1086,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Missing Evidence"
+          ]
         },
         "identity_proposal": {
           "anyOf": [
@@ -1225,8 +1110,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Relation Proposals"
+          ]
         },
         "cluster_proposal": {
           "anyOf": [
@@ -1249,8 +1133,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Anchor Match Proposals"
+          ]
         },
         "project_candidate_proposal": {
           "anyOf": [
@@ -1285,8 +1168,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Project Link Evidence"
+          ]
         },
         "suggestion": {
           "anyOf": [
@@ -1307,8 +1189,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Update Summary"
+          ]
         },
         "memory_recall_used": {
           "anyOf": [
@@ -1318,8 +1199,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Memory Recall Used"
+          ]
         },
         "risk": {
           "anyOf": [
@@ -1342,8 +1222,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Confidence"
+          ]
         },
         "rule_coverage": {
           "anyOf": [
@@ -1356,8 +1235,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Rule Coverage"
+          ]
         },
         "information_completeness": {
           "anyOf": [
@@ -1370,8 +1248,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Information Completeness"
+          ]
         }
       },
       "required": [
@@ -1416,7 +1293,6 @@
         "rule_coverage",
         "information_completeness"
       ],
-      "title": "TaskDecision",
       "type": "object"
     },
     "TaskIdentityEvidence": {
@@ -1431,17 +1307,14 @@
             "same_source_item_same_owner"
           ],
           "description": "For same_source_item_same_owner, versioned Task and owner-proof refs must resolve to linked full DingTalk report bodies on one stable node. The service verifies each SHA-256 against decoded markdown, requires the cited action line once in every referenced body, and checks owners.",
-          "title": "Basis",
           "type": "string"
         },
         "source_signal_id": {
           "exclusiveMinimum": 0,
-          "title": "Source Signal Id",
           "type": "integer"
         },
         "target_signal_id": {
           "exclusiveMinimum": 0,
-          "title": "Target Signal Id",
           "type": "integer"
         }
       },
@@ -1450,7 +1323,6 @@
         "source_signal_id",
         "target_signal_id"
       ],
-      "title": "TaskIdentityEvidence",
       "type": "object"
     },
     "TaskIdentityProposal": {
@@ -1459,13 +1331,11 @@
         "source_task_id": {
           "description": "Real existing Task being merged into another saved Task; must equal the enclosing decision's task_id, not a Signal ID or a new action inferred from the current source.",
           "exclusiveMinimum": 0,
-          "title": "Source Task Id",
           "type": "integer"
         },
         "target_task_id": {
           "description": "Real existing Task retained after the merge; must equal the enclosing decision's target_task_id and be distinct from source_task_id.",
           "exclusiveMinimum": 0,
-          "title": "Target Task Id",
           "type": "integer"
         },
         "identity_evidence": {
@@ -1480,8 +1350,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Reason"
+          ]
         }
       },
       "required": [
@@ -1490,7 +1359,6 @@
         "identity_evidence",
         "reason"
       ],
-      "title": "TaskIdentityProposal",
       "type": "object"
     },
     "TaskProjectAssessment": {
@@ -1498,7 +1366,6 @@
       "properties": {
         "project_title": {
           "description": "Registered Project title when its identity is known; when identity is unresolved, preserve the source's Project clue without treating it as a registered Project.",
-          "title": "Project Title",
           "type": "string"
         },
         "outcome": {
@@ -1508,12 +1375,10 @@
             "not_needed",
             "insufficient_evidence"
           ],
-          "title": "Outcome",
           "type": "string"
         },
         "reason": {
           "description": "Concrete reason for the outcome, grounded in the cited facts; do not restate an inference as an original quote.",
-          "title": "Reason",
           "type": "string"
         },
         "assessment_basis": {
@@ -1522,7 +1387,6 @@
             "current_observation",
             "historical_comparison"
           ],
-          "title": "Assessment Basis",
           "type": "string"
         },
         "evidence": {
@@ -1531,7 +1395,6 @@
             "$ref": "#/$defs/TaskAttentionEvidence"
           },
           "minItems": 1,
-          "title": "Evidence",
           "type": "array"
         },
         "anchor_id": {
@@ -1544,8 +1407,7 @@
               "type": "null"
             }
           ],
-          "description": "Positive persisted ID of a known registered Project anchor; never a list position or a guessed ID.",
-          "title": "Anchor Id"
+          "description": "Positive persisted ID of a known registered Project anchor; never a list position or a guessed ID."
         },
         "project_decision_index": {
           "anyOf": [
@@ -1557,8 +1419,7 @@
               "type": "null"
             }
           ],
-          "description": "Zero-based position in this result's project_decisions; never task_decisions or a persisted Project ID.",
-          "title": "Project Decision Index"
+          "description": "Zero-based position in this result's project_decisions; never task_decisions or a persisted Project ID."
         },
         "existing_attention_id": {
           "anyOf": [
@@ -1570,8 +1431,7 @@
               "type": "null"
             }
           ],
-          "description": "Positive persisted ID of a retained needs_attention card: an original-proof claim, not an update target. For current risk changes use attention_proposal; its Project key reuses the existing card. Leave existing_attention_id null unless you cite and verify that card's stored original evidence. Read the card's current_project_attention entry and cite at least one assessment_json.evidence item with signal_id, source_ref, and source_excerpt unchanged. A current restatement does not replace that stored proof. current_project_attention.task_ids lists actual saved members; Project peers are not automatically card members. Name only saved members as supporting Tasks for a retained card; use attention_proposal with current original evidence for new membership or changed risk. Never a list position.",
-          "title": "Existing Attention Id"
+          "description": "Positive persisted ID of a retained needs_attention card: an original-proof claim, not an update target. For current risk changes use attention_proposal; its Project key reuses the existing card. Leave existing_attention_id null unless you cite and verify that card's stored original evidence. Read the card's current_project_attention entry and cite at least one assessment_json.evidence item with signal_id, source_ref, and source_excerpt unchanged. A current restatement does not replace that stored proof. current_project_attention.task_ids lists actual saved members; Project peers are not automatically card members. Name only saved members as supporting Tasks for a retained card; use attention_proposal with current original evidence for new membership or changed risk. Never a list position."
         },
         "decision_indexes": {
           "anyOf": [
@@ -1586,8 +1446,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Decision Indexes"
+          ]
         },
         "task_ids": {
           "anyOf": [
@@ -1602,8 +1461,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Task Ids"
+          ]
         },
         "attention_proposal": {
           "anyOf": [
@@ -1629,7 +1487,6 @@
         "task_ids",
         "attention_proposal"
       ],
-      "title": "TaskProjectAssessment",
       "type": "object"
     },
     "TaskRelationProposal": {
@@ -1638,7 +1495,6 @@
         "related_task_id": {
           "description": "Real existing related Task ID; the current Task is this decision's applied result, never a guessed new ID.",
           "exclusiveMinimum": 0,
-          "title": "Related Task Id",
           "type": "integer"
         },
         "direction": {
@@ -1646,7 +1502,6 @@
             "current_to_related",
             "related_to_current"
           ],
-          "title": "Direction",
           "type": "string"
         },
         "relation_type": {
@@ -1657,7 +1512,6 @@
             "supersedes",
             "related_to"
           ],
-          "title": "Relation Type",
           "type": "string"
         },
         "reason": {
@@ -1668,8 +1522,7 @@
             {
               "type": "null"
             }
-          ],
-          "title": "Reason"
+          ]
         }
       },
       "required": [
@@ -1678,29 +1531,24 @@
         "relation_type",
         "reason"
       ],
-      "title": "TaskRelationProposal",
       "type": "object"
     },
     "TaskSuggestion": {
       "additionalProperties": false,
       "properties": {
         "reason": {
-          "title": "Reason",
           "type": "string"
         },
         "suggested_owner_user_id": {
-          "title": "Suggested Owner User Id",
           "type": "string"
         },
         "suggested_owner_name": {
-          "title": "Suggested Owner Name",
           "type": "string"
         },
         "responsibility_evidence": {
           "items": {
             "$ref": "#/$defs/SourceCitation"
           },
-          "title": "Responsibility Evidence",
           "type": "array"
         },
         "basis_evidence": {
@@ -1708,7 +1556,6 @@
             "$ref": "#/$defs/SourceCitation"
           },
           "minItems": 1,
-          "title": "Basis Evidence",
           "type": "array"
         }
       },
@@ -1719,7 +1566,6 @@
         "responsibility_evidence",
         "basis_evidence"
       ],
-      "title": "TaskSuggestion",
       "type": "object"
     }
   },
@@ -1730,14 +1576,12 @@
       "items": {
         "$ref": "#/$defs/ProjectDecision"
       },
-      "title": "Project Decisions",
       "type": "array"
     },
     "task_decisions": {
       "items": {
         "$ref": "#/$defs/TaskDecision"
       },
-      "title": "Task Decisions",
       "type": "array"
     },
     "project_assessments": {
@@ -1745,7 +1589,6 @@
       "items": {
         "$ref": "#/$defs/TaskProjectAssessment"
       },
-      "title": "Project Assessments",
       "type": "array"
     },
     "todo_changes": {
@@ -1759,8 +1602,7 @@
         {
           "type": "null"
         }
-      ],
-      "title": "Todo Changes"
+      ]
     },
     "follow_up_changes": {
       "anyOf": [
@@ -1773,8 +1615,7 @@
         {
           "type": "null"
         }
-      ],
-      "title": "Follow Up Changes"
+      ]
     },
     "search_trace": {
       "anyOf": [
@@ -1788,8 +1629,7 @@
         {
           "type": "null"
         }
-      ],
-      "title": "Search Trace"
+      ]
     },
     "update_summary": {
       "anyOf": [
@@ -1799,8 +1639,7 @@
         {
           "type": "null"
         }
-      ],
-      "title": "Update Summary"
+      ]
     },
     "memory_recall_used": {
       "anyOf": [
@@ -1810,8 +1649,7 @@
         {
           "type": "null"
         }
-      ],
-      "title": "Memory Recall Used"
+      ]
     }
   },
   "required": [
@@ -1824,6 +1662,5 @@
     "update_summary",
     "memory_recall_used"
   ],
-  "title": "TaskAgentDecision",
   "type": "object"
 }

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "target_ref": "ae08b7c7 + independent title-only candidate",
+  "route": "configured codex_oauth",
+  "scope": "Anonymous owned Store/full current-main Task pipeline; readonly native CLI/MCP-free; existing full CI Skill unchanged.",
+  "cases": [
+    {
+      "phase": "cold",
+      "work_item": {
+        "source": {
+          "type": "ai_minutes",
+          "ref": "meeting:synthetic-catalog-project",
+          "title": "匿名项目周会",
+          "conversation_id": "",
+          "conversation_title": "",
+          "created_at": "2026-10-12T09:00:00Z"
+        },
+        "summary": "会议决定启动星桥交付项目，目标是完成客户验收和回款。陈明总负责交付，赵华负责客户回款排期。当前验收按计划推进，未报告风险，没有新的独立行动项。",
+        "context": {
+          "sender": "",
+          "sender_user_id": "",
+          "owner_identity": {},
+          "assignment_authorized": false,
+          "external_task_id": "",
+          "reply_to_source_ref": "",
+          "participants": [],
+          "source_conversation_kind": "minutes",
+          "source_conversation_title": ""
+        },
+        "task_signals": {
+          "possible_task_update": false,
+          "mentions_follow_up": false,
+          "progress_claim": false,
+          "owner_correction": false,
+          "complaint_about_followup": false,
+          "signal_reason": ""
+        },
+        "scheduled_consumer": {}
+      }
+    },
+    {
+      "phase": "risk",
+      "work_item": {
+        "source": {
+          "type": "ai_minutes",
+          "ref": "meeting:synthetic-catalog-risk",
+          "title": "匿名项目风险续会",
+          "conversation_id": "",
+          "conversation_title": "",
+          "created_at": "2026-10-13T09:00:00Z"
+        },
+        "summary": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。",
+        "context": {
+          "sender": "",
+          "sender_user_id": "",
+          "owner_identity": {},
+          "assignment_authorized": false,
+          "external_task_id": "",
+          "reply_to_source_ref": "",
+          "participants": [],
+          "source_conversation_kind": "minutes",
+          "source_conversation_title": ""
+        },
+        "task_signals": {
+          "possible_task_update": false,
+          "mentions_follow_up": false,
+          "progress_claim": false,
+          "owner_correction": false,
+          "complaint_about_followup": false,
+          "signal_reason": ""
+        },
+        "scheduled_consumer": {}
+      }
+    }
+  ],
+  "comparison": {
+    "baseline": "Original ae08b7c7 checked-in schema frozen once outside the two empty owned workspaces.",
+    "candidate": "Current checked-in schema with163 titles removed only.",
+    "clocks": {
+      "cold": "2026-10-14T09:00:00+00:00",
+      "risk": "2026-10-14T09:01:00+00:00"
+    }
+  },
+  "acceptance": [
+    "same native session cold/risk per arm",
+    "full native output and unchanged business checks",
+    "source facts/Project roles/risk preserved",
+    "current actual checked-in native schema path matches selected arm",
+    "input/semantic context comparison, not process success only"
+  ],
+  "workspace": "/private/tmp/ceo-title-release-pair.uAjTfa"
+}
