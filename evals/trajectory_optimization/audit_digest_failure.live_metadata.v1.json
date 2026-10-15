@@ -1,0 +1,272 @@
+{
+  "version": 1,
+  "status": "digest_values_wrong_in_original_model_output",
+  "task_id": 404975,
+  "samples": [
+    {
+      "attempt_id": 360292,
+      "session_id": "01a13de7-1bfb-7383-8077-fb36bf9b8d80",
+      "route": "codex_oauth",
+      "status": "failed",
+      "failure_class": "result",
+      "failure_code": "codex_result_invalid",
+      "range": [
+        0,
+        38
+      ],
+      "native_sha256": "098e71e9124ae092de4a296c3262c42d38e7ba5b1a7a29dfb632411cda934e37",
+      "input_chars": 31600,
+      "input_sha256": "863f278ece2f500afa44a43fd4357f88af5226b8b7841db2b185561969db2c5c",
+      "expected_digest_chars": 64,
+      "expected_digest_occurrences_in_input": 1,
+      "expected_digest_fingerprint": "bd01ba2dbe16dc60990c6885a17dba9c5763a5eb896f52fbbc9f00f65d882641",
+      "outputs": [
+        {
+          "line": 34,
+          "sha256": "c5e864867b8f7bdfe25ca9a8f1e14b60b0e1d889f5ea412599030d2a9839f63a",
+          "digest_chars": 63,
+          "exact_digest_match": false,
+          "matching_prefix_chars": 52,
+          "revision_match": true,
+          "wire_errors": [
+            {
+              "loc": [
+                "candidate_digest"
+              ],
+              "type": "string_pattern_mismatch"
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "line": 12,
+          "name": "read_task_skill",
+          "arguments_sha256": "8be43ddd2831e0e1e4bbb51c670bc2b066009a1379a4ae42959bcbbc4e9b0332"
+        },
+        {
+          "line": 17,
+          "name": "read_task_skill",
+          "arguments_sha256": "10f6dae99b817df3b1a9fc4e85ee4a7a0a8b5e09acfd2d3d415e76e63a6fbf0e"
+        },
+        {
+          "line": 26,
+          "name": "read_dingtalk_messages",
+          "arguments_sha256": "67d0fb6d760eb356282d011a14635d56815207e1e1a07ce879e0d19fcd2ea686"
+        }
+      ],
+      "tool_returns": [
+        {
+          "line": 15,
+          "sha256": "92c8c8ccd22cbba3cc5320bf241ff978a1bc7fd9ad240ef933dc7864d21d0d11",
+          "chars": 8546
+        },
+        {
+          "line": 20,
+          "sha256": "7f4f641654e9709df9f393513f35e7f3c4e4f3856664bd53b1f03b52ceff6a3e",
+          "chars": 14737
+        },
+        {
+          "line": 29,
+          "sha256": "0a12dec0645c4c02d87ff89aea0aed095636d2d084464e35a8747c9e46c1f723",
+          "chars": 138627
+        }
+      ],
+      "raw_native_parse_result": "ResultParseError: typed result JSON failed schema validation"
+    },
+    {
+      "attempt_id": 360297,
+      "session_id": "01a13de7-1bfb-7383-8077-fb36bf9b8d80",
+      "route": "codex_oauth",
+      "status": "failed",
+      "failure_class": "result",
+      "failure_code": "codex_result_invalid",
+      "range": [
+        38,
+        60
+      ],
+      "native_sha256": "098e71e9124ae092de4a296c3262c42d38e7ba5b1a7a29dfb632411cda934e37",
+      "input_chars": 31759,
+      "input_sha256": "6a29d22e9e66986507032f3fd0f6487c943ab57b7b862a34934c64f371102486",
+      "expected_digest_chars": 64,
+      "expected_digest_occurrences_in_input": 1,
+      "expected_digest_fingerprint": "bd01ba2dbe16dc60990c6885a17dba9c5763a5eb896f52fbbc9f00f65d882641",
+      "outputs": [
+        {
+          "line": 56,
+          "sha256": "22dd29f07361aca679c9ae5d2a910afc763dfa4928d70d21d078bb5ee7d8aca1",
+          "digest_chars": 64,
+          "exact_digest_match": false,
+          "matching_prefix_chars": 52,
+          "revision_match": true,
+          "wire_errors": []
+        }
+      ],
+      "tools": [
+        {
+          "line": 49,
+          "name": "exec",
+          "arguments_sha256": "06d1c3f75c129dca30c07680a9a2506333561b1e6037df30a22184597f500884"
+        }
+      ],
+      "tool_returns": [
+        {
+          "line": 51,
+          "sha256": "74b5293e5406d34581a146e54b0ed5c9fe4520072bb592548bfd3229376a8732",
+          "chars": 407
+        }
+      ],
+      "raw_native_parse_result": "wire_valid_but_binding_mismatch"
+    },
+    {
+      "attempt_id": 360301,
+      "session_id": "01a13de7-1bfb-7383-8077-fb36bf9b8d80",
+      "route": "codex_oauth",
+      "status": "failed",
+      "failure_class": "result",
+      "failure_code": "codex_result_invalid",
+      "range": [
+        60,
+        76
+      ],
+      "native_sha256": "098e71e9124ae092de4a296c3262c42d38e7ba5b1a7a29dfb632411cda934e37",
+      "input_chars": 31744,
+      "input_sha256": "8904a35a0d9298457e8f40e4cec7e61b77cacbd36c0652ce9c14641de65f5519",
+      "expected_digest_chars": 64,
+      "expected_digest_occurrences_in_input": 1,
+      "expected_digest_fingerprint": "bd01ba2dbe16dc60990c6885a17dba9c5763a5eb896f52fbbc9f00f65d882641",
+      "outputs": [
+        {
+          "line": 72,
+          "sha256": "57812db8c750e6025c141193946754ef0b79a15e4860bd6a9e713de299ea7e53",
+          "digest_chars": 64,
+          "exact_digest_match": false,
+          "matching_prefix_chars": 52,
+          "revision_match": true,
+          "wire_errors": []
+        }
+      ],
+      "tools": [],
+      "tool_returns": [],
+      "raw_native_parse_result": "wire_valid_but_binding_mismatch"
+    },
+    {
+      "attempt_id": 360304,
+      "session_id": "01a13de9-9059-7d50-bcac-3cd7964fb87d",
+      "route": "codex_oauth",
+      "status": "failed",
+      "failure_class": "result",
+      "failure_code": "codex_result_invalid",
+      "range": [
+        0,
+        15
+      ],
+      "native_sha256": "48029911565c9fd91914d5ea04fbf8a3a98f7ac2587d33a670db5b69af40eae8",
+      "input_chars": 31744,
+      "input_sha256": "34da510c4e983a77330620704ab06f6218369aaf0f1c8c8e1376c2a582552d14",
+      "expected_digest_chars": 64,
+      "expected_digest_occurrences_in_input": 1,
+      "expected_digest_fingerprint": "bd01ba2dbe16dc60990c6885a17dba9c5763a5eb896f52fbbc9f00f65d882641",
+      "outputs": [
+        {
+          "line": 11,
+          "sha256": "a9433271918070f05f8ace3ae8800244655b05ddd584e9f46f7f4cdc57e01b94",
+          "digest_chars": 63,
+          "exact_digest_match": false,
+          "matching_prefix_chars": 52,
+          "revision_match": true,
+          "wire_errors": [
+            {
+              "loc": [
+                "candidate_digest"
+              ],
+              "type": "string_pattern_mismatch"
+            }
+          ]
+        }
+      ],
+      "tools": [],
+      "tool_returns": [],
+      "raw_native_parse_result": "ResultParseError: typed result JSON failed schema validation"
+    },
+    {
+      "attempt_id": 360315,
+      "session_id": "01a13de9-9059-7d50-bcac-3cd7964fb87d",
+      "route": "codex_oauth",
+      "status": "failed",
+      "failure_class": "result",
+      "failure_code": "codex_result_invalid",
+      "range": [
+        15,
+        31
+      ],
+      "native_sha256": "48029911565c9fd91914d5ea04fbf8a3a98f7ac2587d33a670db5b69af40eae8",
+      "input_chars": 31759,
+      "input_sha256": "9238bdb1fd211f821b0717a86cb22a12989d84cd65c2769b11a2aa646be699ae",
+      "expected_digest_chars": 64,
+      "expected_digest_occurrences_in_input": 1,
+      "expected_digest_fingerprint": "bd01ba2dbe16dc60990c6885a17dba9c5763a5eb896f52fbbc9f00f65d882641",
+      "outputs": [
+        {
+          "line": 27,
+          "sha256": "a8609b1a3ec7e6d3ba95a40c85db920cc4a3fb5b7eff4f82feff51e6e80fce53",
+          "digest_chars": 64,
+          "exact_digest_match": false,
+          "matching_prefix_chars": 52,
+          "revision_match": true,
+          "wire_errors": []
+        }
+      ],
+      "tools": [],
+      "tool_returns": [],
+      "raw_native_parse_result": "wire_valid_but_binding_mismatch"
+    },
+    {
+      "attempt_id": 360320,
+      "session_id": "01a13de9-9059-7d50-bcac-3cd7964fb87d",
+      "route": "codex_oauth",
+      "status": "failed",
+      "failure_class": "result",
+      "failure_code": "codex_result_invalid",
+      "range": [
+        31,
+        45
+      ],
+      "native_sha256": "48029911565c9fd91914d5ea04fbf8a3a98f7ac2587d33a670db5b69af40eae8",
+      "input_chars": 31744,
+      "input_sha256": "c2b7930bb088a59546164a21d7bd92510d4b9514a2c740b54aa13a40cddd38ac",
+      "expected_digest_chars": 64,
+      "expected_digest_occurrences_in_input": 1,
+      "expected_digest_fingerprint": "bd01ba2dbe16dc60990c6885a17dba9c5763a5eb896f52fbbc9f00f65d882641",
+      "outputs": [
+        {
+          "line": 41,
+          "sha256": "a9433271918070f05f8ace3ae8800244655b05ddd584e9f46f7f4cdc57e01b94",
+          "digest_chars": 63,
+          "exact_digest_match": false,
+          "matching_prefix_chars": 52,
+          "revision_match": true,
+          "wire_errors": [
+            {
+              "loc": [
+                "candidate_digest"
+              ],
+              "type": "string_pattern_mismatch"
+            }
+          ]
+        }
+      ],
+      "tools": [],
+      "tool_returns": [],
+      "raw_native_parse_result": "ResultParseError: typed result JSON failed schema validation"
+    }
+  ],
+  "findings": [
+    "All six native service inputs deliver one64-character expected digest with same fingerprint and matching revision.",
+    "Wrong digest is already present in saved native assistant JSON, not introduced by JSON formatting or service parsing.",
+    "At least one native session continuation repeats the failure; inspect per-attempt session IDs/ranges rather than assuming all retries are new sessions.",
+    "Current parser retains full existing wire and exact binding rejection; no business review conclusion is inferred.",
+    "Model-internal cause of character choice remains unknown; no assertion that prompt length alone caused it."
+  ],
+  "boundary": "Metadata and hashes only; private actual input/output/tool bodies stay in native originals. Readonly DB, no provider call/replay/migration/runtime/binding-policy change."
+}
