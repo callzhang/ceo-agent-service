@@ -109,3 +109,23 @@ metadata/reconstruction checks only; source mutation semantics, CAS/cascade/
 RESTRICT/immutable DML, target mapping, migration/inverse and caller selection
 remain to be implemented. No target schema, version, retention rule, provider
 call, production write or deployment was introduced.
+
+
+### Independent source-metadata acceptance
+
+Sequential fresh SPEC and QUALITY accepted commit `3e171e85`. Both independently
+matched the 34-family grouping, actual/fresh field distinction, original CSV
+coverage, index/trigger/FK and allocator/layout counts. SPEC reran six cases
+in 0.10 seconds; QUALITY reran them in 0.19 seconds, with no runtime or provider
+activity and no edits. This accepts metadata and literal source reconstruction
+only. The six tests do not independently prove the production read or temporary
+cleanup: those are root's recorded capture-command receipts, including the
+closed query-only source and exact published archive constructor invocation.
+The parent TemporaryDirectory was asserted absent after its context exited.
+No raw temporary database or archive is retained for historical replay.
+
+The next work for these groups remains exact source mutation/caller semantics
+and target field/constraint mapping, including explicit treatment of the four
+unused actual-only conversation fields and the five external FK groups. This
+is preparation for the existing ten-table goal, not another target design or
+a claim that these 34 tables have been merged.
