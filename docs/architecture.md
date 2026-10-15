@@ -1,5 +1,24 @@
 # CEO Agent Service Architecture
 
+An unselected `read_native_source_body` helper in `app/native_trajectory.py`
+can reconstruct an exact historical source body from already recorded Codex or
+Claude native provenance. It resolves the native session through the existing
+CLI path finder, verifies the recorded raw JSONL line hash including its line
+ending, follows the recorded JSON leaf and Unicode character range, decodes the
+observed `json_string_literal_utf8` value, and verifies the complete UTF-8 body
+length and SHA-256. Unresolved sessions, unavailable files/lines and mismatches
+with the recorded hashes or body length raise `LookupError`. Invalid required
+field types/shapes, JSON, leaf paths, character ranges and unsupported
+runtime/codec raise `ValueError`. The existing finder owns UUID format
+validation; a nonempty unresolved UUID or mismatching 64-character digest takes
+the `LookupError` path. Other file I/O failures retain their native errors. No production caller selects
+this helper, no body cache or database field is added, and existing source
+identity, quote checks and projections remain unchanged. The recovery artifact
+proves only 30 of 188 historical bodies (seven Codex and 23 Claude); 158 remain
+unproved. This helper does not retire source bodies or activate the approved
+ten-core-table-plus-ledger redesign. See
+`docs/superpowers/plans/2026-10-15-business-native-source-reader-plan.md`.
+
 The local History query candidate projects source identity and sort time from
 each selected source before the combined page sort, applies existing filters
 within those source branches, and hydrates only the selected page in one read
