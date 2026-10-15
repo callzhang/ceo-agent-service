@@ -129,3 +129,26 @@ and target field/constraint mapping, including explicit treatment of the four
 unused actual-only conversation fields and the five external FK groups. This
 is preparation for the existing ten-table goal, not another target design or
 a claim that these 34 tables have been merged.
+
+## Bounded configs source-contract plan, 2026-10-15
+
+`docs/superpowers/plans/2026-10-15-configs-source-contract-plan.md` specifies
+the next independently testable unit for the 15 config families and their 118
+existing fields. It uses the already accepted literal actual/fresh metadata
+and synthetic SQLite DML, plus the genuine archived published constructor for
+caller and externally referenced trigger behavior. It records identity,
+allocator, SQL affinity/NULL, constraints, immutability exceptions, category
+CAS, runtime Skill load-receipt matching, scheduled snapshot interning and
+references, and the WeChat scope watermark. This is research and planning only:
+no source contract test, target declaration, migration, caller selection,
+actual-copy proof or release was implemented by this appendix.
+
+The future atomic closure remains the 15 config families together with
+`scheduled_tasks` and the two `runs` schedule/config references, managed Skill
+export and runtime Skill load receipts converted to typed `actions` references,
+and the approved empty `email_training_snapshot_observations` FK/trigger
+retirement. The six account blocker owners must retain the current candidate's
+typed `actions` predicates; the old source blocker SQL is predecessor evidence
+only. These are separate target, migration and caller/publication plans. This
+source plan reserves no schema version and introduces no auditor or retention
+policy.
