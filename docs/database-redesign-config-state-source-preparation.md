@@ -269,3 +269,18 @@ uses exact current typed `actions` DDL with narrow classification/task/run
 stubs and proves only the six in-flight predicates; it is a focused predicate
 fixture, not a full EmailStore constructor. No missing-table exception is
 counted as parity success.
+
+#### Plan correction: negative-only ordinary rowids
+
+The seven-kind storage plan's initial `_next_source_rowid` expression clamped a
+negative maximum to zero. With only rowid `-7` in an ordinary source table,
+native SQLite allocates `-6`, while that initial plan code allocated `1`.
+The new actual/fresh differential test reproduced the mismatch in both
+variants (`2 failed`, `73 deselected`). The plan now returns `1` only for an
+empty kind and otherwise adds one to the signed maximum; its existing
+maximum-64-bit-integer scratch-table overflow branch remains unchanged. The
+test also checks reuse of `-6` after deletion and allocation of `1` in an
+empty table, before inserting any zero rowid. Extracting the corrected plan
+code to an owned temporary package yielded `75 passed` in `3.73s`; Ruff and
+compileall passed. These are synthetic plan-code checks, not an implemented
+target module, source migration or account-cascade acceptance.

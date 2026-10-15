@@ -577,7 +577,7 @@ def _next_source_rowid(db: sqlite3.Connection, kind: str) -> int:
         (kind,),
     ).fetchone()[0]
     if maximum != 2**63 - 1:
-        return max(maximum or 0, 0) + 1
+        return 1 if maximum is None else maximum + 1
     with closing(sqlite3.connect(":memory:")) as scratch:
         scratch.execute("create table source_rows(id integer primary key)")
         scratch.executemany("insert into source_rows(id) values(?)", db.execute(
@@ -916,7 +916,7 @@ def test_each_email_kind_native_rejection(variant, kind, change):
             insert_config(target, kind, candidate)
 ```
 
-- [ ] **Step 4: Add identity, relation and immutability proofs.** Run the named test functions below and the source oracle `tests/test_configs_source_contract.py` together. The identity test checks stored TEXT affinity before tagged encoding; the relation test checks **category deletion cascading to its binding in both the source and target**, plus a category-key update block; the snapshot test checks source-shaped 0→1 equality rather than freezing every field by policy. This test does not delete or update the account parent.
+- [ ] **Step 4: Add identity, relation and immutability proofs.** Run the named test functions below and the source oracle `tests/test_configs_source_contract.py` together. The identity test checks stored TEXT affinity before tagged encoding; the negative-only rowid test checks native advance from `-7` to `-6`, reuse after deletion and the empty-table start at `1` before inserting any zero rowid; the max-rowid test keeps the native overflow allocator. The relation test checks **category deletion cascading to its binding in both the source and target**, plus a category-key update block; the snapshot test checks source-shaped 0→1 equality rather than freezing every field by policy. This test does not delete or update the account parent.
 
 ```python
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
@@ -1051,6 +1051,30 @@ def test_immutable_history_and_snapshot_delete(variant):
         with pytest.raises(sqlite3.IntegrityError,
                            match="email training snapshot is immutable"):
             delete_config(target, "email_training_snapshots", 1)
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+def test_negative_only_rowid_advances_reuses_and_empty_starts_at_one(variant):
+    with pair(variant) as (source, target):
+        kind = "email_category_configs"
+        insert_both(source, target, kind, VALID[kind], source_rowid=-7)
+        first = VALID[kind] | {"category_key": "first"}
+        native = source_insert(source, kind, first).lastrowid
+        stored = insert_config(target, kind, first).lastrowid
+        assert (native, stored) == (-6, -6)
+        assert source.execute(
+            "delete from email_category_configs where rowid=-6"
+        ).rowcount == 1
+        assert delete_config(target, kind, -6) == 1
+        reused = VALID[kind] | {"category_key": "reused"}
+        native = source_insert(source, kind, reused).lastrowid
+        stored = insert_config(target, kind, reused).lastrowid
+        assert (native, stored) == (-6, -6)
+    with pair(variant) as (source, target):
+        kind = "email_category_configs"
+        native = source_insert(source, kind, VALID[kind]).lastrowid
+        stored = insert_config(target, kind, VALID[kind]).lastrowid
+        assert (native, stored) == (1, 1)
 
 
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
