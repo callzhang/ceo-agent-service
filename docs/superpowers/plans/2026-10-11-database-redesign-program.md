@@ -21,7 +21,7 @@ two runs, one provenance, one inline legacy identity, eight approved retirements
 and one ledger. Reaching the final eleven requires another94 net table reduction,
 complete callers/constraints/current-fact rollback, and the original provenance
 and duplicate-content rules. Combined CI and final production approval remain
-outstanding; three rejected temporary-directory cleanups await human response.
+outstanding; four rejected temporary-directory cleanups await human response.
 
 **已确认目标：** 采用 business；单一来源内联，单一归属直接 FK；仅需共享来源版本时使用 provenance；实际多条证据/关联事实归 actions；可准确溯源原文不长期保存。保留必要状态、已采用业务结果和执行回执。
 

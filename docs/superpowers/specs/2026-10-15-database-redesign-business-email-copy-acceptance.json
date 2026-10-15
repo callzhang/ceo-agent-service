@@ -645,5 +645,16 @@
     "Combined CI, main merge and deployment have not been established by this receipt.",
     "Source has one preexisting FK finding, preserved exactly rather than introduced by this migration.",
     "Raw root source input remains temporary until the other native cases and cleanup finish."
-  ]
+  ],
+  "temporary_input_cleanup": {
+    "path": "/private/tmp/ceo-business-combined-actual-u6i3ldg0",
+    "files": 24,
+    "bytes": 485401660,
+    "source_sha256_reverified": true,
+    "open_handles": 0,
+    "metadata_committed_before_cleanup": "b2600c86",
+    "status": "awaiting_user_response_after_automatic_cleanup_rejection",
+    "automatic_rejection": "approval required by policy, but AskForApproval is set to Never",
+    "alternative_deletion_attempted": false
+  }
 }

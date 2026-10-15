@@ -201,8 +201,14 @@ automatic approval rejected their explicit cleanup as requiring approval under
 AskForApproval Never. Their metadata was saved and lsof found no open handles;
 root did not retry deletion through another mechanism. The previously rejected
 `/private/tmp/business-quality.Xj9m3i` cleanup is independently still pending.
-The latest root-owned raw input remains temporary until final evidence and
-cleanup are finished. No historical database/code archive is committed.
+After evidence commitb2600c86, root rechecked the immutable input SHA and
+committed receipts, verified all24 input-directory files belong to this task,
+and found no open handles. Explicit cleanup of
+`/private/tmp/ceo-business-combined-actual-u6i3ldg0` (485401660 bytes including
+intermediate metadata) was also automatically rejected as requiring approval
+under AskForApproval Never. A separate exact-path user question is pending;
+root did not use another deletion mechanism. The input is no longer needed
+for this acceptance. No historical database/code archive is committed.
 
 Email-only CI38748142018 at82795db4 passed13796 Python tests,729 frontend tests,
 the Workbench build and two browser checks. It is not combined Business coverage.
