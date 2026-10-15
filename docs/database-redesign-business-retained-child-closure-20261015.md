@@ -329,3 +329,23 @@ The task-owned temporary proof directory and call-search output were removed;
 their absence was verified. Only this new document and the author's own claim
 row are in scope.
 Root-owned independent SPEC then QUALITY review remains pending.
+
+
+## Root acceptance after independent reviews
+
+Root accepts this partial constraint and integration boundary after sequential
+fresh SPEC and QUALITY reviews of committed `bbf95edcb56361cb731fb9f860d74c5204fd3cec`.
+SPEC independently recomputed the 19 incoming groups, 15 families, 135 fields,
+40 total groups, index/trigger inventory and current caller closure, and ran
+a bounded in-memory typed Task alias FK control. QUALITY inspected the current
+Business declarations/writer, Store CRUD and follow-up claim, context service,
+import fingerprints and caller/bootstrap inventory and found no blocker.
+
+This acceptance covers the proposal only. The three parent indexes' actual
+space/write cost, child rebuild preservation, complete four-kind identity maps,
+forward/current-fact inverse, reopen and application paths still require
+implementation and copied-database evidence. No migration or caller selection
+has occurred. The next unit remains the coherent four-kind integration, with
+the unpublished Email release boundary resolved from actual code before any
+release marker is selected. Main merge and production deployment still require
+Derek's final approval.
