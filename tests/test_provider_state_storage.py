@@ -1,6 +1,6 @@
 """Independent literal-source controls for the unselected provider-state unit."""
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import sqlite3
 
 import pytest
@@ -17,7 +17,11 @@ from test_provider_state_source import source_db, OBS, GEN, T1, T2
 
 
 def test_target_declaration():
-    db = sqlite3.connect(":memory:")
+    with closing(sqlite3.connect(":memory:")) as db:
+        assert_target_declaration(db)
+
+
+def assert_target_declaration(db):
     create_provider_state_schema(db)
     columns = {row[1]: row for row in db.execute("pragma table_xinfo(provider_state)")}
     assert columns["id"][2:7] == ("INTEGER", 0, None, 1, 0)
