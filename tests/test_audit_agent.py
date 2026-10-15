@@ -355,6 +355,59 @@ def test_sensitive_audit_output_is_a_result_failure_not_a_process_outage(setup):
     assert error["detail"] == "agent_result_contains_sensitive_value"
 
 
+def test_sensitive_recovered_audit_result_is_a_result_failure_not_a_process_outage(
+    setup, monkeypatch,
+):
+    from types import SimpleNamespace
+
+    import app.agent_turn_runner as agent_turn_runner
+    from app.audit_agent import parse_audit_agent_wire_result
+
+    store, task, parent, context, config, _router = setup
+    route = config.routes[0]
+    completed_attempt = SimpleNamespace(
+        id=901, status="completed", result_schema_id="stable-schema",
+        route_name=route.name, runtime_kind=route.runtime_kind.value,
+        session_id="", transcript_start=0, transcript_end=0,
+    )
+    store.list_agent_runtime_attempts = lambda _run_id: [completed_attempt]
+    monkeypatch.setattr(
+        agent_turn_runner,
+        "hashlib",
+        SimpleNamespace(sha256=lambda _value: SimpleNamespace(
+            hexdigest=lambda: "stable-schema",
+        )),
+    )
+    recovered = parse_audit_agent_wire_result(
+        _wire(context.candidate_digest, outcome="return")
+    )
+    unsafe = recovered.model_copy(update={
+        "feedback": recovered.feedback.model_copy(update={
+            "observation": "access_token=synthetic-test-secret",
+        }),
+    })
+    monkeypatch.setattr(
+        agent_turn_runner,
+        "recover_completed_runtime_domain_result",
+        lambda *_args, **_kwargs: unsafe,
+    )
+
+    with pytest.raises(ResultParseError, match="agent_result_contains_sensitive_value"):
+        _runner(setup, CapturingExecutor("")).run(
+            task, context, turn_attempt=0, parent_agent_run_id=parent.id,
+        )
+
+    failed = store.get_agent_run_for_turn(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0,
+    )
+    assert failed.status == "failed"
+    error = json.loads(failed.structured_error_json)
+    assert error["code"] == "codex_result_invalid"
+    assert error["stage"] == "result"
+    assert error["detail"] == "agent_result_contains_sensitive_value"
+
+
 def test_audit_parent_must_be_completed_exact_consumer_candidate(setup):
     store, task, _parent, context, _config, _router = setup
     other = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.CONSUMER,

@@ -358,6 +358,10 @@ runtime predicates; each source retains its depth bound, callback validation
 and original contents. The total serialized result byte limit still applies
 to the complete envelope. This does not exempt business secrets or transport
 capabilities, change source identity/digest checks, or permit an external action.
+Recovery of a completed Audit runtime result repeats the authored-result
+sensitive-value check. A violation remains rejected and is recorded as a
+result-validation failure, not a Codex/provider process outage; it cannot be
+adopted or executed.
 
 The Task Attention inspector reads decision fields only from the completed
 runtime attempt's exact native session and range. It closes the read-only
