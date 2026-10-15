@@ -176,3 +176,102 @@ def test_native_target_baseline_rejects_changed_or_lost_original_row(tmp_path, d
             db.execute("delete from service_state where key='store_schema_version'")
     with pytest.raises(AssertionError, match="service_state"):
         original_rows_unchanged(baseline, path)
+
+
+def _identity_fixture_task(store, key):
+    return store.ensure_reply_task(
+        conversation_id=key, conversation_title="Identity isolation", single_chat=False,
+        trigger_message_id=key, trigger_create_time="2026-10-15T00:00:00Z",
+        trigger_sender="Synthetic", trigger_text="Synthetic artifact identity fixture",
+    )
+
+
+def test_reserved_candidate_task_survives_other_database_terminal_cleanup(tmp_path, monkeypatch):
+    from app import task_artifacts
+    from app.agent_cli import _task_file_root, _read_task_file
+    from app.store import AutoReplyStore
+    from scripts.validate_native_copy_lifecycle import _reserve_fixture_task_ids
+
+    monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "workspace"))
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "artifacts")
+    source = tmp_path / "source.sqlite3"
+    source_store = AutoReplyStore(source)
+    _identity_fixture_task(source_store, "original")
+    baseline_hash = hashlib.sha256(source.read_bytes()).digest()
+    candidate = tmp_path / "candidate.sqlite3"
+    other = tmp_path / "other.sqlite3"
+    _backup_database(source, candidate)
+    _backup_database(source, other)
+    candidate_store, other_store = AutoReplyStore(candidate), AutoReplyStore(other)
+
+    # Control: ordinary copies allocate the same identity and share a native path.
+    ordinary = _identity_fixture_task(candidate_store, "ordinary-candidate")
+    other_task = _identity_fixture_task(other_store, "ordinary-other")
+    assert ordinary.id == other_task.id
+    ordinary_path = _task_file_root(candidate, ordinary.id, ordinary.execution_generation, create=True)
+    (ordinary_path / "case-input.json").write_text("ordinary")
+    with other_store._connect() as db:
+        db.execute("update tasks set status='done' where id=?", (other_task.id,))
+    task_artifacts.cleanup_terminal_task_artifacts(other_store, other_task.id)
+    assert not ordinary_path.exists()
+
+    with sqlite3.connect(candidate) as db:
+        original_rows = db.execute("select * from tasks order by id").fetchall()
+        other_sequences = db.execute("select name,seq from sqlite_sequence where name!='tasks' order by name").fetchall()
+    reservation = _reserve_fixture_task_ids(candidate)
+    isolated = _identity_fixture_task(candidate_store, "isolated-candidate")
+    isolated_path = _task_file_root(candidate, isolated.id, isolated.execution_generation, create=True)
+    (isolated_path / "case-input.json").write_text("isolated")
+    # Another naturally allocated task also reaches terminal cleanup after reserve.
+    next_other = _identity_fixture_task(other_store, "next-other")
+    with other_store._connect() as db:
+        db.execute("update tasks set status='done' where id=?", (next_other.id,))
+    task_artifacts.cleanup_terminal_task_artifacts(other_store, next_other.id)
+    assert isolated_path.exists(), "another database's terminal cleanup removed candidate artifacts"
+    assert _read_task_file(isolated_path, "case-input.json")["content"] == "isolated"
+    assert 2**52 <= reservation < isolated.id < 2**53
+    assert isolated.id == reservation + 1 and isolated.id != next_other.id
+    assert _task_file_root(other, next_other.id, next_other.execution_generation, create=False) != isolated_path
+    assert candidate_store.claim_reply_task(isolated.id).status == "processing"
+    with sqlite3.connect(candidate) as db:
+        assert db.execute("select * from tasks where id<=? order by id", (max(row[0] for row in original_rows),)).fetchall() == original_rows
+        assert db.execute("select name,seq from sqlite_sequence where name!='tasks' order by name").fetchall() == other_sequences
+    assert original_rows_unchanged(source, candidate) > 0
+    assert hashlib.sha256(source.read_bytes()).digest() == baseline_hash
+    with candidate_store._connect() as db:
+        db.execute("update tasks set status='failed' where id=?", (isolated.id,))
+    task_artifacts.cleanup_terminal_task_artifacts(candidate_store, isolated.id)
+    assert not isolated_path.parent.exists()
+
+
+def test_fixture_task_reservation_handles_empty_allocator_and_separate_copies(tmp_path):
+    from scripts.validate_native_copy_lifecycle import _reserve_fixture_task_ids
+
+    reservations = []
+    for name in ("first", "second"):
+        path = tmp_path / (name + ".sqlite3")
+        with sqlite3.connect(path) as db:
+            db.execute("create table tasks(id integer primary key autoincrement, content text)")
+            db.execute("create table unrelated(id integer primary key autoincrement)")
+            db.execute("insert into unrelated default values")
+        reservation = _reserve_fixture_task_ids(path)
+        reservations.append(reservation)
+        with sqlite3.connect(path) as db:
+            cursor = db.execute("insert into tasks(content) values('fixture')")
+            assert cursor.lastrowid == reservation + 1
+            assert 2**52 <= reservation < cursor.lastrowid < 2**53
+            assert db.execute("select seq from sqlite_sequence where name='unrelated'").fetchone() == (1,)
+    assert len(set(reservations)) == 2
+
+
+def test_fixture_task_reservation_refuses_nonordinary_source_without_mutation(tmp_path):
+    from scripts.validate_native_copy_lifecycle import _reserve_fixture_task_ids
+
+    path = tmp_path / "high-source.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("create table tasks(id integer primary key autoincrement)")
+        db.execute("insert into tasks(id) values(?)", (2**52,))
+    before = hashlib.sha256(path.read_bytes()).digest()
+    with pytest.raises(AssertionError, match="ordinary source Task allocator"):
+        _reserve_fixture_task_ids(path)
+    assert hashlib.sha256(path.read_bytes()).digest() == before

@@ -842,16 +842,20 @@ def test_invalid_json_retries_once(tmp_path: Path):
 
     assert decision.action == CodexAction.NO_REPLY
     assert len(executor.commands) == 2
-    assert executor.commands[0][:4] == [
+    assert executor.commands[0][:6] == [
         "codex",
+        "--cd",
+        str(tmp_path),
         "exec",
         "resume",
         "--json",
     ]
     assert executor.commands[0][-2:] == ["session-1", "-"]
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:4] == [
+    assert executor.commands[1][:6] == [
         "codex",
+        "--cd",
+        str(tmp_path),
         "exec",
         "resume",
         "--json",
@@ -1102,8 +1106,10 @@ def test_first_turn_invalid_json_retries_with_extracted_session_id(tmp_path: Pat
     assert _option_value(executor.commands[0], "--cd") == str(tmp_path)
     assert executor.commands[0][-1] == "-"
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:4] == [
+    assert executor.commands[1][:6] == [
         "codex",
+        "--cd",
+        str(tmp_path),
         "exec",
         "resume",
         "--json",
@@ -1146,8 +1152,10 @@ def test_first_turn_invalid_json_retries_with_thread_started_id(tmp_path: Path):
     assert _option_value(executor.commands[0], "--cd") == str(tmp_path)
     assert executor.commands[0][-1] == "-"
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:4] == [
+    assert executor.commands[1][:6] == [
         "codex",
+        "--cd",
+        str(tmp_path),
         "exec",
         "resume",
         "--json",
