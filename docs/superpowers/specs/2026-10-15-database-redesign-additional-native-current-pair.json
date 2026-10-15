@@ -1,0 +1,272 @@
+{
+  "evidence_type": "actual_source_copy_additional_native_acceptance",
+  "recorded_at": "2026-10-15T13:20:13.892729+00:00",
+  "harness_commit": "e66e5dec8e04f401c0808c01550f01a4849047e3",
+  "code_files_sha256": {
+    "scripts/validate_native_copy_additional.py": "1a518d789935b16d3e57c05cbad5251d273d2c186361a92b10c2585530981f98",
+    "scripts/validate_native_copy_lifecycle.py": "21fbf0339021f94ddeca3f102a8dbb3a0b399a6ec57316112665218341a4613c",
+    "app/task_agent.py": "7cc0056a6c348e70a44a360d2112ed6af4e72aa296483ae5b062c59149eb51c9",
+    "app/store.py": "d97777d46cfe17f6c0091a66b5c629778c882f54375758c1bded4d5bd0741b21",
+    "app/email_store.py": "e3f72fb845104430514972038a936fcedd71f8c72695a1d82198bda76f625f37",
+    "app/action_email_schema_release.py": "ddb5d4f30403b878972f07387c583bac4b549a4ad60526943b44ade805622a43",
+    "app/agent_orchestrator.py": "fe218d5d0c6443a281564d9f8099a4e7a6d2e0b23dcd2024f2a8dd38c0312d65",
+    "app/consumer_agent.py": "7300fdc83db115e8a3b7273ee7970edbb253aaa86d1befc217e0987d1b9e44cd",
+    "app/audit_agent.py": "98a86625e718fcc667038f4c8ba8444813c428f4426986a5246a9816adcfb580",
+    "app/workbench/service_runtime.py": "d9c7d9b84bc8a372887692c8ad24a3694193c43efb5a79f87134cf166cd64f60",
+    "app/run_storage.py": "ae57fb5d13aac35672cb07de38c9b515d49651ffebce20cf3b88398e40845718",
+    "app/action_storage.py": "5fc0787a1ab89be57b489f318b2821243d085a40a26e4083c140fd3e798cfac4"
+  },
+  "codex_cli_version": "0.154.0",
+  "source": {
+    "captured_at": "2026-10-15T13:05:57.265827+00:00",
+    "producer_head_before": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+    "producer_head_after": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+    "store": "2026-10-13.5",
+    "email": 51,
+    "physical_tables": 121,
+    "foreign_key_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "size_bytes": 484958208,
+    "sha256": "2f3bf1bd7b462a24d8cecb8a8afd7d699e1a7ddfc35cfb4f015343de45a4dff4"
+  },
+  "copy_target_pair": {
+    "store": "2026-10-14.1",
+    "email": 52,
+    "action_types": 29,
+    "retired_email_tables": 13
+  },
+  "producer_head_after_cases": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "cases": [
+    {
+      "case": "work_summary",
+      "input_id": 6281593909800858,
+      "source_ref": "native-copy-acceptance:work:31329b7d606f4a02a44bbc32f9ae2c1d",
+      "business_id": 595,
+      "native_invocations": [
+        {
+          "returncode": 0,
+          "timed_out": false,
+          "prompt_sha256": "35476dd667ef9f46d40390e4c3282c94a309e3a2a606864b58e54f7f65e6db96"
+        }
+      ],
+      "provider_calls": 0,
+      "status": "done",
+      "session_id": "01a13fb0-a17d-7f23-9059-c27c18a6dedf",
+      "start": 0,
+      "end": 15,
+      "original_tables_unchanged": 103,
+      "target_baseline_sha256": "625ef708fc2a386d76e6a93c28e73997a8dd8f2655ec4475da5cf0e4bed62d74",
+      "task_id_reservation": 6281593909800857,
+      "passed": true,
+      "root_readback": {
+        "case": "work_summary",
+        "native_file_exists": true,
+        "native_bounds_complete": true,
+        "native_event_counts": {
+          "task_started": 1,
+          "item_completed": 3,
+          "token_count": 1,
+          "task_complete": 1
+        },
+        "input_status": "done",
+        "input_compacted": 1,
+        "original_input_bytes": 930,
+        "retained_input_payload_characters": 2,
+        "business_stage": "candidate",
+        "business_status": "open",
+        "task_agent_run_status": "completed",
+        "native_session_matches_run": true,
+        "one_applied_decision": true,
+        "foreign_key_findings": [
+          [
+            "runs",
+            190042,
+            "tasks",
+            1
+          ]
+        ],
+        "runtime_attempts": [
+          {
+            "workload_kind": "task",
+            "runtime_kind": "codex_cli",
+            "status": "completed",
+            "transcript_start": 0,
+            "transcript_end": 15
+          }
+        ],
+        "snapshot_capacity": {
+          "source.sqlite3": {
+            "file_bytes": 484958208,
+            "page_size": 4096,
+            "page_count": 118398,
+            "free_pages": 19,
+            "physical_tables": 121
+          },
+          "pre-native-target.sqlite3": {
+            "file_bytes": 507281408,
+            "page_size": 4096,
+            "page_count": 123848,
+            "free_pages": 0,
+            "physical_tables": 108
+          }
+        }
+      }
+    },
+    {
+      "case": "scheduled",
+      "task_id": 5511727076207666,
+      "scheduled_id": 16,
+      "source_run_id": 361834,
+      "native_invocations": [
+        {
+          "role": "consumer",
+          "returncode": 0,
+          "timed_out": false,
+          "prompt_sha256": "0e984378e81320ecad6e54d7127cf50bcd0e2d8d8230543bac19f41da4a5de3b"
+        },
+        {
+          "role": "audit",
+          "returncode": 0,
+          "timed_out": false,
+          "prompt_sha256": "dfa2ee19c245032ac206dad0e49d4138aabec0b21b35155fb1fb7317f2fd144e"
+        }
+      ],
+      "provider_calls": 1,
+      "status": "done",
+      "original_tables_unchanged": 103,
+      "target_baseline_sha256": "a8a7eebc6d5fbf515cb3eb9556a98d37d4fb94fc5ddb2cf078f82b0b5a293485",
+      "task_id_reservation": 5511727076207665,
+      "passed": true,
+      "root_readback": {
+        "case": "scheduled",
+        "reviews": [
+          "approve"
+        ],
+        "execution_states": [
+          "done"
+        ],
+        "action_attempt_states": [
+          "verified"
+        ],
+        "receipt_count": 1,
+        "receipt_is_in_memory_fixture": true,
+        "native_runs": [
+          {
+            "run_id": 361835,
+            "role": "consumer",
+            "status": "completed",
+            "session_id": "01a13fb3-3d5c-7750-9cbd-57c1090cbfe6",
+            "start": 0,
+            "end": 35,
+            "native_file_exists": true,
+            "complete_native_turn": true
+          },
+          {
+            "run_id": 361837,
+            "role": "audit",
+            "status": "completed",
+            "session_id": "01a13fb3-8dd0-7101-bc88-57038faee645",
+            "start": 0,
+            "end": 29,
+            "native_file_exists": true,
+            "complete_native_turn": true
+          }
+        ],
+        "foreign_key_findings": [
+          [
+            "runs",
+            190042,
+            "tasks",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "case": "workbench",
+      "task_id": "a5d50fdd-bf55-473c-a2af-06050aa6f570",
+      "turn_id": "404c963a-e102-4a96-ab8a-e131b694413d",
+      "native_invocations": [
+        {
+          "returncode": 0,
+          "timed_out": false,
+          "prompt_sha256": "0c758647538102434916f5a8fff802b653672cb2db1afc670fad7d993eac8299"
+        }
+      ],
+      "provider_calls": 0,
+      "status": "completed",
+      "event_count": 4,
+      "session_id": "01a13fb6-18cd-7dc0-8209-f47c508a9fb5",
+      "original_tables_unchanged": 103,
+      "target_baseline_sha256": "03b95ef189aea45aef8fab0e7453e4c263149327ad112560533c9471f9ab2785",
+      "task_id_reservation": 4889719585637286,
+      "passed": true,
+      "root_readback": {
+        "case": "workbench",
+        "turn_completed": true,
+        "result_contains_expected_sum": true,
+        "provider_session_matches": true,
+        "event_types": [
+          "status_changed",
+          "status_changed",
+          "text_delta",
+          "turn_completed"
+        ],
+        "runtime_attempts": [
+          {
+            "workload_kind": "workbench",
+            "runtime_kind": "codex_cli",
+            "status": "completed",
+            "transcript_start": 0,
+            "transcript_end": 15
+          }
+        ],
+        "native_file_exists": true,
+        "complete_native_turn": true,
+        "native_event_counts": {
+          "task_started": 1,
+          "item_completed": 3,
+          "token_count": 1,
+          "task_complete": 1
+        },
+        "foreign_key_findings": [
+          [
+            "runs",
+            190042,
+            "tasks",
+            1
+          ]
+        ]
+      }
+    }
+  ],
+  "totals": {
+    "real_cli_invocations": 4,
+    "complete_native_turns_read_back": 4,
+    "in_memory_delivery_calls": 1,
+    "real_external_delivery_calls": 0
+  },
+  "limitations": [
+    "Email29 candidate copy only; four-kind Business module remains unselected and four old Business parent tables remain.",
+    "Work-summary validates TaskAgent semantic application; it is not a Consumer/Audit case. Workbench validates a text turn. Scheduled case validates Consumer/Audit/verified in-memory execution and receipt.",
+    "103 original ordinary target tables compared; native comparison deliberately excludes virtual FTS tables and their shadow tables.",
+    "No production database write, main merge, push or deployment.",
+    "Prior independent Audit signature misjudgment remains unmodified.",
+    "CI38736466402 at Email09bc was still in_progress at the last current read; this does not prove CI success."
+  ],
+  "temporary_roots": {
+    "paths": [
+      "/private/tmp/ceo-native-copy.hd6lompa",
+      "/private/tmp/ceo-native-copy.8aa2imz8",
+      "/private/tmp/ceo-native-copy.jwb8mcm1"
+    ],
+    "all_removed": true,
+    "native_runtime_originals_retained": true
+  }
+}

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.run_storage import create_run_schema, insert_run
+from app.business_storage import create_business_schema
 from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression
 from app.project_context_service import ProjectContextService
 from app.store import AutoReplyStore
@@ -327,8 +328,9 @@ def test_scoped_runner_records_delivered_metrics_and_ranges_without_source_body(
 def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_path):
     path = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(path) as db:
-        for name in ("business_projects", "business_tasks", "business_attention_items", "business_attention_events",
-                     "business_task_events", "business_task_anchor_links", "business_anchors"):
+        create_business_schema(db)
+        for name in ("business_attention_items", "business_attention_events",
+                     "business_task_events", "business_task_anchor_links"):
             db.execute(f"create table {name} (id integer, canonical_anchor_id integer, active integer)")
         create_task_schema(db)
         create_run_schema(db, include_task_runs=True)
@@ -360,7 +362,7 @@ def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_
     result = tool.readback(store, input_id=1, before=tool.read_domain(store))
     assert result["run_id"] == 2  # latest public ID, despite descending physical IDs
     assert "project_centered_storage_missing" in result["failures"]
-    assert result["comparison_capabilities"]["missing_tables"] == ["business_project_context_revisions", "business_project_evidence", "business_source_documents"]
+    assert result["comparison_capabilities"]["missing_tables"] == ["business_project_evidence", "business_source_documents"]
     assert not result["passed"]
     assert path.read_bytes() == before
 

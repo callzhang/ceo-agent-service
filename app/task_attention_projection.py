@@ -1,6 +1,7 @@
 """Persisted, evidence-backed business attention projection."""
 
 from __future__ import annotations
+from app.business_definitions import BUSINESS_PROJECTIONS
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -103,19 +104,19 @@ class BusinessAttentionProjection:
         if signal is None:
             raise ValueError("attention evidence signal does not exist")
         anchor = db.execute(
-            "select active from business_anchors where id=?", (proposal.anchor_id,)
+            f'select active from ({BUSINESS_PROJECTIONS["anchor"]}) where id=?', (proposal.anchor_id,)
         ).fetchone()
         if anchor is None:
             raise ValueError("attention anchor does not exist")
         if not bool(anchor["active"]):
             raise ValueError("attention anchor must be active")
         if db.execute(
-            "select 1 from business_projects where canonical_anchor_id=?", (proposal.anchor_id,)
+            f'select 1 from ({BUSINESS_PROJECTIONS["project"]}) where canonical_anchor_id=?', (proposal.anchor_id,)
         ).fetchone() is None:
             raise ValueError("attention requires an official Project")
         if db.execute(
             "select 1 from business_project_evidence evidence "
-            "join business_projects project on project.id=evidence.project_id "
+            f'join ({BUSINESS_PROJECTIONS["project"]}) project on project.id=evidence.project_id '
             "where project.canonical_anchor_id=? and evidence.signal_id=?",
             (proposal.anchor_id, proposal.evidence_signal_id),
         ).fetchone() is None:
@@ -151,10 +152,7 @@ class BusinessAttentionProjection:
                 and task.status in (BusinessTaskStatus.OPEN, BusinessTaskStatus.WAITING)
                 and task.business_relevance is BusinessRelevance.RELEVANT
                 and db.execute(
-                    """select 1 from business_task_anchor_links link
-                       join business_anchors anchor on anchor.id=link.anchor_id
-                       where link.task_id=? and link.anchor_id=? and link.status='confirmed'
-                         and link.active=1 and anchor.active=1""",
+                    f'select 1 from business_task_anchor_links link\n                       join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id\n                       where link.task_id=? and link.anchor_id=? and link.status=\'confirmed\'\n                         and link.active=1 and anchor.active=1',
                     (task_id, anchor_id),
                 ).fetchone() is not None
             ):
@@ -274,7 +272,7 @@ class BusinessAttentionProjection:
             )
             if db.execute(
                 "select 1 from business_project_evidence evidence "
-                "join business_projects project on project.id=evidence.project_id "
+                f'join ({BUSINESS_PROJECTIONS["project"]}) project on project.id=evidence.project_id '
                 "where project.canonical_anchor_id=? and evidence.signal_id=?",
                 (item.anchor_id, resolution_signal_id),
             ).fetchone() is None:

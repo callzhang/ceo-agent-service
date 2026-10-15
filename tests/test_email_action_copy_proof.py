@@ -17,7 +17,7 @@ from scripts import validate_action_email_copy as proof
 from scripts.validate_action_email_copy import _case, _old_process, run
 
 PUBLISHED_OLD_REF = "9cd41bcf5ea43a275eeb1376817d37f7cef6bd21"
-LATEST_OLD_REF = "d06c148b90aaeee74c14bbabf0183ffd65f34048"
+LATEST_OLD_REF = "7dadc492c1c62d5b0624f2f97dd0c89f4f358646"
 
 
 @pytest.fixture
@@ -307,6 +307,11 @@ def test_latest_paired_publication_current_public_inverse_and_reforward(latest_f
     assert result["old_public_cold_writes"]
     assert result["current_fact_inverse"]
     assert result["reforward_current_facts"]
+    assert result["source_tables"] - result["target_tables"] == 16
+    assert set(result["business_current_public_ids"]) == {
+        "task", "anchor", "project", "project_context_revision",
+    }
+    assert result["business_old_public_ids"]["email_cold_read"]
 
 
 def test_latest_paired_copy_requires_real_publication_before_default_constructors(
@@ -414,12 +419,17 @@ def bounded_run(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[1]
     source = tmp_path / "source.sqlite3"
     sqlite3.connect(source).close()
-    source_ref = "published-current"
+    source_ref = proof.PUBLISHED_SCHEMA_REF
     heads = [source_ref, "published-next"]
-    binding = {"production_checkout_head_after": proof.PUBLISHED_SCHEMA_REF,
-               "store_marker": {"value": 19}, "email_migration_ledger": [],
+    binding = {"production_checkout_head_before": proof.PUBLISHED_SCHEMA_REF,
+               "production_checkout_head_after": proof.PUBLISHED_SCHEMA_REF,
+               "store_marker": {"value": 19, "updated_at": "now"},
+               "email_migration_ledger": [], "foreign_key_findings": [],
                "actions": {"variant": "old", "declaration_fingerprint_sha256": "fingerprint"},
-               "email_declaration_fingerprint_sha256": "fingerprint", "schema_user_table_count": 0}
+               "email_declaration_fingerprint_sha256": "fingerprint", "schema_user_table_count": 0,
+               "business": {"variant": "actual",
+                            "parent_declaration_fingerprint_sha256": "fingerprint",
+                            "child_declaration_fingerprint_sha256": "fingerprint"}}
     binding_path = tmp_path / "binding.json"
     binding_path.write_text(json.dumps(binding))
     monkeypatch.setattr(proof, "BINDING", binding_path)
@@ -427,6 +437,9 @@ def bounded_run(tmp_path, monkeypatch):
     monkeypatch.setattr(proof, "_email_ledger", lambda db: ())
     monkeypatch.setattr(proof, "capture_email_action_source", lambda db: {
         "action_variant": "old", "source_actions": {}, "source_tables": {}})
+    monkeypatch.setattr(proof, "capture_business_source", lambda db: {
+        "variant": "actual", "parents": {}, "children": {}, "fk_findings": (),
+    })
     monkeypatch.setattr(proof, "_fingerprint", lambda value: "fingerprint")
     monkeypatch.setattr(proof, "_consistency", lambda db: ())
     monkeypatch.setattr(proof, "_copy", lambda origin, target: shutil.copyfile(origin, target))
@@ -437,7 +450,9 @@ def bounded_run(tmp_path, monkeypatch):
     with tarfile.open(fileobj=archive_bytes, mode="w") as archive:
         for name in (*("app/" + p for p in ("store.py", "email_store.py",
                      "action_storage.py", "action_email_storage.py",
-                     "action_email_definitions.py")), proof.SOURCE_ARCHIVE_PATHS[1]):
+                     "action_email_definitions.py", "project_context_service.py",
+                     "task_semantic_models.py", "email_classifier_contracts.py",
+                     "email_unsubscribe.py", "audit_web.py")), proof.SOURCE_ARCHIVE_PATHS[1]):
             payload = b"published source"
             entry = tarfile.TarInfo(name)
             entry.size = len(payload)
@@ -448,8 +463,6 @@ def bounded_run(tmp_path, monkeypatch):
             return archive_bytes.getvalue()
         if "status" in command:
             return ""
-        if "merge-base" in command:
-            return proof.PUBLISHED_SCHEMA_REF
         if "rev-parse" in command and str(proof.PRODUCTION_ROOT) in command:
             return heads.pop(0)
         if "rev-parse" in command:
@@ -472,8 +485,16 @@ def test_final_production_head_change_keeps_all_completed_case_evidence(bounded_
     assert report["production_head_after"] == "published-next"
     assert report["published_source_ref"] == source_ref
     assert report["executed_candidate_commit"] == "candidate-commit"
-    assert len(report["candidate_module_sha256"]) == 5
-    assert len(report["published_old_module_sha256"]) == 5
+    assert len(report["candidate_module_sha256"]) == 15
+    assert {"app/email_classifier_contracts.py", "app/email_unsubscribe.py",
+            "app/audit_web.py"}.issubset(report["candidate_module_sha256"])
+    assert "app/process_runner.py" not in report["candidate_module_sha256"]
+    assert "finite" in report["candidate_module_hash_scope"].lower()
+    assert "app/" in report["candidate_module_hash_scope"]
+    assert len(report["candidate_proof_sha256"]) == 13
+    assert proof.BINDING_RELATIVE in report["candidate_proof_sha256"]
+    assert report["scope"] == "combined Business4/Email13 paired copy and three Email-only SQL-boundary cases"
+    assert len(report["published_old_module_sha256"]) == 10
     assert report["cases"] == {
         "paired_actual_online_backup": {"paired": True},
         "actual_online_backup_sql_boundary": {"case": 0},
@@ -489,6 +510,93 @@ def test_unchanged_production_head_still_passes(bounded_run):
     report = run(source, source_ref, repo)
     assert report["status"] == "passed"
     assert report["production_head_before"] == report["production_head_after"] == source_ref
+
+
+def test_latest_copy_requires_actual_published_business_source(bounded_run, monkeypatch):
+    source, source_ref, repo, heads = bounded_run
+    monkeypatch.setattr(proof, "capture_business_source", lambda db: {
+        "variant": "fresh", "parents": {}, "children": {}, "fk_findings": (),
+    })
+    with pytest.raises(AssertionError, match="published Business source variant"):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
+
+
+@pytest.mark.parametrize("field", (
+    "parent_declaration_fingerprint_sha256", "child_declaration_fingerprint_sha256",
+))
+def test_latest_copy_rejects_business_source_declaration_drift(bounded_run, field):
+    source, source_ref, repo, heads = bounded_run
+    binding = json.loads(proof.BINDING.read_text())
+    binding["business"][field] = "different"
+    proof.BINDING.write_text(json.dumps(binding))
+    with pytest.raises(AssertionError, match="published Business source declaration"):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
+
+
+@pytest.mark.parametrize("field", ("store_marker", "foreign_key_findings"))
+def test_latest_copy_rejects_published_marker_or_fk_drift(bounded_run, field):
+    source, source_ref, repo, heads = bounded_run
+    binding = json.loads(proof.BINDING.read_text())
+    if field == "store_marker":
+        binding[field]["updated_at"] = "different"
+    else:
+        binding[field] = [["runs", 1, "tasks", 1]]
+    proof.BINDING.write_text(json.dumps(binding))
+    with pytest.raises(AssertionError):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
+
+
+@pytest.mark.parametrize("path", (
+    "app/store.py", "app/email_store.py", "app/project_context_service.py",
+    "app/task_semantic_models.py",
+    "docs/superpowers/specs/2026-10-15-database-redesign-business-email-published-source.json",
+))
+def test_latest_copy_rejects_dirty_executed_module_or_binding(bounded_run, monkeypatch, path):
+    source, source_ref, repo, heads = bounded_run
+    original = proof.subprocess.check_output
+
+    def dirty_if_checked(command, **kwargs):
+        if "status" in command:
+            pathspecs = command[command.index("--") + 1:]
+            if any(path == spec or path.startswith(f"{spec.rstrip('/')}/")
+                   for spec in pathspecs):
+                return f" M {path}\n"
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(proof.subprocess, "check_output", dirty_if_checked)
+    with pytest.raises(AssertionError, match="proof code is uncommitted"):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
+
+
+def test_latest_copy_guards_app_module_outside_finite_hash_list(bounded_run, monkeypatch):
+    source, source_ref, repo, heads = bounded_run
+    path = "app/process_runner.py"
+    original = proof.subprocess.check_output
+
+    def dirty_if_app_tree_checked(command, **kwargs):
+        if "status" in command:
+            pathspecs = command[command.index("--") + 1:]
+            assert path not in pathspecs
+            if "app" in pathspecs:
+                return f" M {path}\n"
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(proof.subprocess, "check_output", dirty_if_app_tree_checked)
+    with pytest.raises(AssertionError, match="proof code is uncommitted"):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
+
+
+def test_latest_copy_rejects_descendant_source_ref_even_with_same_old_schema(bounded_run):
+    source, _source_ref, repo, heads = bounded_run
+    heads[0] = "published-descendant"
+    with pytest.raises(AssertionError, match="published source ref mismatch"):
+        run(source, "published-descendant", repo)
+    assert heads == ["published-descendant", "published-next"]
 
 
 def test_case_failure_still_propagates_without_success_report(bounded_run, monkeypatch):

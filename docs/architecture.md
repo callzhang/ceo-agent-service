@@ -1,5 +1,80 @@
 # CEO Agent Service Architecture
 
+The unpublished Store `2026-10-14.1`/Email52 candidate selects the four-kind
+Business storage unit for Task, Project,
+Anchor and Project context revision together, preserving all 42 existing source
+fields. Source-shaped reads retain actual/fresh source column order and public
+signed IDs. Writes use the existing tagged SQLite value codec, native affinities,
+NOT NULL/CHECK/unique constraints and typed composite physical/public FKs;
+Project retains its actual Anchor-type composite edge. Four public allocator
+streams remain separate from physical Business IDs. Ordinary writes and schema
+installation leave commit/rollback to an already active caller transaction;
+all omitted row defaults share one SQLite statement. Public allocator exhaustion
+matches the actual plain INSERT/lastrowid source writers: SQLITE_FULL rolls back
+the caller transaction. Native INSERT RETURNING has a different demonstrated
+exhaustion outcome and is not the source API contract. Both current Store and
+Email constructors select this unit. The 19 incoming FK groups from 15 retained
+children target typed Business aliases; Signal/document/evidence/date/event
+tables, their public APIs, provider behavior and other FK groups retain their
+existing contracts. Full ten-core-plus-ledger implementation
+and source-body retirement are still incomplete. See
+`docs/superpowers/plans/2026-10-15-business-four-kind-storage-plan.md`.
+
+The finite release module migrates the four old Business parents
+into this table while retaining fifteen existing child tables. Three generated
+typed public-ID aliases and full unique indexes carry exactly nineteen child
+foreign keys; the other twenty-one child foreign keys stay on their original
+parents. The migration captures and validates the actual or fresh source
+declarations before DDL, maps every parent public ID to a positive physical ID
+before copying references, and preserves source-shaped values and storage
+classes, hidden child ROWIDs, auxiliary declarations, native FK findings, and
+thirteen independent sequence waters. Its inverse reads current target facts,
+including later writes, and recreates the captured source declarations inside
+the caller's FK-off transaction. Migration projections read `main.business`
+explicitly, so a same-named TEMP table cannot substitute its rows. Exact TEMP
+relation collisions with tables whose DDL is rebuilt are refused before DDL.
+The exact published Store19/Email51 pair selects it through the same unpublished
+paired coordinator as Email13. Forward migration, both version markers and
+inverse rollback share one foreign-key-off transaction. Current constructors
+require the target Business declaration and reject malformed marker-correct
+targets without repairing them. This candidate has not been published. See
+`docs/database-redesign-business-four-kind-migration-validation.md`.
+
+The Console Project CRM search saves its local lookup candidates inside the
+existing Business write transaction. Candidate confirmation and explicit link
+clearing use that same transaction boundary; the typed writer requires an
+active caller transaction. Search does not create or replace a confirmed CRM
+association: a previously unlinked Project remains unlinked until human
+confirmation, and an existing confirmed association is preserved. Search
+performs no external CRM write.
+
+The offline copied-database harness checks the combined Business/Email paired
+release against the exact published-source declaration binding. Its paired case
+compares the four source-shaped parent families, fifteen retained child tables,
+SQLite value types, hidden ROWIDs, thirteen sequence waters and FK findings
+through publication, public writes, current-fact inverse, genuine cold old-code
+writes and re-publication. Three additional SQL-boundary cases cover Email only.
+This is candidate validation, not a production migration or native Agent result.
+
+An unselected `read_native_source_body` helper in `app/native_trajectory.py`
+can reconstruct an exact historical source body from already recorded Codex or
+Claude native provenance. It resolves the native session through the existing
+CLI path finder, verifies the recorded raw JSONL line hash including its line
+ending, follows the recorded JSON leaf and Unicode character range, decodes the
+observed `json_string_literal_utf8` value, and verifies the complete UTF-8 body
+length and SHA-256. Unresolved sessions, unavailable files/lines and mismatches
+with the recorded hashes or body length raise `LookupError`. Invalid required
+field types/shapes, JSON, leaf paths, character ranges and unsupported
+runtime/codec raise `ValueError`. The existing finder owns UUID format
+validation; a nonempty unresolved UUID or mismatching 64-character digest takes
+the `LookupError` path. Other file I/O failures retain their native errors. No production caller selects
+this helper, no body cache or database field is added, and existing source
+identity, quote checks and projections remain unchanged. The recovery artifact
+proves only 30 of 188 historical bodies (seven Codex and 23 Claude); 158 remain
+unproved. This helper does not retire source bodies or activate the approved
+ten-core-table-plus-ledger redesign. See
+`docs/superpowers/plans/2026-10-15-business-native-source-reader-plan.md`.
+
 The local History query candidate projects source identity and sort time from
 each selected source before the combined page sort, applies existing filters
 within those source branches, and hydrates only the selected page in one read

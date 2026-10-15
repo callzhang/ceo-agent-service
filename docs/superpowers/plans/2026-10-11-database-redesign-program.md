@@ -1,5 +1,28 @@
 # Database Redesign Program
 
+## Latest unpublished Business/Email acceptance, 2026-10-15
+
+The approved target is still ten core tables plus one migration ledger. Clean
+candidate df72a900 passed the real-source combined Business4/Email13 paired
+copy, current-fact inverse, genuine published7dad old-code writes and reforward;
+121 non-SQLite-internal tables became105 in owned copies only. Root passed1222
+focused tests and138 changed Python Ruff/compile checks. Five real Codex cases
+(approval, revision, work summary, scheduled execution, Workbench) passed with
+ten invocations and three in-memory provider calls; no real outbound delivery.
+Evidence: `../database-redesign-business-four-kind-integration-validation.md`
+and the three2026-10-15 Business/Email copy/native/capacity acceptance receipts.
+
+This is not full redesign completion or production publication. The same-input
+main database grew from485212160 to507965440 bytes; do not call table consolidation
+space recovery. Remaining105 tables map exactly back to the approved direction:
+four already selected cores,32 actions families, eight business, twelve tasks,
+fifteen configs, sixteen state, two provider_state, one schedules, two emails,
+two runs, one provenance, one inline legacy identity, eight approved retirements,
+and one ledger. Reaching the final eleven requires another94 net table reduction,
+complete callers/constraints/current-fact rollback, and the original provenance
+and duplicate-content rules. Combined CI and final production approval remain
+outstanding; four rejected temporary-directory cleanups await human response.
+
 **已确认目标：** 采用 business；单一来源内联，单一归属直接 FK；仅需共享来源版本时使用 provenance；实际多条证据/关联事实归 actions；可准确溯源原文不长期保存。保留必要状态、已采用业务结果和执行回执。
 
 **基线：** 2026-10-11 生产/计划工作树 36e42c17，Email schema 47。149 表/1611 字段/413.60 MB 附录来自此前 d171fb72 审计，不能用作当前精确执行前计数。

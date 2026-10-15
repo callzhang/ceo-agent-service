@@ -78,3 +78,70 @@ body are not automatically identical historical inputs. Retain necessary adopted
 business facts and their direct references; create no generic source-body archive.
 No unused helper was proved by this bounded inspection, and zero date-evidence
 rows do not make its active deadline/writer path dead.
+
+## Complete native source freeze, 2026-10-15
+
+The next bounded preparation above is now recorded in
+`docs/superpowers/specs/2026-10-15-database-redesign-business-core-native-source.json`
+and `tests/test_business_core_source.py`. The earlier seven-family artifact remains
+an earlier observation; the new artifact freezes all ten existing behavior
+families, 84 fields and 3,526 actual rows. Events add 8 fields/893 rows, anchors
+6 fields/50 rows, and Project context revisions 5 fields/6 rows. All 84 actual
+columns match the approved global CSV's type, nullability and PK position.
+
+The actual source is the root-owned immutable Store19/Email51 backup at published
+code `7dadc492c1c62d5b0624f2f97dd0c89f4f358646`, SHA-256
+`c3fcfb543032ab632c948cd9540739a698dda83a33047b0c9388d636c8bbf67e`,
+484,175,872 bytes. Inspection used SQLite `mode=ro`, `query_only=on` and an explicit
+read transaction, exported metadata/counts/sequence waters only, then closed its
+handle before tests. No source copy was created by this preparation. The fresh
+variant was genuinely constructed by that exact code's published AutoReplyStore
+and EmailStore in a separate subprocess/archive and an explicit temporary DB.
+This is an observed current source binding, not a reserved future predecessor.
+
+The complete ten-family outgoing closure is internal: 12 FK groups/13 FK rows.
+Its incoming external closure is 12 physical families, 118 fields and 23 FK groups,
+replacing the earlier seven-family external summary for this complete boundary.
+The exact literal endpoints and external table DDL/xinfo/FKs are frozen in each
+variant. They require endpoint remapping when their business parents are actually
+replaced; this does not add those children to the current migration scope. The
+nine disabled Followup/Todo-sync families keep their separately prepared ownership.
+
+Native validation and its limits are recorded in
+`docs/database-redesign-business-core-native-source-validation.md`. No body has
+been proved recoverable or retired, and zero date-fact rows do not retire the
+active date path. No target field, version, constructor, writer or runtime policy
+was added. Original replay events and adopted Project context remain necessary
+business facts independent of any later source-body retirement decision.
+
+## Verified native source-body recovery lower bound
+
+A later bounded probe on the same7dad snapshot compared all188 original
+bodies (5,986,326 UTF-8 bytes) with only26 exact candidate native session IDs
+from current source-type/ref → work-summary → Task-run lineage. This join
+generates candidate versions; only complete byte/hash equality proves recovery.
+Metadata-only coordinates are in the business-native-source-recovery JSON.
+No body, quoted excerpt, native prompt or tool output is copied into that file.
+
+Actual runtime-attempt metadata distinguishes25 Codex sessions and1 Claude
+session despite the legacy codex_session_id column name. Two native files
+were present. Seven bodies/173,779 bytes were recovered from Codex, and23
+additional bodies/498,518 bytes from Claude. All30 were independently read
+again by root from raw native line hash, decoded JSON leaf, substring offset
+and literal encoding, then compared byte-for-byte with the source DB value.
+Thus native recovery is verified for30/188 bodies/672,297 bytes; this is not
+30 Codex bodies. A strictly Codex-only count is seven.
+
+The158 remaining bodies/5,314,029 bytes remain unproved. For the24 missing
+Codex UUIDs, root also checked the existing native path inventory: no exact
+filename match, and all24 indexed native paths were absent. This does not
+prove external originals are unavailable or authorize raw-body deletion.
+Current Task prompt generation removes summary and exposes visible source
+ranges, so partial native excerpts cannot replace a complete source version.
+
+The source DB hash stayed equal before/after extraction. All source/native
+handles closed; native inspected prefixes matched on reread. The single source
+subsequently moved between root-owned test directories without duplication.
+No source body was retired and no runtime, field, schema, retention policy,
+provider operation or deployment changed. The ten source-family oracle and
+full10-core-plus-ledger acceptance remain distinct from this recovery probe.

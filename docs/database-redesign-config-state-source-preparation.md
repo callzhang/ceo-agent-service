@@ -63,3 +63,69 @@ allocator/ROWID and full incoming SQL/FK closure; map native uniqueness and
 mutation behavior; then plan the smallest atomic publication units with direct
 references. No compatibility tables/views, copied native trajectory, source-body
 archive or new schema fields are justified by this inventory.
+
+
+## Literal actual/published-fresh source freeze, 2026-10-15
+
+A new metadata-only capture at 2026-10-15T13:33:48 UTC is recorded in
+`superpowers/specs/2026-10-15-database-redesign-config-state-native-source.json`.
+A single query-only read transaction inspected the current production source;
+producer `7dadc492c1c62d5b0624f2f97dd0c89f4f358646` and Store2026-10-13.5/Email51
+were verified. All handles closed after capture. Genuine fresh metadata came
+from an exact `git archive` of that published code, using its real Store/Email
+constructors at an explicit private temporary database path. Archive, database
+and parent temporary directory were removed and absence verified.
+
+The actual 34 families contain **238 fields, 44 indexes, 25 owned triggers,
+13 outgoing FK groups, four AUTOINCREMENT families and three WITHOUT ROWID
+families**. Eighteen incoming FK groups include thirteen internal edges and
+five external ones: retired-corpus observation metadata → training snapshot,
+managed Skill export receipts → revisions, runtime Skill load receipts →
+configs, and two `runs` edges → schedule/config version. This is a literal FK
+inventory, not proof of the complete dynamic caller/trigger reference closure.
+External views/triggers are recorded as an explicitly unfiltered declaration
+inventory for later classification. No production row contents or config
+values were captured.
+
+Actual and genuine fresh declarations differ for six families: email_accounts,
+scheduled_task_config_versions, email_provider_observations, scheduled_tasks,
+conversations and org_user_profiles. Fresh has **234 fields**: the four actual
+legacy conversations columns `in_handoff`, `handoff_message_id`,
+`handoff_message_create_time`, and `manual_clear_message_id` are absent from
+published fresh creation. A bounded search of current `app/` and `tests/`, excluding the new metadata
+oracle that names those source columns, found no consumer of those four names. They are candidates for explicit retirement
+in the later state field map; this capture deletes no values or columns.
+The old CSV still covers all 238 actual fields. Fresh initialization also
+creates default category/config/state records, so fresh is not assumed empty.
+
+`tests/test_config_state_native_source.py` first failed on the missing artifact.
+Initial roundtrip checks exposed the four-field actual/fresh distinction and
+the three WITHOUT ROWID PK indexes that have PRAGMA index metadata but no
+separate sqlite_schema index record. The final native SQL reconstruction and
+CSV coverage suite passed **six cases in 0.21 seconds**; Ruff and diff checks
+passed. All literal tables, column metadata, native FK lists, index lists/xinfo
+and trigger SQL reconstruct exactly for both variants. These are source
+metadata/reconstruction checks only; source mutation semantics, CAS/cascade/
+RESTRICT/immutable DML, target mapping, migration/inverse and caller selection
+remain to be implemented. No target schema, version, retention rule, provider
+call, production write or deployment was introduced.
+
+
+### Independent source-metadata acceptance
+
+Sequential fresh SPEC and QUALITY accepted commit `3e171e85`. Both independently
+matched the 34-family grouping, actual/fresh field distinction, original CSV
+coverage, index/trigger/FK and allocator/layout counts. SPEC reran six cases
+in 0.10 seconds; QUALITY reran them in 0.19 seconds, with no runtime or provider
+activity and no edits. This accepts metadata and literal source reconstruction
+only. The six tests do not independently prove the production read or temporary
+cleanup: those are root's recorded capture-command receipts, including the
+closed query-only source and exact published archive constructor invocation.
+The parent TemporaryDirectory was asserted absent after its context exited.
+No raw temporary database or archive is retained for historical replay.
+
+The next work for these groups remains exact source mutation/caller semantics
+and target field/constraint mapping, including explicit treatment of the four
+unused actual-only conversation fields and the five external FK groups. This
+is preparation for the existing ten-table goal, not another target design or
+a claim that these 34 tables have been merged.

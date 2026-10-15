@@ -1,0 +1,58 @@
+# Exact native business source reader acceptance, 2026-10-15
+
+Accepted implementation: `6d675762e9f37d7dc4007ac7938b527806588d05`, parent
+`37a8cf51435ac0a6b4d2705566d20af02362f8e8`, in the isolated
+`codex/database-redesign-business-source-20261015` worktree. This implements only
+the prerequisite in `superpowers/plans/2026-10-15-business-native-source-reader-plan.md`.
+It does not select a production caller, change storage, retire bodies, or complete
+the approved ten-core-table-plus-ledger design.
+
+## Verification
+
+The implementer first observed 72 new tests failing because the helper did not
+exist, then 72 passing after adding it. The focused four-file suite passed
+137 cases in 4.99 seconds:
+
+- `tests/test_native_source_documents.py`
+- `tests/test_task_source_documents.py`
+- `tests/test_storage_native_trajectory.py`
+- `tests/test_business_core_source.py`
+
+Ruff, compilation and diff checks passed. Test roots were temporary and removed.
+Fresh SPEC review confirmed that the function and tests are AST-identical to the
+approved plan, prior module code is unchanged, both documentation insertions are
+exact, and there is no production caller or additional schema/policy change.
+Subsequent fresh QUALITY review found no actionable issue and independently ran
+the 72 new cases: 72 passed in 0.28 seconds. Its isolated temporary home/test root
+was removed. No full local suite ran.
+
+## Readback against existing native originals
+
+At `2026-10-15T11:43:28.959575+00:00`, root used the committed helper against all
+30 previously proved `native_provenance` mappings in
+`superpowers/specs/2026-10-15-database-redesign-business-native-source-recovery.json`.
+The input metadata artifact SHA-256 was
+`ed8ef6f509b4c2d08df7a4c1ce10801ed56e345a258941d30139b3492bbd70ea`.
+The helper resolved original CLI-owned files through existing finders, verified
+the selected raw line, followed the exact JSON leaf and character range, decoded
+the supported JSON string literal, and verified the complete body length/hash.
+Root additionally compared each returned body's length and SHA-256 with the
+artifact's independently recorded source-document length and hash.
+
+| Runtime | Exact bodies | UTF-8 bytes |
+| --- | ---: | ---: |
+| Codex CLI | 7 | 173,779 |
+| Claude CLI | 23 | 498,518 |
+| Total | 30 | 672,297 |
+
+All 30 passed. Returned bodies existed only in process memory and were not
+printed or written. No source database was opened, model or provider invoked,
+native file modified, or new database/test backup created. The command exited
+zero and closed its file handles. Compact metadata is in
+`superpowers/specs/2026-10-15-business-native-source-reader-readback.json`.
+
+This verifies the implementation on the already known recoverable subset; it
+does not increase historical coverage. The other 158 of 188 bodies remain
+unproved. No source body was retired. Provenance persistence, existing caller
+conversion, exact target fields/constraints and forward/inverse migration
+verification remain subsequent work. Nothing here was pushed, merged or deployed.

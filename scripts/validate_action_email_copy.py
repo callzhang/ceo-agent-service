@@ -1,4 +1,4 @@
-"""Offline Email13 copy proof against the published Store19/Email51 predecessor."""
+"""Offline combined Business4/Email13 paired proof and Email-only boundary cases."""
 
 import argparse
 from collections import Counter
@@ -24,10 +24,16 @@ from app.action_email_storage import (
 )
 from app.action_email_definitions import (EMAIL_AUTOINCREMENT_TYPES, EMAIL_COMPOSITE_KEYS,
                                           EMAIL_ROWID_TYPES, EMAIL_TYPES_ORDER)
+from app.business_schema_release import (
+    AUTOINCREMENT_CHILDREN, RETAINED_CHILD_FKS, SOURCE_PARENTS,
+    _child_facts, _child_waters, _parent_facts, _parent_waters,
+    _target_parent_facts, business_schema_is_current, capture_business_source,
+)
 
-PUBLISHED_SCHEMA_REF = "eb797e6bd35de695c269054a2e697af8fde2baa5"
+PUBLISHED_SCHEMA_REF = "7dadc492c1c62d5b0624f2f97dd0c89f4f358646"
 PRODUCTION_ROOT = Path.home() / "Services/ceo-agent-service"
-BINDING = Path(__file__).resolve().parents[1] / "docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json"
+BINDING_RELATIVE = "docs/superpowers/specs/2026-10-15-database-redesign-business-email-published-source.json"
+BINDING = Path(__file__).resolve().parents[1] / BINDING_RELATIVE
 SOURCE_ARCHIVE_PATHS = (
     "app", "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json",
 )
@@ -93,6 +99,10 @@ def _unrelated(db, fixture_ids=None):
 def _paired_unrelated(db, fixture_ids):
     """Keep all other facts; the two changing markers are checked separately."""
     facts = _unrelated(db, fixture_ids)
+    # Four moved parents, fifteen rebuilt children and the target physical
+    # Business table are checked by _business_*_image, never by name here.
+    for name in (*SOURCE_PARENTS.values(), *RETAINED_CHILD_FKS, "business"):
+        facts.pop(name, None)
     del facts["service_state"]
     del facts["email_schema_migrations"]
     columns = _columns(db, "service_state")
@@ -543,6 +553,41 @@ elif mode == 'current':
                       'failed_action_visible':True,'history_source_id_visible':True,
                       'sequence_continued':True,'unsubscribe_skip':True,
                       'explicit_retry_recorded':True}))
+elif mode == 'business_read_write':
+    from app.project_context_service import ProjectContextService
+    from app.task_semantic_models import ProjectContext
+    with store._connect() as db:
+        db.execute('begin immediate')
+        existing = db.execute('select count(*) from business_tasks').fetchone()[0]
+        task_id = store.create_business_task_in_transaction(
+            title='old-code task', stage='candidate', _db=db)
+        anchor_id = store.create_business_anchor_in_transaction(
+            anchor_type='project', anchor_ref='old-code-anchor:' + str(task_id),
+            title='old-code anchor', _db=db)
+        project_id = store.create_business_project_in_transaction(
+            canonical_anchor_id=anchor_id, title='old-code project',
+            registry_source='synthetic', _db=db)
+        context_id = ProjectContextService(store).apply(
+            project_id=project_id,
+            context=ProjectContext.model_validate({
+                'goal':'old-code goal', 'scope':'old-code scope',
+                'overall_owner':None, 'responsibilities':[], 'facts':[],
+            }),
+            signal_ids=(), db=db,
+        )
+        assert context_id is not None
+        assert store.get_business_task_in_transaction(task_id=task_id, _db=db).id == task_id
+        assert store.get_business_anchor_in_transaction(anchor_id=anchor_id, _db=db).id == anchor_id
+        assert store.get_business_project_in_transaction(project_id=project_id, _db=db).id == project_id
+        assert store.list_business_project_context_revisions_in_transaction(
+            project_id=project_id, _db=db)[0].id == context_id
+        db.commit()
+    assert email.get_classification(int(sys.argv[3])) is not None
+    print(json.dumps({
+        'task_id':task_id, 'anchor_id':anchor_id,
+        'project_id':project_id, 'context_id':context_id,
+        'email_cold_read':True, 'preexisting_tasks':existing,
+    }))
 '''
 
 
@@ -1001,6 +1046,118 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
             "reforward_values_types_locators_waters_equal":True}
 
 
+
+def _paired_other_sequences(db):
+    # The 13 public Business waters are compared by _business_*_image.
+    # Physical business.id has no source counterpart.
+    excluded = (
+        *EMAIL_AUTOINCREMENT_TYPES,
+        *(f"actions:{name}" for name in EMAIL_AUTOINCREMENT_TYPES),
+        *SOURCE_PARENTS.values(),
+        *(f"business:{kind}" for kind in SOURCE_PARENTS),
+        *AUTOINCREMENT_CHILDREN,
+        "business",
+    )
+    marks = ",".join("?" for _ in excluded)
+    return tuple(db.execute(
+        f"select name,seq from main.sqlite_sequence "
+        f"where name not in ({marks}) order by name", excluded
+    ))
+
+
+def _business_source_image(db):
+    captured = capture_business_source(db)
+    return {
+        "variant": captured["variant"],
+        "declarations": {key: captured[key] for key in ("parents", "children")},
+        "parents": _parent_facts(db),
+        "children": _child_facts(db),
+        "parent_waters": _parent_waters(db, target=False),
+        "child_waters": _child_waters(db),
+        "fk_findings": tuple(db.execute("pragma foreign_key_check")),
+    }
+
+
+def _business_target_image(db, variant):
+    assert business_schema_is_current(db, variant)
+    return {
+        "variant": variant,
+        "parents": _target_parent_facts(db, variant),
+        "children": _child_facts(db),
+        "parent_waters": _parent_waters(db, target=True),
+        "child_waters": _child_waters(db),
+        "fk_findings": tuple(db.execute("pragma foreign_key_check")),
+    }
+
+
+def _assert_business_facts_equal(source, target):
+    for key in ("variant", "parents", "children", "parent_waters",
+                "child_waters", "fk_findings"):
+        assert target[key] == source[key], key
+
+
+def _assert_original_business_rows_preserved(original, current):
+    for family in ("parents", "children"):
+        for name, before in original[family].items():
+            after = current[family][name]
+            assert after["columns"] == before["columns"], (family, name)
+            original_rows = Counter(zip(before["rows"], before["types"], strict=True))
+            current_rows = Counter(zip(after["rows"], after["types"], strict=True))
+            assert not original_rows - current_rows, (family, name)
+
+
+def _business_image_summary(image):
+    facts = {key: image[key] for key in (
+        "variant", "parents", "children", "parent_waters", "child_waters", "fk_findings"
+    )}
+    summary = {
+        "variant": image["variant"],
+        "parent_counts": {name: len(snap["rows"])
+                          for name, snap in image["parents"].items()},
+        "child_counts": {name: len(snap["rows"])
+                         for name, snap in image["children"].items()},
+        "sequence_water_count": len(image["parent_waters"]) + len(image["child_waters"]),
+        "fk_finding_count": len(image["fk_findings"]),
+        "facts_sha256": hashlib.sha256(pickle.dumps(facts, protocol=4)).hexdigest(),
+    }
+    if "declarations" in image:
+        summary["declarations_sha256"] = _fingerprint(image["declarations"])
+    return summary
+
+
+def _current_business_public_writes(path):
+    from app.project_context_service import ProjectContextService
+    from app.store import AutoReplyStore
+    from app.task_semantic_models import ProjectContext
+    store = AutoReplyStore(path)
+    with store._connect() as db:
+        db.execute("begin immediate")
+        task_id = store.create_business_task_in_transaction(
+            title="copy-only current task", stage="candidate", _db=db
+        )
+        anchor_id = store.create_business_anchor_in_transaction(
+            anchor_type="project", anchor_ref=f"copy-only-current:{task_id}",
+            title="copy-only current anchor", _db=db
+        )
+        project_id = store.create_business_project_in_transaction(
+            canonical_anchor_id=anchor_id, title="copy-only current project",
+            registry_source="synthetic", _db=db
+        )
+        context_id = ProjectContextService(store).apply(
+            project_id=project_id,
+            context=ProjectContext.model_validate({
+                "goal": "copy-only current goal", "scope": "copy-only current scope",
+                "overall_owner": None, "responsibilities": [], "facts": [],
+            }),
+            signal_ids=(), db=db,
+        )
+        assert context_id is not None
+        db.commit()
+    return {
+        "task": task_id, "anchor": anchor_id, "project": project_id,
+        "project_context_revision": context_id,
+    }
+
 def _paired_case(path, oldroot, repo):
     """Prove real paired publication and public writes on an owned old-code copy."""
     from app.email_store import EmailStore
@@ -1009,6 +1166,7 @@ def _paired_case(path, oldroot, repo):
 
     with closing(sqlite3.connect(path)) as db:
         baseline = _source_facts(db)
+        baseline_business = _business_source_image(db)
         original_unrelated = _paired_unrelated(db, ())
         original_actions = _actions(db, _columns(db, "actions"))
         action_columns = _columns(db, "actions")
@@ -1028,8 +1186,10 @@ def _paired_case(path, oldroot, repo):
         _seed_blank_receipt(db, seeded["receipt_classification_id"], seeded["receipt_plan_id"])
         db.commit()
         seeded_source = _source_facts(db)
+        seeded_business = _business_source_image(db)
+        assert seeded_business == baseline_business
         seeded_fixture = _fixture_rows(db, fixture_ids)
-        other_sequences = _other_sequences(db)
+        other_sequences = _paired_other_sequences(db)
         seeded_waters = _source_waters(db)
         assert _paired_unrelated(db, fixture_ids) == original_unrelated
         assert _actions(db, action_columns) == original_actions
@@ -1052,6 +1212,9 @@ def _paired_case(path, oldroot, repo):
         assert target_marker[0] == "2026-10-14.1"
         assert target_ledger == ledger + ((52, target_marker[1]),)
         initial_target = _target_facts(db, state["email_variant"])
+        _assert_business_facts_equal(
+            seeded_business, _business_target_image(db, state["business"]["variant"])
+        )
         for name in SOURCE_TABLES:
             assert initial_target[name] == (
                 (("rowid",) if name in EMAIL_ROWID_TYPES else ()) + _columns_from_state(state, name),
@@ -1063,7 +1226,7 @@ def _paired_case(path, oldroot, repo):
         assert _actions(db, action_columns) == original_actions
         assert db.execute(
             "select count(*) from main.sqlite_schema where type='table' and name not like 'sqlite_%'"
-        ).fetchone() == (initial_tables - 13,)
+        ).fetchone() == (initial_tables - 16,)
         assert not set(SOURCE_TABLES).intersection(
             name for (name,) in db.execute("select name from main.sqlite_schema where type='table'")
         )
@@ -1071,12 +1234,20 @@ def _paired_case(path, oldroot, repo):
     assert _current_counters(path) == seeded_counters
 
     writes = _current_public_writes(path, seeded)
+    business_writes = _current_business_public_writes(path)
     assert all(writes.get(name) is True for name in (
         "receipt_enriched", "direct_completed", "failed_visible", "attempt_water_advanced",
         "unsubscribe_terminal", "unsubscribe_step", "explicit_retry", "history_source_id",
     ))
     with closing(sqlite3.connect(path)) as db:
         current = _target_facts(db, state["email_variant"])
+        current_business = _business_target_image(db, state["business"]["variant"])
+        _assert_original_business_rows_preserved(seeded_business, current_business)
+        for kind, public_id in business_writes.items():
+            assert any(row[0] == public_id for row in current_business["parents"][kind]["rows"])
+            assert len(current_business["parents"][kind]["rows"]) == (
+                len(seeded_business["parents"][kind]["rows"]) + 1
+            )
         current_waters = _target_waters(db)
         assert len(current["email_action_attempts"][1]) == len(seeded_source["email_action_attempts"][0]) + 3
         for name in ("email_unsubscribe_steps", "email_unsubscribe_receipts", "email_direct_retry_requests"):
@@ -1085,7 +1256,7 @@ def _paired_case(path, oldroot, repo):
         assert current_waters["email_action_attempts"] > (seeded_waters["email_action_attempts"] or 0)
         assert current_waters["email_unsubscribe_steps"] > (seeded_waters["email_unsubscribe_steps"] or 0)
         assert _marker(db) == target_marker and _email_ledger(db) == target_ledger
-        assert _other_sequences(db) == other_sequences
+        assert _paired_other_sequences(db) == other_sequences
         assert _paired_unrelated(db, fixture_ids) == original_unrelated
         assert _fixture_rows(db, fixture_ids) == seeded_fixture
         assert _actions(db, action_columns) == original_actions
@@ -1099,7 +1270,12 @@ def _paired_case(path, oldroot, repo):
         assert capture_email_action_source(db)["source_actions"] == state["source_actions"]
         assert _source_facts(db) == {name: current[name][1:] for name in SOURCE_TABLES}
         assert _source_waters(db) == current_waters
-        assert _other_sequences(db) == other_sequences
+        inverse_business = _business_source_image(db)
+        _assert_business_facts_equal(current_business, inverse_business)
+        assert inverse_business["declarations"] == {
+            key: state["business"][key] for key in ("parents", "children")
+        }
+        assert _paired_other_sequences(db) == other_sequences
         assert _paired_unrelated(db, fixture_ids) == original_unrelated
         assert _fixture_rows(db, fixture_ids) == seeded_fixture
         assert _actions(db, action_columns) == original_actions
@@ -1115,6 +1291,9 @@ def _paired_case(path, oldroot, repo):
     donor = path.with_name(path.stem + "-paired-old-donor.sqlite3")
     assert not donor.exists()
     _copy(path, donor)
+    old_business_write = _old_process_genuine(
+        oldroot, path, "business_read_write", seeded["classification_id"]
+    )
     feedback_started = datetime.now(timezone.utc)
     donor_write = _old_process_genuine(oldroot, donor, "write", seeded["classification_id"],
                                        "copy-only-reply", seeded["retry_action_id"])
@@ -1130,6 +1309,13 @@ def _paired_case(path, oldroot, repo):
     _assert_old_failed_history(_old_process(oldroot, path, "failed_history", seeded["failed_action_id"]))
     with closing(sqlite3.connect(path)) as db, closing(sqlite3.connect(donor)) as donor_db:
         after_old = _source_facts(db)
+        after_old_business = _business_source_image(db)
+        _assert_original_business_rows_preserved(seeded_business, after_old_business)
+        for kind, key in (("task", "task_id"), ("anchor", "anchor_id"),
+                          ("project", "project_id"),
+                          ("project_context_revision", "context_id")):
+            assert any(row[0] == old_business_write[key]
+                       for row in after_old_business["parents"][kind]["rows"])
         after_old_waters = _source_waters(db)
         assert _normalized_feedback_source(db, after_old, feedback_started, feedback_finished) == \
             _normalized_feedback_source(donor_db, _source_facts(donor_db), feedback_started, feedback_finished)
@@ -1138,7 +1324,7 @@ def _paired_case(path, oldroot, repo):
         assert after_old_waters == _source_waters(donor_db)
         assert after_old_waters["email_action_attempts"] > current_waters["email_action_attempts"]
         assert after_old_waters["email_unsubscribe_steps"] == current_waters["email_unsubscribe_steps"]
-        assert (_marker(db), _email_ledger(db), _other_sequences(db)) == (marker, ledger, other_sequences)
+        assert (_marker(db), _email_ledger(db), _paired_other_sequences(db)) == (marker, ledger, other_sequences)
         assert _paired_unrelated(db, fixture_ids) == original_unrelated
         assert _actions(db, action_columns) == original_actions
         after_old_fixture = _fixture_rows(db, fixture_ids)
@@ -1160,7 +1346,13 @@ def _paired_case(path, oldroot, repo):
                    *after_old[name]) for name in SOURCE_TABLES
         }
         assert _target_waters(db) == after_old_waters
-        assert _other_sequences(db) == other_sequences
+        _assert_business_facts_equal(
+            after_old_business, _business_target_image(db, state["business"]["variant"])
+        )
+        final_business_summary = _business_image_summary(
+            _business_target_image(db, state["business"]["variant"])
+        )
+        assert _paired_other_sequences(db) == other_sequences
         assert _paired_unrelated(db, fixture_ids) == original_unrelated
         assert _actions(db, action_columns) == original_actions
         assert _fixture_rows(db, fixture_ids) == after_old_fixture
@@ -1172,26 +1364,43 @@ def _paired_case(path, oldroot, repo):
     return {"paired_default_constructors":True, "target_public_writes":True,
             "old_public_cold_writes":True, "current_fact_inverse":True,
             "reforward_current_facts":True, "source_tables":initial_tables,
-            "target_tables":initial_tables - 13, "preserved_fk_findings":len(original_fk)}
+            "target_tables":initial_tables - 16, "preserved_fk_findings":len(original_fk),
+            "business_current_public_ids":business_writes,
+            "business_old_public_ids":old_business_write,
+            "business_source_summary":_business_image_summary(baseline_business),
+            "business_final_summary":final_business_summary}
 
 
 def run(source, source_ref, repo):
     binding = json.loads(BINDING.read_text())
-    assert binding["production_checkout_head_after"] == PUBLISHED_SCHEMA_REF
+    assert (source_ref == PUBLISHED_SCHEMA_REF
+            == binding["production_checkout_head_before"]
+            == binding["production_checkout_head_after"]), "published source ref mismatch"
     production_before = subprocess.check_output(["git", "-C", str(PRODUCTION_ROOT), "rev-parse", "HEAD"], text=True).strip()
     assert production_before == source_ref
-    assert subprocess.check_output(["git", "-C", str(repo), "merge-base", PUBLISHED_SCHEMA_REF,
-                                    source_ref], text=True).strip() == PUBLISHED_SCHEMA_REF
     candidate_commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     proof_paths = ("scripts/validate_action_email_copy.py", "tests/test_email_action_copy_proof.py",
+                   "tests/test_business_copy_proof.py", "tests/test_business_schema_release.py",
                    "app/action_storage.py", "app/action_email_storage.py",
-                   "app/action_email_definitions.py")
-    assert not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain", "--",
-                                        *proof_paths], text=True).strip(), "proof code is uncommitted"
+                   "app/action_email_definitions.py", "app/action_email_schema_release.py",
+                   "app/store_schema_release.py", "app/business_definitions.py",
+                   "app/business_storage.py", "app/business_schema_release.py",
+                   BINDING_RELATIVE)
     module_paths = ("app/store.py", "app/email_store.py", "app/action_storage.py",
-                    "app/action_email_storage.py", "app/action_email_definitions.py")
+                    "app/action_email_storage.py", "app/action_email_definitions.py",
+                    "app/action_email_schema_release.py", "app/store_schema_release.py",
+                    "app/business_definitions.py", "app/business_storage.py",
+                    "app/business_schema_release.py", "app/project_context_service.py",
+                    "app/task_semantic_models.py", "app/email_classifier_contracts.py",
+                    "app/email_unsubscribe.py", "app/audit_web.py")
+    # Git sees both tracked edits and untracked files under the whole imported app tree.
+    guard_paths = (*proof_paths, "app")
+    assert not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain", "--",
+                                        *guard_paths], text=True).strip(), "proof code is uncommitted"
     candidate_hashes = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
                         for name in module_paths}
+    proof_hashes = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
+                    for name in proof_paths}
     with TemporaryDirectory(prefix="ceo-email13-copy.", dir="/tmp") as temp:
         root = Path(temp)
         oldroot = root / "published-code"
@@ -1209,15 +1418,29 @@ def run(source, source_ref, repo):
         _copy(source, original)
         with closing(sqlite3.connect(original)) as db:
             db.execute("pragma query_only=on")
-            assert _marker(db)[0] == binding["store_marker"]["value"]
+            assert _marker(db) == (
+                binding["store_marker"]["value"], binding["store_marker"]["updated_at"]
+            )
             assert _email_ledger(db) == tuple(tuple(item) for item in binding["email_migration_ledger"])
             captured = capture_email_action_source(db)
             assert captured["action_variant"] == binding["actions"]["variant"]
             assert _fingerprint(captured["source_actions"]) == binding["actions"]["declaration_fingerprint_sha256"]
             assert _fingerprint(captured["source_tables"]) == binding["email_declaration_fingerprint_sha256"]
+            business_source = capture_business_source(db)
+            assert business_source["variant"] == binding["business"]["variant"] == "actual", (
+                "published Business source variant"
+            )
+            assert _fingerprint(business_source["parents"]) == binding["business"][
+                "parent_declaration_fingerprint_sha256"
+            ], "published Business source declaration: parents"
+            assert _fingerprint(business_source["children"]) == binding["business"][
+                "child_declaration_fingerprint_sha256"
+            ], "published Business source declaration: children"
             assert db.execute("select count(*) from sqlite_schema where type='table' "
                               "and name not like 'sqlite_%'").fetchone() == (binding["schema_user_table_count"],)
-            _consistency(db)
+            assert _consistency(db) == tuple(
+                tuple(row) for row in binding["foreign_key_findings"]
+            )
         paired = root / "paired-actual-work.sqlite3"
         _copy(original, paired)
         paired_case = _paired_case(paired, oldroot, repo)
@@ -1238,10 +1461,12 @@ def run(source, source_ref, repo):
         fresh_application_case = _case(fresh_application, oldroot, fresh=True, null_plans=False)
     production_after = subprocess.check_output(["git", "-C", str(PRODUCTION_ROOT), "rev-parse", "HEAD"], text=True).strip()
     return {"status":"passed" if production_after == production_before else "production_changed",
-            "scope":"offline Email13 SQL boundary and real paired copy/public APIs",
+            "scope":"combined Business4/Email13 paired copy and three Email-only SQL-boundary cases",
             "observed_at_utc":datetime.now(timezone.utc).isoformat(),
             "published_source_ref":source_ref,"schema_binding_ref":PUBLISHED_SCHEMA_REF,
             "executed_candidate_commit":candidate_commit,"candidate_module_sha256":candidate_hashes,
+            "candidate_module_hash_scope":"Finite named core and direct-import modules; the clean Git guard covers the entire candidate app/ tree.",
+            "candidate_proof_sha256":proof_hashes,
             "published_old_module_sha256":old_hashes,
             "published_old_dependency_sha256":old_dependencies,
             "production_head_before":production_before,
@@ -1253,7 +1478,7 @@ def run(source, source_ref, repo):
                      "published_old_fresh_application":fresh_application_case},
             "checks":{"temporary_copies_cleaned":True,"production_mutations":0,
                       "provider_calls":0,"native_cli_calls":0},
-            "limit":"Offline owned copies only; paired target constructor/public-DAO proof is not native role, CI, production publication or live provider acceptance."}
+            "limit":"Offline owned copies only; paired Business/Email target constructor and public-DAO proof is not native role, CI, production publication or live provider acceptance. The three independent SQL-boundary cases cover Email only."}
 
 
 def main(argv=None):

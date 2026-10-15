@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import insert_business, update_business
 from app.project_context_service import ProjectContextService
 from app.store import AutoReplyStore
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
@@ -26,6 +28,19 @@ def _tool():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _clone_suggestion_task(db, task_id, *, title=None):
+    source = db.execute(
+        f'select title,description,stage,origin,suggestion_json '
+        f'from ({BUSINESS_PROJECTIONS["task"]}) where id=?',
+        (task_id,),
+    ).fetchone()
+    assert source is not None
+    values = dict(source)
+    if title is not None:
+        values["title"] = title
+    return int(insert_business(db, "task", values).lastrowid)
 
 
 @pytest.mark.parametrize("call_style", ["positional", "keyword"])
@@ -230,14 +245,14 @@ def test_oracle_rejects_wrong_persisted_result(seeded_domain, fault, required_fa
     store, task_id = seeded_domain(**options)
     before = domain_snapshot(store)
     if fault == "suggestion_formal":
-        with store._connect() as db:
-            db.execute("update business_tasks set stage='formal', formal_basis='meeting_action_item', "
-                       "commitment_status='assigned_unaccepted', owner_name='王五' where id=?", (task_id,))
+        with store.business_task_transaction() as db:
+            update_business(db, "task", task_id, {
+                "stage": "formal", "formal_basis": "meeting_action_item",
+                "commitment_status": "assigned_unaccepted", "owner_name": "王五",
+            })
     if fault == "duplicate_suggestion":
-        with store._connect() as db:
-            db.execute("insert into business_tasks (title, description, stage, origin, suggestion_json) "
-                       "select title, description, stage, origin, suggestion_json from business_tasks where id=?",
-                       (task_id,))
+        with store.business_task_transaction() as db:
+            _clone_suggestion_task(db, task_id)
     if fault == "outbound_intent":
         with store._connect() as db:
             db.execute("insert into business_task_todo_sync_outbox "
@@ -254,11 +269,10 @@ def test_oracle_accepts_correct_persisted_result(seeded_domain):
 
 def test_task_title_oracle_accepts_reviewed_synonym_alternatives(seeded_domain):
     store, task_id = seeded_domain()
-    with store._connect() as db:
-        db.execute(
-            "update business_tasks set title=? where id=?",
-            ("确认甲客户一期交付付款安排及现金影响", task_id),
-        )
+    with store.business_task_transaction() as db:
+        update_business(db, "task", task_id, {
+            "title": "确认甲客户一期交付付款安排及现金影响",
+        })
     before = domain_snapshot(store)
     expected = json.loads(json.dumps(EXPECTED, ensure_ascii=False))
     expected["task_expectations"][0].pop("title_contains")
@@ -288,29 +302,33 @@ def test_assessment_oracle_accepts_one_of_reviewed_source_citations():
 
 def test_oracle_rejects_two_official_projects_with_same_title(seeded_domain):
     store, _ = seeded_domain()
-    with store._connect() as db:
+    with store.business_task_transaction() as db:
         projects = {
             row["title"]: row["id"]
-            for row in db.execute("select id,title from business_projects")
+            for row in db.execute(
+                f'select id,title from ({BUSINESS_PROJECTIONS["project"]})'
+            )
         }
         original_id = projects["甲客户一期交付"]
         duplicate_id = projects["乙客户采购协同"]
-        db.execute(
-            "insert into business_project_context_revisions "
-            "(project_id,context_json,evidence_json) "
-            "select ?,context_json,evidence_json from business_project_context_revisions "
-            "where project_id=? order by id desc limit 1",
-            (duplicate_id, original_id),
-        )
+        context = db.execute(
+            f'select context_json,evidence_json '
+            f'from ({BUSINESS_PROJECTIONS["project_context_revision"]}) '
+            'where project_id=? order by id desc limit 1',
+            (original_id,),
+        ).fetchone()
+        assert context is not None
+        insert_business(db, "project_context_revision", {
+            "project_id": duplicate_id,
+            "context_json": context["context_json"],
+            "evidence_json": context["evidence_json"],
+        })
         db.execute(
             "insert into business_project_evidence (project_id,signal_id) "
             "select ?,signal_id from business_project_evidence where project_id=?",
             (duplicate_id, original_id),
         )
-        db.execute(
-            "update business_projects set title=? where id=?",
-            ("甲客户一期交付", duplicate_id),
-        )
+        update_business(db, "project", duplicate_id, {"title": "甲客户一期交付"})
     expected = EXPECTED | {"project_titles": ["甲客户一期交付"]}
     failures = evaluate_persisted_case(store, expected, before=domain_snapshot(store))
     assert "project_titles_mismatch" in failures, failures
@@ -322,7 +340,9 @@ def test_readback_rejects_one_judgment_for_two_relevant_projects(seeded_domain):
     with store._connect() as db:
         projects = {
             row["title"]: row["canonical_anchor_id"]
-            for row in db.execute("select title,canonical_anchor_id from business_projects")
+            for row in db.execute(
+                f'select title,canonical_anchor_id from ({BUSINESS_PROJECTIONS["project"]})'
+            )
         }
     assert set(projects) == {"甲客户一期交付", "乙客户采购协同"}
     current = WorkItem.model_validate({
@@ -375,13 +395,8 @@ def test_readback_rejects_one_judgment_for_two_relevant_projects(seeded_domain):
 
 def test_readback_accepts_only_allowed_assessment_task_counts(seeded_domain):
     store, task_id = seeded_domain(attention=False)
-    with store._connect() as db:
-        cursor = db.execute(
-            "insert into business_tasks (title, description, stage, origin, suggestion_json) "
-            "select '独立商务对账', description, stage, origin, suggestion_json "
-            "from business_tasks where id=?", (task_id,)
-        )
-        peer_id = cursor.lastrowid
+    with store.business_task_transaction() as db:
+        peer_id = _clone_suggestion_task(db, task_id, title="独立商务对账")
         db.execute(
             "insert into business_task_anchor_links "
             "(task_id,anchor_id,status,active,evidence_signal_id,reason) "
@@ -389,7 +404,7 @@ def test_readback_accepts_only_allowed_assessment_task_counts(seeded_domain):
             "from business_task_anchor_links where task_id=?", (peer_id, task_id)
         )
         anchor_id = db.execute(
-            "select canonical_anchor_id from business_projects where title=?",
+            f'select canonical_anchor_id from ({BUSINESS_PROJECTIONS["project"]}) where title=?',
             ("甲客户一期交付",),
         ).fetchone()[0]
     current = WorkItem.model_validate({
@@ -560,13 +575,8 @@ def test_oracle_rejects_unrelated_peer_added_to_project_card(seeded_domain):
 
 def test_oracle_rejects_wrong_project_peer_with_same_member_count(seeded_domain):
     store, task_id = seeded_domain()
-    with store._connect() as db:
-        cursor = db.execute(
-            "insert into business_tasks (title, description, stage, origin, suggestion_json) "
-            "select '完成独立商务对账', description, stage, origin, suggestion_json "
-            "from business_tasks where id=?", (task_id,)
-        )
-        peer_id = cursor.lastrowid
+    with store.business_task_transaction() as db:
+        peer_id = _clone_suggestion_task(db, task_id, title="完成独立商务对账")
         db.execute(
             "insert into business_task_anchor_links "
             "(task_id,anchor_id,status,active,evidence_signal_id,reason) "

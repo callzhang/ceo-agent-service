@@ -20,6 +20,13 @@ from app.action_email_storage import (
     restore_email_action_schema,
 )
 from app.action_storage import action_schema_is_current, _encoded_sqlite_value
+from app.business_schema_release import (
+    business_inverse_metadata,
+    business_schema_is_current,
+    capture_business_source,
+    migrate_business_schema,
+    restore_business_schema,
+)
 from app.task_schema_release import _foreign_keys
 
 
@@ -67,10 +74,17 @@ def _markers(db):
     return version, versions
 
 
-def _inverse_metadata(source):
+def email_inverse_metadata(source):
     return {key: source[key] for key in (
         "action_variant", "email_variant", "source_actions", "source_tables", "external_triggers"
     )}
+
+
+def _inverse_metadata(source):
+    return {
+        **email_inverse_metadata(source),
+        "business": business_inverse_metadata(source["business"]),
+    }
 
 
 def _migrate_pair(release: "ActionEmailSchemaRelease") -> None:
@@ -112,8 +126,9 @@ class ActionEmailSchemaRelease:
         # Only declarations are compared: current business rows and allocator
         # waters are inputs to conversion, never a stored pre-publication copy.
         current = capture_email_action_source(db)
+        current["business"] = capture_business_source(db)
         if _inverse_metadata(current) != _inverse_metadata(self.source_schema):
-            raise ValueError("Email paired source declaration changed")
+            raise ValueError("paired Email/Business source declaration changed")
         self._verify_integrity(db)
 
     def _verify_target(self, db):
@@ -129,6 +144,10 @@ class ActionEmailSchemaRelease:
             ",".join("?" for _ in SOURCE_TABLES) + ") limit 1", SOURCE_TABLES
         ).fetchone():
             raise ValueError("Email paired target declaration mismatch")
+        if not business_schema_is_current(
+            db, self.source_schema["business"]["variant"]
+        ):
+            raise ValueError("paired Business target declaration mismatch")
         expected = _target_external_sql()
         triggers = tuple(db.execute(
             "select name,sql from main.sqlite_schema where type='trigger' and name in (" +
@@ -149,9 +168,14 @@ class ActionEmailSchemaRelease:
             db.execute("begin immediate")
             try:
                 self._verify_source(db)
-                inverse = migrate_email_action_schema(db)
-                if inverse != _inverse_metadata(self.source_schema):
-                    raise ValueError("Email paired captured inverse declaration mismatch")
+                email_inverse = migrate_email_action_schema(db)
+                business_inverse = migrate_business_schema(db)
+                if email_inverse != email_inverse_metadata(self.source_schema):
+                    raise ValueError("Email captured inverse declaration mismatch")
+                if business_inverse != business_inverse_metadata(
+                    self.source_schema["business"]
+                ):
+                    raise ValueError("Business captured inverse declaration mismatch")
                 now = datetime.now(timezone.utc).isoformat()
                 db.execute(
                     "update main.service_state set value=?,updated_at=? where key=?",
@@ -183,7 +207,8 @@ class ActionEmailSchemaRelease:
                     db.commit()
                     return
                 self._verify_target(db)
-                restore_email_action_schema(db, _inverse_metadata(self.source_schema))
+                restore_business_schema(db, self.source_schema["business"])
+                restore_email_action_schema(db, email_inverse_metadata(self.source_schema))
                 db.execute(
                     "update main.service_state set value=?,updated_at=? where key=?",
                     (*self.original_version, VERSION_KEY),
@@ -244,6 +269,7 @@ def prepare_action_email_schema_release(
                 not versions or versions[-1][0] != SOURCE_EMAIL_VERSION:
             raise ValueError("Email paired protocol requires the exact Store19/Email51 source")
         source = capture_email_action_source(db)
+        source["business"] = capture_business_source(db)
         release = ActionEmailSchemaRelease(
             root, path, version, versions, source, _foreign_keys(db),
             target_store_version, target_email_version,

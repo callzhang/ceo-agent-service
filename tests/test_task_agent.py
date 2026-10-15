@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import update_business
 from app.store import AutoReplyStore
 from app.run_storage import TASK_AGENT_RUN_SQL
 from app.task_storage import WORK_SUMMARY_INPUT_SQL
@@ -3246,7 +3248,8 @@ def test_retired_project_anchor_does_not_fail_task_or_get_reactivated(
     with store._connect() as db:
         assert (
             db.execute(
-                "select active from business_anchors where id=?", (anchor_id,)
+                f"select active from ({BUSINESS_PROJECTIONS['anchor']}) where id=?",
+                (anchor_id,),
             ).fetchone()[0]
             == 0
         )
@@ -3336,7 +3339,8 @@ def test_report_row_outside_registry_cannot_register_retired_project(tmp_path):
     with store._connect() as db:
         assert (
             db.execute(
-                "select active from business_anchors where id=?", (anchor_id,)
+                f"select active from ({BUSINESS_PROJECTIONS['anchor']}) where id=?",
+                (anchor_id,),
             ).fetchone()[0]
             == 0
         )
@@ -5487,7 +5491,7 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(
     def check_committed(self, proposal):
         with store._connect() as other:
             task = other.execute(
-                "select business_relevance from business_tasks where id=?",
+                f"select business_relevance from ({BUSINESS_PROJECTIONS['task']}) where id=?",
                 (seed.task_id,),
             ).fetchone()
             linked = other.execute(
@@ -5501,7 +5505,7 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(
             ).fetchone()[0]
             project_linked = other.execute(
                 "select count(*) from business_project_evidence evidence "
-                "join business_projects project on project.id=evidence.project_id "
+                f"join ({BUSINESS_PROJECTIONS['project']}) project on project.id=evidence.project_id "
                 "where project.canonical_anchor_id=? and evidence.signal_id=?",
                 (anchor_id, proposal.evidence_signal_id),
             ).fetchone()[0]
@@ -7968,7 +7972,7 @@ def test_stored_assessment_rejects_guessed_project_or_unrelated_task(
         assessment["anchor_id"] = 999
     elif change == "inactive_anchor":
         with store.business_task_transaction() as db:
-            db.execute("update business_anchors set active=0 where id=?", (anchor_id,))
+            update_business(db, "anchor", anchor_id, {"active": 0})
     elif change == "wrong_title":
         assessment["project_title"] = "猜测的项目名"
     elif change == "missing_task":

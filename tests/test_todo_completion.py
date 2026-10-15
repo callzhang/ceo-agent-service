@@ -95,7 +95,8 @@ def _business_task_for_completion(store, *, title="客户验收", with_follow_up
             task_id=task_id, signal_id=signal_id, evidence_role="assignment", _db=db,
         )
         db.execute(
-            "update business_tasks set created_at=?, updated_at=? where id=?",
+            "update business set created_at=?, updated_at=? "
+            "where record_type='task' and public_id=?",
             ("2026-09-23T09:00:00Z", "2026-09-23T09:00:00Z", task_id),
         )
         if with_follow_up:

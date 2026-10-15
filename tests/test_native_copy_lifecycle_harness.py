@@ -72,7 +72,7 @@ def old_email_copy(tmp_path):
     old = tmp_path / "published-old"
     old.mkdir()
     archive = subprocess.check_output([
-        "git", "-C", str(repo), "archive", "d06c148b90aaeee74c14bbabf0183ffd65f34048",
+        "git", "-C", str(repo), "archive", "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
         "app", "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json",
     ])
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
@@ -89,6 +89,7 @@ def old_email_copy(tmp_path):
 
 
 def test_native_candidate_publishes_real_pair_before_immutable_baseline(old_email_copy, tmp_path):
+    from app.business_schema_release import SOURCE_PARENTS, business_schema_is_current
     from app.email_store import EmailStore
     from app.store import AutoReplyStore
 
@@ -98,12 +99,17 @@ def test_native_candidate_publishes_real_pair_before_immutable_baseline(old_emai
         assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.5",)
     published = _publish_email_pair(repo, path)
     assert published == {"store": "2026-10-14.1", "email": 52,
-                         "action_types": 29, "retired_email_tables": 13}
+                         "action_types": 29, "retired_email_tables": 13,
+                         "retired_business_parents": 4}
     _backup_database(path, baseline)
     assert AutoReplyStore(path) and EmailStore(path)
     with sqlite3.connect(baseline) as db:
         assert db.execute("select count(*) from email_schema_migrations where version=52").fetchone() == (1,)
         assert db.execute("select count(*) from sqlite_schema where type='table' and name='email_actions'").fetchone() == (0,)
+        assert business_schema_is_current(db)
+        assert not set(SOURCE_PARENTS.values()).intersection(
+            row[0] for row in db.execute("select name from sqlite_schema where type='table'")
+        )
     with sqlite3.connect(path) as db:
         trigger = db.execute("select sql from sqlite_schema where name='trg_email_direct_action_blocks_account_delete'").fetchone()
         assert trigger is not None and "main.actions" in trigger[0]

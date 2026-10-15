@@ -7,6 +7,7 @@ an old Project title or an Agent-created DingTalk TODO mirror.
 """
 
 from __future__ import annotations
+from app.business_definitions import BUSINESS_PROJECTIONS
 from app.task_storage import WORK_SUMMARY_INPUT_SQL
 
 import hashlib
@@ -94,10 +95,15 @@ def _connect(path: str | Path, *, read_only: bool) -> sqlite3.Connection:
 
 
 def _rows(db: sqlite3.Connection, table: str) -> list[dict[str, object]]:
-    if table not in (*LEGACY_TABLES, "business_anchors", "business_projects"):
+    registry = {
+        "business_anchors": "anchor",
+        "business_projects": "project",
+    }
+    if table in registry:
+        sql = BUSINESS_PROJECTIONS[registry[table]]
+        return [dict(row) for row in db.execute(f"select * from ({sql}) order by id")]
+    if table not in LEGACY_TABLES:
         raise ValueError("unsupported import source table")
-    if table in {"business_anchors", "business_projects"} and not _table_exists(db, table):
-        return []
     return [dict(row) for row in db.execute(f"select * from {table} order by id")]
 
 
@@ -112,7 +118,8 @@ def _fingerprint(path: str | Path, db: sqlite3.Connection) -> str:
     # must not invalidate the same manifest for the next batch or retry.
     source = {table: _rows(db, table) for table in LEGACY_TABLES}
     registry = {
-        table: _rows(db, table) for table in ("business_anchors", "business_projects")
+        table: _rows(db, table) if _table_exists(db, "business") else []
+        for table in ("business_anchors", "business_projects")
     }
     source_inputs = [dict(row) for row in db.execute(
         f"select source_type, source_ref, payload_json from ({WORK_SUMMARY_INPUT_SQL}) "
@@ -254,11 +261,11 @@ def _plan_items(db: sqlite3.Connection) -> tuple[LegacyImportItem, ...]:
         str(row["anchor_ref"]): int(row["project_id"])
         for row in db.execute(
             "select anchor.anchor_ref, project.id as project_id "
-            "from business_projects as project "
-            "join business_anchors as anchor on anchor.id=project.canonical_anchor_id "
+            f'from ({BUSINESS_PROJECTIONS["project"]}) as project '
+            f'join ({BUSINESS_PROJECTIONS["anchor"]}) as anchor on anchor.id=project.canonical_anchor_id '
             "where anchor.anchor_type='project' and anchor.active=1"
         )
-    } if _table_exists(db, "business_projects") and _table_exists(db, "business_anchors") else {}
+    } if _table_exists(db, "business") else {}
     items: list[LegacyImportItem] = []
     for project in projects:
         project_id = int(project["id"])
@@ -452,8 +459,8 @@ def _existing_link_matches(
 ) -> bool:
     if item.disposition == "official_project_match":
         match = db.execute(
-            "select project.id from business_projects as project "
-            "join business_anchors as anchor on anchor.id=project.canonical_anchor_id "
+            f'select project.id from ({BUSINESS_PROJECTIONS["project"]}) as project '
+            f'join ({BUSINESS_PROJECTIONS["anchor"]}) as anchor on anchor.id=project.canonical_anchor_id '
             "where anchor.anchor_type='project' and anchor.active=1 and anchor.anchor_ref=?",
             (item.official_project_registry_key,),
         ).fetchone()
@@ -464,7 +471,7 @@ def _existing_link_matches(
     if details is None or existing["task_id"] is None:
         return False
     task = db.execute(
-        "select stage, formal_basis, title from business_tasks where id=?",
+        f'select stage, formal_basis, title from ({BUSINESS_PROJECTIONS["task"]}) where id=?',
         (existing["task_id"],),
     ).fetchone()
     if task is None or task["title"] != details["title"]:
@@ -519,8 +526,8 @@ def apply_task_semantic_import_manifest(
             endpoint_id: int
             if item.disposition == "official_project_match":
                 row = db.execute(
-                    "select project.id from business_projects as project "
-                    "join business_anchors as anchor on anchor.id=project.canonical_anchor_id "
+                    f'select project.id from ({BUSINESS_PROJECTIONS["project"]}) as project '
+                    f'join ({BUSINESS_PROJECTIONS["anchor"]}) as anchor on anchor.id=project.canonical_anchor_id '
                     "where anchor.anchor_type='project' and anchor.active=1 and anchor.anchor_ref=?",
                     (item.official_project_registry_key,),
                 ).fetchone()

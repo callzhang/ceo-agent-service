@@ -1,5 +1,83 @@
 # Current Runtime Mechanism
 
+The unpublished Store `2026-10-14.1`/Email52 candidate selects the four-kind
+Business storage unit for Task, Project,
+Anchor and Project context revision together, preserving all 42 existing source
+fields. Source-shaped reads retain actual/fresh source column order and public
+signed IDs. Writes use the existing tagged SQLite value codec, native affinities,
+NOT NULL/CHECK/unique constraints and typed composite physical/public FKs;
+Project retains its actual Anchor-type composite edge. Four public allocator
+streams remain separate from physical Business IDs. Ordinary writes and schema
+installation leave commit/rollback to an already active caller transaction;
+all omitted row defaults share one SQLite statement. Public allocator exhaustion
+matches the actual plain INSERT/lastrowid source writers: SQLITE_FULL rolls back
+the caller transaction. Native INSERT RETURNING has a different demonstrated
+exhaustion outcome and is not the source API contract. Both current constructors
+select this unit. The 19 incoming FK groups from 15 retained children target
+typed Business aliases; Signal/document/evidence/date/event tables, their
+public APIs, provider behavior and other FK groups retain their contracts. Full
+ten-core-plus-ledger implementation
+and source-body retirement are still incomplete. See
+`docs/superpowers/plans/2026-10-15-business-four-kind-storage-plan.md`.
+
+`app/business_schema_release.py` provides the finite actual/fresh
+four-kind migration and current-fact inverse. It requires the caller's active
+foreign-key-off transaction and never commits. Before DDL it rejects unsupported
+source declarations, mixed target objects, broken moved-parent references and
+external schema dependencies. Forward copy replaces four parents with one
+Business table, translates nineteen FK endpoints in fifteen retained children
+to three typed public aliases, and preserves the other twenty-one FK groups,
+source-shaped facts, hidden ROWIDs, indexes, triggers and thirteen sequence
+waters. Inverse validates the captured declarations and current target shape,
+reads current facts from `main.business` after any target writes, removes four
+manually named allocator aliases and restores the original declarations. The
+caller rolls back the transaction on a failed copy or inverse. Exact TEMP collisions with
+forward or inverse DDL destination table names are refused before any DROP;
+other TEMP tables do not affect these MAIN-bound reads. The paired Email13
+coordinator invokes this module only for the exact published Store19/Email51
+source pair. It converts Email then Business and writes both target markers in
+one foreign-key-off transaction. Inverse converts Business then Email and
+restores the exact source marker values and timestamps. Current Store and Email
+constructors require the new Business declaration; a marker-correct malformed
+target is refused without repair. No deployed path uses this candidate yet.
+
+Project CRM search, confirmation and link clearing acquire the existing
+`business_task_transaction()` writer before calling typed Business updates.
+Lookup candidates stay local until explicit confirmation. Search leaves a
+previously unlinked Project unlinked and preserves any existing confirmed CRM
+association; the endpoint does not write back to CRM. The writer's
+active-transaction requirement remains unchanged.
+
+`scripts/validate_action_email_copy.py` has one combined Business/Email paired
+case. It binds the source to the published `7dadc492` Store19/Email51 marker,
+ledger and Email/Business declaration fingerprints before operating on owned
+SQLite copies. In that case, moved Business parents and rebuilt children are
+compared as source-shaped facts instead of unchanged tables; all other ordinary
+tables retain the unchanged-row proof. A cold subprocess imports the published
+old code for Task, Anchor, Project, context and Email writes after inverse.
+The three separate SQL-boundary cases remain Email-only. The native copied-DB
+harness checks the combined target Business declaration before taking its
+immutable pre-native baseline.
+
+An unselected `read_native_source_body` helper in `app/native_trajectory.py`
+can reconstruct an exact historical source body from already recorded Codex or
+Claude native provenance. It resolves the native session through the existing
+CLI path finder, verifies the recorded raw JSONL line hash including its line
+ending, follows the recorded JSON leaf and Unicode character range, decodes the
+observed `json_string_literal_utf8` value, and verifies the complete UTF-8 body
+length and SHA-256. Unresolved sessions, unavailable files/lines and mismatches
+with the recorded hashes or body length raise `LookupError`. Invalid required
+field types/shapes, JSON, leaf paths, character ranges and unsupported
+runtime/codec raise `ValueError`. The existing finder owns UUID format
+validation; a nonempty unresolved UUID or mismatching 64-character digest takes
+the `LookupError` path. Other file I/O failures retain their native errors. No production caller selects
+this helper, no body cache or database field is added, and existing source
+identity, quote checks and projections remain unchanged. The recovery artifact
+proves only 30 of 188 historical bodies (seven Codex and 23 Claude); 158 remain
+unproved. This helper does not retire source bodies or activate the approved
+ten-core-table-plus-ledger redesign. See
+`docs/superpowers/plans/2026-10-15-business-native-source-reader-plan.md`.
+
 The nine follow-up/Todo-sync action declarations are available only through an
 explicit disabled-by-default candidate flag on the Email29 actual/fresh action
 scaffold. No Store constructor, release router or caller selects them. Task 1A
