@@ -3489,3 +3489,16 @@ the intruder must claim zero events; the final count must stay unchanged after
 the processing call returns, and no lease thread may remain. The full meeting
 Memory write test file passed (44 tests). Ruff and diff checks passed. This is
 local test evidence only; replacement CI is pending.
+
+
+#### Independent acceptance of the lease fixture correction
+
+Root inspected committed `9ce27583` and the original failed job. Fresh sequential
+SPEC and QUALITY reviews accepted the exact synchronization repair. SPEC ran
+the target plus two adjacent lease cases (3 passed); QUALITY ran the target
+independently (1 passed in 1.21 seconds). The forced early heartbeat remains
+part of the regression, and successful settlement, zero reclaim, successful
+renewals and stopped-thread evidence remain required. No application, schema,
+provider or audit behavior changed. CI38736466402 remains failed; the next pushed
+head requires a new complete run. This acceptance is not Business integration
+coverage, production migration, a main merge or deployment.
