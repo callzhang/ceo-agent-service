@@ -223,3 +223,16 @@ focused files passed209 cases in30.67s, including every original failed case,
 all eight new controls and existing detector tests. No old credential fixture
 or safety assertion was changed. Runtime and fixture-only repairs are kept
 in separate commits. No full local suite was run against the live service.
+
+## Deterministic incident chronology fixture
+
+The older5aa6909a full CI exposed one additional pre-existing Store fixture
+fluctuation. It marked a work input terminal before recording the error, but
+the unchanged recovery contract only closes incidents at or before terminal
+updated_at. Same-second execution accidentally satisfied that predicate. The
+fixture now records the error before the terminal event, preserving every
+original assertion. A fixed one-second reproducer failed before this repair;
+the original case and deterministic older/equal/newer incident controls passed
+4/4 in5.04s with expected counts1/1/0 and matching resolved_at assertions.
+Independent review accepted the test-only change; no sleep, widened comparison
+or runtime recovery policy change was introduced.
