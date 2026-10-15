@@ -83,3 +83,22 @@ Final focused source run: 36 passed in 0.18 seconds. Scoped Ruff and
 temporary root; that exact root and all archive/fresh DB/intermediate contents
 were removed and absence was verified. Root-owned source cleanup remains with root.
 Sequential independent SPEC then QUALITY review remains pending.
+
+## Root acceptance after independent reviews
+
+Independent SPEC and then fresh QUALITY accepted exact source-oracle commit
+`4c70c9453c8ba398dfe6a9a1e73334f82504674e`. SPEC independently matched the
+actual snapshot hash, declarations, xinfo, index semantics, triggers, allocator
+waters and full incoming endpoint map with zero mismatches. It also evaluated
+the relevant published7dad schema AST in memory:54 source DDL statements for
+all22 source/endpoint families matched the fresh capture. QUALITY independently
+executed only the late-FK rollback probe for each captured variant; native trace
+showed11 distinct INSERT statements reaching all10 families before the final
+FK failure, and both rollback/allocator/integrity checks passed. Neither review
+repeated the39 recorded focused cases or ran native/provider/production actions.
+
+These ten **source** families are one bounded portion of the existing database.
+They are not the approved final ten core physical tables. Their target business,
+action and provenance projections, all finite caller/endpoint conversions and
+body-retirement evidence remain future work. No constructor or release selects
+a new business schema, and the full10-core-plus-ledger program remains incomplete.
