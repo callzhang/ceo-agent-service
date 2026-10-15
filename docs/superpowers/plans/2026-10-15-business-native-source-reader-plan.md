@@ -22,7 +22,7 @@ The committed metadata-only `docs/superpowers/specs/2026-10-15-database-redesign
 
 Consume the actual nested `native_provenance` mapping, not the enclosing source-document record. Required fields are `runtime_kind`, `session_uuid`, `line_index_zero_based`, `raw_line_sha256`, `leaf_path`, `substring_start_character_zero_based`, `substring_end_character_exclusive`, `literal_encoding_mode`, `decoded_utf8_sha256`, `decoded_utf8_bytes`. Existing artifact fields `path`, `line_number_one_based` and `raw_line_bytes` remain diagnostic metadata and need no new persistence or reader argument. Resolve the source through the existing native finders rather than trusting the old physical path. `raw_line_sha256` includes line-ending bytes. Offsets count Python Unicode characters in the decoded leaf, not raw bytes or JSONL-file character positions. Native transcripts can append: the exact recorded line hash is the source-version check, not a whole-file hash.
 
-Use built-in `LookupError` for unavailable native file/line or changed line/body version, and `ValueError` for malformed metadata, JSON, paths, ranges or unsupported runtime/codec. These types already exist in Python and require no new exception framework. A narrow `FileNotFoundError` translation covers disappearance after native path resolution; it returns no fallback. Other I/O failures remain their actual `OSError`. This is exact source-version validation under the approved source rule, not new audit, authorization, review, retry or confirmation policy.
+Use built-in `LookupError` for an unresolved native session, unavailable native file/line or a mismatch with the recorded line/body hash or body length, and `ValueError` for invalid required field types/shapes, JSON, leaf paths, character ranges or unsupported runtime/codec. The existing path finder owns session UUID format validation; this helper checks a nonempty session string and 64-character digest strings, so an unresolved UUID or a nonhex 64-character digest reaches the unavailable/version-mismatch `LookupError` path. These types already exist in Python and require no new exception framework. A narrow `FileNotFoundError` translation covers disappearance after native path resolution; it returns no fallback. Other I/O failures remain their actual `OSError`. This is exact source-version validation under the approved source rule, not new audit, authorization, review, retry or confirmation policy.
 
 ## File responsibilities
 
@@ -412,9 +412,12 @@ Claude native provenance. It resolves the native session through the existing
 CLI path finder, verifies the recorded raw JSONL line hash including its line
 ending, follows the recorded JSON leaf and Unicode character range, decodes the
 observed `json_string_literal_utf8` value, and verifies the complete UTF-8 body
-length and SHA-256. Missing or changed sources raise `LookupError`; malformed
-metadata/JSON/paths/ranges and unsupported runtime/codec raise `ValueError`.
-Other file I/O failures retain their native errors. No production caller selects
+length and SHA-256. Unresolved sessions, unavailable files/lines and mismatches
+with the recorded hashes or body length raise `LookupError`. Invalid required
+field types/shapes, JSON, leaf paths, character ranges and unsupported
+runtime/codec raise `ValueError`. The existing finder owns UUID format
+validation; a nonempty unresolved UUID or mismatching 64-character digest takes
+the `LookupError` path. Other file I/O failures retain their native errors. No production caller selects
 this helper, no body cache or database field is added, and existing source
 identity, quote checks and projections remain unchanged. The recovery artifact
 proves only 30 of 188 historical bodies (seven Codex and 23 Claude); 158 remain
