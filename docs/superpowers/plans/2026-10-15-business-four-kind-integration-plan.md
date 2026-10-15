@@ -1426,13 +1426,259 @@ if mode == 'business_read_write':
     }))
 ```
 
-In `_paired_case`, immediately after `release.rollback()` and the existing source-declaration/FK assertions, call `_old_process_genuine(oldroot, path, "business_read_write", seeded["classification_id"])`; save its returned four IDs. Keep the existing Email `write` cold process on the same `path` so the old executable performs both Business and Email writes. Before `prepare_database_schema_release(repo, path).publish()` for reforward, capture `_parent_facts`, `_child_facts`, `_parent_waters(target=False)` and `_child_waters`; after reforward assert these equal `_target_parent_facts(db, state["business"]["variant"])`, `_child_facts`, `_parent_waters(target=True)` and `_child_waters`. Assert all four returned IDs resolve in source and target projections. The exact source/target snapshot function and comparison above in Step 1 are reused as a finite copy-proof helper; the old process itself imports no current Business module.
+The exact single-use harness edit below inserts the old-code process call into `_paired_case`, captures current Business writes before inverse, captures the cold old-code writes after inverse, and compares all four families and child facts after reforward. Run that edit after appending the `OLD_PROGRAM` branch. The old process itself imports no current Business module.
 
-- [ ] **Step 4: Verify whole app and real native lifecycle on a copied database.** Run selected focused Task/Project/Anchor/context Store APIs; Task semantic import hash; merge/official Project/CRM; ownerless meeting evidence; Attention; Task Web Project summary/detail; retained child follow-up claim; Email action/worker/History; scheduled, work summary and Workbench paths after their own scripts are Business-aware. Update `scripts/validate_native_copy_lifecycle.py::_publish_email_pair` to invoke the same actual combined coordinator, keeping its accepted candidate-only high JavaScript-safe Task-ID reservation and target-baseline hashing. Run one **real Codex** Consumer→Audit approval plus one revision/correction case against the owned copy, with the existing `InMemoryProvider` only and exact native artifact/receipt/readback assertions. Do not contact DingTalk, Email or another real provider. Check source SHA and original source rows unchanged; compare target baseline to postnative copy with the harness's existing table-row proof plus new source-shaped Business projection. Record provider substitute call count, native outcome and cleanup of all task-owned temporary directories. A synthetic model output is not a native acceptance substitute.
+- [ ] **Step 4: Verify whole app and real native lifecycle on a copied database.** Run selected focused Task/Project/Anchor/context Store APIs; Task semantic import hash; merge/official Project/CRM; ownerless meeting evidence; Attention; Task Web Project summary/detail; retained child follow-up claim; Email action/worker/History; scheduled, work summary and Workbench paths after their own scripts are Business-aware. The existing `scripts/validate_native_copy_lifecycle.py::_publish_email_pair` already invokes `prepare_database_schema_release` and `release.publish`; after Task 3 those calls select the combined coordinator. Add `business_schema_is_current(db)` and retired-parent absence assertions beside its Email target assertions, keeping its candidate-only high JavaScript-safe Task-ID reservation and target-baseline hashing. Run one **real Codex** Consumer→Audit approval plus one revision/correction case against the owned copy, with the existing `InMemoryProvider` only and exact native artifact/receipt/readback assertions. Do not contact DingTalk, Email or another real provider. Check source SHA and original source rows unchanged; compare the post-publication target baseline to postnative target with the harness's existing literal table-row proof. The source-versus-target Business projection proof is the paired-copy harness edit below. Record provider substitute call count, native outcome and cleanup of all task-owned temporary directories. A synthetic model output is not a native acceptance substitute.
 
 - [ ] **Step 5: Complete scoped checks and review before requesting publication.** Run only affected exact tests, not serial whole-tree pytest while service is live. Minimum: `pytest -q tests/test_business_core_source.py tests/test_business_storage.py tests/test_business_schema_release.py tests/test_business_integration_callers.py tests/test_business_copy_proof.py tests/test_email_action_schema_release.py tests/test_email_action_callers.py tests/test_email_current_schema.py tests/test_store_schema_release.py`, then the exact Task/Project/Attention/Web/Email/harness files changed in Task 2. Run `ruff check` on changed Python, `python -m compileall -q` on changed Python, and `git diff --check`. CI needs a **new combined candidate** run and completed result; pending CI `38736466402` for Email09bc cannot count as a pass or as combined Business coverage. Obtain independent spec then quality review of the complete final branch. Record actual source binding, checked paths/results, source/target fingerprints, failure-injection receipts, copied real Codex outcome, measured size and any open risk in the validation doc. Keep report boundaries separate: code, focused tests, copied DB, native substitute, CI, push/merge, deploy and live business result.
 
 - [ ] **Step 6: Final merge/deploy remains a direct Derek decision.** The root must present the complete reviewable combined implementation and evidence to Derek before main merge or production deployment. This plan's execution stops at that final decision unless Derek has directly authorized it in the session. Once authorized, preserve remote increments with a safe normal merge/fast-forward (no reset/rebase/force push), rebind the actual immediate predecessor, push the complete commit, wait for new combined CI, then use `python -m app.deploy` from development only. Formal deploy backs up and rolls code/schema together before work resumes. After deploy, read actual production commit, paired markers, new PID, healthz, queues/claims, Attention, History, Task/Project/Email API details and no unexpected failed/stuck work; never paste secret settings. If the service has resumed external actions, do not roll back to a stale database copy that would erase receipts. No direct production edits, tests in production checkout, provider replay, VACUUM, retention cleanup or invented approval-policy change belongs in this unit.
+
+### Task 4 paired-copy harness: exact Business partition and call sites
+
+Run this single-use edit on `scripts/validate_action_email_copy.py` after Task 1–3 and the `OLD_PROGRAM` Business branch above exist. It changes only the paired case: the existing Email-only `_case` and its original `_other_sequences` checks remain intact. Every replacement checks the original source text before writing; inspect the resulting diff and run the copy-proof tests before a real copy.
+
+```python
+# Run as: python - <<'PY' (paste the entire block) from repository root.
+from pathlib import Path
+import ast
+
+path = Path("scripts/validate_action_email_copy.py")
+text = path.read_text()
+
+def replace_once(old, new):
+    global text
+    if text.count(old) != 1:
+        raise ValueError(f"expected one copy harness anchor: {old[:80]!r}")
+    text = text.replace(old, new, 1)
+
+replace_once(
+    "from app.action_email_definitions import (EMAIL_AUTOINCREMENT_TYPES, EMAIL_COMPOSITE_KEYS,\n"
+    "                                          EMAIL_ROWID_TYPES, EMAIL_TYPES_ORDER)\n",
+    "from app.action_email_definitions import (EMAIL_AUTOINCREMENT_TYPES, EMAIL_COMPOSITE_KEYS,\n"
+    "                                          EMAIL_ROWID_TYPES, EMAIL_TYPES_ORDER)\n"
+    "from app.business_schema_release import (\n"
+    "    AUTOINCREMENT_CHILDREN, RETAINED_CHILD_FKS, SOURCE_PARENTS,\n"
+    "    _child_facts, _child_waters, _parent_facts, _parent_waters,\n"
+    "    _target_parent_facts, business_schema_is_current, capture_business_source,\n"
+    ")\n",
+)
+
+replace_once(
+    "    facts = _unrelated(db, fixture_ids)\n"
+    "    del facts[\"service_state\"]\n",
+    "    facts = _unrelated(db, fixture_ids)\n"
+    "    # Four moved parents, fifteen rebuilt children and the target physical\n"
+    "    # Business table are checked by _business_*_image, never by name here.\n"
+    "    for name in (*SOURCE_PARENTS.values(), *RETAINED_CHILD_FKS, \"business\"):\n"
+    "        facts.pop(name, None)\n"
+    "    del facts[\"service_state\"]\n",
+)
+
+business_helpers = '''
+def _paired_other_sequences(db):
+    # The 13 public Business waters are compared by _business_*_image.
+    # Physical business.id has no source counterpart.
+    excluded = (
+        *EMAIL_AUTOINCREMENT_TYPES,
+        *(f"actions:{name}" for name in EMAIL_AUTOINCREMENT_TYPES),
+        *SOURCE_PARENTS.values(),
+        *(f"business:{kind}" for kind in SOURCE_PARENTS),
+        *AUTOINCREMENT_CHILDREN,
+        "business",
+    )
+    marks = ",".join("?" for _ in excluded)
+    return tuple(db.execute(
+        f"select name,seq from main.sqlite_sequence "
+        f"where name not in ({marks}) order by name", excluded
+    ))
+
+
+def _business_source_image(db):
+    captured = capture_business_source(db)
+    return {
+        "variant": captured["variant"],
+        "declarations": {key: captured[key] for key in ("parents", "children")},
+        "parents": _parent_facts(db),
+        "children": _child_facts(db),
+        "parent_waters": _parent_waters(db, target=False),
+        "child_waters": _child_waters(db),
+        "fk_findings": tuple(db.execute("pragma foreign_key_check")),
+    }
+
+
+def _business_target_image(db, variant):
+    assert business_schema_is_current(db, variant)
+    return {
+        "variant": variant,
+        "parents": _target_parent_facts(db, variant),
+        "children": _child_facts(db),
+        "parent_waters": _parent_waters(db, target=True),
+        "child_waters": _child_waters(db),
+        "fk_findings": tuple(db.execute("pragma foreign_key_check")),
+    }
+
+
+def _assert_business_facts_equal(source, target):
+    for key in ("variant", "parents", "children", "parent_waters",
+                "child_waters", "fk_findings"):
+        assert target[key] == source[key], key
+
+
+def _current_business_public_writes(path):
+    from app.project_context_service import ProjectContextService
+    from app.store import AutoReplyStore
+    from app.task_semantic_models import ProjectContext
+    store = AutoReplyStore(path)
+    with store._connect() as db:
+        db.execute("begin immediate")
+        task_id = store.create_business_task_in_transaction(
+            title="copy-only current task", stage="candidate", _db=db
+        )
+        anchor_id = store.create_business_anchor_in_transaction(
+            anchor_type="project", anchor_ref=f"copy-only-current:{task_id}",
+            title="copy-only current anchor", _db=db
+        )
+        project_id = store.create_business_project_in_transaction(
+            canonical_anchor_id=anchor_id, title="copy-only current project",
+            registry_source="synthetic", _db=db
+        )
+        context_id = ProjectContextService(store).apply(
+            project_id=project_id,
+            context=ProjectContext.model_validate({
+                "goal": "copy-only current goal", "scope": "copy-only current scope",
+                "overall_owner": None, "responsibilities": [], "facts": [],
+            }),
+            signal_ids=(), db=db,
+        )
+        assert context_id is not None
+        db.commit()
+    return {
+        "task": task_id, "anchor": anchor_id, "project": project_id,
+        "project_context_revision": context_id,
+    }
+
+'''
+replace_once("def _paired_case(path, oldroot, repo):\n",
+             business_helpers + "def _paired_case(path, oldroot, repo):\n")
+
+begin = text.index("def _paired_case(path, oldroot, repo):\n")
+end = text.index("\ndef run(source, source_ref, repo):\n", begin)
+paired = text[begin:end]
+
+def paired_once(old, new):
+    global paired
+    if paired.count(old) != 1:
+        raise ValueError(f"expected one paired-case anchor: {old[:80]!r}")
+    paired = paired.replace(old, new, 1)
+
+if paired.count("_other_sequences(db)") != 5:
+    raise ValueError("paired Business water partition drift")
+paired = paired.replace("_other_sequences(db)", "_paired_other_sequences(db)")
+if paired.count("initial_tables - 13") != 2:
+    raise ValueError("paired table-count drift")
+paired = paired.replace("initial_tables - 13", "initial_tables - 16")
+
+paired_once(
+    "        baseline = _source_facts(db)\n",
+    "        baseline = _source_facts(db)\n"
+    "        baseline_business = _business_source_image(db)\n",
+)
+paired_once(
+    "        seeded_source = _source_facts(db)\n",
+    "        seeded_source = _source_facts(db)\n"
+    "        seeded_business = _business_source_image(db)\n"
+    "        assert seeded_business == baseline_business\n",
+)
+paired_once(
+    "        initial_target = _target_facts(db, state[\"email_variant\"])\n",
+    "        initial_target = _target_facts(db, state[\"email_variant\"])\n"
+    "        _assert_business_facts_equal(\n"
+    "            seeded_business, _business_target_image(db, state[\"business\"][\"variant\"])\n"
+    "        )\n",
+)
+paired_once(
+    "    writes = _current_public_writes(path, seeded)\n",
+    "    writes = _current_public_writes(path, seeded)\n"
+    "    business_writes = _current_business_public_writes(path)\n",
+)
+paired_once(
+    "        current = _target_facts(db, state[\"email_variant\"])\n",
+    "        current = _target_facts(db, state[\"email_variant\"])\n"
+    "        current_business = _business_target_image(db, state[\"business\"][\"variant\"])\n"
+    "        for kind, public_id in business_writes.items():\n"
+    "            assert any(row[0] == public_id for row in current_business[\"parents\"][kind][\"rows\"])\n"
+    "            assert len(current_business[\"parents\"][kind][\"rows\"]) == (\n"
+    "                len(seeded_business[\"parents\"][kind][\"rows\"]) + 1\n"
+    "            )\n",
+)
+paired_once(
+    "        assert _source_waters(db) == current_waters\n",
+    "        assert _source_waters(db) == current_waters\n"
+    "        inverse_business = _business_source_image(db)\n"
+    "        _assert_business_facts_equal(current_business, inverse_business)\n"
+    "        assert inverse_business[\"declarations\"] == {\n"
+    "            key: state[\"business\"][key] for key in (\"parents\", \"children\")\n"
+    "        }\n",
+)
+paired_once(
+    "    _copy(path, donor)\n",
+    "    _copy(path, donor)\n"
+    "    old_business_write = _old_process_genuine(\n"
+    "        oldroot, path, \"business_read_write\", seeded[\"classification_id\"]\n"
+    "    )\n",
+)
+paired_once(
+    "        after_old = _source_facts(db)\n",
+    "        after_old = _source_facts(db)\n"
+    "        after_old_business = _business_source_image(db)\n"
+    "        for kind, key in ((\"task\", \"task_id\"), (\"anchor\", \"anchor_id\"),\n"
+    "                          (\"project\", \"project_id\"),\n"
+    "                          (\"project_context_revision\", \"context_id\")):\n"
+    "            assert any(row[0] == old_business_write[key]\n"
+    "                       for row in after_old_business[\"parents\"][kind][\"rows\"])\n",
+)
+paired_once(
+    "        assert _target_waters(db) == after_old_waters\n",
+    "        assert _target_waters(db) == after_old_waters\n"
+    "        _assert_business_facts_equal(\n"
+    "            after_old_business, _business_target_image(db, state[\"business\"][\"variant\"])\n"
+    "        )\n",
+)
+paired_once(
+    "            \"target_tables\":initial_tables - 16, \"preserved_fk_findings\":len(original_fk)}\n",
+    "            \"target_tables\":initial_tables - 16, \"preserved_fk_findings\":len(original_fk),\n"
+    "            \"business_current_public_ids\":business_writes,\n"
+    "            \"business_old_public_ids\":old_business_write}\n",
+)
+text = text[:begin] + paired + text[end:]
+
+replace_once(
+    '    proof_paths = ("scripts/validate_action_email_copy.py", "tests/test_email_action_copy_proof.py",\n'
+    '                   "app/action_storage.py", "app/action_email_storage.py",\n'
+    '                   "app/action_email_definitions.py")\n',
+    '    proof_paths = ("scripts/validate_action_email_copy.py", "tests/test_email_action_copy_proof.py",\n'
+    '                   "tests/test_business_copy_proof.py", "tests/test_business_schema_release.py",\n'
+    '                   "app/action_storage.py", "app/action_email_storage.py",\n'
+    '                   "app/action_email_definitions.py", "app/action_email_schema_release.py",\n'
+    '                   "app/store_schema_release.py", "app/business_definitions.py",\n'
+    '                   "app/business_storage.py", "app/business_schema_release.py")\n',
+)
+replace_once(
+    '    module_paths = ("app/store.py", "app/email_store.py", "app/action_storage.py",\n'
+    '                    "app/action_email_storage.py", "app/action_email_definitions.py")\n',
+    '    module_paths = ("app/store.py", "app/email_store.py", "app/action_storage.py",\n'
+    '                    "app/action_email_storage.py", "app/action_email_definitions.py",\n'
+    '                    "app/action_email_schema_release.py", "app/store_schema_release.py",\n'
+    '                    "app/business_definitions.py", "app/business_storage.py",\n'
+    '                    "app/business_schema_release.py")\n',
+)
+ast.parse(text)
+path.write_text(text)
+print("paired copy harness: Business partition, all paired stages, exact -16 table count")
+```
+
+The full Business image compares all four source-shaped parent fields and `typeof` values, fifteen child row sets (including six hidden ROWID streams), thirteen public/child waters and FK findings. `_paired_unrelated` checks only unchanged tables. The independent Email-only copy cases keep their existing comparator and `initial_tables - 13` expectation. At acceptance, record the actual source/target table counts; the combined `-16` difference is a structural expectation, not a measured capacity saving.
 
 ## Normative Task 1 finite migration module
 
