@@ -3448,3 +3448,24 @@ and the single moved source were removed. The final revision root cleanup remove
 1,497,273,062 bytes; no raw proof DB/workspace or second trajectory copy remains.
 Final submitted-head CI and full10-core-plus-ledger completion remain outstanding;
 no main merge, deployment, restart or real testing send occurred.
+
+### Final submitted CI failure and exact resume-test repair, 2026-10-15
+
+CI38727017901 for submitted head3f82e1be completed with3failed,13793passed,
+118skipped and44deselected in3669.93seconds. All three failures were in the
+existing decision retry tests, whose four resume assertions omitted the native
+global `--cd <selected workspace>` added by incoming main1279f4ed. Root read
+the actual command builder and reproduced exactly3failures locally in45.33s.
+
+Test-only69dfaa5d replaces only those four prefixes with the exact six arguments,
+including the actual selected directory and its global position. First-turn
+commands, session suffixes, retry counts, correction prompts, reviewer settings
+and business decisions remain checked. The3selected cases passed in45.41s;
+workspace3cases and runner-resume4cases also passed. Ruff/diff checks passed and
+all nonselected function ASTs are unchanged. Fresh sequential SPEC and QUALITY
+reviews accepted the bounded repair. App, migration and native CLI behavior are
+unchanged, so these are corrected test expectations rather than a runtime fix.
+
+Compact evidence is `docs/superpowers/specs/2026-10-15-email-final-ci-resume-regression.json`.
+The failed run remains a failure; a replacement submitted-head CI run is required.
+No extra real CLI, database-copy, provider send, main merge or deployment occurred.
