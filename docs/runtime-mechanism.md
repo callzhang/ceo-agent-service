@@ -1,5 +1,23 @@
 # Current Runtime Mechanism
 
+An unselected four-kind Business storage unit now declares Task, Project,
+Anchor and Project context revision together, preserving all 42 existing source
+fields. Source-shaped reads retain actual/fresh source column order and public
+signed IDs. Writes use the existing tagged SQLite value codec, native affinities,
+NOT NULL/CHECK/unique constraints and typed composite physical/public FKs;
+Project retains its actual Anchor-type composite edge. Four public allocator
+streams remain separate from physical Business IDs. Ordinary writes and schema
+installation leave commit/rollback to an already active caller transaction;
+all omitted row defaults share one SQLite statement. Public allocator exhaustion
+matches the actual plain INSERT/lastrowid source writers: SQLITE_FULL rolls back
+the caller transaction. Native INSERT RETURNING has a different demonstrated
+exhaustion outcome and is not the source API contract. No constructor or caller
+selects this unit. Existing Signal/document/evidence/date/event tables, all 19
+incoming FK groups from 15 retained children, versions, migrations and providers
+remain at their existing endpoints. Full ten-core-plus-ledger implementation
+and source-body retirement are still incomplete. See
+`docs/superpowers/plans/2026-10-15-business-four-kind-storage-plan.md`.
+
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
 can reconstruct an exact historical source body from already recorded Codex or
 Claude native provenance. It resolves the native session through the existing
