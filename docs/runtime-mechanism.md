@@ -1214,6 +1214,8 @@ Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 executi
 
 `needs_human` 的有效绑定选项直接选择已审核精确方案，由 System Executor 执行；停止选项按原方案写入 skipped 和原因。requested_input 或新增事实进入 Consumer/Audit 生成并审核新 revision，不能改写已经批准的方案。旧无绑定选项不可执行，未收到选择时不猜测决定。
 
+Console Attention 同时投影当前队列故障和当前有效、已通过 Audit、尚未选择且仍未解决的 `needs_human` 决策。普通 `pending`、`processing` 或仅因状态为 `needs_human` 的记录不因此进入 Attention；人工决策行必须仍绑定当前 task/generation 与最新有效候选。Status 的 Attention 总数与 `/api/console/attention` 使用相同口径，避免把需要用户选择的已审核事项留在单独列表而漏出 Attention。
+
 如果 Derek 已直接在钉钉完成 OA，定时 OA 扫描会读取该 process instance 的实时状态。
 实例已进入明确终态时，服务不重放审批动作，而是把当前 `needs_human` attempt 收口为
 `skipped`，保存实时结果作为 resolution，并从当前 Attention 移除；原 Agent run 和决策
