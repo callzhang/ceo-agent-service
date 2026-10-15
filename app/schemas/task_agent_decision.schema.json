@@ -894,6 +894,7 @@
               "type": "null"
             }
           ],
+          "description": "Real existing Task ID required for update_task, including an ordinary scope/content update with transition=update_fields. For merge_identity this is the source Task being merged. New/skip decisions leave it null; never put the ordinary update's Task ID only in target_task_id.",
           "title": "Task Id"
         },
         "target_task_id": {
@@ -906,6 +907,7 @@
               "type": "null"
             }
           ],
+          "description": "Merge destination only: for merge_identity, the distinct existing Task retained after merging task_id into it. Leave null for ordinary update_fields, promotion, acceptance, new or skip decisions.",
           "title": "Target Task Id"
         },
         "source_excerpt": {
@@ -1209,7 +1211,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Only for merge_identity between two distinct existing Tasks, with source_task_id=task_id and matching target_task_id plus verified identity evidence. For an ordinary scope/content update use update_fields and task_id, leaving this null; neither matching a current source to one Task nor repeating that Task's ID is an identity merge."
         },
         "relation_proposals": {
           "anyOf": [
@@ -1267,7 +1270,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Project selector for this Task: an existing anchor_id or a zero-based project_decision_index. A new supporting Task named by a registered Project assessment's decision_indexes must explicitly select that assessment's Project when the assessment has anchor_id or project_decision_index. Standalone Tasks and unresolved clue-only assessments may leave it null."
         },
         "project_link_evidence": {
           "anyOf": [
@@ -1453,11 +1457,13 @@
       "additionalProperties": false,
       "properties": {
         "source_task_id": {
+          "description": "Real existing Task being merged into another saved Task; must equal the enclosing decision's task_id, not a Signal ID or a new action inferred from the current source.",
           "exclusiveMinimum": 0,
           "title": "Source Task Id",
           "type": "integer"
         },
         "target_task_id": {
+          "description": "Real existing Task retained after the merge; must equal the enclosing decision's target_task_id and be distinct from source_task_id.",
           "exclusiveMinimum": 0,
           "title": "Target Task Id",
           "type": "integer"
@@ -1468,6 +1474,7 @@
         "reason": {
           "anyOf": [
             {
+              "description": "Why the cited evidence proves that two distinct persisted Tasks represent the same deliverable and should merge. A later scope/content update to one existing Task needs no identity proposal.",
               "type": "string"
             },
             {

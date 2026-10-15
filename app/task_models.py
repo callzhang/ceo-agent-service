@@ -355,10 +355,19 @@ class TaskIdentityEvidence(StrictTaskModel):
 
 
 class TaskIdentityProposal(StrictTaskModel):
-    source_task_id: int = Field(gt=0)
-    target_task_id: int = Field(gt=0)
+    source_task_id: int = Field(
+        gt=0,
+        description="Real existing Task being merged into another saved Task; must equal the enclosing decision's task_id, not a Signal ID or a new action inferred from the current source.",
+    )
+    target_task_id: int = Field(
+        gt=0,
+        description="Real existing Task retained after the merge; must equal the enclosing decision's target_task_id and be distinct from source_task_id.",
+    )
     identity_evidence: TaskIdentityEvidence
-    reason: str = ""
+    reason: str = Field(
+        default="",
+        description="Why the cited evidence proves that two distinct persisted Tasks represent the same deliverable and should merge. A later scope/content update to one existing Task needs no identity proposal.",
+    )
 
     @model_validator(mode="after")
     def distinct_tasks(self) -> "TaskIdentityProposal":
@@ -557,8 +566,16 @@ class TaskDecision(StrictTaskModel):
         "merge_identity",
     ]
     skip_reason: str = ""
-    task_id: int | None = Field(default=None, gt=0)
-    target_task_id: int | None = Field(default=None, gt=0)
+    task_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Real existing Task ID required for update_task, including an ordinary scope/content update with transition=update_fields. For merge_identity this is the source Task being merged. New/skip decisions leave it null; never put the ordinary update's Task ID only in target_task_id.",
+    )
+    target_task_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Merge destination only: for merge_identity, the distinct existing Task retained after merging task_id into it. Leave null for ordinary update_fields, promotion, acceptance, new or skip decisions.",
+    )
     source_excerpt: str = Field(
         default="",
         description="Exact contiguous verbatim quote supporting this actual Task action/update or a display-only suggestion's factual basis, not Project registration scope already covered by concrete actions. Project registration belongs in project_decisions. Preserve punctuation, spaces, and line breaks; do not quote an inferred action as human instructions.",
@@ -635,12 +652,18 @@ class TaskDecision(StrictTaskModel):
     )
     date_evidence: list[TaskDateEvidence] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
-    identity_proposal: TaskIdentityProposal | None = None
+    identity_proposal: TaskIdentityProposal | None = Field(
+        default=None,
+        description="Only for merge_identity between two distinct existing Tasks, with source_task_id=task_id and matching target_task_id plus verified identity evidence. For an ordinary scope/content update use update_fields and task_id, leaving this null; neither matching a current source to one Task nor repeating that Task's ID is an identity merge.",
+    )
     relation_proposals: list[TaskRelationProposal] = Field(default_factory=list)
     cluster_proposal: TaskClusterProposal | None = None
     anchor_match_proposals: list[TaskAnchorMatchProposal] = Field(default_factory=list)
     project_candidate_proposal: ProjectCandidateProposal | None = None
-    project: ProjectSelector | None = None
+    project: ProjectSelector | None = Field(
+        default=None,
+        description="Project selector for this Task: an existing anchor_id or a zero-based project_decision_index. A new supporting Task named by a registered Project assessment's decision_indexes must explicitly select that assessment's Project when the assessment has anchor_id or project_decision_index. Standalone Tasks and unresolved clue-only assessments may leave it null.",
+    )
     project_link_evidence: list[SourceCitation] = Field(
         default_factory=list,
         description="Original evidence linking this Task to the selected Project. Reuse an unchanged confirmed existing link without manufacturing a Task update.",

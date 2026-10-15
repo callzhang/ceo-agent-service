@@ -1,5 +1,14 @@
 # CEO Agent Service Architecture
 
+Task Agent's native result schema explains that `task_id` identifies the
+existing Task being updated, while `target_task_id` and `identity_proposal`
+describe a merge between two distinct persisted Tasks. Scope/content updates
+use `update_fields` with no identity merge. A new Task supporting a registered Project
+assessment explicitly selects that Project; unresolved Project clues may retain
+a null selector. These field descriptions mirror
+existing validators; correction limits and lifecycle rules are unchanged.
+Diagnosis and regression evidence: `docs/system-health-quality-validation.md`.
+
 Console History counts and orders compact source keys through an inline union,
 then hydrates the requested page within one database read snapshot. It has no
 page-result cache or background page refresh: page size and newly committed

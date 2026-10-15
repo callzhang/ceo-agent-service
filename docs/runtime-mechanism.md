@@ -1,5 +1,16 @@
 # Current Runtime Mechanism
 
+Task Agent's checked-in native strict schema documents existing Task identity
+fields: ordinary `update_task`/`update_fields` uses `task_id`; merge-only target
+and identity fields identify two distinct persisted Tasks. New supporting Tasks
+carry a registered assessment's Project selector explicitly; unresolved Project
+clues may retain a null selector. Model field descriptions and
+the generated schema stay synchronized. No validator or correction-budget
+change accompanies this clarification. A failed uncompacted Work input may be
+requeued through the existing reviewed-recovery CLI after the diagnosed cause
+is repaired; old failed runs remain intact, and acceptance requires a new
+terminal source/projection readback. See `docs/system-health-quality-validation.md`.
+
 DingTalk delivery verification reads outgoing identifiers only from the native
 send `result`, never referencedMessage or nested action metadata. An openTaskId
 always requires a task query; only result.sendStatus=SUCCESS confirms asynchronous
