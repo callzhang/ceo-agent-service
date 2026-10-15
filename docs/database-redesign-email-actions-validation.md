@@ -3414,3 +3414,37 @@ only concise aggregates and native references are retained. A fresh same-source
 A/B invocation after the fixture fix is in progress. Final-head CI, publication,
 capacity recovery, remaining consolidation and full10-core-plus-ledger completion
 remain outstanding. No main merge, deploy, restart or real test send occurred.
+
+### Root follow-up: isolated same-source approval and revision both passed
+
+After the candidate-only Task ID fixture fix and independent reviews, two fresh
+generic native cases passed on the exact same7dad input snapshot. Approve ran
+at62de3cae; revision ran atb45dae49, whose changes were metadata/docs only.
+All14 recorded runtime/harness module hashes match between the two executions.
+The native7dad-isolated aggregate retains exact commits, source hash and native
+session/range references rather than assigning these runs to later doc heads.
+
+| Case | Genuine CLI calls | Review path | Persisted result | Substitute send/verification/receipt |
+| --- | ---: | --- | --- | --- |
+| approve |2| approve revision0 | Task done, one business Attempt |1/1/1|
+| revision |4| return revision0 → approve revision1 | Task done, one business Attempt |1/1/1|
+
+Both retained103 original relevant pre-native tables, unchanged source and
+baseline hashes, original FK findings, terminal input compaction/provenance,
+existing native session files and valid completed-run ranges. Reopening returned
+executed without another model/provider invocation. Current public Email DAO
+direct/context/Attempt/History fixture assertions also passed, separately from
+these generic Consumer/Audit model cases. Real provider sends remain zero.
+
+The earlier nine-CLI failure is still retained as failure evidence. Audit
+prompt/policy was not changed, so the successful fresh cases do not establish
+that its prior signature judgment is repaired. This is not a repeated five-case
+all-role native sweep. Historical no_action/technical-retry/settlement and four-case
+SQL inverse receipts keep their original execution/source bindings.
+
+Each reserved native Task root was absent after terminal cleanup. After aggregate
+and source-hash verification plus no-open-handle checks, both accepted raw roots
+and the single moved source were removed. The final revision root cleanup removed
+1,497,273,062 bytes; no raw proof DB/workspace or second trajectory copy remains.
+Final submitted-head CI and full10-core-plus-ledger completion remain outstanding;
+no main merge, deployment, restart or real testing send occurred.
