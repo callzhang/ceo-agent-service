@@ -260,6 +260,14 @@ def _definitions():
         "created_at text not null default current_timestamp", "updated_at text not null default ''",
         "merged_task_ref integer", "canonical_anchor_ref integer", "context_project_ref integer",
     ]
+    columns.extend((
+        "task_public_id integer generated always as "
+        "(case when record_type='task' then public_id end) virtual",
+        "project_public_id integer generated always as "
+        "(case when record_type='project' then public_id end) virtual",
+        "anchor_public_id integer generated always as "
+        "(case when record_type='anchor' then public_id end) virtual",
+    ))
     constraints = []
     for kind in BUSINESS_FIELDS:
         for field in business_payload_fields(kind):
@@ -300,6 +308,9 @@ def _definitions():
         "create unique index idx_business_anchor_identity on business(anchor_anchor_type,anchor_anchor_ref) where record_type='anchor'",
         "create unique index idx_business_anchor_public_type on business(public_id,anchor_anchor_type) where record_type='anchor'",
         "create index idx_business_context_project on business(project_context_revision_project_id,public_id desc) where record_type='project_context_revision'",
+        "create unique index idx_business_task_public_id on business(task_public_id)",
+        "create unique index idx_business_project_public_id on business(project_public_id)",
+        "create unique index idx_business_anchor_public_id on business(anchor_public_id)",
     )
     triggers = tuple(
         f"create trigger trg_business_{kind}_sequence before insert on business "

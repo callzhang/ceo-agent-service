@@ -18,6 +18,20 @@ remain at their existing endpoints. Full ten-core-plus-ledger implementation
 and source-body retirement are still incomplete. See
 `docs/superpowers/plans/2026-10-15-business-four-kind-storage-plan.md`.
 
+An unselected finite release module can migrate the four old Business parents
+into this table while retaining fifteen existing child tables. Three generated
+typed public-ID aliases and full unique indexes carry exactly nineteen child
+foreign keys; the other twenty-one child foreign keys stay on their original
+parents. The migration captures and validates the actual or fresh source
+declarations before DDL, maps every parent public ID to a positive physical ID
+before copying references, and preserves source-shaped values and storage
+classes, hidden child ROWIDs, auxiliary declarations, native FK findings, and
+thirteen independent sequence waters. Its inverse reads current target facts,
+including later writes, and recreates the captured source declarations inside
+the caller's FK-off transaction. No constructor, version or coordinator selects
+this release module yet. See
+`docs/database-redesign-business-four-kind-migration-validation.md`.
+
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
 can reconstruct an exact historical source body from already recorded Codex or
 Claude native provenance. It resolves the native session through the existing

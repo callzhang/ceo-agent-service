@@ -1,0 +1,3538 @@
+{
+  "children": {
+    "business_attention_items": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "stable_key",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "category",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "'active'",
+          "hidden": 0,
+          "name": "status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "title",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "business_area",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "why_attention",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "current_state",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "ceo_action",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "anchor_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 10,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "evidence_signal_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 11,
+          "dflt_value": "'{}'",
+          "hidden": 0,
+          "name": "assessment_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 12,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "resolution_signal_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 13,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "resolved_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 14,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 15,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "resolution_signal_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "evidence_signal_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "anchor_id",
+          "id": 2,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_anchors",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 3,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "status",
+              "seqno": 0
+            },
+            {
+              "cid": 2,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "category",
+              "seqno": 1
+            },
+            {
+              "cid": 15,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "updated_at",
+              "seqno": 2
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 3
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 4
+            }
+          ],
+          "name": "idx_business_attention_items_list",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_attention_items_list\n                    on business_attention_items(status, category, updated_at, id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "stable_key",
+              "seqno": 0
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 1
+            }
+          ],
+          "name": "sqlite_autoindex_business_attention_items_1",
+          "origin": "u",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_attention_items (\n                    id integer primary key autoincrement,\n                    stable_key text not null unique check(trim(stable_key, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    category text not null check(category in ('fyi', 'watch', 'decision', 'push')),\n                    status text not null default 'active' check(status in ('active', 'resolved')),\n                    title text not null check(trim(title, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    business_area text not null default '',\n                    why_attention text not null check(trim(why_attention, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    current_state text not null check(trim(current_state, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    ceo_action text not null check(trim(ceo_action, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    anchor_id integer not null,\n                    evidence_signal_id integer not null,\n                    assessment_json text not null default '{}',\n                    resolution_signal_id integer,\n                    resolved_at text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    check(\n                        (status = 'active' and resolution_signal_id is null and resolved_at = '')\n                        or (status = 'resolved' and resolution_signal_id is not null\n                            and trim(resolved_at, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> '')\n                    ),\n                    foreign key(anchor_id) references business_anchors(id),\n                    foreign key(evidence_signal_id) references business_task_signals(id),\n                    foreign key(resolution_signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_attention_proposal_tasks": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "attention_item_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "task_id",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "task_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        },
+        {
+          "from": "attention_item_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_attention_items",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "attention_item_id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "idx_business_attention_proposal_tasks_task",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_attention_proposal_tasks_task\n                    on business_attention_proposal_tasks(task_id, attention_item_id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "attention_item_id",
+              "seqno": 0
+            },
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "sqlite_autoindex_business_attention_proposal_tasks_1",
+          "origin": "pk",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_attention_proposal_tasks (\n                    attention_item_id integer not null,\n                    task_id integer not null,\n                    created_at text not null default current_timestamp,\n                    primary key(attention_item_id, task_id),\n                    foreign key(attention_item_id) references business_attention_items(id),\n                    foreign key(task_id) references business_tasks(id)\n                )",
+      "triggers": []
+    },
+    "business_attention_tasks": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "attention_item_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "task_id",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "task_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        },
+        {
+          "from": "attention_item_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_attention_items",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "attention_item_id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "idx_business_attention_tasks_task",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_attention_tasks_task\n                    on business_attention_tasks(task_id, attention_item_id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "attention_item_id",
+              "seqno": 0
+            },
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "sqlite_autoindex_business_attention_tasks_1",
+          "origin": "pk",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_attention_tasks (\n                    attention_item_id integer not null,\n                    task_id integer not null,\n                    created_at text not null default current_timestamp,\n                    primary key(attention_item_id, task_id),\n                    foreign key(attention_item_id) references business_attention_items(id),\n                    foreign key(task_id) references business_tasks(id)\n                )",
+      "triggers": []
+    },
+    "business_legacy_links": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "signal_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "task_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "cluster_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "anchor_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "project_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "project_candidate_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 7,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "attention_item_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 8,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "work_project_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 9,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "work_todo_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 10,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "work_update_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 11,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "work_update_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "work_updates",
+          "to": "id"
+        },
+        {
+          "from": "work_todo_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "work_todos",
+          "to": "id"
+        },
+        {
+          "from": "work_project_id",
+          "id": 2,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "work_projects",
+          "to": "id"
+        },
+        {
+          "from": "attention_item_id",
+          "id": 3,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_attention_items",
+          "to": "id"
+        },
+        {
+          "from": "project_candidate_id",
+          "id": 4,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_project_candidates",
+          "to": "id"
+        },
+        {
+          "from": "project_id",
+          "id": 5,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_projects",
+          "to": "id"
+        },
+        {
+          "from": "anchor_id",
+          "id": 6,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_anchors",
+          "to": "id"
+        },
+        {
+          "from": "cluster_id",
+          "id": 7,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_work_clusters",
+          "to": "id"
+        },
+        {
+          "from": "task_id",
+          "id": 8,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        },
+        {
+          "from": "signal_id",
+          "id": 9,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 2,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "idx_business_legacy_links_task",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_legacy_links_task\n                    on business_legacy_links(task_id, id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 10,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "work_update_id",
+              "seqno": 0
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 1
+            }
+          ],
+          "name": "sqlite_autoindex_business_legacy_links_3",
+          "origin": "u",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        },
+        {
+          "columns": [
+            {
+              "cid": 9,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "work_todo_id",
+              "seqno": 0
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 1
+            }
+          ],
+          "name": "sqlite_autoindex_business_legacy_links_2",
+          "origin": "u",
+          "partial": 0,
+          "seq": 2,
+          "sql": null,
+          "unique": 1
+        },
+        {
+          "columns": [
+            {
+              "cid": 8,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "work_project_id",
+              "seqno": 0
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 1
+            }
+          ],
+          "name": "sqlite_autoindex_business_legacy_links_1",
+          "origin": "u",
+          "partial": 0,
+          "seq": 3,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_legacy_links (\n                    id integer primary key autoincrement,\n                    signal_id integer,\n                    task_id integer,\n                    cluster_id integer,\n                    anchor_id integer,\n                    project_id integer,\n                    project_candidate_id integer,\n                    attention_item_id integer,\n                    work_project_id integer unique,\n                    work_todo_id integer unique,\n                    work_update_id integer unique,\n                    created_at text not null default current_timestamp,\n                    check(\n                        (signal_id is not null) + (task_id is not null) + (cluster_id is not null)\n                        + (anchor_id is not null) + (project_id is not null)\n                        + (project_candidate_id is not null) + (attention_item_id is not null) = 1\n                    ),\n                    check(\n                        (work_project_id is not null) + (work_todo_id is not null)\n                        + (work_update_id is not null) = 1\n                    ),\n                    foreign key(signal_id) references business_task_signals(id),\n                    foreign key(task_id) references business_tasks(id),\n                    foreign key(cluster_id) references business_work_clusters(id),\n                    foreign key(anchor_id) references business_anchors(id),\n                    foreign key(project_id) references business_projects(id),\n                    foreign key(project_candidate_id) references business_project_candidates(id),\n                    foreign key(attention_item_id) references business_attention_items(id),\n                    foreign key(work_project_id) references work_projects(id),\n                    foreign key(work_todo_id) references work_todos(id),\n                    foreign key(work_update_id) references work_updates(id)\n                )",
+      "triggers": []
+    },
+    "business_project_candidates": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "cluster_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "title",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "reason",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "'proposed'",
+          "hidden": 0,
+          "name": "status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "confirmed_project_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "confirmation_signal_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "confirmation_signal_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "confirmed_project_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_projects",
+          "to": "id"
+        },
+        {
+          "from": "cluster_id",
+          "id": 2,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_work_clusters",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "cluster_id",
+              "seqno": 0
+            },
+            {
+              "cid": 4,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "status",
+              "seqno": 1
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "idx_business_project_candidates_cluster",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_project_candidates_cluster\n                    on business_project_candidates(cluster_id, status, id)",
+          "unique": 0
+        }
+      ],
+      "sql": "CREATE TABLE business_project_candidates (\n                    id integer primary key autoincrement,\n                    cluster_id integer not null,\n                    title text not null check(trim(title, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    reason text not null check(trim(reason, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    status text not null default 'proposed'\n                        check(status in ('proposed', 'confirmed', 'rejected')),\n                    confirmed_project_id integer,\n                    confirmation_signal_id integer,\n                    created_at text not null default current_timestamp,\n                    check((status = 'confirmed') = (confirmed_project_id is not null)),\n                    check((status = 'confirmed') = (confirmation_signal_id is not null)),\n                    foreign key(cluster_id) references business_work_clusters(id),\n                    foreign key(confirmed_project_id) references business_projects(id),\n                    foreign key(confirmation_signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_project_evidence": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "project_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "signal_id",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "signal_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "project_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_projects",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "project_id",
+              "seqno": 0
+            },
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "signal_id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "sqlite_autoindex_business_project_evidence_1",
+          "origin": "pk",
+          "partial": 0,
+          "seq": 0,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_project_evidence (\n                    project_id integer not null,\n                    signal_id integer not null,\n                    created_at text not null default current_timestamp,\n                    primary key(project_id, signal_id),\n                    foreign key(project_id) references business_projects(id),\n                    foreign key(signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_task_anchor_links": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "task_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "anchor_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "'proposed'",
+          "hidden": 0,
+          "name": "status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "1",
+          "hidden": 0,
+          "name": "active",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "evidence_signal_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "reason",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "evidence_signal_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "anchor_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_anchors",
+          "to": "id"
+        },
+        {
+          "from": "task_id",
+          "id": 2,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 3,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "status",
+              "seqno": 1
+            },
+            {
+              "cid": 4,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "active",
+              "seqno": 2
+            },
+            {
+              "cid": 2,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "anchor_id",
+              "seqno": 3
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 4
+            }
+          ],
+          "name": "idx_business_task_anchor_links_task",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_task_anchor_links_task\n                    on business_task_anchor_links(task_id, status, active, anchor_id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 2,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "anchor_id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "sqlite_autoindex_business_task_anchor_links_1",
+          "origin": "u",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_task_anchor_links (\n                    id integer primary key autoincrement,\n                    task_id integer not null,\n                    anchor_id integer not null,\n                    status text not null default 'proposed'\n                        check(status in ('proposed', 'confirmed', 'rejected')),\n                    active integer not null default 1 check(active in (0, 1)),\n                    evidence_signal_id integer not null,\n                    reason text not null default '',\n                    created_at text not null default current_timestamp,\n                    unique(task_id, anchor_id),\n                    foreign key(task_id) references business_tasks(id),\n                    foreign key(anchor_id) references business_anchors(id),\n                    foreign key(evidence_signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_task_date_evidence": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "task_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "date_type",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "value_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "raw_phrase",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "source_signal_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "actor_kind",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "actor_user_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "actor_name",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "source_signal_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "task_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "idx_business_task_date_evidence_task",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_task_date_evidence_task\n                    on business_task_date_evidence(task_id, id)",
+          "unique": 0
+        }
+      ],
+      "sql": "CREATE TABLE business_task_date_evidence (\n                    id integer primary key autoincrement,\n                    task_id integer not null,\n                    date_type text not null check(date_type in (\n                        'assigned_at', 'requested_deadline_at', 'external_deadline_at',\n                        'committed_deadline_at', 'estimated_deadline_at', 'next_check_at'\n                    )),\n                    value_at text not null default '',\n                    raw_phrase text not null check(trim(raw_phrase, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    source_signal_id integer not null,\n                    actor_kind text not null check(actor_kind in ('human', 'system', 'agent', 'unknown')),\n                    actor_user_id text not null default '',\n                    actor_name text not null default '',\n                    created_at text not null default current_timestamp,\n                    foreign key(task_id) references business_tasks(id),\n                    foreign key(source_signal_id) references business_task_signals(id)\n                )",
+      "triggers": [
+        {
+          "name": "trg_business_task_date_evidence_immutable_delete",
+          "sql": "CREATE TRIGGER trg_business_task_date_evidence_immutable_delete\n                before delete on business_task_date_evidence\n                begin select raise(abort, 'business task date evidence is immutable'); end"
+        },
+        {
+          "name": "trg_business_task_date_evidence_immutable_replace",
+          "sql": "CREATE TRIGGER trg_business_task_date_evidence_immutable_replace\n                before insert on business_task_date_evidence\n                when exists (select 1 from business_task_date_evidence where id=new.id)\n                begin select raise(abort, 'business task date evidence is immutable'); end"
+        },
+        {
+          "name": "trg_business_task_date_evidence_immutable_update",
+          "sql": "CREATE TRIGGER trg_business_task_date_evidence_immutable_update\n                before update on business_task_date_evidence\n                begin select raise(abort, 'business task date evidence is immutable'); end"
+        }
+      ]
+    },
+    "business_task_dingtalk_links": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "business_task_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "dingtalk_task_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "executor_user_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "executor_name",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "title_snapshot",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "deadline_at_snapshot",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "priority_snapshot",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "last_dingtalk_done",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 10,
+          "dflt_value": "'{}'",
+          "hidden": 0,
+          "name": "last_dingtalk_payload_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 11,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "last_pull_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 12,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "last_push_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 13,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "last_error",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 14,
+          "dflt_value": "0",
+          "hidden": 0,
+          "name": "retry_count",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 15,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 16,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "business_task_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "business_task_id",
+              "seqno": 0
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 1
+            }
+          ],
+          "name": "idx_business_task_dingtalk_links_one_active",
+          "origin": "c",
+          "partial": 1,
+          "seq": 0,
+          "sql": "CREATE UNIQUE INDEX idx_business_task_dingtalk_links_one_active\n                    on business_task_dingtalk_links(business_task_id)\n                    where status in ('creating','active')",
+          "unique": 1
+        },
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "business_task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 8,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "status",
+              "seqno": 1
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "idx_business_task_dingtalk_links_task",
+          "origin": "c",
+          "partial": 0,
+          "seq": 1,
+          "sql": "CREATE INDEX idx_business_task_dingtalk_links_task\n                    on business_task_dingtalk_links(business_task_id, status, id)",
+          "unique": 0
+        }
+      ],
+      "sql": "CREATE TABLE business_task_dingtalk_links (\n                    id integer primary key autoincrement,\n                    business_task_id integer not null,\n                    dingtalk_task_id text not null default '',\n                    executor_user_id text not null default '',\n                    executor_name text not null default '',\n                    title_snapshot text not null default '',\n                    deadline_at_snapshot text not null default '',\n                    priority_snapshot text not null default '',\n                    status text not null check(status in ('creating','active','done','cancelled','failed')),\n                    last_dingtalk_done integer,\n                    last_dingtalk_payload_json text not null default '{}',\n                    last_pull_at text not null default '', last_push_at text not null default '',\n                    last_error text not null default '', retry_count integer not null default 0,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    foreign key(business_task_id) references business_tasks(id)\n                )",
+      "triggers": []
+    },
+    "business_task_events": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "task_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "event_type",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "signal_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "before_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "after_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "reason",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "signal_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "task_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 7,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "created_at",
+              "seqno": 1
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "idx_business_task_events_task",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_task_events_task\n                    on business_task_events(task_id, created_at, id)",
+          "unique": 0
+        }
+      ],
+      "sql": "CREATE TABLE business_task_events (\n                    id integer primary key autoincrement,\n                    task_id integer not null,\n                    event_type text not null check(event_type in (\n                        'created', 'promoted', 'commitment_changed', 'owner_changed',\n                        'deadline_changed', 'date_evidence_recorded', 'status_changed',\n                        'relevance_changed', 'details_changed', 'fields_changed', 'merged'\n                    )),\n                    signal_id integer,\n                    before_json text not null\n                        check(json_valid(before_json) and json_type(before_json) = 'object'),\n                    after_json text not null\n                        check(json_valid(after_json) and json_type(after_json) = 'object'),\n                    reason text not null check(trim(reason, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    created_at text not null default current_timestamp,\n                    foreign key(task_id) references business_tasks(id),\n                    foreign key(signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_task_evidence": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "task_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "signal_id",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "evidence_role",
+          "notnull": 1,
+          "pk": 3,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "signal_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "task_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 3,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "created_at",
+              "seqno": 1
+            },
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "signal_id",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "idx_business_task_evidence_task",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_task_evidence_task\n                    on business_task_evidence(task_id, created_at, signal_id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "signal_id",
+              "seqno": 1
+            },
+            {
+              "cid": 2,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "evidence_role",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "sqlite_autoindex_business_task_evidence_1",
+          "origin": "pk",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_task_evidence (\n                    task_id integer not null,\n                    signal_id integer not null,\n                    evidence_role text not null check(evidence_role in (\n                        'discovery', 'commitment', 'assignment', 'acceptance', 'completion',\n                        'correction', 'merge_identity', 'relevance', 'resolution'\n                    )),\n                    created_at text not null default current_timestamp,\n                    primary key(task_id, signal_id, evidence_role),\n                    foreign key(task_id) references business_tasks(id),\n                    foreign key(signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_task_follow_ups": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "business_task_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "source_signal_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "owner_user_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "owner_name",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "target_conversation_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "target_kind",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "question_text",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "scheduled_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "sent_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 10,
+          "dflt_value": "'draft'",
+          "hidden": 0,
+          "name": "status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 11,
+          "dflt_value": "1",
+          "hidden": 0,
+          "name": "revision",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 12,
+          "dflt_value": "'{}'",
+          "hidden": 0,
+          "name": "send_result_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 13,
+          "dflt_value": "'{}'",
+          "hidden": 0,
+          "name": "evidence_check_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 14,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "suppressed_reason",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 15,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "dedupe_key",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 16,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 17,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "source_signal_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "business_task_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 10,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "status",
+              "seqno": 0
+            },
+            {
+              "cid": 8,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "scheduled_at",
+              "seqno": 1
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "idx_business_task_follow_ups_due",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_task_follow_ups_due\n                    on business_task_follow_ups(status, scheduled_at, id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 15,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "dedupe_key",
+              "seqno": 0
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 1
+            }
+          ],
+          "name": "sqlite_autoindex_business_task_follow_ups_1",
+          "origin": "u",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_task_follow_ups (\n                    id integer primary key autoincrement,\n                    business_task_id integer not null,\n                    source_signal_id integer not null,\n                    owner_user_id text not null default '',\n                    owner_name text not null default '',\n                    target_conversation_id text not null,\n                    target_kind text not null check(target_kind in ('group','direct')),\n                    question_text text not null,\n                    scheduled_at text not null,\n                    sent_at text not null default '',\n                    status text not null default 'draft' check(status in ('draft','approved','sent','completed','skipped','cancelled','failed')),\n                    revision integer not null default 1,\n                    send_result_json text not null default '{}',\n                    evidence_check_json text not null default '{}',\n                    suppressed_reason text not null default '',\n                    dedupe_key text not null unique,\n                    created_at text not null default current_timestamp, updated_at text not null default current_timestamp,\n                    foreign key(business_task_id) references business_tasks(id),\n                    foreign key(source_signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_task_relations": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "from_task_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "to_task_id",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "relation_type",
+          "notnull": 1,
+          "pk": 3,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "'proposed'",
+          "hidden": 0,
+          "name": "status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "supporting_signal_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "reason",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "supporting_signal_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_task_signals",
+          "to": "id"
+        },
+        {
+          "from": "to_task_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        },
+        {
+          "from": "from_task_id",
+          "id": 2,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "to_task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 2,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "relation_type",
+              "seqno": 1
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "from_task_id",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "idx_business_task_relations_to",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_task_relations_to\n                    on business_task_relations(to_task_id, relation_type, from_task_id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "from_task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 2,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "relation_type",
+              "seqno": 1
+            },
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "to_task_id",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "idx_business_task_relations_from",
+          "origin": "c",
+          "partial": 0,
+          "seq": 1,
+          "sql": "CREATE INDEX idx_business_task_relations_from\n                    on business_task_relations(from_task_id, relation_type, to_task_id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "from_task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "to_task_id",
+              "seqno": 1
+            },
+            {
+              "cid": 2,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "relation_type",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "sqlite_autoindex_business_task_relations_1",
+          "origin": "pk",
+          "partial": 0,
+          "seq": 2,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_task_relations (\n                    from_task_id integer not null,\n                    to_task_id integer not null,\n                    relation_type text not null check(relation_type in (\n                        'depends_on', 'blocks', 'supports', 'supersedes', 'related_to'\n                    )),\n                    status text not null default 'proposed'\n                        check(status in ('proposed', 'confirmed', 'rejected')),\n                    supporting_signal_id integer not null,\n                    reason text not null default '',\n                    created_at text not null default current_timestamp,\n                    primary key(from_task_id, to_task_id, relation_type),\n                    check(from_task_id <> to_task_id),\n                    foreign key(from_task_id) references business_tasks(id),\n                    foreign key(to_task_id) references business_tasks(id),\n                    foreign key(supporting_signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_task_todo_sync_outbox": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "operation_key",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "business_task_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "operation",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "'queued'",
+          "hidden": 0,
+          "name": "status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": "'{}'",
+          "hidden": 0,
+          "name": "evidence_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": "'{}'",
+          "hidden": 0,
+          "name": "receipt_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "error",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": "0",
+          "hidden": 0,
+          "name": "attempt_count",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 9,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "lease_owner",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 10,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "lease_expires_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 11,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "next_attempt_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 12,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "completed_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 13,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 14,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "business_task_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 4,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "status",
+              "seqno": 0
+            },
+            {
+              "cid": 11,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "next_attempt_at",
+              "seqno": 1
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "idx_business_task_todo_sync_outbox_status",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_task_todo_sync_outbox_status\n                    on business_task_todo_sync_outbox(status, next_attempt_at, id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "operation_key",
+              "seqno": 0
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 1
+            }
+          ],
+          "name": "sqlite_autoindex_business_task_todo_sync_outbox_1",
+          "origin": "u",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_task_todo_sync_outbox (\n                    id integer primary key autoincrement,\n                    operation_key text not null unique, business_task_id integer not null,\n                    operation text not null check(operation in ('create','complete')),\n                    status text not null default 'queued' check(status in ('queued','running','completed','skipped','failed','unknown')),\n                    evidence_json text not null default '{}', receipt_json text not null default '{}', error text not null default '',\n                    attempt_count integer not null default 0, lease_owner text not null default '', lease_expires_at text not null default '',\n                    next_attempt_at text not null default '', completed_at text not null default '',\n                    created_at text not null default current_timestamp, updated_at text not null default current_timestamp,\n                    foreign key(business_task_id) references business_tasks(id)\n                )",
+      "triggers": []
+    },
+    "business_work_cluster_tasks": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "cluster_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "task_id",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "task_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        },
+        {
+          "from": "cluster_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_work_clusters",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 0
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "cluster_id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "idx_business_work_cluster_tasks_task",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_work_cluster_tasks_task\n                    on business_work_cluster_tasks(task_id, cluster_id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "cluster_id",
+              "seqno": 0
+            },
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "task_id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "sqlite_autoindex_business_work_cluster_tasks_1",
+          "origin": "pk",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_work_cluster_tasks (\n                    cluster_id integer not null,\n                    task_id integer not null,\n                    created_at text not null default current_timestamp,\n                    primary key(cluster_id, task_id),\n                    foreign key(cluster_id) references business_work_clusters(id),\n                    foreign key(task_id) references business_tasks(id)\n                )",
+      "triggers": []
+    }
+  },
+  "parents": {
+    "business_anchors": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "anchor_type",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "anchor_ref",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "title",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "1",
+          "hidden": 0,
+          "name": "active",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 0
+            },
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "anchor_type",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "sqlite_autoindex_business_anchors_2",
+          "origin": "u",
+          "partial": 0,
+          "seq": 0,
+          "sql": null,
+          "unique": 1
+        },
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "anchor_type",
+              "seqno": 0
+            },
+            {
+              "cid": 2,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "anchor_ref",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "sqlite_autoindex_business_anchors_1",
+          "origin": "u",
+          "partial": 0,
+          "seq": 1,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_anchors (\n                    id integer primary key autoincrement,\n                    anchor_type text not null check(anchor_type in (\n                        'project', 'okr', 'customer', 'product', 'revenue', 'financing',\n                        'cash', 'key_hire', 'personnel', 'company_priority', 'matter'\n                    )),\n                    anchor_ref text not null check(trim(anchor_ref, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    title text not null check(trim(title, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    active integer not null default 1 check(active in (0, 1)),\n                    created_at text not null default current_timestamp,\n                    unique(anchor_type, anchor_ref),\n                    unique(id, anchor_type)\n                )",
+      "triggers": []
+    },
+    "business_project_context_revisions": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "project_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "context_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "evidence_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "project_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_projects",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "project_id",
+              "seqno": 0
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 1,
+              "key": 1,
+              "name": "id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "idx_business_project_context_revisions_project",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_project_context_revisions_project\n                    on business_project_context_revisions(project_id, id desc)",
+          "unique": 0
+        }
+      ],
+      "sql": "CREATE TABLE business_project_context_revisions (\n                    id integer primary key autoincrement,\n                    project_id integer not null,\n                    context_json text not null,\n                    evidence_json text not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(project_id) references business_projects(id)\n                )",
+      "triggers": []
+    },
+    "business_projects": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "canonical_anchor_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "'project'",
+          "hidden": 0,
+          "name": "anchor_type",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "title",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "registry_source",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "crm_customer_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "crm_customer_name",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "'not_requested'",
+          "hidden": 0,
+          "name": "crm_customer_lookup_status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": "'[]'",
+          "hidden": 0,
+          "name": "crm_customer_candidates_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "crm_customer_label",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 10,
+          "dflt_value": "'{}'",
+          "hidden": 0,
+          "name": "crm_customer_evidence_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 11,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "canonical_anchor_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_anchors",
+          "to": "id"
+        },
+        {
+          "from": "anchor_type",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 1,
+          "table": "business_anchors",
+          "to": "anchor_type"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "canonical_anchor_id",
+              "seqno": 0
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 1
+            }
+          ],
+          "name": "sqlite_autoindex_business_projects_1",
+          "origin": "u",
+          "partial": 0,
+          "seq": 0,
+          "sql": null,
+          "unique": 1
+        }
+      ],
+      "sql": "CREATE TABLE business_projects (\n                    id integer primary key autoincrement,\n                    canonical_anchor_id integer not null unique,\n                    anchor_type text not null default 'project' check(anchor_type = 'project'),\n                    title text not null check(trim(title, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    registry_source text not null\n                        check(trim(registry_source, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    crm_customer_id text not null default '',\n                    crm_customer_name text not null default '',\n                    crm_customer_lookup_status text not null default 'not_requested'\n                        check(crm_customer_lookup_status in (\n                            'not_requested', 'matched', 'ambiguous', 'needs_confirmation',\n                            'no_match', 'unavailable', 'conflict'\n                        )),\n                    crm_customer_candidates_json text not null default '[]'\n                        check(json_valid(crm_customer_candidates_json)\n                            and json_type(crm_customer_candidates_json) = 'array'),\n                    crm_customer_label text not null default '',\n                    crm_customer_evidence_json text not null default '{}'\n                        check(json_valid(crm_customer_evidence_json)\n                            and json_type(crm_customer_evidence_json) = 'object'),\n                    created_at text not null default current_timestamp,\n                    foreign key(canonical_anchor_id, anchor_type)\n                        references business_anchors(id, anchor_type)\n                )",
+      "triggers": []
+    },
+    "business_tasks": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "title",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "description",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "stage",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "'source'",
+          "hidden": 0,
+          "name": "origin",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": "'{}'",
+          "hidden": 0,
+          "name": "suggestion_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": "'open'",
+          "hidden": 0,
+          "name": "status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "'none'",
+          "hidden": 0,
+          "name": "commitment_status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "formal_basis",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "dflt_value": "'unknown'",
+          "hidden": 0,
+          "name": "business_relevance",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 10,
+          "dflt_value": null,
+          "hidden": 0,
+          "name": "merged_into_task_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 11,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "owner_user_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 12,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "owner_name",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 13,
+          "dflt_value": "'{}'",
+          "hidden": 0,
+          "name": "owner_evidence_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 14,
+          "dflt_value": "''",
+          "hidden": 0,
+          "name": "deadline_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 15,
+          "dflt_value": "'[]'",
+          "hidden": 0,
+          "name": "missing_evidence_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 16,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "last_activity_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 17,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 18,
+          "dflt_value": "current_timestamp",
+          "hidden": 0,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "merged_into_task_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "NO ACTION",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "business_tasks",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "cid": 9,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "business_relevance",
+              "seqno": 0
+            },
+            {
+              "cid": 18,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "updated_at",
+              "seqno": 1
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 2
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 3
+            }
+          ],
+          "name": "idx_business_tasks_relevance",
+          "origin": "c",
+          "partial": 0,
+          "seq": 0,
+          "sql": "CREATE INDEX idx_business_tasks_relevance\n                    on business_tasks(business_relevance, updated_at, id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 3,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "stage",
+              "seqno": 0
+            },
+            {
+              "cid": 6,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "status",
+              "seqno": 1
+            },
+            {
+              "cid": 18,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "updated_at",
+              "seqno": 2
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 3
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 4
+            }
+          ],
+          "name": "idx_business_tasks_list",
+          "origin": "c",
+          "partial": 0,
+          "seq": 1,
+          "sql": "CREATE INDEX idx_business_tasks_list\n                    on business_tasks(stage, status, updated_at, id)",
+          "unique": 0
+        },
+        {
+          "columns": [
+            {
+              "cid": 18,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "updated_at",
+              "seqno": 0
+            },
+            {
+              "cid": 0,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 1,
+              "name": "id",
+              "seqno": 1
+            },
+            {
+              "cid": -1,
+              "coll": "BINARY",
+              "desc": 0,
+              "key": 0,
+              "name": null,
+              "seqno": 2
+            }
+          ],
+          "name": "idx_business_tasks_updated_id",
+          "origin": "c",
+          "partial": 0,
+          "seq": 2,
+          "sql": "CREATE INDEX idx_business_tasks_updated_id\n                    on business_tasks(updated_at, id)",
+          "unique": 0
+        }
+      ],
+      "sql": "CREATE TABLE business_tasks (\n                    id integer primary key autoincrement,\n                    title text not null check(trim(title, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    description text not null default '',\n                    stage text not null check(stage in ('candidate', 'formal')),\n                    origin text not null default 'source' check(origin in ('source', 'agent_suggestion')),\n                    suggestion_json text not null default '{}'\n                        check(json_valid(suggestion_json) and json_type(suggestion_json) = 'object'),\n                    status text not null default 'open' check(status in (\n                        'open', 'waiting', 'done', 'cancelled', 'merged'\n                    )),\n                    commitment_status text not null default 'none' check(commitment_status in (\n                        'none', 'assigned_unaccepted', 'accepted', 'disputed', 'completed', 'cancelled'\n                    )),\n                    formal_basis text check(formal_basis in (\n                        'explicit_assignment', 'explicit_commitment', 'external_todo', 'meeting_action_item'\n                    )),\n                    business_relevance text not null default 'unknown' check(business_relevance in (\n                        'unknown', 'not_relevant', 'relevant'\n                    )),\n                    merged_into_task_id integer,\n                    owner_user_id text not null default '',\n                    owner_name text not null default '',\n                    owner_evidence_json text not null default '{}'\n                        check(json_valid(owner_evidence_json) and json_type(owner_evidence_json) = 'object'),\n                    deadline_at text not null default '',\n                    missing_evidence_json text not null default '[]'\n                        check(json_valid(missing_evidence_json) and json_type(missing_evidence_json) = 'array'),\n                    last_activity_at text not null default current_timestamp,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    check(\n                        (stage = 'formal' and formal_basis is not null)\n                        or (stage = 'candidate' and formal_basis is null)\n                    ),\n                    check(\n                        (status = 'merged' and merged_into_task_id is not null)\n                        or (status <> 'merged' and merged_into_task_id is null)\n                    ),\n                    check(merged_into_task_id is null or merged_into_task_id <> id),\n                    foreign key(merged_into_task_id) references business_tasks(id)\n                )",
+      "triggers": []
+    }
+  },
+  "variant": "fresh"
+}

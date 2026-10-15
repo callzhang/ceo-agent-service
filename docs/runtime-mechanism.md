@@ -18,6 +18,20 @@ remain at their existing endpoints. Full ten-core-plus-ledger implementation
 and source-body retirement are still incomplete. See
 `docs/superpowers/plans/2026-10-15-business-four-kind-storage-plan.md`.
 
+An unselected `app/business_schema_release.py` provides the finite actual/fresh
+four-kind migration and current-fact inverse. It requires the caller's active
+foreign-key-off transaction and never commits. Before DDL it rejects unsupported
+source declarations, mixed target objects, broken moved-parent references and
+external schema dependencies. Forward copy replaces four parents with one
+Business table, translates nineteen FK endpoints in fifteen retained children
+to three typed public aliases, and preserves the other twenty-one FK groups,
+source-shaped facts, hidden ROWIDs, indexes, triggers and thirteen sequence
+waters. Inverse validates the captured declarations and current target shape,
+reads current facts after any target writes, removes four manually named
+allocator aliases and restores the original declarations. The caller rolls
+back the transaction on a failed copy or inverse. No current Store bootstrap,
+route, version marker or deployed path invokes this module.
+
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
 can reconstruct an exact historical source body from already recorded Codex or
 Claude native provenance. It resolves the native session through the existing
