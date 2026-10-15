@@ -2600,3 +2600,18 @@ functions and helpers were unchanged, apart from now-unused imports. Scoped
 Ruff and diff checks passed. Both owned temporary roots were removed and their
 absence verified. This is local test evidence; fresh sequential SPEC/QUALITY,
 CI/publication, and the full10+1 gate remain open.
+
+### Task7 previous Store owners: independent acceptance
+
+Root accepts49903964 after fresh sequential SPEC/QUALITY PASS. Exactly three
+AST-exact published functions are preserved through three explicit groups and
+five children; all16 groups require68 functions/126 children without skipped,
+failed or errored cases. The five extra archive metadata paths close real
+historical helper dependencies; app/tests/conftest bytes stay genuine0441.
+No current repair behavior was hidden: its sole manifest-flag correction retains
+the index drop, cold reopen and exact remaining assertions, with18 current cases
+passed. Shared harness/old groups and all other retained functions remain
+unchanged. No redundant rerun followed independent source/AST/archive checks.
+The remaining current source13 callers still require complete coherent old-source
+assembly and official paired publication. Full Task7, CI/deployment and10+1 stay
+open; no runtime, production or provider change is claimed.
