@@ -2559,3 +2559,24 @@ The tests used only their existing local loopback and IMAP/SMTP substitutes,
 with `WORKBENCH_BROWSER_TESTS=1` for that invocation. The owned pytest temp
 roots were cleaned. Fresh sequential SPEC and QUALITY review remain pending;
 this is local test evidence, not production or provider verification.
+
+### Task7 browser-read independent acceptance and remaining fixture baselines
+
+Root accepts606d228c after fresh sequential SPEC/QUALITY PASS. All69 selected
+assertions and68 unselected functions remain unchanged. SPEC independently
+verified six complete source-shaped field sets, row keys, parameter binding and
+family isolation in memory. Effects use their declared composite identity; the
+original exactly-one-effect assertion makes the revised ordering equivalent.
+The existing local-only three-case GREEN evidence was sufficient; no reviewer
+repeated browser execution. Provider and production behavior were unchanged.
+
+Root also established two focused remaining baselines in owned temporary roots.
+The14 current source13 caller cases yielded8failed/3passed/3setup errors in17.21s;
+all three fresh controls passed and the11 migrated cases stopped at the missing
+paired publication before current reader/business assertions. The three prior
+Store constructor tests yielded five historical failures; one additional current
+delivery index-repair test failed because its final exact manifest check still
+omits include_email (6failed2.50s total). These are recorded failures, not
+accepted target behavior. Both roots were deleted and absence verified. The
+next changes must retain current business tests while binding genuine historical
+owner tests to fixed source. CI/publication and full10+1 remain open.
