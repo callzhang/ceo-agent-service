@@ -45,3 +45,34 @@ inverse/reforward, real native CLI with provider substitutes, combined CI and
 production publication remain outstanding. Production121-table observation is
 unchanged by this local acceptance; the complete10-core-plus-ledger goal is
 still incomplete.
+
+## Task 4 local combined-copy harness
+
+The unpublished harness now treats the four moved Business parents, fifteen
+rebuilt children and target `business` table as the changing partition in the
+paired copy. It compares complete source-shaped parent and child facts,
+including SQLite storage classes and hidden ROWIDs, thirteen independent
+waters, FK findings and original-row preservation at each relevant stage.
+The paired target checks a structural sixteen-table decrease; no capacity
+saving is inferred from that count. Four current public Business writes and
+four genuine published-old-code public writes are checked across inverse and
+re-publication alongside the existing Email public writes. The old code runs
+in a cold archived subprocess. Returned Business evidence contains counts,
+digests and public IDs, without raw rows.
+
+The preflight is bound to the root-owned metadata-only published-source receipt
+`docs/superpowers/specs/2026-10-15-database-redesign-business-email-published-source.json`:
+`7dadc492` Store19/Email51, 121 ordinary tables, exact Email declarations,
+the Business `actual` variant and both Business declaration fingerprints.
+Live Business row counts are informational because the service may advance.
+The three other SQL-boundary cases in the script remain Email-only. The native
+copied-DB helper now verifies Business target shape and retired-parent absence
+before its immutable baseline; no native CLI was invoked by this harness edit.
+
+The first focused tests failed on the missing Business image and the old
+Email-only paired partition. After implementation, the original scoped harness
+group passed 53 tests; the exact `7dadc492` published-code paired and native
+fixtures passed 2 tests. A synthetic Business actual/fresh image test also
+covers target edits, deletion, project and child rebind, inverse and reforward.
+The root-owned actual production-source copy, real native lifecycle, combined
+CI, main merge, push and deploy remain separate pending evidence.

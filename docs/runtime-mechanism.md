@@ -41,6 +41,17 @@ restores the exact source marker values and timestamps. Current Store and Email
 constructors require the new Business declaration; a marker-correct malformed
 target is refused without repair. No deployed path uses this candidate yet.
 
+`scripts/validate_action_email_copy.py` has one combined Business/Email paired
+case. It binds the source to the published `7dadc492` Store19/Email51 marker,
+ledger and Email/Business declaration fingerprints before operating on owned
+SQLite copies. In that case, moved Business parents and rebuilt children are
+compared as source-shaped facts instead of unchanged tables; all other ordinary
+tables retain the unchanged-row proof. A cold subprocess imports the published
+old code for Task, Anchor, Project, context and Email writes after inverse.
+The three separate SQL-boundary cases remain Email-only. The native copied-DB
+harness checks the combined target Business declaration before taking its
+immutable pre-native baseline.
+
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
 can reconstruct an exact historical source body from already recorded Codex or
 Claude native provenance. It resolves the native session through the existing

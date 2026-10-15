@@ -40,6 +40,14 @@ require the target Business declaration and reject malformed marker-correct
 targets without repairing them. This candidate has not been published. See
 `docs/database-redesign-business-four-kind-migration-validation.md`.
 
+The offline copied-database harness checks the combined Business/Email paired
+release against the exact published-source declaration binding. Its paired case
+compares the four source-shaped parent families, fifteen retained child tables,
+SQLite value types, hidden ROWIDs, thirteen sequence waters and FK findings
+through publication, public writes, current-fact inverse, genuine cold old-code
+writes and re-publication. Three additional SQL-boundary cases cover Email only.
+This is candidate validation, not a production migration or native Agent result.
+
 An unselected `read_native_source_body` helper in `app/native_trajectory.py`
 can reconstruct an exact historical source body from already recorded Codex or
 Claude native provenance. It resolves the native session through the existing

@@ -184,6 +184,7 @@ def _file_sha256(path):
 
 
 def _publish_email_pair(repo, candidate):
+    from app.business_schema_release import SOURCE_PARENTS, business_schema_is_current
     from app.action_email_schema_release import TARGET_EMAIL_VERSION, TARGET_STORE_VERSION
     from app.action_email_storage import SOURCE_TABLES
     from app.action_storage import ALL_ACTION_TYPES_WITH_REPLY, reply_schema_is_current
@@ -210,9 +211,12 @@ def _publish_email_pair(repo, candidate):
         assert email_version == (TARGET_EMAIL_VERSION,)
         assert len(ALL_ACTION_TYPES_WITH_REPLY) + len(EMAIL_TYPES_ORDER) == 29
         assert not tables.intersection(SOURCE_TABLES)
+        assert not tables.intersection(SOURCE_PARENTS.values())
+        assert business_schema_is_current(db)
         assert reply_schema_is_current(db, include_email=True)
     return {"store": store_version[0], "email": email_version[0],
-            "action_types": 29, "retired_email_tables": len(SOURCE_TABLES)}
+            "action_types": 29, "retired_email_tables": len(SOURCE_TABLES),
+            "retired_business_parents": len(SOURCE_PARENTS)}
 
 
 def _exercise_current_email(candidate):

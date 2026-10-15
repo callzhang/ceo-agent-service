@@ -17,7 +17,7 @@ from scripts import validate_action_email_copy as proof
 from scripts.validate_action_email_copy import _case, _old_process, run
 
 PUBLISHED_OLD_REF = "9cd41bcf5ea43a275eeb1376817d37f7cef6bd21"
-LATEST_OLD_REF = "d06c148b90aaeee74c14bbabf0183ffd65f34048"
+LATEST_OLD_REF = "7dadc492c1c62d5b0624f2f97dd0c89f4f358646"
 
 
 @pytest.fixture
@@ -307,6 +307,11 @@ def test_latest_paired_publication_current_public_inverse_and_reforward(latest_f
     assert result["old_public_cold_writes"]
     assert result["current_fact_inverse"]
     assert result["reforward_current_facts"]
+    assert result["source_tables"] - result["target_tables"] == 16
+    assert set(result["business_current_public_ids"]) == {
+        "task", "anchor", "project", "project_context_revision",
+    }
+    assert result["business_old_public_ids"]["email_cold_read"]
 
 
 def test_latest_paired_copy_requires_real_publication_before_default_constructors(
@@ -417,9 +422,13 @@ def bounded_run(tmp_path, monkeypatch):
     source_ref = "published-current"
     heads = [source_ref, "published-next"]
     binding = {"production_checkout_head_after": proof.PUBLISHED_SCHEMA_REF,
-               "store_marker": {"value": 19}, "email_migration_ledger": [],
+               "store_marker": {"value": 19, "updated_at": "now"},
+               "email_migration_ledger": [], "foreign_key_findings": [],
                "actions": {"variant": "old", "declaration_fingerprint_sha256": "fingerprint"},
-               "email_declaration_fingerprint_sha256": "fingerprint", "schema_user_table_count": 0}
+               "email_declaration_fingerprint_sha256": "fingerprint", "schema_user_table_count": 0,
+               "business": {"variant": "actual",
+                            "parent_declaration_fingerprint_sha256": "fingerprint",
+                            "child_declaration_fingerprint_sha256": "fingerprint"}}
     binding_path = tmp_path / "binding.json"
     binding_path.write_text(json.dumps(binding))
     monkeypatch.setattr(proof, "BINDING", binding_path)
@@ -427,6 +436,9 @@ def bounded_run(tmp_path, monkeypatch):
     monkeypatch.setattr(proof, "_email_ledger", lambda db: ())
     monkeypatch.setattr(proof, "capture_email_action_source", lambda db: {
         "action_variant": "old", "source_actions": {}, "source_tables": {}})
+    monkeypatch.setattr(proof, "capture_business_source", lambda db: {
+        "variant": "actual", "parents": {}, "children": {}, "fk_findings": (),
+    })
     monkeypatch.setattr(proof, "_fingerprint", lambda value: "fingerprint")
     monkeypatch.setattr(proof, "_consistency", lambda db: ())
     monkeypatch.setattr(proof, "_copy", lambda origin, target: shutil.copyfile(origin, target))
@@ -472,7 +484,9 @@ def test_final_production_head_change_keeps_all_completed_case_evidence(bounded_
     assert report["production_head_after"] == "published-next"
     assert report["published_source_ref"] == source_ref
     assert report["executed_candidate_commit"] == "candidate-commit"
-    assert len(report["candidate_module_sha256"]) == 5
+    assert len(report["candidate_module_sha256"]) == 10
+    assert len(report["candidate_proof_sha256"]) == 12
+    assert report["scope"] == "combined Business4/Email13 paired copy and three Email-only SQL-boundary cases"
     assert len(report["published_old_module_sha256"]) == 5
     assert report["cases"] == {
         "paired_actual_online_backup": {"paired": True},
@@ -489,6 +503,43 @@ def test_unchanged_production_head_still_passes(bounded_run):
     report = run(source, source_ref, repo)
     assert report["status"] == "passed"
     assert report["production_head_before"] == report["production_head_after"] == source_ref
+
+
+def test_latest_copy_requires_actual_published_business_source(bounded_run, monkeypatch):
+    source, source_ref, repo, heads = bounded_run
+    monkeypatch.setattr(proof, "capture_business_source", lambda db: {
+        "variant": "fresh", "parents": {}, "children": {}, "fk_findings": (),
+    })
+    with pytest.raises(AssertionError, match="published Business source variant"):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
+
+
+@pytest.mark.parametrize("field", (
+    "parent_declaration_fingerprint_sha256", "child_declaration_fingerprint_sha256",
+))
+def test_latest_copy_rejects_business_source_declaration_drift(bounded_run, field):
+    source, source_ref, repo, heads = bounded_run
+    binding = json.loads(proof.BINDING.read_text())
+    binding["business"][field] = "different"
+    proof.BINDING.write_text(json.dumps(binding))
+    with pytest.raises(AssertionError, match="published Business source declaration"):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
+
+
+@pytest.mark.parametrize("field", ("store_marker", "foreign_key_findings"))
+def test_latest_copy_rejects_published_marker_or_fk_drift(bounded_run, field):
+    source, source_ref, repo, heads = bounded_run
+    binding = json.loads(proof.BINDING.read_text())
+    if field == "store_marker":
+        binding[field]["updated_at"] = "different"
+    else:
+        binding[field] = [["runs", 1, "tasks", 1]]
+    proof.BINDING.write_text(json.dumps(binding))
+    with pytest.raises(AssertionError):
+        run(source, source_ref, repo)
+    assert heads == ["published-next"]
 
 
 def test_case_failure_still_propagates_without_success_report(bounded_run, monkeypatch):
