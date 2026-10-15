@@ -548,8 +548,15 @@ standalone plan code blocks compiled, and the CSV still has 1,611 rows with
 only the one approved disposition correction. Both owned temporary parents
 were absent after closing. This checks the schedule prototype and plan syntax,
 not the future complete config/action integration, migration or actual data.
+
 The receipt schema fragment was also compiled in a private SQLite syntax probe:
 11 generated fields, fifteen CHECK/FK clauses, three indexes and six triggers
 installed without a parser error. Its minimal syntax carrier is not a complete
 Email/action/config fixture or a receipt DML parity result. Its temporary parent
 was absent after closing.
+
+The plan's complete eight-kind synthetic row set covers all 45 remaining
+config source fields. Each row and its real schedule parent inserted without
+error into both literal actual and genuine fresh in-memory source schemas.
+This is a source-fixture readiness check; target eight-kind DML and typed
+action integration remain unimplemented and unverified.

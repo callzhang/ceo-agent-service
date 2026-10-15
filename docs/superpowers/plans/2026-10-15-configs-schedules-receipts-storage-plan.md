@@ -389,7 +389,65 @@ SYNTHETIC_CONFIG_ROWS = {
 assert sum(map(len, SYNTHETIC_CONFIG_ROWS.values())) == 45
 ```
 
-Keep the accepted seven-kind cases as independent tests: change their declaration-count assertion from 7/73 to 15/118, and separately assert the original seven kinds/73 fields still project unchanged. Commit the complete declaration and its focused cases after green.
+Add the following complete differential test under the same synthetic rows. It uses the already accepted `tests.configs_source_fixtures.source_db` to reconstruct every literal native table/index/trigger in each variant, then the **complete** target actions/schedules/configs fixture. The eight rows are inserted in dependency order, and all 45 source fields are compared by value and SQLite storage class. The current action schema must be the new explicitly flagged variant; a missing generated column or missing FK parent is a failure.
+
+```python
+from contextlib import closing
+import sqlite3
+import pytest
+from app.action_storage import create_action_schema
+from app.configs_definitions import CONFIG_FIELDS, CONFIG_PROJECTIONS, CONFIG_FRESH_PROJECTIONS, config_column
+from app.configs_storage import create_configs_schema, insert_config
+from app.schedules_storage import create_schedules_schema, insert_schedule
+from tests.configs_source_fixtures import insert as source_insert, source_db
+
+INSERT_ORDER = (
+    "managed_skills", "managed_skill_revisions", "runtime_skill_configs",
+    "scheduled_task_config_versions", "runtime_feedback_iteration_capabilities",
+    "runtime_skill_bindings", "scheduled_task_skill_refs", "wechat_reply_scopes",
+)
+SCHEDULE_ROW = {"id": 500, "name": "cron-500", "prompt": "p",
+                "cron_expression": "* * * * *", "timezone": "UTC",
+                "runtime_id": "claude", "enabled": 1}
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+def test_eight_kinds_all_45_source_fields_and_storage_classes(variant):
+    with source_db(variant) as source, closing(sqlite3.connect(":memory:")) as target:
+        target.execute("pragma foreign_keys=on")
+        create_schedules_schema(target)
+        create_action_schema(target, include_reply=True,
+                             reply_variant="fresh_memory_fk", include_email=True,
+                             include_followup_sync=True,
+                             include_skill_config_receipts=True)
+        create_configs_schema(target)
+        source.execute("begin")
+        target.execute("begin")
+        cols = tuple(SCHEDULE_ROW)
+        source.execute("insert into scheduled_tasks(" + ",".join(cols) + ") values(" +
+                       ",".join("?" for _ in cols) + ")", tuple(SCHEDULE_ROW.values()))
+        insert_schedule(target, SCHEDULE_ROW)
+        for kind in INSERT_ORDER:
+            row = SYNTHETIC_CONFIG_ROWS[kind]
+            source_insert(source, kind, row)
+            insert_config(target, kind, row)
+            names = tuple(CONFIG_FIELDS[kind])
+            projection = (CONFIG_PROJECTIONS if variant == "actual"
+                          else CONFIG_FRESH_PROJECTIONS)[kind]
+            expected = source.execute("select " + ",".join(names) + " from " + kind).fetchone()
+            actual = target.execute(projection).fetchone()
+            assert actual == expected, kind
+            for field in names:
+                source_type = source.execute("select typeof(" + field + ") from " + kind).fetchone()[0]
+                target_type = target.execute(
+                    "select typeof(" + config_column(kind, field) + ") from configs "
+                    "where record_type=?", (kind,)
+                ).fetchone()[0]
+                assert target_type == source_type, (kind, field)
+        source.rollback()
+        target.rollback()
+```
+
+Remove no lines from the accepted seven-kind behavior tests. Change their declaration-count assertion from 7/73 to 15/118, and separately assert the original seven kinds/73 fields still project unchanged. Commit the complete declaration and its focused cases after green.
 
 ## Task 3: Source-shaped config writes and independent IDs
 
@@ -400,7 +458,7 @@ Keep the accepted seven-kind cases as independent tests: change their declaratio
 - [ ] **Step 2: Implement finite allocation and typed relation writes.** The following functions replace the one-size `_next_source_rowid` call and extend `_stored`. Keep `_lock` and caller transaction semantics unchanged. `sqlite_sequence` exists because `configs.id` is AUTOINCREMENT. Explicit auto source IDs update their own sequence water. Sequence names are internal `sqlite_sequence` rows, not additional user tables.
 
 ```python
-from app.configs_definitions import AUTOINCREMENT_KINDS, CONFIG_REFS, SCHEDULE_REF
+from app.configs_definitions import AUTOINCREMENT_KINDS, CONFIG_REFS, NUMERIC_SCALAR_KINDS, SCHEDULE_REF
 
 MAX_ROWID = 2**63 - 1
 
