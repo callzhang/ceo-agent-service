@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "boundary": "Anonymous configured Claude OAuth Task cold/risk, Read-only MCP-free isolation. Schema formatting and known-value validation feedback; no production or general model-accuracy claim.",
+  "same_input_format_comparison": {
+    "before": 61614,
+    "after": 39857,
+    "schema_before": 51522,
+    "schema_after": 29765,
+    "removed": 21757,
+    "parsed_schema_equal": true
+  },
+  "turns": [
+    {
+      "phase": "cold",
+      "session_id": "8079de7a-5895-4c36-9b4b-2dcfd56f0fbf",
+      "native_sha256_at_capture": "988665cb4916c260eebedbdaa12b3ab90b047720f09d4ba6a1203a7ba7e2c8e5",
+      "native_lines_at_capture": 35,
+      "attempts": [
+        {
+          "id": 2,
+          "range": [
+            0,
+            25
+          ],
+          "status": "completed",
+          "submitted_chars": 39866,
+          "submitted_sha256": "e23de9599850679a9c18d7d1193940cf2404c5ed16571d9918a1a821f6510a33",
+          "native_input_matches": true,
+          "known_expected_reference_in_feedback": false,
+          "complete_schema_once": true
+        },
+        {
+          "id": 3,
+          "range": [
+            25,
+            35
+          ],
+          "status": "completed",
+          "submitted_chars": 33844,
+          "submitted_sha256": "336ec7e6b6812a82545bb7a040a52bc155508920f725a44dfae13fc5c26553c8",
+          "native_input_matches": true,
+          "known_expected_reference_in_feedback": true,
+          "complete_schema_once": true
+        }
+      ],
+      "input_status": "done",
+      "business_counts": {
+        "projects": 1,
+        "tasks": 0,
+        "attention": 0,
+        "quick_check": "ok"
+      }
+    },
+    {
+      "phase": "risk",
+      "session_id": "8079de7a-5895-4c36-9b4b-2dcfd56f0fbf",
+      "native_sha256_at_capture": "98b07678b2491f8699a0317c0c1dfd26213e3ee2e89776bf97a80e3f2b031c02",
+      "native_lines_at_capture": 49,
+      "attempts": [
+        {
+          "id": 5,
+          "range": [
+            35,
+            49
+          ],
+          "status": "completed",
+          "submitted_chars": 37848,
+          "submitted_sha256": "0a9c83a2750c94b57510eb61e4490cc168cd3df36971f217f6602d78cb22e513",
+          "native_input_matches": true,
+          "known_expected_reference_in_feedback": false,
+          "complete_schema_once": true
+        }
+      ],
+      "input_status": "done",
+      "business_counts": {
+        "projects": 1,
+        "tasks": 1,
+        "attention": 1,
+        "quick_check": "ok"
+      }
+    }
+  ],
+  "findings": [
+    "Schema value is unchanged; string whitespace/escapes and special keys covered by regression tests.",
+    "Cold initial citation uses document ID instead of immutable reference; existing validation rejects before writes. Known expected/received values appear in the one correction and final application succeeds.",
+    "Risk shares the cold session and applies one candidate/Attention. Earlier failed citation trajectory retained separately; this is not a unique-causality or first-pass accuracy proof.",
+    "317 draft-origin focused tests pass; no changes to native Codex schema file channel, business validators, repair budget, permissions, route or prompt rules."
+  ]
+}

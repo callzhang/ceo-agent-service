@@ -19,11 +19,20 @@ verification failure, not a needs_human business choice. No maintenance runs in
 read paths or startup.
 
 Startup reply-task projection recovery performs candidate discovery on read-only
-connections and applies bounded batches in short SQLite write transactions. Both
-the failed-current-run repair and settled-trigger reconciliation recheck the exact
-task generation and current evidence inside each write transaction, so a concurrent
-terminal update is preserved and a large historical backlog cannot monopolize the
-database writer for one transaction.
+connections and applies bounded batches in short SQLite write transactions. The
+failed-current-run repair rechecks only the candidate task IDs, generations and
+latest run IDs in each write batch, along with current receipt and settlement
+evidence; it never reruns the full historical candidate scan under the writer
+lock. Settled-trigger reconciliation also rechecks exact task generations and
+current evidence inside each batch, preserving concurrent terminal updates.
+
+OA audit metadata backfill follows the same lock boundary: it discovers and
+parses missing process identities outside a write transaction, then updates at
+most 100 still-unidentified attempts per short `BEGIN IMMEDIATE` batch. It must
+not issue a no-op write before scanning the historical Attempt/Task join, since
+the implicit transaction would hold SQLite's single writer while that scan
+runs. Each update remains conditional on the Attempt's process identity still
+being empty, so concurrent recovery is not overwritten.
 
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
@@ -1543,7 +1552,7 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
 `email_unsubscribe_browser_timeout`、`email_unsubscribe_browser_session_unavailable`、兜底码 `email_unsubscribe_browser_failed` 这三个瞬时失败会先退避重试；用完固定次数后写终态 `failed` 错误文本时，只有兜底码把 `task_error` 里已经带的 `: category=<名称>`（或未预期异常的类名与消息）一并写入，其余两个专属码保持裸码——`app/external_failures.py` 只登记了这个精确格式。此前用完次数一律只写裸码，2026-09-25 那 6 次失败因此从未真正匹配过外部原因清单：它们的错误文本是裸的 `email_unsubscribe_browser_failed`，本该在 Attention 之外却一直在里面（Derek 2026-09-28 指出后修复）。控制台看到的失败原因同样有这道口子：一个还没读到任何页面、因而没有回执的退订任务（浏览器在读页面前就报错），观测时间线过去只给状态不给原因，2026-09-28 起把任务自己的错误文本一并投影进 `kind=unsubscribe` 的记录（`list_email_classification_observability` 和 `list_unsubscribe_states` 的 `error` 字段），控制台把已知的码译成人话，未知的码原样显示而不是不显示。钉钉 OKR 登录失效（`okr_headless_session_expired…`、`okr_authorization_required…`）同样是外部原因：只有人能重新登录，也保持 `failed`、不进 Attention；只有标准错误码 `authorization_required` 才能承载「需要人工」的授权决定，OKR 自己的错误码不行，所以它记为失败而不是人工决定。唯一例外是 `email_unsubscribe_receipts.entry_url`：该列按 Derek 的明确要求保存这次实际打开的完整私密 URL（含 query 与 token），用于人工复现同一个退订入口。写入前校验它的 sha256 等于 `entry_reference` 的摘要，因此不能与生命周期认定的身份漂移；它不经过 `assert_no_credentials`，因为被保存的正是那类 token。打开该 URL 会真实执行退订，任何能读这张表或这个页面的人都能替当事人退订。该列只在本次变更之后产生的 receipt 上有值，历史行为空且无法补全。退订浏览器不再对页面发出的网络请求做 origin 白名单、跳转或资源家族限制。
 同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避：60 秒、120 秒、240 秒……封顶 15 分钟，`external_retry.retry_delay_seconds`）。编排层按持久化的 run 计数该角色在这个 revision 上**连续**失败的 turn 数，满 `MAX_CONSECUTIVE_FAILED_TURNS`（6 = 3 个 pass × 2）后，在下一次 provider 调用之前结果就是 `failed_terminal`：错误码不变（例如 `agent_reported_failure`），Agent 原文 `source_code` 保留在错误诊断和结果摘要里，任务结束为 `failed`，不再重新入队。计数只在该角色同修订出现 `completed` run 时中断；实际失败的容量、连接和运行时 turn 都计入六次上限。尚未实际执行的活动租约等待不产生失败 turn；授权缺失沿用不可重试终态。这条上限对所有调用方生效：DingTalk worker 的 3 次 attempts 恰好对应同一数字；定时执行与 Email 任务延期时会归还 attempts，此前没有任何计数，2026-09-26 定时周报任务 385880 因 Audit 反复报告 `proposal_already_executed`（`agent_reported_failure`）在同一 generation 里被重跑 310 次，每 12 秒一次。内容反馈预算耗尽时进入 failed 并保留具体修改意见，不创建人工问题或停止选项。
 
-`dependency_read_unavailable` 与服务侧 `agent_context_refresh_failed` 是连续失败上限的外部依赖等待例外：必需 DWS/MCP/外部来源读取因依赖故障未完成时，当前 worker pass 停下，DingTalk 任务退避重排并归还 attempt，下一 pass 重新执行来源读取；这两类错误不计入连续六次失败。成功读取但无匹配数据、证据缺失/歧义或规则未定义仍走正常证据/业务规则判断，不得伪报成依赖故障。
+`dependency_read_unavailable` 与服务侧 `agent_context_refresh_failed` 是连续失败上限的外部依赖等待例外：必需 DWS/MCP/外部来源读取因依赖故障未完成时，当前 worker pass 停下，DingTalk 任务退避重排并归还 attempt，下一 pass 重新执行来源读取；这两类错误不计入连续六次失败。对已有持久化角色 run 的连续同码依赖失败，间隔按同一执行代、角色和修订内的失败 run 数递增（60、120、240 秒等，最长 15 分钟），不能因 attempt 退款而每次回到 60 秒；任务继续 pending，不形成业务结论。成功读取但无匹配数据、证据缺失/歧义或规则未定义仍走正常证据/业务规则判断，不得伪报成依赖故障。
 
 ## 周期性工作的归属
 
@@ -1601,7 +1610,9 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 `failed`、但 task 投影误为 `done` 的回复任务，并保留成功外部动作和已收口错误的排除条件。
 候选扫描在只读连接完成；写入按固定大小分批，每批在短写事务内重新核对 task ID、执行代、
 最新失败 run、成功外部动作、已收口错误及适用的邮件终态回执。外部读取或扫描不会持有全局写锁，
-并发改变或已收口的候选在写入前被排除；候选状态条件和历史保留规则不变。
+并发改变或已收口的候选在写入前被排除；候选状态条件和历史保留规则不变。成功外部动作的
+只读核验使用 typed `actions` 表，并显式选择既有 `idx_actions_global_business` 与
+`idx_actions_sent_external_key` 索引，避免 SQLite 对嵌套投影连接退化为按类型反复扫描。
 
 ## 进程、租约和恢复
 
@@ -1627,6 +1638,7 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 - 这一恢复规则适用于所有任务：普通服务重启只释放已经停止的 worker 租约，保留同一任务的执行代次、已准备消息和外部回执；恢复 worker 从这些事实继续。若运维明确完成了运行时/路由修复，则服务修复重试创建新的 execution generation 和新的 session 绑定，但仍复用同一业务对象及外部动作幂等事实；用户业务反馈重跑则按反馈闭环复用兼容 session。
 - 外部动作的 operation、target 和 provider result identifier（若 provider 返回）会保留用于去重；缺少标识属于 provider/Agent 失败，不转换为额外状态。
 - WeChat reader 由独立 launchd job 自动保持运行；worker 连续三次 IPC 超时后主动 kickstart 该 job，处理“进程仍在但 IPC 已卡住”的情况。worker 只恢复 reader 进程，不启动 WeChat 主应用，也不重放消息。
+- WeChat sender loop 每轮成功完成恢复检查与待发送队列检查后，才将此前同组件错误标记为已恢复；抛出异常的轮次不会清除错误。该收口仅更新错误的恢复状态，不代表任何消息已发送；发送事实仍以 delivery 和 provider 回执为准。
 - OKR 无头来源启动使用进程锁；并发调用者取得锁后必须再次读取共享缓存，复用前一个调用刚刷新的认证信息，不能重复启动浏览器或把正常刷新误报为锁超时。锁等待上限覆盖一次完整刷新周期；认证刷新通过 `app.service_browser.launch_service_chrome` 使用每日 Chrome cookie 副本启动真 Chrome，来源命令只负责在上层超时时终止自己的 worker 进程，不再启动或清理独立的 bundled Chromium 子进程。
 - OKR 无头来源在请求业务 API 前校验新捕获认证的有效期。专用浏览器会话过期时返回明确的 `okr_headless_session_expired` 服务错误，不得继续请求并把认证失败误报为周期不存在。
 - 个人季度不存在由共享 source 的 `MissingOkrPeriod` 类型表示：只有 provider 整数 code 0、完整且结构有效的个人季度列表及有效季度身份才能产生该结果。headless wrapper 输出绑定请求 userId/periodLabel 的 `availability.status=goals_not_established`、UTC 采集时间、providerCode 0、periodsComplete true 和真实季度列表，不伪造 `processed` 空数组。认证准备、HTTP 401 和未分类共同来源失败保持 shared 技术失败；可明确归属单次成员读取的 HTTP 或格式失败使用 member 范围。错误按结构化 scope/code/detail 回到 source adapter 并抛出 `OkrLiveSourceError`，不靠错误文字猜缺目标或只用失败人数判断共享认证。依赖 wrapper 部署前必须核验本机共享 SDK 类型与打包 source 合同一致；保留共享目录无关改动。
@@ -2124,7 +2136,7 @@ out of the latest-row window.
 Audit web startup does not scan and cache History lists or charts. History
 pages are computed when requested. The list counts and sorts compact source
 keys, then hydrates only the requested page in the same read snapshot; it does
-not materialize every historical display body to compute the total. Attempt detail loads tool events in one
+not materialize every historical display body to compute the total. The reply-attempt History branch computes each task's latest associated public Attempt ID once per query and applies the separate current-generation exclusion; source-specific list, count, chart, and page hydration use that same branch. Attempt detail loads tool events in one
 batched read for the historical generation shown on the page. If the task has
 since moved to a newer execution generation, its runs are read without event
 payloads because only their status is needed for the current projection. The
@@ -2139,6 +2151,14 @@ History chart projects lifecycle status only for reply
 attempts in the requested time window, avoiding a full-history status scan.
 Health readiness is not evidence that History requests or business actions
 have completed; their APIs and provider receipts must still be read back.
+
+The failed History filter first selects source rows that can still project to
+failed under the existing recovery and terminal-state rules. Reply-attempt
+candidates include current-generation task and delivery state, while standalone
+attempts retain the legacy fallback. The total and page order are computed from
+compact source keys; display projections and attempt details are loaded only
+for the requested page. This keeps the failed view responsive without
+replaying work or changing its status semantics.
 
 DingTalk meeting group searches explicitly request 100 candidates per page,
 the provider's supported maximum, while retaining the complete-source check.
@@ -2947,3 +2967,29 @@ Attempt detail and History attention prioritize the current failed task delivery
 
 
 正式部署的停止完成条件（2026-10-14）：在 bootout 前读取本次 launchd 服务的 supervisor 及其直接服务子进程 PID；停止等待同时要求标签已卸载和这些已知进程已退出，再进入备份、代码切换和数据库发布。沿用现有停止超时，不扫描或清理无关 CLI，也不增加审批步骤。
+
+
+## Claude native attempt coordinates
+
+Claude attempt start/end coordinates use the native Claude JSONL line counter, including resumed, completed, cancelled and interrupted turns. Streamed Claude references use claude_session; stdout event counts are not native transcript coordinates. Codex/Friday bookkeeping and task/session/routing policies are unchanged. Historical incorrect ranges are not rewritten or reconstructed. Original anonymous native evidence and current-main regression results are documented in docs/native-input-evidence-release-validation.md.
+
+
+## Complete inline schema formatting
+
+Claude/Friday single-message bridges serialize the complete output schema as compact JSON. Parsed content, descriptions and whitespace within string values are preserved; only JSON formatting is removed. Codex retains its native file channel. Schema occurrence count, validation, facts, routing and sessions are unchanged. Verification is documented in docs/native-input-evidence-release-validation.md.
+
+
+## Task citation mismatch diagnostics
+
+Existing current-Project citation validation reports both the expected immutable WorkItem source_ref and the received reference when they differ. The existing repair path receives those known values. Validation conditions, result contract, repair budget, routing and permissions remain unchanged; no additional prompt rule is added. Verification is documented in docs/native-input-evidence-release-validation.md.
+
+
+History latest-task lookup publication666f4078 passed exact-tree full Quality
+and normal deployment on2026-10-14. Production PID31985 and healthz were read
+back; live History list/chart, type/status controls, pagination and an existing
+Attempt detail were opened. Initial20s combined-request timeout and variable
+Status latency remain recorded; system health still reported degraded and
+unavailable historical native delivery evidence. This is scoped read acceptance,
+not proof of all task execution or provider outcomes. See
+`docs/database-redesign-history-query-validation.md` for exact evidence.
+No schema or retention change is part of this History release.

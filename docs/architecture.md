@@ -356,9 +356,11 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 服务启动时，`reconcile_done_reply_tasks_with_failed_current_run` 只把当前执行代的最新 run 确为
 `failed`、且没有成功外部动作或已收口错误的 `done` task 改回真实失败投影。此恢复按
 `external_action_results.business_object_key`、`sent_replies.external_action_key` 和
-`errors(conversation_id, message_id, kind)` 索引反查，不在写事务中为每条 task 扫描整张回执和
-错误表。候选扫描在只读连接完成，写入按固定大小分批；每批在短写事务内重新核验 task ID、执行代、
-最新失败 run、外部成功动作和已收口错误。并发变化的候选会跳过，不会被旧扫描结果覆盖；历史保留规则不变。
+`errors(conversation_id, message_id, kind)` 索引反查；成功外部动作检查直接使用 typed `actions`
+表，并固定走已有业务对象键与发送回执键索引，避免 SQLite 对嵌套投影连接选择按 record_type
+反复扫描回执。候选扫描在只读连接完成，写入按固定大小分批；每批短写事务只按候选 task ID、执行代和
+最新 run ID 查询并重核外部成功动作、已收口错误及终态回执，不在写锁内重跑全历史候选查询。
+并发变化的候选会跳过，不会被旧扫描结果覆盖；历史保留规则不变。
 
 `reconcile_unresolved_reply_tasks_with_settlement_evidence` 同样先只读扫描精确 trigger 的已收口
 settlement evidence，再按固定大小批次短写。每个批次重新核验 task ID、execution generation、未解决状态
@@ -689,7 +691,7 @@ Status 的 Reply task 当前业务对象投影和 Email 当前计划动作投影
 随后计算计数、重试、最新时间和错误。每次请求仍使用新的只读快照；当前对象范围、大小写与空值
 处理、失败／重试划分以及更新时间和 ID 的最新行排序均沿用原口径。
 
-History 分页先在同一数据库快照中筛选、计数和排序记录标识，再只读取本页记录的展示正文；总数与内容保持同一时点，正文读取量随页大小变化。
+History 分页先在同一数据库快照中筛选、计数和排序记录标识，再只读取本页记录的展示正文；总数与内容保持同一时点，正文读取量随页大小变化。Reply Attempt 的操作日志按每个任务全部关联 Attempt 的最大公开 ID 排除较早记录，另按运行与任务的当前 execution generation 排除过时代次；最新 ID 汇总不限制代次。
 
 History 是任务和执行记录的单一展示入口。同一个任务不得被拆成多条当前队列记录；
 队列任务与执行记录都必须保留各自真实状态。筛选条件的业务含义固定如下：
@@ -1476,7 +1478,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-角色同一 revision 每个 pass 最多两个技术 turn；连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。唯一不计入该上限的已识别外部读取等待是 `dependency_read_unavailable` 和 `agent_context_refresh_failed`：它们让任务退避后重新读取并归还 DingTalk attempt，不形成业务结论；成功读取但无匹配数据或业务证据仍缺失不属于此错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
+角色同一 revision 每个 pass 最多两个技术 turn；普通连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。`dependency_read_unavailable` 和 `agent_context_refresh_failed` 是外部读取等待，不形成业务结论或消耗 DingTalk attempt，也不计入六次上限；同一角色和修订连续遇到相同依赖错误时，按已持久化失败 run 数以 60、120、240 秒等间隔退避，最长 15 分钟，再读取当前来源。这个等待不终止待办。成功读取但无匹配数据或业务证据仍缺失不属于依赖错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
 
 ## 统一外发消息后缀
 
@@ -2139,3 +2141,29 @@ Attempt detail and History attention prioritize the current failed task delivery
 
 
 正式部署的停止完成条件（2026-10-14）：在 bootout 前读取本次 launchd 服务的 supervisor 及其直接服务子进程 PID；停止等待同时要求标签已卸载和这些已知进程已退出，再进入备份、代码切换和数据库发布。沿用现有停止超时，不扫描或清理无关 CLI，也不增加审批步骤。
+
+
+## Claude native attempt coordinates
+
+Claude attempt start/end coordinates use the native Claude JSONL line counter, including resumed, completed, cancelled and interrupted turns. Streamed Claude references use claude_session; stdout event counts are not native transcript coordinates. Codex/Friday bookkeeping and task/session/routing policies are unchanged. Historical incorrect ranges are not rewritten or reconstructed. Original anonymous native evidence and current-main regression results are documented in docs/native-input-evidence-release-validation.md.
+
+
+## Complete inline schema formatting
+
+Claude/Friday single-message bridges serialize the complete output schema as compact JSON. Parsed content, descriptions and whitespace within string values are preserved; only JSON formatting is removed. Codex retains its native file channel. Schema occurrence count, validation, facts, routing and sessions are unchanged. Verification is documented in docs/native-input-evidence-release-validation.md.
+
+
+## Task citation mismatch diagnostics
+
+Existing current-Project citation validation reports both the expected immutable WorkItem source_ref and the received reference when they differ. The existing repair path receives those known values. Validation conditions, result contract, repair budget, routing and permissions remain unchanged; no additional prompt rule is added. Verification is documented in docs/native-input-evidence-release-validation.md.
+
+
+History latest-task lookup publication666f4078 passed exact-tree full Quality
+and normal deployment on2026-10-14. Production PID31985 and healthz were read
+back; live History list/chart, type/status controls, pagination and an existing
+Attempt detail were opened. Initial20s combined-request timeout and variable
+Status latency remain recorded; system health still reported degraded and
+unavailable historical native delivery evidence. This is scoped read acceptance,
+not proof of all task execution or provider outcomes. See
+`docs/database-redesign-history-query-validation.md` for exact evidence.
+No schema or retention change is part of this History release.

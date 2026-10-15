@@ -215,6 +215,7 @@ STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
 STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 DONE_FAILED_RUN_RECONCILE_BATCH_SIZE = 100
 SETTLED_REPLY_RECONCILE_BATCH_SIZE = 100
+OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE = 100
 AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
 AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
@@ -23938,7 +23939,36 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                 """
                 receipt_parameters = terminal_unsubscribe_outcomes
-            candidate_sql = f"""
+            shared_exclusions = f"""
+                and not exists (
+                    select 1
+                    from actions as actions
+                    indexed by idx_actions_global_business
+                    where actions.record_type='external_action_results'
+                      and actions.business_object_key=tasks.business_object_key
+                      and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
+                      and exists (
+                          select 1
+                          from actions as replies
+                          indexed by idx_actions_sent_external_key
+                          where replies.record_type='sent_replies'
+                            and replies.external_action_key<>''
+                            and replies.external_action_key=actions.legacy_key
+                      )
+                )
+                and not exists (
+                    select 1
+                    from errors as settled
+                    where settled.conversation_id=tasks.conversation_id
+                      and settled.message_id=tasks.trigger_message_id
+                      and settled.kind='reply_task_already_settled'
+                      and trim(coalesce(settled.resolved_at, ''))<>''
+                      and trim(coalesce(settled.resolution, ''))<>''
+                )
+                {receipt_exclusion}
+            """
+            candidates = db.execute(
+                f"""
                 select tasks.id, tasks.execution_generation, runs.id as run_id,
                        runs.structured_error_json
                 from ({REPLY_TASK_SQL}) as tasks
@@ -23951,37 +23981,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     limit 1
                 )
                 where tasks.status='done' and runs.status='failed'
-                  and not exists (
-                      select 1
-                      from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
-                      join ({SENT_REPLY_SQL}) as replies
-                        on replies.external_action_key=actions.external_action_key
-                      where actions.business_object_key=tasks.business_object_key
-                        and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
-                  )
-                  and not exists (
-                      select 1
-                      from errors as settled
-                      where settled.conversation_id=tasks.conversation_id
-                        and settled.message_id=tasks.trigger_message_id
-                        and settled.kind='reply_task_already_settled'
-                        and trim(coalesce(settled.resolved_at, ''))<>''
-                        and trim(coalesce(settled.resolution, ''))<>''
-                  )
-                  {receipt_exclusion}
-            """
-            candidates = db.execute(
-                candidate_sql + " order by tasks.id",
+                  {shared_exclusions}
+                order by tasks.id
+                """,
                 receipt_parameters,
             ).fetchall()
 
         repaired = 0
         for offset in range(0, len(candidates), DONE_FAILED_RUN_RECONCILE_BATCH_SIZE):
             batch = candidates[offset:offset + DONE_FAILED_RUN_RECONCILE_BATCH_SIZE]
-            batch_predicates = " or ".join(
-                "(tasks.id=? and tasks.execution_generation=? and runs.id=?)"
-                for _ in batch
-            )
+            batch_values = ", ".join("(?, ?, ?)" for _ in batch)
             batch_parameters = [
                 value
                 for row in batch
@@ -23989,9 +23998,35 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ]
             with self._immediate_write_transaction() as db:
                 rows = db.execute(
-                    candidate_sql
-                    + f" and ({batch_predicates}) order by tasks.id",
-                    [*receipt_parameters, *batch_parameters],
+                    f"""
+                    with batch_candidates(task_id, execution_generation, run_id) as (
+                        values {batch_values}
+                    )
+                    select tasks.id, tasks.execution_generation,
+                           runs.id as run_id, runs.structured_error_json
+                    from batch_candidates
+                    join tasks on tasks.id=batch_candidates.task_id
+                      and tasks.record_type='reply_tasks'
+                    join runs on runs.id=batch_candidates.run_id
+                      and runs.record_type='agent_runs'
+                    where tasks.status='done'
+                      and tasks.execution_generation=batch_candidates.execution_generation
+                      and runs.task_id=tasks.id
+                      and runs.execution_generation=tasks.execution_generation
+                      and runs.status='failed'
+                      and runs.id=(
+                          select latest.id
+                          from runs as latest
+                          where latest.record_type='agent_runs'
+                            and latest.task_id=tasks.id
+                            and latest.execution_generation=tasks.execution_generation
+                          order by latest.id desc
+                          limit 1
+                      )
+                      {shared_exclusions}
+                    order by tasks.id
+                    """,
+                    [*batch_parameters, *receipt_parameters],
                 ).fetchall()
                 for row in rows:
                     cursor = db.execute(
@@ -26167,7 +26202,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def backfill_oa_audit_metadata(self) -> int:
         """Recover OA identity for historical agent attempts by exact task key."""
         with self._connect() as db:
-            db.execute("update sqlite_sequence set seq=seq where 0")
             rows = db.execute(
                 f"""
                 select reply_attempts.id, reply_attempts.oa_action, reply_tasks.oa_url,
@@ -26181,33 +26215,51 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         reply_tasks.oa_url<>''
                         or reply_tasks.business_object_key like 'oa:%'
                     )
+                order by reply_attempts.id
                 """
             ).fetchall()
-            repaired = 0
-            for row in rows:
-                process_instance_id, task_id = self._oa_identifiers_from_url(
-                    str(row["oa_url"] or "")
+
+        candidates = []
+        for row in rows:
+            process_instance_id, task_id = self._oa_identifiers_from_url(
+                str(row["oa_url"] or "")
+            )
+            if not process_instance_id:
+                business_key = str(row["business_object_key"] or "").strip()
+                if business_key.startswith("oa:") and ":" in business_key[3:]:
+                    process_instance_id, task_id = business_key[3:].rsplit(":", 1)
+            if not process_instance_id:
+                continue
+            oa_url = str(row["oa_url"] or "").strip()
+            if not oa_url:
+                oa_url = (
+                    "https://aflow.dingtalk.com/detail?"
+                    f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
                 )
-                if not process_instance_id:
-                    business_key = str(row["business_object_key"] or "").strip()
-                    if business_key.startswith("oa:") and ":" in business_key[3:]:
-                        process_instance_id, task_id = business_key[3:].rsplit(":", 1)
-                if not process_instance_id:
-                    continue
-                oa_url = str(row["oa_url"] or "").strip()
-                if not oa_url:
-                    oa_url = (
-                        "https://aflow.dingtalk.com/detail?"
-                        f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
-                    )
-                cursor = update_action(db, "reply_attempts", int(row["id"]), {
-                    "oa_process_instance_id": process_instance_id,
-                    "oa_task_id": task_id, "oa_url": oa_url,
-                    "oa_action": "review" if row["oa_action"] == "" else row["oa_action"],
-                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
-                }, where_sql="oa_process_instance_id=''")
-                repaired += cursor.rowcount
-            return repaired
+            candidates.append((
+                int(row["id"]),
+                process_instance_id,
+                task_id,
+                oa_url,
+                "review" if row["oa_action"] == "" else row["oa_action"],
+            ))
+
+        repaired = 0
+        for offset in range(0, len(candidates), OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE):
+            batch = candidates[offset:offset + OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE]
+            with self._immediate_write_transaction() as db:
+                for attempt_id, process_instance_id, task_id, oa_url, oa_action in batch:
+                    cursor = update_action(db, "reply_attempts", attempt_id, {
+                        "oa_process_instance_id": process_instance_id,
+                        "oa_task_id": task_id,
+                        "oa_url": oa_url,
+                        "oa_action": oa_action,
+                        "updated_at": db.execute(
+                            "select current_timestamp"
+                        ).fetchone()[0],
+                    }, where_sql="oa_process_instance_id=''")
+                    repaired += cursor.rowcount
+        return repaired
 
     @staticmethod
     def _oa_identifiers_from_url(url: str) -> tuple[str, str]:
@@ -30221,6 +30273,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             daemon=True,
                         ).start()
                     return cached[2], list(cached[3])
+        if (
+            statuses == ("failed",)
+            and not query.strip()
+            and not log_type.strip()
+            and not history_types
+            and source_tables
+        ):
+            return self._list_failed_operation_logs_with_count(
+                limit=limit,
+                offset=offset,
+                source_tables=source_tables,
+            )
         where_sql, where_args = self._operation_log_filters(
             query=query,
             log_type=log_type,
@@ -30287,6 +30351,304 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 self._history_page_cache_refreshing = False
         return result
+
+    def _list_failed_operation_logs_with_count(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        source_tables: tuple[str, ...],
+    ) -> tuple[int, list[OperationLog]]:
+        """Project only raw rows that can still map to failed History status."""
+        candidate_queries = {
+            "reply_tasks": (
+                f"select id as source_id, updated_at as occurred_at "
+                f"from ({REPLY_TASK_CURRENT_SQL}) where status='failed'"
+            ),
+            "reply_attempts": f"""
+                with current_tasks as ({REPLY_TASK_CURRENT_SQL}),
+                task_attempts as (
+                    select cast(attempts.legacy_key as integer) as attempt_id,
+                           agent_run.task_id as task_id
+                    from actions as attempts
+                    join runs as agent_run
+                      on agent_run.id=attempts.attempt_agent_run_id
+                     and agent_run.record_type='agent_runs'
+                    where attempts.record_type='reply_attempts'
+                ),
+                latest_task_attempts as (
+                    select task_id, max(attempt_id) as latest_attempt_id
+                    from task_attempts
+                    group by task_id
+                ),
+                terminal_tasks as (
+                    select channel, conversation_id, trigger_message_id
+                    from current_tasks
+                    where status in ('done', 'skipped', 'needs_human')
+                ),
+                terminal_business_objects as (
+                    select current_business_object.business_object_key
+                    from business_object_tasks as current_business_object
+                    join current_tasks as task
+                      on task.id=current_business_object.reply_task_id
+                    where task.status in ('done', 'skipped', 'needs_human')
+                ),
+                terminal_attempts as (
+                    select attempt_channel as channel,
+                           attempt_conversation_id as conversation_id,
+                           attempt_trigger_message_id as trigger_message_id,
+                           max(cast(legacy_key as integer)) as terminal_id
+                    from actions
+                    where record_type='reply_attempts'
+                      and attempt_send_status in (
+                          'sent', 'completed', 'skipped', 'needs_human',
+                          'reacted', 'commented', 'calendar', 'document'
+                      )
+                    group by attempt_channel, attempt_conversation_id,
+                             attempt_trigger_message_id
+                )
+                select cast(attempts.legacy_key as integer) as source_id,
+                       attempts.attempt_updated_at as occurred_at
+                from actions as attempts
+                join runs as agent_run
+                  on agent_run.id=attempts.attempt_agent_run_id
+                 and agent_run.record_type='agent_runs'
+                join current_tasks as task
+                  on task.id=agent_run.task_id
+                 and task.execution_generation=agent_run.execution_generation
+                join latest_task_attempts as latest
+                  on latest.task_id=agent_run.task_id
+                where attempts.record_type='reply_attempts'
+                  and attempts.attempt_send_status='failed'
+                  and latest.latest_attempt_id=cast(attempts.legacy_key as integer)
+                  and task.status not in ('done', 'skipped', 'needs_human')
+                  and coalesce(attempts.attempt_resolved_at, '')=''
+                  and not exists (
+                      select 1 from terminal_tasks as terminal_task
+                      where terminal_task.channel=attempts.attempt_channel
+                        and terminal_task.conversation_id=attempts.attempt_conversation_id
+                        and terminal_task.trigger_message_id=attempts.attempt_trigger_message_id
+                  )
+                  and not exists (
+                      select 1 from terminal_business_objects as terminal_object
+                      where terminal_object.business_object_key=(
+                          'message:' || attempts.attempt_channel || ':' ||
+                          attempts.attempt_conversation_id || ':' ||
+                          attempts.attempt_trigger_message_id
+                      )
+                  )
+                union
+                select cast(attempts.legacy_key as integer) as source_id,
+                       attempts.attempt_updated_at as occurred_at
+                from actions as attempts
+                left join runs as agent_run
+                  on agent_run.id=attempts.attempt_agent_run_id
+                 and agent_run.record_type='agent_runs'
+                left join current_tasks as task on task.id=agent_run.task_id
+                left join latest_task_attempts as latest on latest.task_id=agent_run.task_id
+                left join terminal_attempts as terminal
+                  on terminal.channel=attempts.attempt_channel
+                 and terminal.conversation_id=attempts.attempt_conversation_id
+                 and terminal.trigger_message_id=attempts.attempt_trigger_message_id
+                where attempts.record_type='reply_attempts'
+                  and attempts.attempt_send_status='failed'
+                  and coalesce(attempts.attempt_resolved_at, '')=''
+                  and (latest.latest_attempt_id is null or latest.latest_attempt_id=
+                       cast(attempts.legacy_key as integer))
+                  and (agent_run.id is null or task.id is null)
+                  and (terminal.terminal_id is null or terminal.terminal_id <
+                       cast(attempts.legacy_key as integer))
+                  and not exists (
+                      select 1 from terminal_tasks as terminal_task
+                      where terminal_task.channel=attempts.attempt_channel
+                        and terminal_task.conversation_id=attempts.attempt_conversation_id
+                        and terminal_task.trigger_message_id=attempts.attempt_trigger_message_id
+                  )
+                  and not exists (
+                      select 1 from terminal_business_objects as terminal_object
+                      where terminal_object.business_object_key=(
+                          'message:' || attempts.attempt_channel || ':' ||
+                          attempts.attempt_conversation_id || ':' ||
+                          attempts.attempt_trigger_message_id
+                      )
+                  )
+                union
+                select cast(attempts.legacy_key as integer) as source_id,
+                       attempts.attempt_updated_at as occurred_at
+                from actions as attempts
+                join current_tasks as task
+                  on task.channel=attempts.attempt_channel
+                 and task.conversation_id=attempts.attempt_conversation_id
+                 and task.trigger_message_id=attempts.attempt_trigger_message_id
+                left join latest_task_attempts as latest
+                  on latest.task_id=task.id
+                left join runs as agent_run
+                  on agent_run.id=attempts.attempt_agent_run_id
+                 and agent_run.record_type='agent_runs'
+                left join current_tasks as run_task on run_task.id=agent_run.task_id
+                join wechat_deliveries as delivery
+                  on delivery.reply_task_id=task.id
+                 and delivery.execution_generation=task.execution_generation
+                 and delivery.conversation_id=attempts.attempt_conversation_id
+                where attempts.record_type='reply_attempts'
+                  and attempts.attempt_send_status='failed'
+                  and (latest.latest_attempt_id is null or latest.latest_attempt_id=
+                       cast(attempts.legacy_key as integer))
+                  and attempts.attempt_channel='wechat'
+                  and (run_task.id is null or agent_run.execution_generation=
+                       run_task.execution_generation)
+                  and delivery.status in ('failed', 'send_unknown')
+                  and delivery.id=(
+                      select max(current_delivery.id)
+                      from wechat_deliveries as current_delivery
+                      where current_delivery.reply_task_id=task.id
+                        and current_delivery.execution_generation=task.execution_generation
+                  )
+            """,
+            "meeting_alignment_runs": f"""
+                select runs.id as source_id, runs.created_at as occurred_at
+                from ({MEETING_RUN_SQL}) as runs
+                join ({MEETING_JOB_SQL}) as jobs on jobs.id=runs.job_id
+                where (
+                    runs.status in ('retry', 'failed')
+                    and jobs.status not in ('sent', 'no_action', 'skipped', 'done')
+                ) or (runs.status='ready_to_send' and jobs.status in ('retry', 'failed'))
+            """,
+            "work_summary_inputs": (
+                f"select id as source_id, updated_at as occurred_at "
+                f"from ({WORK_SUMMARY_INPUT_SQL}) where status='failed'"
+            ),
+            "todo_evidence_candidates": (
+                "select id as source_id, updated_at as occurred_at "
+                "from todo_evidence_candidates where status='failed'"
+            ),
+            "follow_up_drafts": (
+                "select id as source_id, coalesce(nullif(sent_at, ''), created_at) as occurred_at "
+                "from follow_up_drafts where status='failed'"
+            ),
+            "work_todo_dingtalk_links": (
+                "select id as source_id, updated_at as occurred_at "
+                "from work_todo_dingtalk_links where status='failed'"
+            ),
+            "scheduled_task_runs": f"""
+                select runs.id as source_id,
+                       coalesce(datetime(coalesce(nullif(runs.dispatched_at, ''), runs.created_at)),
+                                runs.created_at) as occurred_at
+                from ({SCHEDULED_RUN_SQL}) as runs
+                where runs.dispatch_status not in ('dispatched', 'skipped')
+                  and {history_types.scheduled_run_filter_sql('runs')}
+                  and not exists (
+                      select 1 from ({SCHEDULED_RUN_SQL}) as later_runs
+                      where later_runs.scheduled_task_id=runs.scheduled_task_id
+                        and later_runs.id>runs.id
+                        and later_runs.dispatch_status='dispatched'
+                  )
+            """,
+        }
+        if self._email_actions_history_available():
+            from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS
+
+            candidate_queries["email_actions"] = f"""
+                select actions.rowid as source_id,
+                       coalesce(datetime(actions.updated_at), actions.updated_at) as occurred_at
+                from email_actions as actions
+                join email_classifications as messages
+                  on messages.id=actions.classification_id
+                where actions.status='failed'
+                  and actions.action_plan_id=coalesce(messages.current_action_plan_id, '')
+                  and messages.status='processed'
+                  and not (
+                      actions.attempt_count<{DIRECT_ACTION_MAX_ATTEMPTS}
+                      and trim(actions.next_attempt_at)<>''
+                      and datetime(actions.next_attempt_at) is not null
+                  )
+            """
+
+        candidate_keys: list[tuple[str, int, str]] = []
+        with self.read_snapshot(), self._connect() as db:
+            for source_table in source_tables:
+                sql = candidate_queries.get(source_table)
+                if sql is None:
+                    continue
+                candidate_keys.extend(
+                    (source_table, int(row["source_id"]), row["occurred_at"] or "")
+                    for row in db.execute(sql).fetchall()
+                )
+
+            candidate_keys.sort(key=lambda item: (item[2], item[0], item[1]), reverse=True)
+            total = len(candidate_keys)
+            start = max(0, offset)
+            page_keys = candidate_keys[start:start + max(0, limit)]
+            items_by_key: dict[tuple[str, int], OperationLog] = {}
+            page_ids_by_source: dict[str, list[int]] = {}
+            for source_table, source_id, _occurred_at in page_keys:
+                page_ids_by_source.setdefault(source_table, []).append(source_id)
+
+            for source_table, ids in page_ids_by_source.items():
+                for start in range(0, len(ids), 800):
+                    batch = ids[start:start + 800]
+                    if source_table == "reply_attempts":
+                        rows = self._failed_reply_attempt_operation_logs(db, batch)
+                    else:
+                        placeholders = ",".join("?" for _ in batch)
+                        base = self._operation_logs_base_query((source_table,))
+                        rows = db.execute(
+                            f"select * from ({base}) as failed_candidates "
+                            f"where source_id in ({placeholders}) and status='failed'",
+                            tuple(batch),
+                        ).fetchall()
+                    for row in rows:
+                        item = OperationLog.model_validate(dict(row))
+                        items_by_key[(item.source_table, item.source_id)] = item
+        items = [
+            items_by_key[(source_table, source_id)]
+            for source_table, source_id, _occurred_at in page_keys
+            if (source_table, source_id) in items_by_key
+        ]
+        return total, items
+
+    def _failed_reply_attempt_operation_logs(
+        self, db: sqlite3.Connection, attempt_ids: list[int]
+    ) -> list[sqlite3.Row]:
+        placeholders = ",".join("?" for _ in attempt_ids)
+        history_type = history_types.reply_attempt_history_type_sql("reply_attempts")
+        return db.execute(
+            f"""
+            select
+                'reply:' || reply_attempts.id as id,
+                'reply_attempts' as source_table,
+                reply_attempts.id as source_id,
+                reply_attempts.updated_at as occurred_at,
+                'Reply' as category,
+                reply_attempts.action as action,
+                'failed' as status,
+                {history_type} as history_type,
+                reply_attempts.trigger_sender as source_actor,
+                reply_attempts.conversation_title as context,
+                reply_attempts.trigger_text as summary,
+                trim(
+                    coalesce(
+                        nullif(reply_attempts.final_reply_text, ''),
+                        nullif(reply_attempts.audit_summary, ''),
+                        ''
+                    )
+                    || case when reply_attempts.send_error<>''
+                            then char(10) || reply_attempts.send_error else '' end
+                    || case when coalesce(reply_attempts.resolved_at, '')<>''
+                            then char(10) || 'Resolved: ' || reply_attempts.resolution
+                            else '' end,
+                    char(10)
+                ) as detail,
+                reply_attempts.conversation_id as conversation_id,
+                reply_attempts.trigger_message_id as message_id,
+                0 as project_id,
+                0 as todo_id,
+                0 as follow_up_id
+            from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
+            where reply_attempts.id in ({placeholders})
+            """,
+            tuple(attempt_ids),
+        ).fetchall()
 
     def list_reply_attempt_operation_statuses(
         self, attempt_ids: list[int]
@@ -30573,14 +30935,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and attempt_run.execution_generation<>current_task.execution_generation
                 )
                   and not exists (
+                    with latest_task_attempt as materialized (
+                        select runs.task_id,
+                               max(cast(attempts.legacy_key as integer)) as attempt_id
+                        from actions as attempts
+                        join runs on runs.id=attempts.attempt_agent_run_id
+                                 and runs.record_type='agent_runs'
+                        where attempts.record_type='reply_attempts'
+                        group by runs.task_id
+                    )
                     select 1
                     from ({AGENT_RUN_SQL}) as historical_run
-                    join ({REPLY_ATTEMPT_COMMON_SQL}) as newer_attempt
-                      on newer_attempt.id > reply_attempts.id
-                    join ({AGENT_RUN_SQL}) as newer_run
-                      on newer_run.id = newer_attempt.agent_run_id
+                    join latest_task_attempt as latest
+                      on latest.task_id=historical_run.reply_task_id
                     where historical_run.id = reply_attempts.agent_run_id
-                      and newer_run.reply_task_id = historical_run.reply_task_id
+                      and latest.attempt_id > reply_attempts.id
                 )
                 union all
                 select

@@ -2689,6 +2689,39 @@ def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> N
     assert updated.error == "codex_process_failed"
 
 
+def test_reconciliation_candidate_scan_uses_receipt_lookup_indexes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    statements: list[str] = []
+    original_connect = store._connect
+
+    @contextmanager
+    def traced_connect():
+        with original_connect() as db:
+            db.set_trace_callback(statements.append)
+            try:
+                yield db
+            finally:
+                db.set_trace_callback(None)
+
+    monkeypatch.setattr(store, "_connect", traced_connect)
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
+
+    [candidate_query] = [
+        statement
+        for statement in statements
+        if statement.lstrip().lower().startswith(
+            "select tasks.id, tasks.execution_generation"
+        )
+    ]
+    with store._connect() as db:
+        plan = db.execute(f"explain query plan {candidate_query}").fetchall()
+    details = " ".join(str(row[3]) for row in plan)
+    assert "idx_actions_global_business" in details
+    assert "idx_actions_sent_external_key" in details
+
+
 def test_reconcile_done_failed_runs_commits_between_bounded_batches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2722,12 +2755,19 @@ def test_reconcile_done_failed_runs_commits_between_bounded_batches(
     original_transaction = store._immediate_write_transaction
     committed_batches = 0
     interleaved_writer_acquired = False
+    batch_transaction_sql: list[str] = []
 
     @contextmanager
     def transaction_with_competing_writer():
         nonlocal committed_batches, interleaved_writer_acquired
         with original_transaction() as db:
-            yield db
+            statements: list[str] = []
+            db.set_trace_callback(statements.append)
+            try:
+                yield db
+            finally:
+                db.set_trace_callback(None)
+                batch_transaction_sql.extend(statements)
         committed_batches += 1
         if committed_batches == 1:
             with store._connect() as other_writer:
@@ -2746,6 +2786,17 @@ def test_reconcile_done_failed_runs_commits_between_bounded_batches(
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 1
     assert committed_batches == 2
     assert interleaved_writer_acquired
+    batch_selects = [
+        statement.lower()
+        for statement in batch_transaction_sql
+        if statement.lstrip().lower().startswith(("select", "with"))
+    ]
+    assert len(batch_selects) == 2
+    assert all("with batch_candidates" in statement for statement in batch_selects)
+    assert all(
+        "from (select cast(legacy_key as integer) as id" not in statement
+        for statement in batch_selects
+    )
     first = store.get_reply_task(task_ids[0])
     second = store.get_reply_task(task_ids[1])
     assert first is not None and first.status == "failed"
@@ -10259,6 +10310,71 @@ def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(
     assert attempt.oa_task_id == "task-1"
     assert attempt.oa_url.endswith("procInstId=proc-1&taskId=task-1")
     assert attempt.oa_action == "review"
+
+
+def test_backfill_oa_audit_metadata_scans_before_opening_write_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for number in range(2):
+        trigger_message_id = f"oa-pending:proc-{number}:revision-1"
+        assert store.enqueue_reply_task(
+            conversation_id="oa_pending_scan",
+            conversation_title="审批待办",
+            single_chat=True,
+            trigger_message_id=trigger_message_id,
+            trigger_create_time="2026-08-06T05:41:00+00:00",
+            trigger_sender="Derek OA",
+            trigger_text="审批待办扫描",
+            oa_url=(
+                "https://aflow.dingtalk.com/dingtalk/mobile/query/formService"
+                f"#/detail?procInstId=proc-{number}&taskId=task-{number}"
+            ),
+        )
+        with store._connect() as db:
+            db.execute(
+                "update tasks set oa_url='' where record_type='reply_tasks' and trigger_message_id=?",
+                (trigger_message_id,),
+            )
+        store.record_reply_attempt(
+            conversation_id="oa_pending_scan",
+            conversation_title="审批待办",
+            trigger_message_id=trigger_message_id,
+            trigger_sender="Derek OA",
+            trigger_text="审批待办扫描",
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status="needs_human",
+        )
+
+    read_transaction_states: list[bool] = []
+    statements: list[str] = []
+    original_connect = store._connect
+    monkeypatch.setattr(store_module, "OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE", 1)
+
+    @contextmanager
+    def traced_connect():
+        with original_connect() as db:
+            def trace(statement: str) -> None:
+                statements.append(statement)
+                if statement.lstrip().lower().startswith(
+                    "select reply_attempts.id, reply_attempts.oa_action"
+                ):
+                    read_transaction_states.append(db.in_transaction)
+
+            db.set_trace_callback(trace)
+            try:
+                yield db
+            finally:
+                db.set_trace_callback(None)
+
+    monkeypatch.setattr(store, "_connect", traced_connect)
+
+    assert store.backfill_oa_audit_metadata() == 2
+    assert read_transaction_states == [False]
+    assert sum(
+        statement.strip().upper() == "BEGIN IMMEDIATE" for statement in statements
+    ) == 2
 
 
 def test_completed_oa_needs_human_attempt_is_closed_as_skipped(tmp_path: Path):
