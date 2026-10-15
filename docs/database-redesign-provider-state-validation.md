@@ -32,3 +32,55 @@ for both actual and fresh declarations, followed by caller/release integration
 and real-source copy/old-code read-write/reforward proof. No constructor,
 version, migration coordinator or production state was changed. The broader
 10-core-table-plus-ledger goal remains incomplete.
+
+## Unselected pure migration, 2026-10-15
+
+The preceding paragraph records the next task at the storage acceptance
+boundary; this appendix records that task's local implementation.
+
+`app/provider_state_schema_release.py` now exposes
+`capture_provider_state_source(db)`, `apply_provider_state_migration(db, metadata)`
+and `rollback_provider_state_migration(db, metadata)`. Capture returns only
+`{"variant": "actual"|"fresh", "tables": {source_name: declaration}}`;
+the declarations contain literal table SQL, columns, indexes, foreign keys and
+triggers. They contain no source rows, body values, rowid catalog, baseline
+snapshot, allocator, counts or persisted ledger. The two source declaration
+fingerprints and one exact target fingerprint bind the finite shapes. The
+functions do not choose a Store or Email version or begin, commit or roll back
+the caller's transaction.
+
+The forward copy reads all observations and folder generations by named fields,
+including rows without classifications and old or excluded observations. It
+encodes the four payload fields through the accepted tagged SQLite codec. For
+each record kind, symmetric source-shaped SQL comparisons include every field
+and `typeof`, plus row counts, before the original two tables are dropped.
+Every data query and drop names `main`; preflight rejects case-insensitive TEMP
+shadows, replacement-name collisions, nonmatching source or target declarations,
+inbound FKs and unsupported external SQL dependencies. The inverse reconstructs
+the exact captured source table and explicit index declarations, copies the
+**current** target facts, verifies both families and only then drops
+`provider_state`. Source hidden ROWIDs are not preserved or treated as public
+identity; source composite keys are. Reforward from the reconstructed source is
+supported.
+
+Test-first record: the initial focused import test failed at collection with
+`ModuleNotFoundError: app.provider_state_schema_release`; after implementation,
+the empty actual/fresh pair passed. The final focused command
+`pytest -q tests/test_provider_state_schema_release.py tests/test_provider_state_source.py tests/test_provider_state_storage.py`
+passed **34** tests. Literal actual and fresh source databases independently
+exercise the swapped signal/time ordinals, all 12 named fields and storage
+classes, BLOB optional fields, numeric strings, an infinity input normalized
+to text by native source affinity, JSON scalar `42`, account and
+case-sensitive identities, generations, empty tables, post-forward inserts,
+updates and deletes, source writes after inverse and reforward. Negative cases
+cover missing or tampered metadata, unknown source/target indexes, partial or
+already-target state, TEMP shadows, external dependencies, and mid-copy failure
+with caller rollback. An unrelated AUTOINCREMENT high-water mark and a
+preexisting unrelated FK finding remain equal after the round trip. Ruff for
+the two new Python files, compilation and diff check passed.
+
+This is an unselected, synthetic SQLite proof. No current Store caller,
+constructor, version marker, release coordinator, real database, provider call,
+native Agent run, push, main merge or deployment was changed or exercised.
+Copied production data, archived old-code writes, paired Store/Email release
+and space savings remain separate evidence gates.
