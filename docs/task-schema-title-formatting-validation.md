@@ -31,3 +31,5 @@ Post-merge Task identity/title/trace plus concurrent quality/queue regressions p
 
 
 Formal deploy completes e4fdb5d2 ->86772bcd (CLI exit0). Production checkout is clean; all four runtime/schema files match reviewed bytes, native schema is26624 compact chars with0 remaining display titles. New supervisor PID13016 and children13065/13066/13067 are observed; health200/ok. However Status, Attention, History and public Consumer Settings each time out20s. A single Settings retry also times out15.084s. Recent existing slow-reader diagnostics show reply-attempt queue43.047s and full queue snapshot77.978s, plus other slow readers. These are concrete Console performance observations, not a diagnosis caused by schema title removal. No query, policy, recovery or process override is added to this release. **Source/process/health acceptance passes; complete Console operational acceptance remains open.** Metadata: task_schema_titles.production.v1.json.
+
+After verification, the two owned anonymous Stores and frozen baseline fixture were removed (3633870 bytes). Committed cases/results and both original CLI-native sessions remain; no production/user files were removed.
