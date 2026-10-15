@@ -251,8 +251,6 @@ def _audit_result_record(candidate: dict[str, object]) -> dict[str, object]:
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
         "summary": "The candidate and source evidence were reviewed.",
-        "proposal_revision": candidate["proposal_revision"],
-        "candidate_digest": candidate["candidate_digest"],
         "evidence_refs": [],
         "feedback": None,
         "error_code": "",

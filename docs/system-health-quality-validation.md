@@ -173,3 +173,21 @@ and Attention issue fields matched, and99 current ten-field candidate rows
 matched exactly. EXPLAIN and bytecode verified status rejection before payload
 column reads, candidate-key outer iteration and indexed public-ID/trigger
 lookups. This proves the query's improvement, not complete HTTP acceptance.
+
+## Audit wire fixture follow-up
+
+Complete Quality run 38690491856 on `ae08b7c7` exposed 38 failures after the
+service-owned Audit revision/digest transport change; the preceding 24
+format assertions no longer failed. Synthetic native-output fixtures still
+emitted `proposal_revision` and `candidate_digest`, which the current strict
+wire schema rejects. The fixture adapters now omit only those transport echoes;
+the domain result retains its service-provided binding. The instruction test
+asserts the same ownership. Two explicit controls verify each forbidden echo
+still raises validation failure and service conversion restores the binding.
+
+All 38 affected scenarios plus those two controls passed in168.11s using
+temporary copies of repository seed prompts. An earlier local run using the
+operator's old saved prompt was isolated as configuration pollution and is not
+counted as CI evidence. Ruff and diff checks passed, and independent review
+accepted the test-only change. Lifecycle, delivery, receipt, retry and side-effect
+assertions remain; no validator, timeout, skip or expected business result changed.

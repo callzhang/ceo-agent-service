@@ -1095,7 +1095,8 @@ def test_audit_instructions_use_the_same_quality_gate_priority():
     assert "risk, confidence, rule_coverage and information_completeness" in instructions
     assert "technical outcome, not a business judgment" in instructions
     assert "technical/provider/authentication/schema/runtime/retry failure" in instructions
-    assert "candidate_digest and proposal_revision" in instructions
+    assert "The service binds your review to that candidate's digest and proposal revision" in instructions
+    assert "do not output candidate_digest or proposal_revision" in instructions
 
 
 def test_audit_instructions_do_not_create_reconciliation_prompt():
