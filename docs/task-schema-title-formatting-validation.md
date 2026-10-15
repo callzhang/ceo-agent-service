@@ -23,3 +23,8 @@ Complete original cold tool calls/returns also reveal an existing separate sourc
 ## Publication
 
 Commit/push, formal quiet-wait deployment and production source/PID/health/queues/Attention/History/Settings readback are recorded after completion. No independent-task or whole-goal completion is inferred from these focused checks.
+
+
+Before publication a concurrent main update caused normal push rejection. Normal merge retains a3288b7f/e4fdb5d2 queue diagnostics and indexed quality readers; only appended claim rows conflict and both are preserved. No Task/schema source conflict. A separate formal deployment was observed running PID9929 before this release; no manual process control or quiet-wait bypass is performed by this task. Post-merge focused checks are recorded after completion.
+
+Post-merge Task identity/title/trace plus concurrent quality/queue regressions pass47 in21.76s.

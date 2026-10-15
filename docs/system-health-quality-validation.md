@@ -153,3 +153,23 @@ and passed after asserting the exact JSON participant ID or original
 `source.ref`. Original audience, combined-message content, read-only transport,
 source payload and side-effect assertions remain. Independent review accepted
 the three-file test-only change; Ruff and diff checks passed.
+
+## Latest-trigger quality query cost
+
+The four trigger-latest checks repeated full-history window sorting. Attempt
+fields are VIRTUAL generated columns over `actions.payload_json`, so metadata
+selection can still read JSON. The finite source now reads candidate statuses
+through the existing status index before resolving identity fields, groups
+candidate keys once and fixes those keys as the outer lookup. The latest lookup
+still includes every status and retains `datetime(updated_at), id` order and
+NULL partitions. OA's separate process-identity window and all consumer quality
+predicates remain unchanged. No schema, index or persistent cache was added.
+
+Cost regressions first failed for terminal history, repeated candidates and
+many candidate keys. The final 87 focused tests passed. On the same production
+read-only snapshot, the original full Reply Attempt check used10.634M VM steps
+and3.846s; the candidate used2.300M /1.388s and2.302M /1.119s. Complete violations
+and Attention issue fields matched, and99 current ten-field candidate rows
+matched exactly. EXPLAIN and bytecode verified status rejection before payload
+column reads, candidate-key outer iteration and indexed public-ID/trigger
+lookups. This proves the query's improvement, not complete HTTP acceptance.
