@@ -28,6 +28,21 @@ from app.developer_prompt import (
 from tests.prompt_structure import validate_prompt_structure
 
 
+def _has_json_field(rendered, key, expected):
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(rendered):
+        if char != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(rendered[index:])
+        except json.JSONDecodeError:
+            continue
+        if (isinstance(value, dict) and key in value
+                and type(value[key]) is type(expected) and value[key] == expected):
+            return True
+    return False
+
+
 def _candidate(proposal: ConsumerProposal) -> ConsumerAgentResult:
     return ConsumerAgentResult.model_validate({
         "outcome": "proposal",
@@ -338,8 +353,8 @@ def test_context_renders_prior_human_answer_as_evidence_without_reauthorizing():
 
     rendered = context.render()
     assert "Prior human answers and new facts" in rendered
-    assert '"option_key": "stop"' in rendered
-    assert '"invalidation_reason": "business_state_changed"' in rendered
+    assert _has_json_field(rendered, 'option_key', 'stop')
+    assert _has_json_field(rendered, 'invalidation_reason', 'business_state_changed')
     assert "historical evidence, not current execution authorization" in rendered
 
 
@@ -355,7 +370,7 @@ def test_context_renders_deterministic_business_state_change_as_new_fact():
 
     rendered = context.render()
     assert "Current deterministic business-state changes" in rendered
-    assert '"source_candidate_id": 14' in rendered
+    assert _has_json_field(rendered, 'source_candidate_id', 14)
     assert '"oa:task:updated"' in rendered
     assert "new complete candidate" in rendered
 
@@ -364,10 +379,10 @@ def test_context_marks_trigger_as_authoritative_over_recent_context():
     rendered = _context(trigger_text="我今天需要休息一天").render()
 
     assert "Task trigger authority" in rendered
-    assert '"authoritative_message_id": "mid"' in rendered
+    assert _has_json_field(rendered, 'authoritative_message_id', 'mid')
     assert "this original request has already been resolved" in rendered
-    assert '"text": "我今天需要休息一天"' in rendered
-    assert '"text": "预算已经确认。"' in rendered
+    assert _has_json_field(rendered, 'text', '我今天需要休息一天')
+    assert _has_json_field(rendered, 'text', '预算已经确认。')
 
 
 def test_email_attachment_materials_expose_metadata_without_read_capability():
@@ -416,8 +431,8 @@ def test_context_renders_one_canonical_instant_for_naive_dingtalk_times():
     )
 
     assert "Canonical time facts" in rendered
-    assert '"assumed_timezone": "Asia/Shanghai"' in rendered
-    assert '"utc": "2026-07-28T04:00:00+00:00"' in rendered
+    assert _has_json_field(rendered, 'assumed_timezone', 'Asia/Shanghai')
+    assert _has_json_field(rendered, 'utc', '2026-07-28T04:00:00+00:00')
     assert "Compare only the UTC values" in rendered
 
 
@@ -491,7 +506,7 @@ def test_context_gives_each_agent_turn_an_explicit_execution_time():
     assert "Current turn execution time" in consumer
     assert "2026-07-28 14:15:00 +0800" in consumer
     assert "2026-07-28 14:16:00 +0800" in audit
-    assert '"create_time": "2026-07-28 12:00:00"' in audit
+    assert _has_json_field(audit, 'create_time', '2026-07-28 12:00:00')
 
 
 def test_agent_rules_leave_time_sensitive_policy_to_business_skills():
@@ -520,7 +535,7 @@ def test_context_renders_only_minimal_manual_review_instruction():
     rendered = context.render()
     manual_section = rendered.split("Manual rerun instruction", 1)[1]
 
-    assert '"source_attempt_id": 42' in manual_section
+    assert _has_json_field(manual_section, 'source_attempt_id', 42)
     assert "需要先核对材料，再执行。" in manual_section
     assert "请按材料中的最新数字回复。" in manual_section
     assert "trigger_sender_user_id" not in manual_section
@@ -706,7 +721,7 @@ def test_single_chat_context_carries_type_without_embedding_target_policy():
         **{**group_context.__dict__, "single_chat": True}
     ).render()
 
-    assert '"single_chat": true' in rendered
+    assert _has_json_field(rendered, 'single_chat', True)
     assert "For a single chat, address the verified participant directly" not in rendered
     assert "single-chat conversation ID" not in rendered
 
@@ -752,12 +767,12 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
 
     assert "Audit reads and judges it" in audit_developer_instructions("Only publish supported facts.")
     assert "Audit reads and judges it" not in rendered
-    assert '"proposal_revision": 2' in rendered
-    assert '"operation_id": "op-2"' in rendered
+    assert _has_json_field(rendered, 'proposal_revision', 2)
+    assert _has_json_field(rendered, 'operation_id', 'op-2')
     assert "请补充材料。" in rendered
     assert "dws oa approval detail --instance-id pid-1 --format json" in rendered
     assert "Audit reads and judges it without executing actions" in audit_developer_instructions("Only publish supported facts.")
-    assert '"candidate_digest": "' + "b" * 64 + '"' in rendered
+    assert _has_json_field(rendered, "candidate_digest", "b" * 64)
     assert "Candidate revision" in rendered
     assert "group-send candidate" not in rendered
     assert "OA factual gap" not in rendered

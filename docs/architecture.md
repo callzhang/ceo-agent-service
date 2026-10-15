@@ -2180,3 +2180,12 @@ unavailable historical native delivery evidence. This is scoped read acceptance,
 not proof of all task execution or provider outcomes. See
 `docs/database-redesign-history-query-validation.md` for exact evidence.
 No schema or retention change is part of this History release.
+
+
+Service context JSON blocks use compact serialization rather than indentation.
+Every original field, nested value, identifier and string whitespace/newline is
+preserved; only JSON separator/indentation bytes change. Consumer and Audit share
+this renderer. Candidate digest calculation, source binding, business validation,
+role/tool boundaries, session reuse and historical saved inputs remain unchanged.
+See docs/context-json-formatting-validation.md for focused verification and
+metadata-only measurements; publication status is recorded there.

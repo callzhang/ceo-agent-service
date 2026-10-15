@@ -233,8 +233,8 @@ def test_human_question_renders_every_bound_branch_and_open_fact_request(setup):
         ],
     })
     rendered = replace(context, candidate=question, candidate_digest=candidate_digest(question)).render()
-    assert '"key": "send"' in rendered
-    assert '"key": "stop"' in rendered
+    document, _ = json.JSONDecoder().raw_decode(rendered.split("Candidate revision\n", 1)[1])
+    assert [option["key"] for option in document["candidate"]["decision_options"]] == ["send", "stop"]
     assert "Exact prepared notice" in rendered
     assert "Applicant already has the information" in rendered
     open_input = question.model_copy(update={"decision_options": (), "requested_input": "Provide the missing date"})
