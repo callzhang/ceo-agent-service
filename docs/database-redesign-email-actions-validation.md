@@ -2541,3 +2541,21 @@ assertions and failed only because those reads still name retired Email tables
 pytest root was deleted with absence verified; no task Chromium process remains.
 The E2E's existing IMAP/SMTP/network substitutes were retained. No real provider
 or production mutation was performed.
+
+Task7 audited browser and E2E current reads: the selected direct-worker E2E
+now reads the action plan, effect and step rows through the finite Email
+projections; its account/message reads, receipt and claim binding checks,
+loopback requests, private URL, browser profile and external-I/O assertions
+remain unchanged. The dedicated-profile case reads all five privacy-checked
+families through the same finite projections and still excludes only
+`entry_url` from its persisted JSON check. The source effect table's `ROWID`
+cannot be projected for this composite-key family; the finite read uses
+`action_identity,effect_digest` order, and the unchanged assertion requires
+exactly one effect. Root's original baseline was 3 failures in 32.96s at the
+retired table reads. The first local attempt passed both browser variants but
+failed at an invalid `include_rowid=True` request for effects; after using the
+declared composite key, the exact three selected cases passed in 14.95s.
+The tests used only their existing local loopback and IMAP/SMTP substitutes,
+with `WORKBENCH_BROWSER_TESTS=1` for that invocation. The owned pytest temp
+roots were cleaned. Fresh sequential SPEC and QUALITY review remain pending;
+this is local test evidence, not production or provider verification.
