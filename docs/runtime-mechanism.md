@@ -20,10 +20,18 @@ read paths or startup.
 
 For a historical native reply with an existing sent-reply row but an unavailable
 provider task, `reconcile-failed-reply-chat-readback --task-id ...` performs a
-bounded, paginated read of the original conversation around `sent_at`. A
+bounded, paginated read of the original conversation around `sent_at`; naive
+SQLite `CURRENT_TIMESTAMP` values are UTC. A
 complete result must contain exactly one message matching the conversation,
-the recorded query range, quoted trigger, exact persisted body, and authenticated
-sender identity. The native page ledger must be complete, non-partial,
+the recorded query range, quoted trigger, exact persisted body (or the native
+quoted-sender rendering using the persisted trigger sender and the unchanged
+full body), and authenticated sender identity. The native renderer's
+whitespace-only normalization is shared with the ordinary native reply
+reconciler; all non-whitespace characters, mention name and body content must
+match. UTC range timestamps are compared as timezone-aware instants because
+the provider may canonicalize `+00:00` to `Z`; a different instant is rejected.
+Arbitrary prefixes or rewritten content do not match.
+The native page ledger must be complete, non-partial,
 failure-free, and untruncated. The
 explicit `--apply` then rechecks the failed task, generation, approved
 single-action candidate, uncertain external receipt and inactive execution
@@ -31,6 +39,18 @@ inside one immediate transaction. It records the readback digest and message
 identity, settles the same execution/task and compacts only that settled input.
 The command has no send/comment path; previews are read-only and every mismatch
 or incomplete response leaves the task unresolved.
+
+Historical tasks from before persisted Audit candidates were introduced use a
+separate evidence contract, not a reconstructed approval: the task must have no
+candidate in any generation, exactly one completed legacy reply Attempt with no
+permission or Audit evidence, and one completed Agent run bound to the exact
+task generation. The existing sent-reply row and external receipt must match
+the same business key and exact conversation/trigger target. After the same
+complete native readback proves the outgoing message, the transaction records
+delivery verification and closes only the task; it does not create candidate,
+review, execution, or approval records and does not rewrite the historical
+Attempt. Any approval trace, ambiguous identity, or mismatched target keeps the
+task unresolved.
 
 Startup reply-task projection recovery performs candidate discovery on read-only
 connections and applies bounded batches in short SQLite write transactions. The
@@ -357,6 +377,10 @@ runtime predicates; each source retains its depth bound, callback validation
 and original contents. The total serialized result byte limit still applies
 to the complete envelope. This does not exempt business secrets or transport
 capabilities, change source identity/digest checks, or permit an external action.
+Recovery of a completed Audit runtime result repeats the authored-result
+sensitive-value check. A violation remains rejected and is recorded as a
+result-validation failure, not a Codex/provider process outage; it cannot be
+adopted or executed.
 
 The Task Attention inspector reads decision fields only from the completed
 runtime attempt's exact native session and range. It closes the read-only
@@ -3021,3 +3045,12 @@ unavailable historical native delivery evidence. This is scoped read acceptance,
 not proof of all task execution or provider outcomes. See
 `docs/database-redesign-history-query-validation.md` for exact evidence.
 No schema or retention change is part of this History release.
+
+
+Service context JSON blocks use compact serialization rather than indentation.
+Every original field, nested value, identifier and string whitespace/newline is
+preserved; only JSON separator/indentation bytes change. Consumer and Audit share
+this renderer. Candidate digest calculation, source binding, business validation,
+role/tool boundaries, session reuse and historical saved inputs remain unchanged.
+See docs/context-json-formatting-validation.md for focused verification and
+metadata-only measurements; publication status is recorded there.

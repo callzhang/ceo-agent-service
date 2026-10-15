@@ -106,7 +106,8 @@ uncertain 执行状态，不生成管理者业务决策问题。
 `reconcile-failed-reply-chat-readback --task-id ...` is an explicit, one-task
 maintenance path for a historical reply whose send is already present in the
 sent-reply ledger but whose provider task can no longer be queried. It reads
-only that conversation around the recorded send time and requires the exact
+only that conversation around the UTC `sent_at` instant (SQLite's naive
+`CURRENT_TIMESTAMP` is interpreted as UTC) and requires the exact
 query range plus complete, untruncated, failure-free native history, one exact
 outgoing body quoting the original trigger, and a sender matching the authenticated principal. `--apply` records that evidence
 against the same approved candidate, external action and generation in one
@@ -165,6 +166,8 @@ CLI 原生 `auto_review` 是 Codex 对 `codex-auto-review` 模型的一次额外
 审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许三个内容反馈周期，基础设施失败不消耗反馈周期。反馈次数耗尽本身是自动闭环失败，不是人工决策依据；只有 Consumer 提出的完整当前实例问题经过 Audit approve，才进入 `needs_human`；分值描述证据，不作为固定路由阈值。
 
 修订后的 Audit 输入从当前 Consumer 的持久父链读取促成该修订的已采用 return/reject，传入原 proposal_revision、candidate_digest 和完整 feedback。该段在当前事实和候选之前，明确只是修订背景，不是事实来源或业务授权；不复制旧 summary 或分值。Audit 对照上次要求复核当前候选，先前要求本身有误时应说明依据并纠正，遵从反馈不能证明事实成立。初轮和已批准执行后的新阶段不带该段；进程恢复及技术重试从同一采用记录恢复，不依赖原生轨迹可用性。三轮上限、候选绑定、状态和外部动作权限保持原样。
+
+恢复已完成的 Audit runtime 结果时仍执行相同的敏感值校验；校验失败记为结果校验失败，不记为 Codex/provider 进程故障。拒绝规则不放宽，失败结果不会因此被采用或执行。
 
 所有任务都禁止使用 `discard` 动作或写入 `discarded` 状态。无需动作的结果在 trace 记录 `no_action` 后进入 `done`；需要修正时由审核 Agent 写入 `audit_feedback`，执行 Agent 生成新 revision；处理失败使用 `failed`；无法自动解决使用 `needs_human`。
 
@@ -2191,3 +2194,12 @@ unavailable historical native delivery evidence. This is scoped read acceptance,
 not proof of all task execution or provider outcomes. See
 `docs/database-redesign-history-query-validation.md` for exact evidence.
 No schema or retention change is part of this History release.
+
+
+Service context JSON blocks use compact serialization rather than indentation.
+Every original field, nested value, identifier and string whitespace/newline is
+preserved; only JSON separator/indentation bytes change. Consumer and Audit share
+this renderer. Candidate digest calculation, source binding, business validation,
+role/tool boundaries, session reuse and historical saved inputs remain unchanged.
+See docs/context-json-formatting-validation.md for focused verification and
+metadata-only measurements; publication status is recorded there.

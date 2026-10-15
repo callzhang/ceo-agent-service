@@ -997,7 +997,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 if run.role is AgentRole.CONSUMER:
                     raise CompletedRuntimeResultBlockedError("completed_consumer_candidate_unavailable")
                 if _contains_sensitive_value(result.model_dump(mode="json")):
-                    raise ValueError("agent_result_contains_sensitive_value")
+                    raise ResultParseError("agent_result_contains_sensitive_value")
                 active_attempt = completed_attempt
                 observed_session_id = completed_attempt.session_id
                 pending_claude_session_id = completed_attempt.session_id

@@ -7,15 +7,41 @@ from datetime import datetime, timedelta, timezone
 from app.action_storage import (
     CANDIDATE_ACTION_ATTEMPT_SQL, CANDIDATE_EXECUTION_SQL, CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL, EXTERNAL_ACTION_RESULT_SQL, REVIEW_CANDIDATE_SQL,
-    SENT_REPLY_SQL, update_action,
+    REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, update_action,
 )
 from app.agent_contracts import SystemExecutionResult
 from app.run_storage import AGENT_RUN_SQL
 
 
+def _same_timestamp_instant(actual: object, expected: object) -> bool:
+    if not isinstance(actual, str) or not isinstance(expected, str):
+        return False
+    try:
+        actual_time = datetime.fromisoformat(actual.replace("Z", "+00:00"))
+        expected_time = datetime.fromisoformat(expected.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if actual_time.tzinfo is None or expected_time.tzinfo is None:
+        return False
+    return actual_time.astimezone(timezone.utc) == expected_time.astimezone(timezone.utc)
+
+
+def native_reply_text_matches(actual: object, sent_body: object, trigger_sender: object) -> bool:
+    """Match a stored reply or its exact native quoted-sender rendering."""
+    if not isinstance(actual, str) or not isinstance(sent_body, str):
+        return False
+    normalized_actual = "".join(actual.split())
+    normalized_body = "".join(sent_body.split())
+    if normalized_actual == normalized_body:
+        return True
+    if not isinstance(trigger_sender, str) or not trigger_sender:
+        return False
+    expected = f"@{trigger_sender} {sent_body}"
+    return normalized_actual == "".join(expected.split())
+
+
 def collect_native_chat_readback(store, dws, task_id: int) -> dict:
     """Read one reply's exact conversation window and bind it to the current principal."""
-    from app.dws_client import DINGTALK_MESSAGE_TIME_ZONE
     from app.store import REPLY_TASK_SQL
 
     with store._connect() as db:
@@ -33,7 +59,7 @@ def collect_native_chat_readback(store, dws, task_id: int) -> dict:
 
     sent_time = datetime.fromisoformat(str(sent_at).replace("Z", "+00:00"))
     if sent_time.tzinfo is None:
-        sent_time = sent_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+        sent_time = sent_time.replace(tzinfo=timezone.utc)
     start = (sent_time - timedelta(minutes=3)).isoformat(timespec="seconds")
     end = (sent_time + timedelta(minutes=3)).isoformat(timespec="seconds")
     payload = dws.run_json([
@@ -167,8 +193,10 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
     )):
         raise ValueError("native chat readback metadata is incomplete")
     query_range = payload.get("queryRange")
-    if (not isinstance(query_range, dict) or query_range.get("startTime") != start
-            or query_range.get("endTime") != end or query_range.get("order") != "asc"):
+    if (not isinstance(query_range, dict)
+            or not _same_timestamp_instant(query_range.get("startTime"), start)
+            or not _same_timestamp_instant(query_range.get("endTime"), end)
+            or query_range.get("order") != "asc"):
         raise ValueError("native chat response range does not match the requested read")
 
     with store._immediate_write_transaction() as db:
@@ -210,7 +238,9 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
         matches = [row for row in rows if
             row.get("conversationId") == task["conversation_id"]
             and (row.get("quotedMessage") or {}).get("messageId") == task["trigger_message_id"]
-            and row.get("text") == sent["reply_text"]
+            and native_reply_text_matches(
+                row.get("text"), sent["reply_text"], task["trigger_sender"]
+            )
             and matches_principal(row)]
         if len(matches) != 1:
             raise ValueError("native chat response does not uniquely prove this reply")
@@ -222,8 +252,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
             (sent["external_action_key"],),
         ).fetchone()
-        if (receipt is None or receipt["business_object_key"] != task["business_object_key"]
-                or receipt["operation"] != "reply_to_message"):
+        if receipt is None or receipt["business_object_key"] != task["business_object_key"]:
             raise ValueError("external receipt does not belong to this task")
         original = receipt["provider_result_json"]
         old = json.loads(original)
@@ -249,9 +278,91 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             (sent["external_action_key"], task_id, task["execution_generation"],
              task_id, task["execution_generation"]),
         ).fetchall()
+        if not candidate:
+            historical_candidates = db.execute(
+                f"select id from ({REVIEW_CANDIDATE_SQL}) where task_id=?", (task_id,)
+            ).fetchall()
+            attempts = db.execute(
+                f"select * from ({REPLY_ATTEMPT_COMMON_SQL}) where agent_run_id=? "
+                "and channel=? and conversation_id=? and trigger_message_id=?",
+                (receipt["first_agent_run_id"], task["channel"], task["conversation_id"],
+                 task["trigger_message_id"]),
+            ).fetchall()
+            run = db.execute(
+                f"select * from ({AGENT_RUN_SQL}) where id=? and reply_task_id=? "
+                "and execution_generation=?",
+                (receipt["first_agent_run_id"], task_id, task["execution_generation"]),
+            ).fetchone()
+            expected_target = {
+                "conversation_id": task["conversation_id"],
+                "message_id": task["trigger_message_id"],
+            }
+            if (historical_candidates or len(attempts) != 1 or run is None
+                    or run["status"] != "completed"
+                    or attempts[0]["send_status"] != "completed"
+                    or attempts[0]["permission_action"] != ""
+                    or attempts[0]["reviewed_at"] is not None
+                    or attempts[0]["audit_tool_events_json"] not in (None, "", "[]")
+                    or attempts[0]["audit_documents_json"] not in (None, "", "[]")
+                    or json.loads(receipt["target_identifiers_json"]) != expected_target):
+                raise ValueError("legacy reply lacks one exact completed run and delivery record")
+            source_digest = hashlib.sha256(original.encode()).hexdigest()
+            proof_digest = hashlib.sha256(json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode()).hexdigest()
+            verification = {
+                "state": "sent", "source": "native_chat_readback",
+                "message_id": message["messageId"], "queried_at": queried_at,
+                "start": start, "end": end,
+                "conversation_id": task["conversation_id"],
+                "quoted_trigger_id": task["trigger_message_id"],
+                "sender_user_id": message.get("senderUserId", ""),
+                "sender_open_dingtalk_id": message.get("senderOpenDingTalkId", message.get("senderId", "")),
+                "principal_user_id": principal_user_id,
+                "principal_open_dingtalk_id": principal_open_id,
+                "body_sha256": hashlib.sha256(sent["reply_text"].encode()).hexdigest(),
+            }
+            changed = {**old, "verification": verification, "verification_repair": {
+                **old.get("verification_repair", {}),
+                "source": "native_chat_readback", "source_digest": source_digest,
+                "queried_at": queried_at, "native_payload_sha256": proof_digest,
+                "previous_verification": old.get("verification", {}),
+                "native_chat_readback": verification,
+                "approval_reconstructed": False,
+                "settlement_basis": "verified_existing_legacy_reply_delivery",
+                "previous_task_state": {
+                    "status": task["status"], "error": task["error"],
+                    "execution_generation": task["execution_generation"],
+                    "updated_at": task["updated_at"],
+                },
+            }}
+            result_json = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            receipt_cursor = update_action(db, "external_action_results", sent["external_action_key"], {
+                "provider_result_json": result_json,
+                "result_digest": hashlib.sha256(result_json.encode()).hexdigest(),
+            }, where_sql="provider_result_json=?", parameters=(original,))
+            if receipt_cursor.rowcount != 1:
+                raise ValueError("external receipt changed during reconciliation")
+            task_cursor = db.execute(
+                "update tasks set status='done',error='',available_at='',locked_at=null,updated_at=? "
+                "where record_type='reply_tasks' and id=? and status='failed' "
+                "and error='external_action_uncertain' and execution_generation=?",
+                (queried_at, task_id, task["execution_generation"]),
+            )
+            if task_cursor.rowcount != 1:
+                raise ValueError("legacy reply task changed during reconciliation")
+            store._compact_settled_reply_task_input(db, task_id)
+            for sent_row in db.execute(
+                f"select id from ({SENT_REPLY_SQL}) where external_action_key=?",
+                (sent["external_action_key"],),
+            ).fetchall():
+                update_action(db, "sent_replies", sent_row["id"], {"send_result_json": result_json})
+            return True
         if len(candidate) != 1:
             raise ValueError("reply receipt is not bound to one current approved action")
         candidate = candidate[0]
+        if receipt["operation"] != "reply_to_message":
+            raise ValueError("approved reply receipt operation does not match")
         if (candidate["decision"] != "approve"
                 or candidate["review_digest"] != candidate["candidate_digest"]):
             raise ValueError("current action approval does not match its candidate")

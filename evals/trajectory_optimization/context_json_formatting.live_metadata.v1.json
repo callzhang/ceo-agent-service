@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "target_ref": "bdc98bb3 plus formatting-only candidate",
+  "status": "lossless_saved_input_comparison_not_live_execution",
+  "measurement": "Only actual saved Candidate revision JSON blocks are reformatted; other helper outputs may save more but are not counted. Every parsed field/string equal. No private original text copied.",
+  "samples": [
+    {
+      "attempt_id": 360292,
+      "role": "audit",
+      "native_sha256": "098e71e9124ae092de4a296c3262c42d38e7ba5b1a7a29dfb632411cda934e37",
+      "range": [
+        0,
+        38
+      ],
+      "service_input_chars": 31600,
+      "candidate_block_before": 16454,
+      "candidate_block_after": 14220,
+      "chars_removed": 2234,
+      "parsed_value_equal": true,
+      "service_chars_if_only_candidate_block_reformatted": 29366
+    },
+    {
+      "attempt_id": 360058,
+      "role": "audit",
+      "native_sha256": "a4f5ed5cbed6eaabc71bf3dedf236f6a89ede6ad872bb8601a923f5041ae7574",
+      "range": [
+        0,
+        58
+      ],
+      "service_input_chars": 61141,
+      "candidate_block_before": 40850,
+      "candidate_block_after": 38182,
+      "chars_removed": 2668,
+      "parsed_value_equal": true,
+      "service_chars_if_only_candidate_block_reformatted": 58473
+    },
+    {
+      "attempt_id": 360021,
+      "role": "audit",
+      "native_sha256": "9d2770c470073eefde5a22578cee727b9e10b293334059f022842bec7751d260",
+      "range": [
+        0,
+        58
+      ],
+      "service_input_chars": 20057,
+      "candidate_block_before": 6501,
+      "candidate_block_after": 4848,
+      "chars_removed": 1653,
+      "parsed_value_equal": true,
+      "service_chars_if_only_candidate_block_reformatted": 18404
+    },
+    {
+      "attempt_id": 359943,
+      "role": "audit",
+      "native_sha256": "353528daf64eacd4a9f3d4b39f915cdfdea74586d9151c30de04a59ef0905030",
+      "range": [
+        0,
+        58
+      ],
+      "service_input_chars": 64022,
+      "candidate_block_before": 44704,
+      "candidate_block_after": 42014,
+      "chars_removed": 2690,
+      "parsed_value_equal": true,
+      "service_chars_if_only_candidate_block_reformatted": 61332
+    },
+    {
+      "attempt_id": 359852,
+      "role": "audit",
+      "native_sha256": "a52f7923c0c8db0a5ff24816475dfdeb3eade3f21a032de8c3da9ab4165b74b7",
+      "range": [
+        0,
+        34
+      ],
+      "service_input_chars": 45852,
+      "candidate_block_before": 24850,
+      "candidate_block_after": 21574,
+      "chars_removed": 3276,
+      "parsed_value_equal": true,
+      "service_chars_if_only_candidate_block_reformatted": 42576
+    },
+    {
+      "attempt_id": 359764,
+      "role": "audit",
+      "native_sha256": "53ed01ceee96683a2f8e26fc72a316536759b4235587f70b3b95d001e6fbf76f",
+      "range": [
+        0,
+        34
+      ],
+      "service_input_chars": 85994,
+      "candidate_block_before": 56343,
+      "candidate_block_after": 53588,
+      "chars_removed": 2755,
+      "parsed_value_equal": true,
+      "service_chars_if_only_candidate_block_reformatted": 83239
+    }
+  ],
+  "boundary": "Character evidence, no token/business/digest fix claim. Original historical input/native unchanged; no production state write or provider call."
+}

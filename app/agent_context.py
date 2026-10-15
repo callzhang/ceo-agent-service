@@ -467,7 +467,7 @@ def candidate_action_field_facts(candidate: ConsumerAgentResult) -> list[dict[st
 
 
 def _json(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, indent=2)
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _current_local_time() -> str:
