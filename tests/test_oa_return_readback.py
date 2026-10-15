@@ -64,6 +64,18 @@ class Source:
             "tasks": [{"taskid": "original", "task_status": "CANCELED"}, self.destination],
             "operation_records": self.records}}
 
+    def read_oa_approval_records(self, process_id):
+        assert process_id == "process"
+        native_records = []
+        for record in self.records:
+            event_time = OaRevertHandler._event_time(record.get("date"))
+            native = {"operationType": record.get("operation_type"),
+                "userId": record.get("userid")}
+            if event_time is not None:
+                native["operationTime"] = round(event_time.timestamp() * 1000)
+            native_records.append(native)
+        return {"success": True, "result": {"operationRecords": native_records}}
+
 
 def attempt(status="dispatched", result=None):
     return {"action_attempt": {"status": status, "external_action_key": "key",
@@ -252,6 +264,61 @@ def test_return_is_not_dispatched_without_exact_journal_binding():
     source = Source()
     result = OaRevertHandler(source).dispatch(action(), action_key="key", candidate={})
     assert result.status == "uncertain"
+    assert source.calls == []
+
+
+def test_millisecond_dws_record_resolves_openapi_second_truncation_without_weakening_boundary():
+    source = Source()
+    source.returned = True
+    source.records[0]["date"] = "2026-10-13 18:06:25"
+    source.destination["create_time"] = "2026-10-13 18:06:27"
+    source.read_oa_approval_records = lambda process_id: {
+        "success": True,
+        "result": {"operationRecords": [{
+            "operationType": "REDIRECT_PROCESS",
+            "userId": "principal",
+            "operationTime": 1791885985900,
+        }]},
+    }
+    proof = acceptance()
+    proof["dispatch_started_at"] = "2026-10-13T10:06:25.641Z"
+    proof["accepted_at"] = "2026-10-13T10:06:26.200Z"
+    proof["response_received_at"] = proof["accepted_at"]
+    provider_read_clock.current = datetime.fromisoformat("2026-10-13T10:07:00+00:00")
+    candidate = attempt("uncertain", proof)
+    candidate["action_attempt"]["created_at"] = "2026-10-13T10:06:25.641Z"
+
+    outcome = OaRevertHandler(source).reconcile(action(), action_key="key", candidate=candidate)
+
+    assert outcome.status == "verified"
+    assert len(source.calls) == 0
+
+
+def test_ambiguous_millisecond_records_in_same_openapi_second_remain_uncertain():
+    source = Source()
+    source.returned = True
+    source.records[0]["date"] = "2026-10-13 18:06:25"
+    source.destination["create_time"] = "2026-10-13 18:06:27"
+    source.read_oa_approval_records = lambda process_id: {
+        "success": True,
+        "result": {"operationRecords": [
+            {"operationType": "REDIRECT_PROCESS", "userId": "principal",
+             "operationTime": 1791885985900},
+            {"operationType": "REDIRECT_PROCESS", "userId": "principal",
+             "operationTime": 1791885985990},
+        ]},
+    }
+    proof = acceptance()
+    proof["dispatch_started_at"] = "2026-10-13T10:06:25.641Z"
+    proof["accepted_at"] = "2026-10-13T10:06:26.200Z"
+    proof["response_received_at"] = proof["accepted_at"]
+    provider_read_clock.current = datetime.fromisoformat("2026-10-13T10:07:00+00:00")
+    candidate = attempt("uncertain", proof)
+    candidate["action_attempt"]["created_at"] = "2026-10-13T10:06:25.641Z"
+
+    outcome = OaRevertHandler(source).reconcile(action(), action_key="key", candidate=candidate)
+
+    assert outcome.status == "uncertain"
     assert source.calls == []
 
 
