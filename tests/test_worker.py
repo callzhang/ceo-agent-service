@@ -6481,6 +6481,7 @@ def test_dependency_read_unavailable_run_is_deferred_after_retry_budget(
                 source_code="audience_membership_evidence_unavailable",
             ),
             feedback_cycles=0,
+            retry_after_seconds=300,
         ),
     )
 
@@ -6488,7 +6489,10 @@ def test_dependency_read_unavailable_run_is_deferred_after_retry_budget(
     assert not completed
     assert persisted is not None and persisted.status == "pending"
     assert persisted.error == "dependency_read_unavailable"
-    assert persisted.available_at
+    expected_retry_at = fixed_worker_now().astimezone(timezone.utc) + timedelta(
+        seconds=300
+    )
+    assert persisted.available_at == expected_retry_at.strftime("%Y-%m-%d %H:%M:%S")
     assert persisted.attempts == task.attempts - 1
 
 
