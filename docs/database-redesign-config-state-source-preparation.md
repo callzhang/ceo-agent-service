@@ -306,3 +306,54 @@ predecessor action declarations or the full published constructor before
 selection; the focused typed-action fixture proves the six current target
 blocker predicates only. No Store/Email default constructor selects this
 module, and no schema version or migration changed.
+
+
+#### State caller and transaction source research, 2026-10-15
+
+Bounded read-only review at `4c14dcd7` confirms the captured sixteen state
+families and 91 actual fields. All are ordinary ROWID tables, without
+AUTOINCREMENT, WITHOUT ROWID, owned triggers or captured incoming/outgoing
+FKs. Single-column TEXT PRIMARY KEY fields lack explicit NOT NULL; composite
+key columns explicitly require values. This describes source declarations,
+not a target constraint decision or dynamic SQL closure.
+
+| Source family | Actual fields | Source behavior to preserve in the one-table conversion |
+| --- | ---: | --- |
+| channel_login_reservations |3| Channel ownership paired transactionally with service_state login requests |
+| codex_session_locks |3| Owner/stale-time acquire, renew, release and restart cleanup |
+| conversation_runtime_sessions |5| Conversation/route/session/contract binding, conditional clear and route rename |
+| conversations |9| Conversation title/single-chat/native session binding; fresh has five fields |
+| corpus_sources |2| Creation found; no current bounded app reader/writer found, not deletion authority |
+| daily_scan_state |5| Raw cursor JSON, success/error and update time consumed by scanners/quality |
+| dispatcher_claim_leases |10| Owner/generation/expiry CAS, generation increment, terminal ordering by terminal_at and ROWID |
+| email_historical_traversals |6| Account/folder/model cursor; UIDVALIDITY generation and durable enqueue transaction |
+| email_scan_cursors |6| Account/folder cursor; expected generation, monotonic UID and durable enqueue |
+| org_cache_metadata |3| Raw keyed JSON, including principal and HR department IDs |
+| org_user_profiles |11| Profile fields/JSON arrays; nonunique name and DingTalk-ID lookup indexes |
+| runtime_route_pauses |5| Retry-time expiry and route rename coupled with sessions/schedules/capability |
+| seen_messages |3| Global message-ID INSERT OR IGNORE dedupe and recent-conversation ordering |
+| service_state |3| Raw keyed values, schema marker, capacity/lease/channel/deploy records |
+| setup_wizard_steps |6| Manual confirmation identity/time retained when an update omits confirmer |
+| wechat_read_state |11| Empty-value coalescing preserves self identity, watermark and last scan |
+
+The four actual-only conversation handoff fields remain retirement candidates,
+not approved value deletion. Zero observed corpus/reservation/lock rows do not
+retire the corresponding behavior. No source trigger enforces dedupe, fences or
+cursor monotonicity: those rules live in the current writers and SQL predicates.
+
+The schema marker is a bootstrap dependency: Store reads service_state during
+construction; store_schema_release reads it before choosing a paired inverse;
+ExistingSchemaUpgradeStateStore accesses it directly before constructing the
+newer Store. Its one-table conversion must update that pre-construction path,
+paired forward/inverse and current callers together, without read-path repair
+or a permanent compatibility table/view. Dispatcher direct joins and deploy
+quiet checks likewise need conversion with its ledger. The source terminal
+prune ROWID tie-break must remain stable through migration and new writes.
+
+The next bounded source oracle should exercise actual/fresh service-state
+marker/direct updater access and dispatcher owner/generation CAS plus ROWID
+terminal ties, followed by native session, cursor/enqueue, dedupe and watermark
+transactions. This review executed no new DML, target schema, migration,
+production reads/writes, native CLI or provider calls, and adds no expiry or
+30-day history policy. It is not evidence that sixteen families have already
+been removed.
