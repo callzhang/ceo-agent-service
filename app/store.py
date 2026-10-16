@@ -30834,6 +30834,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                               and coalesce(projected_task.error, '')<>'external_action_uncertain'
                             limit 1
                         )
+                        when reply_attempts.agent_run_id is null and exists (
+                            select 1
+                            from ({REPLY_TASK_CURRENT_SQL}) as message_task
+                            where message_task.channel=reply_attempts.channel
+                              and message_task.conversation_id=reply_attempts.conversation_id
+                              and message_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and message_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(message_task.error, '')<>'external_action_uncertain'
+                        ) then (
+                            select message_task.status
+                            from ({REPLY_TASK_CURRENT_SQL}) as message_task
+                            where message_task.channel=reply_attempts.channel
+                              and message_task.conversation_id=reply_attempts.conversation_id
+                              and message_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and message_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(message_task.error, '')<>'external_action_uncertain'
+                            order by message_task.id desc
+                            limit 1
+                        )
                         when exists (
                             select 1
                             from ({AGENT_RUN_SQL}) as projected_run

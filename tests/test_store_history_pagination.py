@@ -588,6 +588,50 @@ def test_history_skipped_attempt_matches_detail_only_when_bound_run_is_latest(tm
     assert skipped_rows == []
 
 
+def test_history_projects_attempt_without_run_from_current_message_task(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-unbound-message-task.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="history-unbound-message-task",
+        conversation_title="Bound by message",
+        single_chat=False,
+        trigger_message_id="trigger",
+        trigger_create_time="2026-10-15 00:00:00",
+        trigger_sender="sender",
+        trigger_text="approval result",
+        execution_generation="generation-1",
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
+            ("trigger",),
+        ).fetchone()[0]
+        attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "history-unbound-message-task",
+            "conversation_title": "Bound by message",
+            "trigger_message_id": "trigger",
+            "trigger_sender": "sender",
+            "trigger_text": "approval result",
+            "action": "agent_run",
+            "sensitivity_kind": "general",
+            "send_status": "completed",
+        })
+        db.execute("update tasks set status='done' where id=?", (task_id,))
+
+    done_total, done_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("done",), source_tables=("reply_attempts",)
+    )
+    completed_total, completed_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("completed",), source_tables=("reply_attempts",)
+    )
+
+    assert done_total == 1
+    assert [(row.source_id, row.status) for row in done_rows] == [
+        (attempt.lastrowid, "done")
+    ]
+    assert completed_total == 0
+    assert completed_rows == []
+
+
 def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(tmp_path):
     store = AutoReplyStore(tmp_path / "history-uncertain-execution.sqlite3")
     store.enqueue_reply_task(
