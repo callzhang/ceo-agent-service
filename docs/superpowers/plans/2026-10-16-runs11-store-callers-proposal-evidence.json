@@ -1,0 +1,42 @@
+{
+  "base_commit": "c14cb181d",
+  "selection": "unselected docs-only proposal",
+  "files": {
+    "2026-10-16-runs11-store-callers-proposal.patch": "c72becc6e949eb0094cb14f9cc3548a6652b3db3c66b04bdea6053380ef36f33",
+    "2026-10-16-runs11-store-callers-proposal-tests.py": "164b8551e16d900464c924821921749bec8ee6ed1e6905f740c08ea9926ba5b3"
+  },
+  "ast_functions": {
+    "store.py": {
+      "before_count": 799,
+      "after_count": 799,
+      "changed": [
+        "list_setup_wizard_events",
+        "record_setup_wizard_event",
+        "search_codex_sessions",
+        "upsert_codex_session_search_index"
+      ]
+    },
+    "meeting_alignment.py": {
+      "before_count": 58,
+      "after_count": 58,
+      "changed": [
+        "_analyze_meeting_job",
+        "_index_meeting_codex_session"
+      ]
+    }
+  },
+  "tests": {
+    "isolated_copied_app": "4 passed in 7.05s",
+    "source_cwd_baseline_red": "4 failed because current methods address retired tables after pure migration",
+    "compile": "pass",
+    "ruff": "pass with copied repo pyproject",
+    "patch_apply_check": "pass",
+    "patch_reverse_check": "pass",
+    "patch_replay_byte_cmp": "pass"
+  },
+  "integration_boundaries": [
+    "current Store54 constructor and Email sample declaration still require root selection",
+    "actual tests/test_store.py, tests/test_workbench_storage.py, and other physical fixtures remain root or separate test owner",
+    "production source DB, native CLI, providers, network, main, push and deploy untouched"
+  ]
+}
