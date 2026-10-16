@@ -45,8 +45,10 @@ git diff --check
 Expected564pass (239source-target+325declarations), OWNED_TEMP_REMOVED True. Strengthened existing22cases exercise ordinary invalid INSERT/UPDATE, invalid positive-round at source AUTO FULL, immutable UPDATE/DELETE, both actual/fresh profiles, exact message/class/code and retained rows/transaction. No external database is touched.
 
 - [ ] Commit only3app/test paths plus own claim and this plan checkboxes (5paths).
-- [ ] Root obtains SPEC exact contract recheck, then QUALITY original finding and literal mutants. Prior554 suite and seven behavioral mutants remain historical evidence; do not unnecessarily repeat the66-probe/7-mutant matrix for literal-only changes.
+- [x] Root obtains SPEC exact contract recheck, then QUALITY original finding and literal mutants. Prior554 suite and seven behavioral mutants remain historical evidence; do not unnecessarily repeat the66-probe/7-mutant matrix for literal-only changes.
 
 ## Boundary
 
 No current caller/constructor/migration/source retirement/provider/nativeCLI/network/main/push/service/deploy or production database access. Full ten-core-plus-ledger redesign remains active; existing8writers and all20caller conversion, copy/current-fact inverse/true predecessor writes/reforward/native/UI/publication remain open.
+
+Final root acceptance: applicationb12f4eb8 after both identified source-contract findings were repaired. Applied564/30.98s; final SPEC22/1.75s and QUALITY22/1.67s plus3literal reversions killed; prior seven behavioral mutants remain applicable. Metadata-only receipt: ../specs/2026-10-16-task12-storage-acceptance.json. Full database redesign remains incomplete and active.

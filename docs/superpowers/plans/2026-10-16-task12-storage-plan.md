@@ -68,8 +68,10 @@ Unselected Tasks12 transactional storage: app/task12_storage.py supplies source-
 ```
 
 - [x] Commit exactly the3app/test paths, ownclaim, this plan's implementation checkboxes and the two exact doc paragraphs (7paths). Do not include root-owned canonical/preflight artifacts or touch other claims.
-- [ ] Fresh independent SPEC verifies finite source semantics/identity/constraint/transaction/selector boundaries, then fresh QUALITY tests meaningful adversarial controls, including REAL projection deletion, self-parent guard deletion, sequence consumption and referenced batch replacement. Resolve findings before root accepts.
+- [x] Fresh independent SPEC verifies finite source semantics/identity/constraint/transaction/selector boundaries, then fresh QUALITY tests meaningful adversarial controls, including REAL projection deletion, self-parent guard deletion, sequence consumption and referenced batch replacement. Resolve findings before root accepts.
 
 ### Full-goal continuation
 
 This component is not the full Tasks20 runtime. Implement existing8kind target writers; convert all8+12current consumers, callback and source-ID lookups, coupled retained child FKs and source initializers without dual writers. Validate copied-DB forward/current writes/current-fact inverse/true predecessor writes/reforward, exact current rows/schema/allocator baselines, lease/CAS recovery, Workbench filesystem and feedback lifecycles. Real Codex CLI uses fake outbound only, with UI/business-result/receipt proof. Complete remainingActions/Business/Emails/Provenance/retirements to10core+1Emailledger, CI and approved production publication. Keep the full approved design goal active until all those facts are true and verified.
+
+Final root acceptance: applicationb12f4eb8 after both identified source-contract findings were repaired. Applied564/30.98s; final SPEC22/1.75s and QUALITY22/1.67s plus3literal reversions killed; prior seven behavioral mutants remain applicable. Metadata-only receipt: ../specs/2026-10-16-task12-storage-acceptance.json. Full database redesign remains incomplete and active.

@@ -1,0 +1,191 @@
+{
+  "recorded_utc": "2026-10-16T17:39:34.687390+00:00",
+  "status": "accepted_unselected_tasks12_storage_foundation",
+  "reviewed_application_commit": "b12f4eb816c14ef521723e707fe659ca2f5b5855",
+  "reconciled_worktree_head": "0bf6771ff52b7a7d69dd50917670d47638bb74a4",
+  "application_sha256": {
+    "app/task20_definitions.py": "884563de85c27369c8306f1745bdf819916fcf9249a31cf8889307845289ef5c",
+    "app/task12_storage.py": "cf051a3067d5c956e9e5a9e7a441e382c8d172183147b452f7bff811ed726fc7",
+    "tests/test_task12_storage.py": "67e952047cc0ac1e2640edc7ae7db48c8a501fce34dad4fd66e9d42b58d32cdb"
+  },
+  "scope": {
+    "source_kinds": 12,
+    "source_columns": 134,
+    "source_auto_streams": 5,
+    "source_hidden_rowid_families": 7,
+    "target_stored_structural_columns": 7,
+    "target_virtual_generated_columns": 268,
+    "target_indices": 51,
+    "target_triggers": 30,
+    "selected_by_current_callers": false,
+    "selected_by_constructor": false,
+    "migration_applied": false
+  },
+  "findings_resolved": [
+    {
+      "finding": "CASE REAL read expression erased native comparison affinity",
+      "initial_spec": "request_changes",
+      "repair_commit": "df113cb4b3f7afe2f44c215b361bf8e38653dcb2",
+      "red": {
+        "failed": 14,
+        "passed": 8,
+        "deselected": 207,
+        "seconds": 1.78
+      },
+      "resolution": "Direct typed generated columns and internal composable nonflattening projection barrier; guarded source ROWID selection before barrier remains indexed.",
+      "performance_boundary": "Public REAL projection outer predicates may scan the kind; caller conversion must measure reads."
+    },
+    {
+      "finding": "Translated source stable feedback trigger error messages",
+      "initial_quality_pass_withdrawn": true,
+      "source_authority": [
+        "tests/test_feedback_processing.py:340",
+        "tests/test_feedback_processing.py:502",
+        "tests/test_feedback_processing.py:613",
+        "tests/test_feedback_processing.py:1044",
+        "captured actual/fresh native decision trigger literals"
+      ],
+      "repair_commit": "b12f4eb816c14ef521723e707fe659ca2f5b5855",
+      "red": {
+        "failed": 22,
+        "deselected": 217,
+        "seconds": 1.65
+      },
+      "resolution": "Restore exact original round and append-only decision messages, including ordinary INSERT/UPDATE and round validation before allocator FULL."
+    }
+  ],
+  "verification": {
+    "root_candidate": {
+      "passed": 564,
+      "seconds": 30.16,
+      "note": "Before final test-only formatting; applied implementer independently verified final patch."
+    },
+    "applied_implementer": {
+      "passed": 564,
+      "seconds": 30.98,
+      "owned_temp_removed": true
+    },
+    "spec_full_affinity": {
+      "passed": 554,
+      "seconds": 28.33,
+      "additional_real_differential_checks": 4608,
+      "guarded_deletes_matched": true
+    },
+    "spec_final_error_recheck": {
+      "passed": 22,
+      "deselected": 217,
+      "seconds": 1.75,
+      "owned_temp_removed": true
+    },
+    "quality_full_affinity": {
+      "passed": 554,
+      "seconds": 31.96
+    },
+    "quality_additional_initial_exact_message_probes": {
+      "passed": 62,
+      "failed_message_mismatches": 4,
+      "seconds": 5.0,
+      "note": "Original mismatches are resolved by final exact-message cases. Later message-excluding66pass probe is not evidence for message parity."
+    },
+    "quality_final_error_recheck": {
+      "passed": 22,
+      "deselected": 217,
+      "seconds": 1.67,
+      "owned_temp_removed": true
+    },
+    "quality_mutants_killed": [
+      {
+        "mutation": "remove REAL barrier",
+        "failed": 8,
+        "passed_controls": 32,
+        "seconds": 3.15
+      },
+      {
+        "mutation": "restore historical CASE wrapper",
+        "failed": 14,
+        "passed_controls": 8,
+        "seconds": 1.85
+      },
+      {
+        "mutation": "remove after-parent guards",
+        "failed": 3,
+        "seconds": 0.2
+      },
+      {
+        "mutation": "disable source sequence consumption",
+        "failed": 14,
+        "seconds": 1.32
+      },
+      {
+        "mutation": "disable batch public-key endpoint reuse",
+        "failed": 4,
+        "seconds": 0.6
+      },
+      {
+        "mutation": "bypass owner-generation guard",
+        "failed": 2,
+        "seconds": 0.26
+      },
+      {
+        "mutation": "remove FULL whole-transaction rollback",
+        "failed": 8,
+        "passed_round_controls": 2,
+        "seconds": 0.83
+      },
+      {
+        "mutation": "revert target round error",
+        "failed": 10,
+        "seconds": 1.71
+      },
+      {
+        "mutation": "revert FULL scratch error",
+        "failed": 10,
+        "seconds": 1.05
+      },
+      {
+        "mutation": "revert decision error",
+        "failed": 2,
+        "seconds": 0.31
+      }
+    ],
+    "root_app_ast_files": 352,
+    "ruff": "pass",
+    "diff_check": "pass",
+    "new_owned_temporary_artifacts_removed": true
+  },
+  "published_increment_reconciliation": {
+    "production_head_readonly_observed": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+    "isolated_merge_commit": "0bf6771ff52b7a7d69dd50917670d47638bb74a4",
+    "paths": 7,
+    "application_diff_bytes": 0,
+    "conflicts": 0,
+    "focused_tests": [
+      "tests/test_consumer_system_release.py",
+      "tests/test_stardust_oa_finance_evidence_rules.py"
+    ],
+    "passed": 26,
+    "seconds": 19.72,
+    "owned_temp_removed": true,
+    "source_tasks_metadata_actual_fresh_equal_except_index_seq": true,
+    "source_tasks_table_sha_matches_prior_capture": true
+  },
+  "remaining": [
+    "Implement existing eight-kind native INSERT/SET/RETURNING parts and convert116mutation sites plus direct readers/deletions.",
+    "Convert all twelve residual callers and coupled retained feedback child endpoints, source initializers and selectors as one complete cutover.",
+    "Copied forward/current writes/current-fact inverse/true predecessor writes/reforward with exact schema, storage classes, identities and allocator water evidence.",
+    "Workbench filesystem/lease recovery; native Codex CLI with fake outbound; UI/business-result/execution receipt verification.",
+    "Remaining Actions/Business/Emails/Provenance and approved retirements to ten core tables plus one Email schema ledger; CI and final approved production publication."
+  ],
+  "boundaries": {
+    "current_turn_production_write": false,
+    "real_outbound_send": false,
+    "native_cli_execution": false,
+    "main_merge": false,
+    "push": false,
+    "service_restart_or_deploy": false,
+    "latest_prior_integrated_state_copy_ordinary_tables": 67,
+    "final_eleven_tables_achieved": false,
+    "task12_copied_database_validation_performed": false,
+    "cleanup_note": "New owned artifacts removed; older separately denied cleanup remains pending and was not retried."
+  }
+}
