@@ -39,6 +39,17 @@ with TemporaryDirectory(prefix="ceo-task12-insert-expression-", dir="/tmp") as o
             / "docs/superpowers/plans/2026-10-16-task12-insert-expression-candidate.py",
             temporary / "app/task12_storage.py",
         )
+    if "--before-default-repair" in sys.argv:
+        (temporary / "app/task12_storage.py").write_bytes(
+            subprocess.check_output(
+                [
+                    "git",
+                    "show",
+                    "ef26ceadf2fe64275de9ef3da011f4abab939d66:app/task12_storage.py",
+                ],
+                cwd=ROOT,
+            )
+        )
     (temporary / "docs").symlink_to(ROOT / "docs", target_is_directory=True)
     (temporary / "data/config").mkdir(parents=True)
     for name in ("skill-features.json", "mcp-tool-effects.json"):
@@ -77,7 +88,12 @@ with TemporaryDirectory(prefix="ceo-task12-insert-expression-", dir="/tmp") as o
                 *[
                     arg
                     for arg in sys.argv[1:]
-                    if arg not in ("--applied", "--with-declarations")
+                    if arg
+                    not in (
+                        "--applied",
+                        "--with-declarations",
+                        "--before-default-repair",
+                    )
                 ],
             ]
         )

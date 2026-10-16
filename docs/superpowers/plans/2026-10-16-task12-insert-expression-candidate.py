@@ -198,7 +198,16 @@ def _payload(db, kind, values, replace, *, insert_sql=None):
         f: "json_quote(" + TASK20_DEFAULTS[kind].get(f, "null") + ")"
         for f in TASK20_PAYLOAD_FIELDS[kind]
         if f not in bound and f not in expressions
-    } | {field: "ceo_native_json(" + sql + ")" for field, sql in expressions.items()}
+    } | {
+        field: "ceo_native_json("
+        + (
+            "coalesce(" + sql + "," + TASK20_DEFAULTS[kind][field] + ")"
+            if replace and field in required and field in TASK20_DEFAULTS[kind]
+            else sql
+        )
+        + ")"
+        for field, sql in expressions.items()
+    }
     expression = "?"
     if missing:
         expression = (
