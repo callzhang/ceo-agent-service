@@ -194,7 +194,9 @@ The deterministic regression changes a custom SQLite current_timestamp clock by 
 - [x] Apply exact two-function replacement/remove unused _completed and add exact tests. Keep all unrelated AST nodes unchanged.
 - [x] Run focused637 matrix and Ruff --no-cache/in-memory compile/git diff --check. Pinned Python /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python, PYTHONDONTWRITEBYTECODE=1; pytest -p no:cacheprovider --basetemp inside owned tempfile.TemporaryDirectory(dir=/tmp). Matrix: new file; test_state_storage, test_state_upsert, test_state_bulk_update, test_state_bulk_update_expressions, test_state_schema_release, test_state_org_index_order, test_state_target_index_history, test_state_upgrade_progress, test_native_integer_binding.
 - [x] Update scoped State paragraphs in docs/architecture.md/runtime-mechanism.md after verification: point INSERT and ORREPLACE defaults now execute in final write, caller transaction/identity unchanged and current caller/constructor/release unselected. Commit own files/hunks only.
-- [ ] Fresh independent SPEC then QUALITY, including real delayed final statement reproductions and native default/constraint semantics. Then re-review unchanged mixed23 proposal after foundation acceptance.
+- [x] Fresh independent SPEC then QUALITY, including real delayed final statement reproductions and native default/constraint semantics. Then re-review unchanged mixed23 proposal after foundation acceptance.
 
 No current caller, constructor, release/version/progress entrypoint, provider/native CLI, actual database, main, push or deployment is selected by this prerequisite.
 
+
+Root independent acceptance recorded in ../specs/2026-10-16-state-point-defaults-native-binding-acceptance.json: pointSPEC637 and18 delayed clock witnesses, then originalQUALITY P2 closed by16paired scalar rechecks after genericnative bindingSPEC793/QUALITY543inputs+3740Statecases+637crossfamily checks. Currentcaller/constructor/release unselected; mixed23 has its own separate re-review.

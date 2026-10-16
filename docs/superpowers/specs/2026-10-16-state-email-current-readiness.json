@@ -48,5 +48,16 @@
     "harness_corrections": "Resolved /tmp vs /private/tmp import check before running; corrected driver quoting and unqualified pytest module import so the adapted assertion is the function actually collected. Earlier9pass/1obsoleteassert runs are not accepted10-pass evidence.",
     "test_proposal": "2026-10-16-state-email-current-test-proposal.patch",
     "other_families_not_yet_proved": "historical candidate/traversal, progress API, unsubscribe cancellation branches and crossmodule version/progress/publication closure"
-  }
+  },
+  "root_current_integration_preflight": {
+    "tests": 27,
+    "seconds": 16.14,
+    "scope": "Prior10 plus current historical provider-reread/queue and fair durable queue, three HTTPprogress API cases, principal unsubscribe cancellation/identity/serialization/pending-reconciliation and allthree dispatcher namespaces, public readonlypreview matches native source and preserves bytes/facts.",
+    "fixtures": "Only explicit physical-target adjustments in the adjacentthree-file testpatch: scan rollback assertion projection; dispatcher seed uses State inside same explicit transaction; typed current validation fixture selects State migration before committing current markers.",
+    "harness_dependencies": "Copied only trackedstatic data/config/skill-features.json andmcp-tool-effects.json into owned app tree. Initialmissingstatic registry preventedone workerfixture bootstrap, not accepted as functional failure. The initial read-onlypreview targetfixture omitted State and was correctlyrefused; fixture now applies exactpureState migration, nativeoracleoriginal untouched.",
+    "warning": "Existing Starlette anyio BlockingPortal deprecation only.",
+    "actual_or_production_db_access": false
+  },
+  "test_patch_sha256": "51ef1038786bd0d005964d8db3174a2471053bf82d5891d26c4e347260be18e8",
+  "independent_spec": "RUNNING"
 }

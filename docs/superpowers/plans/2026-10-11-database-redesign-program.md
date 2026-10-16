@@ -716,3 +716,8 @@ The tested Email target retires13 tables to108 under the same non-internal
 counting rule. No production/provider mutation or proportional size claim is
 made. Remaining business/provenance/config/provider-state/schedule/state
 consolidation is still required for the complete ten-core-table plus ledger goal.
+
+
+## 2026-10-16 continuation: State foundations and constructor closure
+
+Independent acceptance receipts now cover targetindex enumeration normalization24cf6c55, point statement-default clocks77566a8b and generic underlying native binding8998e7af. Constructor proposal revision2 (ef63860c/Store7170541a) passes214SPEC and214QUALITY plus26current/12fresh former reproductions, refusing unsupported namespace inputs beforeWAL/DDL. All State caller/constructor/publication candidates remain unselected. Root fresh synthetic paired constructors yield67ordinary tables; the last accepted combined actualcopy remains82ordinary tables and has not yet been revalidated with State. Neither number is final10core+oneledger. Emailnine current State method proposal c7f80cd9 is under integration validation; direct currentSQL/version/progress/coordinator closure and actualcopy inverse/current-production-predecessor/nativefakeoutbound/UI proof remain required. Production/main unchanged.
