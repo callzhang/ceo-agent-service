@@ -71,3 +71,7 @@ The publication marker regression is created by its test patch. All other test c
 Implementation selected at `7ef171fecc82ba76e8edadc55da0289db7c13622`: applied-source493passed200.15s;350modules compiled and Ruff31passed. The only exact-transfer deviations are the three authorized import cleanups. Fresh independent SPEC reconstructed all33paths and passed77focused cases39.31s. Fresh QUALITY and current production-copy/genuine adf0ee88 predecessor proof are in progress. Known28 constructor blank-line whitespace warnings remain cosmetic and explicitly recorded. Production remains unchanged.
 
 Fresh independent QUALITY accepts51existing cases56.62s plus4independent constructor/cache/index-history probes3.57s. No actionable finding. Exact selected-source acceptance is `../specs/2026-10-16-state-runtime-integration-acceptance.json`. Actual-copy proof is separate and still running at this record.
+
+Actual State storage/cursor proof accepted197.928s at15:53UTC:116→67→116→genuineadf0ee88 coldwrite→67; all original source rows/types/required identities and declarations/waters preserved. Root-copy subgate complete; native task/audit/business/fakeoutbound/UI and final10+ledger remain open, so the combined later-gates checkbox stays unchecked.
+
+Final proof revision additionally checks declarations/allocator waters after predecessor public writes. Fresh SPEC18/0.16s and QUALITY18/0.07s plus14adversarial controls accept the harness and committed regressions. Latest actual receipt197.928s supersedes earlier207.78s proof; no application correction was needed.
