@@ -475,6 +475,119 @@ def test_failed_history_projects_terminal_status_through_stable_run_task_id(tmp_
     assert [(row.source_id, row.status) for row in uncertain_rows] == [(uncertain_attempt_id, "uncertain")]
 
 
+@pytest.mark.parametrize("legacy_status", ["completed", "commented", "decision_selected", "recovered"])
+def test_history_projects_successful_legacy_attempt_status_from_current_task(
+    tmp_path, legacy_status
+):
+    store = AutoReplyStore(tmp_path / f"history-{legacy_status}.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id=f"history-{legacy_status}",
+        conversation_title="Bound task",
+        single_chat=False,
+        trigger_message_id="trigger",
+        trigger_create_time="2026-10-15 00:00:00",
+        trigger_sender="sender",
+        trigger_text="approval action",
+        execution_generation="generation-1",
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
+            ("trigger",),
+        ).fetchone()[0]
+        run = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "audit",
+            "status": "completed",
+        })
+        attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": f"history-{legacy_status}",
+            "conversation_title": "Bound task",
+            "trigger_message_id": "trigger",
+            "trigger_sender": "sender",
+            "trigger_text": "approval action",
+            "action": "oa_approve",
+            "sensitivity_kind": "general",
+            "send_status": legacy_status,
+            "agent_run_id": run.lastrowid,
+        })
+        db.execute(
+            "update tasks set status='done' where id=?", (task_id,)
+        )
+
+    done_total, done_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("done",), source_tables=("reply_attempts",)
+    )
+    legacy_total, legacy_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=(legacy_status,), source_tables=("reply_attempts",)
+    )
+
+    assert done_total == 1
+    assert [(row.source_id, row.status, row.action) for row in done_rows] == [
+        (attempt.lastrowid, "done", "oa_approve")
+    ]
+    assert legacy_total == 0
+    assert legacy_rows == []
+
+
+def test_history_skipped_attempt_matches_detail_only_when_bound_run_is_latest(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-skipped-current-run.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="history-skipped-current-run",
+        conversation_title="Bound task",
+        single_chat=False,
+        trigger_message_id="trigger",
+        trigger_create_time="2026-10-15 00:00:00",
+        trigger_sender="sender",
+        trigger_text="no action",
+        execution_generation="generation-1",
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
+            ("trigger",),
+        ).fetchone()[0]
+        bound_run = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "consumer",
+            "status": "completed",
+        })
+        insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "audit",
+            "status": "completed",
+        })
+        attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "history-skipped-current-run",
+            "conversation_title": "Bound task",
+            "trigger_message_id": "trigger",
+            "trigger_sender": "sender",
+            "trigger_text": "no action",
+            "action": "agent_run",
+            "sensitivity_kind": "general",
+            "send_status": "skipped",
+            "agent_run_id": bound_run.lastrowid,
+        })
+        db.execute("update tasks set status='done' where id=?", (task_id,))
+
+    done_total, done_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("done",), source_tables=("reply_attempts",)
+    )
+    skipped_total, skipped_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("skipped",), source_tables=("reply_attempts",)
+    )
+
+    assert done_total == 1
+    assert [(row.source_id, row.status) for row in done_rows] == [
+        (attempt.lastrowid, "done")
+    ]
+    assert skipped_total == 0
+    assert skipped_rows == []
+
+
 def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(tmp_path):
     store = AutoReplyStore(tmp_path / "history-uncertain-execution.sqlite3")
     store.enqueue_reply_task(
