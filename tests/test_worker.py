@@ -351,7 +351,7 @@ class FakeAgentOrchestrator:
                     "no_external_action_evidence": [{"assertion": "No action was performed", "references": ["receipt:none"]}],
                     "conclusion": scripted.summary,
                 },
-                "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+                "risk": "low", "confidence": 1.0, "rule_coverage": 0.0,
                 "information_completeness": 1.0,
                 "error": {"code": "", "retryable": False, "authorization_required": False},
             })

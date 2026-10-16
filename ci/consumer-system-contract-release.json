@@ -4,14 +4,14 @@
     {
       "source": "app/defaults/audit_rules.md",
       "target": "audit_rules",
-      "old_sha256": "75d7bb0959f5dd61ea66a7588869ec0e8a26831d8f0d4146faa1d37f3d408c43",
+      "old_sha256": "2109b25434cadad2822888f489877849c5eb169db31b7acf516e45f89e2526e1",
       "new_sha256": "2109b25434cadad2822888f489877849c5eb169db31b7acf516e45f89e2526e1"
     },
     {
       "source": "ci/shared-skills/ceo-calendar-invite/SKILL.md",
       "target": "skills/ceo-calendar-invite/SKILL.md",
-      "old_sha256": "8419e3922762fee2134caefad659a08b596d480cee0f34553f80e1a16b8f9f00",
-      "new_sha256": "8419e3922762fee2134caefad659a08b596d480cee0f34553f80e1a16b8f9f00",
+      "old_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
+      "new_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
       "old_managed_sha256": "8419e3922762fee2134caefad659a08b596d480cee0f34553f80e1a16b8f9f00"
     },
     {
@@ -31,28 +31,28 @@
     {
       "source": "ci/shared-skills/ceo-mail-review/SKILL.md",
       "target": "skills/ceo-mail-review/SKILL.md",
-      "old_sha256": "11ff63aa9bf726ee39d2b79e9682d6e146d7e2a8b257d21925acbc292402de3c",
+      "old_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
       "new_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
-      "old_managed_sha256": "11ff63aa9bf726ee39d2b79e9682d6e146d7e2a8b257d21925acbc292402de3c"
+      "old_managed_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d"
     },
     {
       "source": "ci/shared-skills/ceo-message-triage/SKILL.md",
       "target": "skills/ceo-message-triage/SKILL.md",
-      "old_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd",
+      "old_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
       "new_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
       "old_managed_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd"
     },
     {
       "source": "ci/shared-skills/ceo-wechat/SKILL.md",
       "target": "skills/ceo-wechat/SKILL.md",
-      "old_sha256": "c4b6b739678e6343197af064eb2ffdf4fca041f5d69ef4d2c5559fdebc0d5c40",
+      "old_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae",
       "new_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
       "target": "skills/ceo-weekly-report/SKILL.md",
-      "old_sha256": "8a8c03255ca9f559e73591bedf84a285d9f836ce6a3d3df34d5793c742cb9372",
-      "new_sha256": "8a8c03255ca9f559e73591bedf84a285d9f836ce6a3d3df34d5793c742cb9372",
+      "old_sha256": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09",
+      "new_sha256": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09",
       "old_managed_sha256": "8a8c03255ca9f559e73591bedf84a285d9f836ce6a3d3df34d5793c742cb9372"
     },
     {
@@ -65,7 +65,31 @@
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
       "old_sha256": "a5a26d1a2ada2959a35e957204967bd88c3b2091a7ea736b44bcc1494ab0d4de",
-      "new_sha256": "b76a9be76313c9ff5a3995876617c5a00bbd9586d0dbffe54956d964747e55b3"
+      "new_sha256": "a5a26d1a2ada2959a35e957204967bd88c3b2091a7ea736b44bcc1494ab0d4de"
+    },
+    {
+      "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
+      "target": "skills/stardust-oa-finance-review/SKILL.md",
+      "old_sha256": "c7de13fa622d2f17b7cc3bb174554be0a4e4b55bf42a9c822c31181ba697d9c0",
+      "new_sha256": "c7de13fa622d2f17b7cc3bb174554be0a4e4b55bf42a9c822c31181ba697d9c0"
+    },
+    {
+      "source": "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
+      "target": "skills/stardust-oa-finance-review/references/finance-rule-cards.md",
+      "old_sha256": "2dec9a9581444c211caf016d312067f83616bedb1cd9235aeaa2f632f643005d",
+      "new_sha256": "2dec9a9581444c211caf016d312067f83616bedb1cd9235aeaa2f632f643005d"
+    },
+    {
+      "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
+      "target": "skills/stardust-oa-people-review/SKILL.md",
+      "old_sha256": "0b2e4e7d13981cddfe0879ad30cb5f43cfe427a393186b68c470eecb06d85cd2",
+      "new_sha256": "0b2e4e7d13981cddfe0879ad30cb5f43cfe427a393186b68c470eecb06d85cd2"
+    },
+    {
+      "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
+      "target": "skills/stardust-oa-attendance-travel-review/SKILL.md",
+      "old_sha256": "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e",
+      "new_sha256": "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e"
     }
   ]
 }

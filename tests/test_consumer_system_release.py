@@ -50,6 +50,54 @@ def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
 
 
+def test_repository_consumer_release_manifest_tracks_every_source_digest():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+
+    assert all(
+        entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+        for entry in manifest["files"]
+    )
+
+
+def test_repository_consumer_release_manifest_includes_finance_review_assets():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    sources = {entry["source"] for entry in manifest["files"]}
+
+    assert "ci/shared-skills/stardust-oa-finance-review/SKILL.md" in sources
+    assert "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md" in sources
+
+
+def test_repository_consumer_release_manifest_includes_people_review_skill():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    source = "ci/shared-skills/stardust-oa-people-review/SKILL.md"
+    entry = next(item for item in manifest["files"] if item["source"] == source)
+
+    assert entry["target"] == "skills/stardust-oa-people-review/SKILL.md"
+    assert entry["new_sha256"] == _digest((root / source).read_bytes())
+
+
+def test_repository_consumer_release_manifest_includes_current_attendance_review_skill():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    source = "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md"
+    entry = next(item for item in manifest["files"] if item["source"] == source)
+
+    assert entry["target"] == "skills/stardust-oa-attendance-travel-review/SKILL.md"
+    assert entry["old_sha256"] == "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e"
+    assert entry["new_sha256"] == _digest((root / source).read_bytes())
+
+
 def _skill(name: str, marker: bool, suffix: str) -> bytes:
     metadata = "metadata:\n  managed_by: ceo-agent-service\n" if marker else ""
     return (
@@ -64,7 +112,14 @@ def _fixture(tmp_path: Path):
     entries = []
     old = {}
     new = {}
-    for name in (*SKILLS, "dingtalk-oa-approval", "ceo-wechat"):
+    for name in (
+        *SKILLS,
+        "dingtalk-oa-approval",
+        "stardust-oa-finance-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
+        "ceo-wechat",
+    ):
         rel = f"{name}/SKILL.md"
         previous = _skill(name, name in SKILLS, "old")
         replacement = _skill(name, name in SKILLS, "new")
@@ -82,6 +137,18 @@ def _fixture(tmp_path: Path):
         })
     rel = "ceo-weekly-report/references/dingtalk-runbook.md"
     old[rel], new[rel] = b"old reference\n", b"new reference\n"
+    target = skills / rel
+    source = root / "ci/shared-skills" / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(old[rel])
+    source.write_bytes(new[rel])
+    entries.append({
+        "source": f"ci/shared-skills/{rel}", "target": f"skills/{rel}",
+        "old_sha256": _digest(old[rel]), "new_sha256": _digest(new[rel]),
+    })
+    rel = "stardust-oa-finance-review/references/finance-rule-cards.md"
+    old[rel], new[rel] = b"old finance rules\n", b"new finance rules\n"
     target = skills / rel
     source = root / "ci/shared-skills" / rel
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -321,6 +388,32 @@ def test_manifest_requires_64_hex_expected_old_digest(tmp_path: Path):
             skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
         )
     assert (skills / "ceo-calendar-invite/SKILL.md").read_bytes() == old["ceo-calendar-invite/SKILL.md"]
+
+
+def test_stale_installed_digest_fails_before_any_release_write(tmp_path: Path):
+    root, skills, rules, manifest, old, _new = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    _store_with_refs(db, old)
+    payload = json.loads(manifest.read_text())
+    audit_rules = next(
+        item for item in payload["files"]
+        if item["source"] == "app/defaults/audit_rules.md"
+    )
+    audit_rules["old_sha256"] = _digest(b"stale installed audit rules\n")
+    manifest.write_text(json.dumps(payload))
+
+    with pytest.raises(
+        ValueError, match="SHA mismatch: app/defaults/audit_rules.md"
+    ):
+        prepare_consumer_system_contracts(
+            root=root, database_path=db, operation_id="stale-runtime-digest",
+            skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+        )
+
+    assert rules.read_bytes() == old["audit_rules"]
+    assert (skills / "ceo-calendar-invite/SKILL.md").read_bytes() == old[
+        "ceo-calendar-invite/SKILL.md"
+    ]
 
 
 def test_concurrent_scheduled_edit_is_not_overwritten_by_publication_rollback(
