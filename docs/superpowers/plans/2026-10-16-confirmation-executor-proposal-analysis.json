@@ -1,0 +1,342 @@
+{
+  "status": "COMPLETE_UNSELECTED_PROPOSAL",
+  "base_head": "7111ea47546ac7cb242ff7267993868eacec6561",
+  "scope": [
+    "app/workbench/executor.py",
+    "app/workbench/models.py",
+    "app/workbench/runtime.py",
+    "app/workbench/native_events.py"
+  ],
+  "artifacts": {
+    "2026-10-16-confirmation-executor-proposal.patch": {
+      "bytes": 25216,
+      "sha256": "294fc6f7ac837a0d064c3af39e8af7e6ea6e6c3d12c132bf37fce262610cee47"
+    },
+    "2026-10-16-confirmation-executor-test-proposal.patch": {
+      "bytes": 4505,
+      "sha256": "ad5e2e00f383ce3313e2a2c04e9439f75f7a7678c0d01908c14b90beb5164e7e"
+    },
+    "2026-10-16-confirmation-executor-task20-fixture-proposal.patch": {
+      "bytes": 2439,
+      "sha256": "ed9dafe6a0c5594a4e32f0c3b24a8a0653c7bc68bb35075f29a069acc84bb69f"
+    }
+  },
+  "inputs": {
+    "app/workbench/executor.py": "5c4bfc85412af9e36846b1c4964a47d28e7d202ca223656abd6badd04eae06fe",
+    "app/workbench/models.py": "4bb51e47c980a63924bf48358b22f7fe38c2950de69a860b7f31e99934e40ecd",
+    "app/workbench/runtime.py": "b6fd3630ed4b432433e90400ee8ae24e183128ab2516945a1bfb35991edd44f2",
+    "app/workbench/native_events.py": "1cf7a6de80676539fa5f5945cccda4327ac61eb4f1e059ffb40cefc9876b85e1",
+    "app/workbench/store.py": "b9027194eb4f9f277630935bf2d00a36792047f626e6b0242667d22a7de070db",
+    "app/workbench/__init__.py": "2f710a3a1cadf49fd7632cd4ef2c142674bac4f1f28d8db17906f4e318e8a488",
+    "app/store.py": "72b40d7917af0cf48ffcb131d347c66799432efbec98a1f61e759d2804253d86",
+    "app/workbench/service_runtime.py": "d9c7d9b84bc8a372887692c8ad24a3694193c43efb5a79f87134cf166cd64f60",
+    "app/agent_cli.py": "fcd40c67fcfbec339a1c9ece44a0e77f5ba7b2a93837053ee18712216df105ac",
+    "app/native_cli_metadata.py": "06775c56c99831698647d1d64abcf027e2a2267748278594cd61eace0ff8a2dc",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/workbench_storage.py": "03e99ec30333e9a6dbde422d06ef49b03bd2fb0c02211bb915fa7b94c3249398",
+    "app/task8_storage.py": "8994bab2054b253a3001aab562d5c6dddd23cad3305b08068110cdea4f25cf6c",
+    "app/task20_definitions.py": "b7e23407ff77b37522639aaff0317d8fdccfac61c3f073ccd3d9774817e7785e",
+    "tests/test_workbench_executor.py": "7ee79c37f0cdf6525ea7b1ff661e35ee2d029dfa77fba0c40eb45e402fa7421f",
+    "tests/test_workbench_native_events.py": "658e6b446fbc9a6a1c401e548cf31c749b5d46986fdbae6b8b3cc26c5cd0419b",
+    "tests/test_workbench_runtime.py": "515efd63a7f5ebdea62e72fb8f58047366a1858316fda5176c2cdac7d3555c75",
+    "tests/conftest.py": "74b5a3022d92a530e6b4def57dc5a6cd0a70f960fc937de7bc95db4152e744ce",
+    "pyproject.toml": "7b236f2948ca0c9bae3de67e99f6383f0e91b53c34ae590bfd295cba8855f48c",
+    "docs/superpowers/specs/2026-10-11-database-redesign-design.md": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80",
+    "docs/superpowers/plans/2026-10-16-confirmation-store-schema-proposal.patch": "a52dad8ca09acf72dc37c012c2959241d289d799e0d1c4609a5083a3a63f45c4"
+  },
+  "function_audit": {
+    "app/workbench/executor.py": {
+      "before_sha256": "5c4bfc85412af9e36846b1c4964a47d28e7d202ca223656abd6badd04eae06fe",
+      "after_sha256": "57f1b4e4b413a0eb1a18ef6b832727003f9579acc45c48ac756474214f6768a8",
+      "removed_functions": [
+        "WorkbenchExecutor._confirmation_after_lost_lease",
+        "WorkbenchExecutor._confirmation_heartbeat",
+        "WorkbenchExecutor._create_confirmation",
+        "WorkbenchExecutor._drain_recovery_batches",
+        "WorkbenchExecutor._receipt_resume_context",
+        "WorkbenchExecutor._safe_display",
+        "WorkbenchExecutor._safe_receipt",
+        "WorkbenchExecutor._start_confirmation_heartbeat",
+        "WorkbenchExecutor._stop_confirmation_heartbeat",
+        "WorkbenchExecutor.cancel",
+        "WorkbenchExecutor.confirm"
+      ],
+      "changed_functions": [
+        "WorkbenchExecutor.__init__",
+        "WorkbenchExecutor._execute_turn",
+        "WorkbenchExecutor._heartbeat",
+        "WorkbenchExecutor._on_event",
+        "WorkbenchExecutor.close",
+        "WorkbenchExecutor.recover"
+      ],
+      "preserved_ast_functions": [
+        "WorkbenchExecutor._append_artifact_event",
+        "WorkbenchExecutor._execute_turn_reserved",
+        "WorkbenchExecutor._fail_claimed",
+        "WorkbenchExecutor._finish_runtime",
+        "WorkbenchExecutor._retry_transient_sqlite_lock",
+        "WorkbenchExecutor._stop_state_once",
+        "WorkbenchExecutor._validated_inputs",
+        "WorkbenchExecutor.run_once",
+        "WorkbenchExecutor.stop",
+        "_public_runtime_failure_detail"
+      ],
+      "preserved_byte_functions": [
+        "WorkbenchExecutor._append_artifact_event",
+        "WorkbenchExecutor._execute_turn_reserved",
+        "WorkbenchExecutor._fail_claimed",
+        "WorkbenchExecutor._finish_runtime",
+        "WorkbenchExecutor._retry_transient_sqlite_lock",
+        "WorkbenchExecutor._stop_state_once",
+        "WorkbenchExecutor._validated_inputs",
+        "WorkbenchExecutor.run_once",
+        "WorkbenchExecutor.stop",
+        "_public_runtime_failure_detail"
+      ],
+      "signatures_preserved_except": [
+        "WorkbenchExecutor.__init__"
+      ]
+    },
+    "app/workbench/models.py": {
+      "before_sha256": "4bb51e47c980a63924bf48358b22f7fe38c2950de69a860b7f31e99934e40ecd",
+      "after_sha256": "ce50cb87b4f1669b8522ace48700a06fb9af9641d196b26ead65e5507d49f16c",
+      "removed_functions": [],
+      "changed_functions": [],
+      "preserved_ast_functions": [],
+      "preserved_byte_functions": [],
+      "signatures_preserved_except": []
+    },
+    "app/workbench/runtime.py": {
+      "before_sha256": "b6fd3630ed4b432433e90400ee8ae24e183128ab2516945a1bfb35991edd44f2",
+      "after_sha256": "b8233dc7663a47d780ff9c381d74aaabb7479a320759c2bc5a75bdf15d95f4a8",
+      "removed_functions": [],
+      "changed_functions": [],
+      "preserved_ast_functions": [
+        "AgentRuntime.capabilities",
+        "AgentRuntime.start",
+        "AgentRuntime.stop",
+        "AgentRuntime.wait",
+        "RuntimeEvent.__eq__",
+        "RuntimeEvent.__post_init__",
+        "RuntimeEvent.payload_json_value",
+        "RuntimeHandle.__init__",
+        "RuntimeHandle.create",
+        "RuntimeRegistry.__init__",
+        "RuntimeRegistry.get",
+        "RuntimeRegistry.kinds",
+        "RuntimeRegistry.register",
+        "RuntimeRequest.__post_init__",
+        "RuntimeResult.__post_init__",
+        "_FrozenJsonMapping.__eq__",
+        "_FrozenJsonMapping.__getitem__",
+        "_FrozenJsonMapping.__iter__",
+        "_FrozenJsonMapping.__len__",
+        "_freeze_json_value",
+        "_json_projection",
+        "_release_runtime_owner",
+        "_runtime_owner"
+      ],
+      "preserved_byte_functions": [
+        "AgentRuntime.capabilities",
+        "AgentRuntime.start",
+        "AgentRuntime.stop",
+        "AgentRuntime.wait",
+        "RuntimeEvent.__eq__",
+        "RuntimeEvent.__post_init__",
+        "RuntimeEvent.payload_json_value",
+        "RuntimeHandle.__init__",
+        "RuntimeHandle.create",
+        "RuntimeRegistry.__init__",
+        "RuntimeRegistry.get",
+        "RuntimeRegistry.kinds",
+        "RuntimeRegistry.register",
+        "RuntimeRequest.__post_init__",
+        "RuntimeResult.__post_init__",
+        "_FrozenJsonMapping.__eq__",
+        "_FrozenJsonMapping.__getitem__",
+        "_FrozenJsonMapping.__iter__",
+        "_FrozenJsonMapping.__len__",
+        "_freeze_json_value",
+        "_json_projection",
+        "_release_runtime_owner",
+        "_runtime_owner"
+      ],
+      "signatures_preserved_except": []
+    },
+    "app/workbench/native_events.py": {
+      "before_sha256": "1cf7a6de80676539fa5f5945cccda4327ac61eb4f1e059ffb40cefc9876b85e1",
+      "after_sha256": "925bb9c1415665d5f0b8e9cd3d2b0a9d272a6fc1dbd079bd4eee64080f7e0955",
+      "removed_functions": [],
+      "changed_functions": [
+        "terminal_cached_turn_ids"
+      ],
+      "preserved_ast_functions": [
+        "_attempts",
+        "_file_payload",
+        "_native_events_for_turn",
+        "_tool_payload",
+        "forget_live_turn",
+        "friday_refs",
+        "hydrate_events",
+        "hydrate_friday_turns",
+        "hydrate_turn",
+        "remember_live_payload",
+        "started_tool_event_id",
+        "stored_payload"
+      ],
+      "preserved_byte_functions": [
+        "_attempts",
+        "_file_payload",
+        "_native_events_for_turn",
+        "_tool_payload",
+        "forget_live_turn",
+        "friday_refs",
+        "hydrate_events",
+        "hydrate_friday_turns",
+        "hydrate_turn",
+        "remember_live_payload",
+        "started_tool_event_id",
+        "stored_payload"
+      ],
+      "signatures_preserved_except": []
+    }
+  },
+  "feature_test_inventory": [
+    {
+      "name": "test_recover_drains_every_bounded_confirmation_batch",
+      "line": 195,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_recover_fails_safe_when_full_batch_makes_no_progress",
+      "line": 232,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_recover_retries_a_transient_sqlite_lock",
+      "line": 253,
+      "role": "mixed ordinary recovery coverage: retain ordinary intent through new focused regression; old setup still needs explicit test maintenance"
+    },
+    {
+      "name": "test_recover_requeues_only_expired_running_turns",
+      "line": 350,
+      "role": "mixed ordinary recovery coverage: retain ordinary intent through new focused regression; old setup still needs explicit test maintenance"
+    },
+    {
+      "name": "test_stop_and_confirmation_callback_race_has_one_authoritative_terminal_state",
+      "line": 567,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_confirmation_event_atomically_waits_and_runtime_completion_cannot_overwrite",
+      "line": 688,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_confirmation_uses_canonical_target_and_waits_for_runtime_quiescence",
+      "line": 740,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_cancel_intent_waits_for_quiescence_then_requeues_without_second_click",
+      "line": 815,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_unquiesced_crashed_proposer_recovery_fails_closed",
+      "line": 869,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_runtime_recovery_fails_corrupt_blank_legacy_proposer",
+      "line": 905,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_scheduler_never_executes_persisted_legacy_confirmation_intent",
+      "line": 949,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_confirmation_rejects_private_argv_drift_before_writer",
+      "line": 991,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_confirm_executes_once_redacts_receipt_and_requeues",
+      "line": 1026,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_cancel_never_runs_and_conflicting_decision_rejects",
+      "line": 1078,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_writer_failure_is_sanitized_and_requeued_for_agent_report",
+      "line": 1128,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_restart_reconciles_confirmed_without_result_without_execution",
+      "line": 1170,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_explicit_recovery_reconciles_legacy_resultless_confirmed_states_without_execution",
+      "line": 1212,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_claim_and_run_once_defend_against_unreconciled_confirmed_action",
+      "line": 1274,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_live_confirmation_claim_survives_other_executor_recovery_and_runs_once",
+      "line": 1298,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_stop_during_blocked_writer_keeps_turn_stopped_and_persists_receipt",
+      "line": 1349,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_confirmation_heartbeat_prevents_short_lease_recovery",
+      "line": 1385,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_lost_confirmation_lease_never_persists_writer_result",
+      "line": 1422,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    },
+    {
+      "name": "test_two_executors_racing_confirm_run_writer_at_most_once",
+      "line": 1465,
+      "role": "retired legacy feature test; inventory only, no deletion proposed"
+    }
+  ],
+  "verification": {
+    "patch_apply": "git apply --check passed on exact source",
+    "syntax_compile": "All four candidates compiled with pinned Python3.13 (/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python).",
+    "ruff": "four candidate modules and both fixture test modules/new regression test pass",
+    "baseline_new_tests": "original five tests: 5 failed; retirement resources/event accepted and legacy recovery calls absent from stub",
+    "candidate_stub_tests": "original five tests: 5 passed with sqlite3.connect forbidden; test-only package/store stub, not integration proof",
+    "real_combined_tests": "root Store/schema patch a52dad8ca09acf72dc37c012c2959241d289d799e0d1c4609a5083a3a63f45c4 + full four-file patch, real package and WorkbenchStore: 5 new tests + entire runtime/native-events = 56 passed in 5.90s; expanded six new tests separately = 6 passed in 0.75s",
+    "real_combined_ordinary": "17 parametrized ordinary executor cases passed in 9.67s using exact AST-selected source test functions, real models/package/Store, separate tiny fixture changes; unused retired enum import omitted only in owned harness",
+    "original_fixture_failures": "4/4 fail on original source in 2.38s (old t.client_request_id projection and physical status write); fixed query exposes same-test physical error_detail write, converted separately; final same-test case passes1.13s",
+    "limited_first_run": "candidate executor/runtime/native_events with ORIGINAL models/Store, source executor module collection: 67 passed, 1 stale physical error_detail write failed after fixture conversion; this mixed proof is superseded by real combined current-source proof",
+    "patch_reverse_reapply": "Root Store patch already applied in owned copy: reverse of four-file proposal reproduced all four original source bytes; reapply reproduced all four candidate bytes exactly.",
+    "temporary_cleanup": "Owned /tmp/confirmation-executor.Ym2KXd removed after evidence capture; pytest bases all task-owned.",
+    "deterministic_recovery_fixture": "Fresh SPEC found UUID tie ordering in same-second test fixture. Revised six-test patch seeds distinct created_at through task8_set_parts (create_turn has no now parameter); actual runtime ordering/assertions preserved; pinned3.13 case10/10 repetitions passed. Full six revised regressions additionally passed1.38s."
+  },
+  "limitations": [
+    "No app/test working-tree selection; root owns Store/schema/coordinator/migration and API owner handles surfaces.",
+    "Old full executor test module retains feature-only imports/decorator and historical confirmation tests; inventory does not retire or skip them. Whole-module collection requires explicit reviewed maintenance.",
+    "New ordinary harness selects source function bodies; it does not prove original full test-module collection.",
+    "No real provider, native CLI, production database, migration, network, push, deployment or final program acceptance.",
+    "Current constructor still creates unrelated ordinary tables; root migration/source-zero and final schema release proof remain separate."
+  ]
+}

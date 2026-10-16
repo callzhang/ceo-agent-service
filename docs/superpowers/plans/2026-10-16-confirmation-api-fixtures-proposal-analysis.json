@@ -1,0 +1,457 @@
+{
+  "status": "COMPLETE_UNSELECTED_POST_SURFACE_API_TEST_FIXTURE_PROPOSAL",
+  "base_head": "7111ea47546ac7cb242ff7267993868eacec6561",
+  "patch_sha256": "a4cd6b3169fbf601a57fb8f2e0a2f47da711f9f4d204f8446788400a7b7cbc61",
+  "patch_bytes": 13591,
+  "inputs": {
+    "tests/test_workbench_api.py": "cf004a4a38b5ca69d682402abc0882bc5862733d0a3495e25b148651e6b44a9d",
+    "tests/conftest.py": "74b5a3022d92a530e6b4def57dc5a6cd0a70f960fc937de7bc95db4152e744ce",
+    "pyproject.toml": "7b236f2948ca0c9bae3de67e99f6383f0e91b53c34ae590bfd295cba8855f48c",
+    "app/task8_storage.py": "8994bab2054b253a3001aab562d5c6dddd23cad3305b08068110cdea4f25cf6c",
+    "app/task12_storage.py": "d695f644308e669d9cffa2f20f7803f31c23d6ff9d7463035a30262d105bf19c",
+    "app/task20_definitions.py": "b7e23407ff77b37522639aaff0317d8fdccfac61c3f073ccd3d9774817e7785e",
+    "app/workbench/store.py": "b9027194eb4f9f277630935bf2d00a36792047f626e6b0242667d22a7de070db",
+    "app/workbench/api.py": "4a3847fb8db9b71e5618d77ce4e2392588f06e5db190994d652622e789f184ae",
+    "app/audit_web.py": "d10a0995be2abaf7cd6163e0337f474933d724081353a9d806050ad65b2b9559",
+    "app/agent_cli.py": "fcd40c67fcfbec339a1c9ece44a0e77f5ba7b2a93837053ee18712216df105ac",
+    "app/workbench/service_runtime.py": "d9c7d9b84bc8a372887692c8ad24a3694193c43efb5a79f87134cf166cd64f60",
+    "docs/superpowers/specs/2026-10-11-database-redesign-design.md": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80",
+    "docs/superpowers/plans/2026-10-16-confirmation-store-schema-proposal.patch": "a52dad8ca09acf72dc37c012c2959241d289d799e0d1c4609a5083a3a63f45c4",
+    "docs/superpowers/plans/2026-10-16-confirmation-executor-proposal.patch": "294fc6f7ac837a0d064c3af39e8af7e6ea6e6c3d12c132bf37fce262610cee47",
+    "docs/superpowers/plans/2026-10-16-confirmation-surface-proposal.patch": "0d437d6586e5f35d07cdf3a5c4bd98845885e29c0aaa884987fd4292799d71c6",
+    "docs/superpowers/plans/2026-10-16-confirmation-release-proposal.patch": "25ba3d7e84828be021a498332606d6ed9579ad8116725cf205ba0ba5a9a0047b",
+    "docs/superpowers/plans/2026-10-16-confirmation-surface-proposal-tests.patch": "e83cfac91542872f5b6ef2e3be2952fac74594990fea1fa0c7331878e2ee7125"
+  },
+  "post_surface_test_sha256": "ddbb847f4fec262db346747884c59789a314e704ea0b0d49fabd5ed667acb26e",
+  "candidate_test_sha256": "05fabadc828082bf81ae153e2e8b37d6b52e84dd7c44e397747e44a5677ff64b",
+  "bounded_sql_sites": [
+    {
+      "line": 556,
+      "role": "current Tasks8 task text/date fixture",
+      "old": "db.execute(\n            \"update tasks\\n               set title=?,runtime_kind=?,created_at=?,updated_at=? where record_type='workbench_tasks' and legacy_key=?\",\n            (\n                \"Bearer legacy-secret /private/task.db\",\n                \"runtime=/opt/provider/config\",\n                \"Bearer created-secret\",\n                \"updated=/etc/task.db\",\n                task.id,\n            ),\n        )",
+      "new": "parts = task8_set_parts(\"workbench_tasks\", {'title': \"Bearer legacy-secret /private/task.db\", 'runtime_kind': \"runtime=/opt/provider/config\", 'created_at': \"Bearer created-secret\", 'updated_at': \"updated=/etc/task.db\"})\n        db.execute(\n            f\"update tasks set {parts.sql} where record_type='workbench_tasks' and legacy_key=?\",\n            (*parts.parameters, task.id),\n        )"
+    },
+    {
+      "line": 566,
+      "role": "current Tasks8 turn text/date fixture",
+      "old": "db.execute(\n            \"update tasks\\n               set client_request_id=?,user_text=?,error_code=?,error_detail=?,\\n                   started_at=?,completed_at=?,created_at=?,updated_at=?\\n               where record_type='workbench_turns' and legacy_key=?\",\n            (\n                \"Bearer client-secret\",\n                \"read /Users/derek/private.txt\",\n\n                \"token=legacy-secret\",\n                \"failed at C:\\\\private\\\\secret.txt\",\n                \"started=/root/secret\",\n                \"Bearer completed-secret\",\n                \"created=/home/secret\",\n                \"updated=/opt/secret\",\n                turn.id,\n            ),\n        )",
+      "new": "parts = task8_set_parts(\"workbench_turns\", {'client_request_id': \"Bearer client-secret\", 'user_text': \"read /Users/derek/private.txt\", 'error_code': \"token=legacy-secret\", 'error_detail': \"failed at C:\\\\private\\\\secret.txt\", 'started_at': \"started=/root/secret\", 'completed_at': \"Bearer completed-secret\", 'created_at': \"created=/home/secret\", 'updated_at': \"updated=/opt/secret\"})\n        db.execute(\n            f\"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?\",\n            (*parts.parameters, turn.id),\n        )"
+    },
+    {
+      "line": 581,
+      "role": "current Tasks12 workbench_attachments source fields",
+      "old": "db.execute(\n            \"\"\"insert into workbench_attachments\n               (id,task_id,client_request_id,filename,media_type,size_bytes,storage_path,content_sha256)\n               values(?,?,?,?,?,?,?,?)\"\"\",\n            (\n                attachment_id,\n                task_physical_id(db, \"workbench_tasks\", task.id),\n                attachment_id,\n                \"/etc/private.txt\",\n                \"text/plain\",\n                0,\n                str(tmp_path / \"internal-attachment\"),\n                \"0\" * 64,\n            ),\n        )",
+      "new": "insert_task12(db, \"workbench_attachments\", {\n            'id': attachment_id,\n            'task_id': task_physical_id(db, \"workbench_tasks\", task.id),\n            'client_request_id': attachment_id,\n            'filename': \"/etc/private.txt\",\n            'media_type': \"text/plain\",\n            'size_bytes': 0,\n            'storage_path': str(tmp_path / \"internal-attachment\"),\n            'content_sha256': \"0\" * 64,\n        })"
+    },
+    {
+      "line": 596,
+      "role": "current Tasks12 workbench_artifacts source fields",
+      "old": "db.execute(\n            \"\"\"insert into workbench_artifacts\n               (id,turn_id,label,path,media_type)\n               values(?,?,?,?,?)\"\"\",\n            (\n                artifact_id,\n                task_physical_id(db, \"workbench_turns\", turn.id),\n                \"Bearer artifact-secret /root/report.txt\",\n                str(tmp_path / \"internal-artifact\"),\n                \"text/plain\",\n            ),\n        )",
+      "new": "insert_task12(db, \"workbench_artifacts\", {\n            'id': artifact_id,\n            'turn_id': task_physical_id(db, \"workbench_turns\", turn.id),\n            'label': \"Bearer artifact-secret /root/report.txt\",\n            'path': str(tmp_path / \"internal-artifact\"),\n            'media_type': \"text/plain\",\n        })"
+    },
+    {
+      "line": 651,
+      "role": "current Tasks8 failure text fixture",
+      "old": "db.execute(\n            \"update tasks\\n               set status='failed',\\n                   \\n                   error_code='provider_failed',\\n                   error_detail='\u6267\u884c /usr/bin/printf \u5931\u8d25\uff1bapi_key=credential-value-1234'\\n               where record_type='workbench_turns' and legacy_key=?\",\n            (turn.id,),\n        )",
+      "new": "parts = task8_set_parts(\"workbench_turns\", {'status': 'failed', 'error_code': 'provider_failed', 'error_detail': '\u6267\u884c /usr/bin/printf \u5931\u8d25\uff1bapi_key=credential-value-1234'})\n        db.execute(\n            f\"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?\",\n            (*parts.parameters, turn.id),\n        )"
+    },
+    {
+      "line": 989,
+      "role": "current Tasks12 workbench_artifacts source fields",
+      "old": "db.execute(\n            \"\"\"\n            insert into workbench_artifacts (id, turn_id, label, path, media_type)\n            values (?, ?, ?, ?, ?)\n            \"\"\",\n            (\n                artifact_id,\n                task_physical_id(db, \"workbench_turns\", turn.id),\n                \"Bearer artifact-download-secret\",\n                str(artifact_path),\n                \"text/\ud83d\udca5\",\n            ),\n        )",
+      "new": "insert_task12(db, \"workbench_artifacts\", {\n            'id': artifact_id,\n            'turn_id': task_physical_id(db, \"workbench_turns\", turn.id),\n            'label': \"Bearer artifact-download-secret\",\n            'path': str(artifact_path),\n            'media_type': \"text/\ud83d\udca5\",\n        })"
+    },
+    {
+      "line": 1034,
+      "role": "current Tasks12 workbench_artifacts source fields",
+      "old": "db.execute(\n            \"\"\"\n            insert into workbench_artifacts (id, turn_id, label, path, media_type)\n            values (?, ?, ?, ?, ?)\n            \"\"\",\n            (artifact_id, task_physical_id(db, \"workbench_turns\", turn.id), \"Report\", str(link), \"text/plain\"),\n        )",
+      "new": "insert_task12(db, \"workbench_artifacts\", {\n            'id': artifact_id,\n            'turn_id': task_physical_id(db, \"workbench_turns\", turn.id),\n            'label': \"Report\",\n            'path': str(link),\n            'media_type': \"text/plain\",\n        })"
+    },
+    {
+      "line": 1064,
+      "role": "current Tasks12 workbench_artifacts source fields",
+      "old": "db.execute(\n            \"\"\"\n            insert into workbench_artifacts (id, turn_id, label, path, media_type)\n            values (?, ?, ?, ?, ?)\n            \"\"\",\n            (\n                artifact_id,\n                task_physical_id(db, \"workbench_turns\", turn.id),\n                \"Report\",\n                str(linked_directory / \"report.txt\"),\n                \"text/plain\",\n            ),\n        )",
+      "new": "insert_task12(db, \"workbench_artifacts\", {\n            'id': artifact_id,\n            'turn_id': task_physical_id(db, \"workbench_turns\", turn.id),\n            'label': \"Report\",\n            'path': str(linked_directory / \"report.txt\"),\n            'media_type': \"text/plain\",\n        })"
+    },
+    {
+      "line": 1100,
+      "role": "current Tasks12 workbench_artifacts source fields",
+      "old": "db.execute(\n            \"\"\"\n            insert into workbench_artifacts (id, turn_id, label, path, media_type)\n            values (?, ?, ?, ?, ?)\n            \"\"\",\n            (artifact_id, task_physical_id(db, \"workbench_turns\", turn.id), \"Report\", str(artifact_path), \"text/plain\"),\n        )",
+      "new": "insert_task12(db, \"workbench_artifacts\", {\n            'id': artifact_id,\n            'turn_id': task_physical_id(db, \"workbench_turns\", turn.id),\n            'label': \"Report\",\n            'path': str(artifact_path),\n            'media_type': \"text/plain\",\n        })"
+    },
+    {
+      "line": 355,
+      "role": "current Tasks8 native turn insert",
+      "old": "insert_task(db, 'workbench_turns', {\n                \"legacy_key\": turn_id,\n                \"parent_id\": task_physical_id(db, \"workbench_tasks\", task.id),\n                \"client_request_id\": f\"page-{index}\",\n                \"task_sequence\": index + 1,\n                \"user_text\": f\"turn {index}\",\n                \"status\": \"completed\",\n                \"created_at\": created_at,\n                \"updated_at\": created_at,\n            })",
+      "new": "parts = task8_insert_parts(\"workbench_turns\", {\n                \"legacy_key\": turn_id,\n                \"parent_id\": task_physical_id(db, \"workbench_tasks\", task.id),\n                \"client_request_id\": f\"page-{index}\",\n                \"task_sequence\": index + 1,\n                \"user_text\": f\"turn {index}\",\n                \"status\": \"completed\",\n                \"created_at\": created_at,\n                \"updated_at\": created_at,\n            })\n            db.execute(\n                f\"insert into tasks ({parts.columns}) values ({parts.values})\",\n                parts.parameters,\n            )"
+    },
+    {
+      "line": 373,
+      "role": "current Tasks12 workbench_artifacts source fields",
+      "old": "db.execute(\n                \"\"\"insert into workbench_artifacts\n                   (id,turn_id,label,path,media_type,created_at)\n                   values(?,?,?,?,?,?)\"\"\",\n                (\n                    str(uuid4()),\n                    task_physical_id(db, \"workbench_turns\", turn_ids[index]),\n                    f\"artifact {index}\",\n                    str(tmp_path / f\"artifact-{index}.txt\"),\n                    \"text/plain\",\n                    f\"2026-08-13 00:{index // 60:02d}:{index % 60:02d}\",\n                ),\n            )",
+      "new": "insert_task12(db, \"workbench_artifacts\", {\n                'id': str(uuid4()),\n                'turn_id': task_physical_id(db, \"workbench_turns\", turn_ids[index]),\n                'label': f\"artifact {index}\",\n                'path': str(tmp_path / f\"artifact-{index}.txt\"),\n                'media_type': \"text/plain\",\n                'created_at': f\"2026-08-13 00:{index // 60:02d}:{index % 60:02d}\",\n            })"
+    },
+    {
+      "line": 436,
+      "role": "current Tasks8 timestamp tie fixture",
+      "old": "db.execute(\n                f\"update tasks set created_at='2026-08-13 00:00:00' where record_type='workbench_turns' and parent_id={task_id_expression('workbench_tasks', '?')}\",\n                (task[\"id\"],),\n            )",
+      "new": "parts = task8_set_parts(\"workbench_turns\", {\"created_at\": \"2026-08-13 00:00:00\"})\n            db.execute(\n                f\"update tasks set {parts.sql} where record_type='workbench_turns' and parent_id={task_id_expression('workbench_tasks', '?')}\",\n                (*parts.parameters, task[\"id\"]),\n            )"
+    },
+    {
+      "line": 273,
+      "role": "current source-shaped attachment metadata",
+      "old": "\"select client_request_id, content_sha256 from workbench_attachments\"",
+      "new": "f\"select client_request_id, content_sha256 from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments\""
+    },
+    {
+      "line": 271,
+      "role": "current source-shaped attachment count",
+      "old": "\"select count(*) from workbench_attachments\"",
+      "new": "f\"select count(*) from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments\""
+    }
+  ],
+  "function_assertion_audit": {
+    "changed": [
+      "test_attachment_upload_retry_is_idempotent_and_collision_is_fixed",
+      "test_timeline_turn_cursor_keeps_nested_resources_on_the_selected_page",
+      "test_same_timestamp_public_turns_keep_creation_order_and_latest_state",
+      "test_all_timeline_public_strings_preserve_exact_local_evidence",
+      "test_public_turn_preserves_exact_local_paths_and_credential_shaped_text",
+      "test_legacy_confirmation_endpoints_are_absent",
+      "test_artifact_download_checks_nested_ownership_and_does_not_expose_path",
+      "test_artifact_download_rejects_symlink",
+      "test_artifact_download_rejects_symlinked_parent",
+      "test_artifact_download_streams_opened_descriptor_across_path_swap"
+    ],
+    "unchanged": [
+      "_complete_setup",
+      "_client",
+      "test_default_main_page_runtime_uses_shared_service_execution",
+      "test_task_turn_and_event_replay",
+      "test_first_turn_derives_default_task_title_in_timeline",
+      "test_cross_origin_mutation_is_rejected",
+      "test_root_reports_missing_workbench_build_and_history_keeps_query",
+      "test_root_serves_exact_workbench_index_when_built",
+      "test_attachment_is_strict_bounded_and_has_no_storage_path",
+      "test_task_archive_filter_is_explicit",
+      "test_task_list_is_bounded_and_cursor_paginates_without_duplicates",
+      "test_single_task_mutation_responses_never_load_full_turn_history",
+      "test_timeline_cursor_is_bound_to_issuing_task",
+      "test_timeline_excludes_retired_confirmation_resource",
+      "test_timeline_exposes_usable_resource_cursors",
+      "test_streaming_json_collector_stops_at_cap_without_consuming_remaining_chunks",
+      "test_streaming_json_collector_rejects_large_content_length_before_receive",
+      "test_slow_sse_snapshot_does_not_block_unrelated_async_request",
+      "test_attachment_fsync_does_not_block_unrelated_async_request",
+      "test_archived_task_and_active_turn_archive_return_fixed_conflicts",
+      "test_archived_task_idempotent_retry_precedes_fixed_collision_and_archive_errors",
+      "test_nested_turn_resources_do_not_leak_across_tasks",
+      "test_runtime_capabilities_and_stats_are_public_stable_models",
+      "test_artifact_download_regression_detects_missing_stream_close",
+      "test_public_event_projection_preserves_nested_local_evidence",
+      "test_public_event_projection_preserves_delimited_paths_and_web_urls",
+      "test_white_box_tool_event_preserves_exact_action_and_nested_result",
+      "test_white_box_tool_event_preserves_exact_provider_values",
+      "test_public_event_projection_preserves_all_diagnostic_path_strings",
+      "test_public_event_projection_preserves_repeated_slashes_and_file_uris",
+      "test_sse_replays_persisted_events_with_last_event_id_precedence",
+      "test_sse_polling_delivers_database_event_without_broker_wakeup",
+      "test_sse_terminal_race_rechecks_sqlite_without_missing_or_duplicates_100_times",
+      "test_sse_rejects_invalid_cursor",
+      "test_sse_rejects_cross_origin_and_unknown_turn",
+      "test_scheduler_polls_without_overlap_and_recovers_with_sanitized_log",
+      "test_scheduler_wakeup_runs_before_next_poll_interval",
+      "test_scheduler_join_is_bounded_and_records_incomplete_close",
+      "test_app_startup_recovers_then_runs_persisted_queue_and_shutdown_joins",
+      "test_app_shutdown_stops_executor_before_bounded_scheduler_join",
+      "test_unknown_store_error_never_reflects_exception_text"
+    ],
+    "assertions": {
+      "_complete_setup": {
+        "before": 0,
+        "after": 0,
+        "identical": true
+      },
+      "_client": {
+        "before": 0,
+        "after": 0,
+        "identical": true
+      },
+      "test_default_main_page_runtime_uses_shared_service_execution": {
+        "before": 2,
+        "after": 2,
+        "identical": true
+      },
+      "test_task_turn_and_event_replay": {
+        "before": 3,
+        "after": 3,
+        "identical": true
+      },
+      "test_first_turn_derives_default_task_title_in_timeline": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_cross_origin_mutation_is_rejected": {
+        "before": 1,
+        "after": 1,
+        "identical": true
+      },
+      "test_root_reports_missing_workbench_build_and_history_keeps_query": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_root_serves_exact_workbench_index_when_built": {
+        "before": 3,
+        "after": 3,
+        "identical": true
+      },
+      "test_attachment_is_strict_bounded_and_has_no_storage_path": {
+        "before": 6,
+        "after": 6,
+        "identical": true
+      },
+      "test_attachment_upload_retry_is_idempotent_and_collision_is_fixed": {
+        "before": 9,
+        "after": 9,
+        "identical": false
+      },
+      "test_task_archive_filter_is_explicit": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_task_list_is_bounded_and_cursor_paginates_without_duplicates": {
+        "before": 3,
+        "after": 3,
+        "identical": true
+      },
+      "test_single_task_mutation_responses_never_load_full_turn_history": {
+        "before": 3,
+        "after": 3,
+        "identical": true
+      },
+      "test_timeline_turn_cursor_keeps_nested_resources_on_the_selected_page": {
+        "before": 9,
+        "after": 9,
+        "identical": true
+      },
+      "test_same_timestamp_public_turns_keep_creation_order_and_latest_state": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_timeline_cursor_is_bound_to_issuing_task": {
+        "before": 2,
+        "after": 2,
+        "identical": true
+      },
+      "test_timeline_excludes_retired_confirmation_resource": {
+        "before": 2,
+        "after": 2,
+        "identical": true
+      },
+      "test_timeline_exposes_usable_resource_cursors": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      },
+      "test_all_timeline_public_strings_preserve_exact_local_evidence": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      },
+      "test_public_turn_preserves_exact_local_paths_and_credential_shaped_text": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      },
+      "test_streaming_json_collector_stops_at_cap_without_consuming_remaining_chunks": {
+        "before": 2,
+        "after": 2,
+        "identical": true
+      },
+      "test_streaming_json_collector_rejects_large_content_length_before_receive": {
+        "before": 2,
+        "after": 2,
+        "identical": true
+      },
+      "test_legacy_confirmation_endpoints_are_absent": {
+        "before": 2,
+        "after": 3,
+        "identical": false
+      },
+      "test_slow_sse_snapshot_does_not_block_unrelated_async_request": {
+        "before": 2,
+        "after": 2,
+        "identical": true
+      },
+      "test_attachment_fsync_does_not_block_unrelated_async_request": {
+        "before": 3,
+        "after": 3,
+        "identical": true
+      },
+      "test_archived_task_and_active_turn_archive_return_fixed_conflicts": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      },
+      "test_archived_task_idempotent_retry_precedes_fixed_collision_and_archive_errors": {
+        "before": 7,
+        "after": 7,
+        "identical": true
+      },
+      "test_nested_turn_resources_do_not_leak_across_tasks": {
+        "before": 1,
+        "after": 1,
+        "identical": true
+      },
+      "test_runtime_capabilities_and_stats_are_public_stable_models": {
+        "before": 8,
+        "after": 8,
+        "identical": true
+      },
+      "test_artifact_download_checks_nested_ownership_and_does_not_expose_path": {
+        "before": 8,
+        "after": 8,
+        "identical": true
+      },
+      "test_artifact_download_rejects_symlink": {
+        "before": 1,
+        "after": 1,
+        "identical": true
+      },
+      "test_artifact_download_rejects_symlinked_parent": {
+        "before": 1,
+        "after": 1,
+        "identical": true
+      },
+      "test_artifact_download_streams_opened_descriptor_across_path_swap": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_artifact_download_regression_detects_missing_stream_close": {
+        "before": 0,
+        "after": 0,
+        "identical": true
+      },
+      "test_public_event_projection_preserves_nested_local_evidence": {
+        "before": 9,
+        "after": 9,
+        "identical": true
+      },
+      "test_public_event_projection_preserves_delimited_paths_and_web_urls": {
+        "before": 13,
+        "after": 13,
+        "identical": true
+      },
+      "test_white_box_tool_event_preserves_exact_action_and_nested_result": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      },
+      "test_white_box_tool_event_preserves_exact_provider_values": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_public_event_projection_preserves_all_diagnostic_path_strings": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_public_event_projection_preserves_repeated_slashes_and_file_uris": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      },
+      "test_sse_replays_persisted_events_with_last_event_id_precedence": {
+        "before": 7,
+        "after": 7,
+        "identical": true
+      },
+      "test_sse_polling_delivers_database_event_without_broker_wakeup": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_sse_terminal_race_rechecks_sqlite_without_missing_or_duplicates_100_times": {
+        "before": 7,
+        "after": 7,
+        "identical": true
+      },
+      "test_sse_rejects_invalid_cursor": {
+        "before": 1,
+        "after": 1,
+        "identical": true
+      },
+      "test_sse_rejects_cross_origin_and_unknown_turn": {
+        "before": 2,
+        "after": 2,
+        "identical": true
+      },
+      "test_scheduler_polls_without_overlap_and_recovers_with_sanitized_log": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_scheduler_wakeup_runs_before_next_poll_interval": {
+        "before": 2,
+        "after": 2,
+        "identical": true
+      },
+      "test_scheduler_join_is_bounded_and_records_incomplete_close": {
+        "before": 6,
+        "after": 6,
+        "identical": true
+      },
+      "test_app_startup_recovers_then_runs_persisted_queue_and_shutdown_joins": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      },
+      "test_app_shutdown_stops_executor_before_bounded_scheduler_join": {
+        "before": 6,
+        "after": 6,
+        "identical": true
+      },
+      "test_unknown_store_error_never_reflects_exception_text": {
+        "before": 3,
+        "after": 3,
+        "identical": true
+      }
+    }
+  },
+  "invariants": {
+    "retained_functions": 51,
+    "unchanged_function_ast_count": 41,
+    "changed_function_count": 10,
+    "all_function_signatures": "exact",
+    "old_assertion_statements": 207,
+    "new_assertion_statements": 208,
+    "unchanged_assertion_statements": 204,
+    "attachment_assertion": "Same count==1 assertion now queries the exact source-shaped typed attachment projection; other assertions in that function exact.",
+    "contract_correction": "Two assertions in integrated removed-endpoint test now expect405/Method Not Allowed because existing GET/HEAD SPA catchall remains. Additional OpenAPI absence assertion. Standalone Workbench removed-router tests continue expecting404. No runtime routing change.",
+    "descriptor_mutant": "Entire test_artifact_download_regression_detects_missing_stream_close source body/AST exact; all assertions in descriptor swap/close test exact.",
+    "fixture_values": "Fourteen bounded SQL call sites preserve original source field keys/values/public IDs/physical parent references and transaction scope; no added fixture API wrappers. Existing Task8 SQL parts plus Tasks12 insert helper and Store source-shaped attachment projection used.",
+    "removed_or_skipped_tests": 0
+  },
+  "verification": {
+    "post_surface_baseline": "Full real candidate API module without this fixture patch:11failed41passed128.07s. Ten stale SQL fixture cases, one incorrect integrated404 assumption.",
+    "original_baseline": "Nine ordinary failing SQL fixture test functions reproduced on original untouched app/module:9failed16.59s; original descriptor-close-mutant test separately reproduces same missing workbench_artifacts table:1failed1.81s.",
+    "candidate_full": "Full real retained tests/test_workbench_api.py:52passed160.99s, pinnedPython3.13, one existing Starlette BlockingPortal deprecation warning. No stub/skip/xfail/test extraction.",
+    "compile": "PinnedPython3.13 compile passed",
+    "ruff": "Whole candidate test module passed",
+    "replay": "Current rootStore+executor+surface+release+surface-tests+APIfixture patches replay to exact tested app and API source bytes.",
+    "reverse_reapply": "APIfixture reverse reproduces exact post-surface test source; reapply reproduces candidate bytes.",
+    "adjacent_six_test_fixture_fix": "Separate six-regression proposal SHAad5e2e00f383ce3313e2a2c04e9439f75f7a7678c0d01908c14b90beb5164e7e now seeds distinct created_at through existing task8_set_parts;10/10 narrow repeats and complete6tests passed1.38s."
+  },
+  "limitations": [
+    "Docs-only proposal: no application/tests actual working-tree edit, index operation or commit.",
+    "No provider/native CLI/network/production access, database migration, push or deployment.",
+    "Root owns integration/reviews and final release acceptance."
+  ],
+  "cleanup": "Owned /private/tmp/confirmation-api-fixtures.DlkmOI removed after evidence capture."
+}

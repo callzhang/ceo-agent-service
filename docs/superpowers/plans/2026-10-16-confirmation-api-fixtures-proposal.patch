@@ -1,0 +1,306 @@
+--- a/tests/test_workbench_api.py
++++ b/tests/test_workbench_api.py
+@@ -1,7 +1,6 @@
+ import json
+ import os
+ import asyncio
+-import sqlite3
+ from pathlib import Path
+ import threading
+ import time
+@@ -20,9 +19,11 @@
+ from app.store import AutoReplyStore
+ from app.workbench.api import WorkbenchScheduler
+ from app.workbench.models import TurnStatus
+-from app.task_storage import insert_task, task_physical_id, task_id_expression
++from app.task_storage import task_physical_id, task_id_expression
++from app.task8_storage import task8_insert_parts, task8_set_parts
++from app.task12_storage import insert_task12
+ from app.run_storage import insert_run
+-from app.workbench.store import WorkbenchStore
++from app.workbench.store import WorkbenchStore, WORKBENCH_ATTACHMENT_SQL
+ 
+ 
+ def _complete_setup(store: WorkbenchStore) -> None:
+@@ -267,10 +268,10 @@
+     assert collision.json() == {
+         "detail": "Client request ID conflicts with an existing attachment"
+     }
+-    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+-        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 1
++    with WorkbenchStore(tmp_path / "worker.sqlite3")._connect() as db:
++        assert db.execute(f"select count(*) from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments").fetchone()[0] == 1
+         row = db.execute(
+-            "select client_request_id, content_sha256 from workbench_attachments"
++            f"select client_request_id, content_sha256 from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments"
+         ).fetchone()
+     assert row[0] == request_id
+     assert len(row[1]) == 64
+@@ -352,7 +353,7 @@
+             turn_id = str(uuid4())
+             turn_ids.append(turn_id)
+             created_at = f"2026-08-13 00:{index // 60:02d}:{index % 60:02d}"
+-            insert_task(db, 'workbench_turns', {
++            parts = task8_insert_parts("workbench_turns", {
+                 "legacy_key": turn_id,
+                 "parent_id": task_physical_id(db, "workbench_tasks", task.id),
+                 "client_request_id": f"page-{index}",
+@@ -362,6 +363,10 @@
+                 "created_at": created_at,
+                 "updated_at": created_at,
+             })
++            db.execute(
++                f"insert into tasks ({parts.columns}) values ({parts.values})",
++                parts.parameters,
++            )
+             insert_run(db, 'workbench_events', {
+                 "task_id": task_physical_id(db, "workbench_turns", turn_id),
+                 "sequence": 1,
+@@ -370,19 +375,14 @@
+                 "created_at": created_at,
+             })
+         for index in (0, 100):
+-            db.execute(
+-                """insert into workbench_artifacts
+-                   (id,turn_id,label,path,media_type,created_at)
+-                   values(?,?,?,?,?,?)""",
+-                (
+-                    str(uuid4()),
+-                    task_physical_id(db, "workbench_turns", turn_ids[index]),
+-                    f"artifact {index}",
+-                    str(tmp_path / f"artifact-{index}.txt"),
+-                    "text/plain",
+-                    f"2026-08-13 00:{index // 60:02d}:{index % 60:02d}",
+-                ),
+-            )
++            insert_task12(db, "workbench_artifacts", {
++                'id': str(uuid4()),
++                'turn_id': task_physical_id(db, "workbench_turns", turn_ids[index]),
++                'label': f"artifact {index}",
++                'path': str(tmp_path / f"artifact-{index}.txt"),
++                'media_type': "text/plain",
++                'created_at': f"2026-08-13 00:{index // 60:02d}:{index % 60:02d}",
++            })
+ 
+     with _client(tmp_path) as client:
+         first = client.get(
+@@ -433,9 +433,10 @@
+         ).json()
+         store = WorkbenchStore(tmp_path / "worker.sqlite3")
+         with store._connect() as db:
++            parts = task8_set_parts("workbench_turns", {"created_at": "2026-08-13 00:00:00"})
+             db.execute(
+-                f"update tasks set created_at='2026-08-13 00:00:00' where record_type='workbench_turns' and parent_id={task_id_expression('workbench_tasks', '?')}",
+-                (task["id"],),
++                f"update tasks set {parts.sql} where record_type='workbench_turns' and parent_id={task_id_expression('workbench_tasks', '?')}",
++                (*parts.parameters, task["id"]),
+             )
+         summary = client.get(f"/api/workbench/tasks/{task['id']}")
+         timeline = client.get(f"/api/workbench/tasks/{task['id']}/timeline")
+@@ -553,58 +554,33 @@
+     attachment_id = str(uuid4())
+     artifact_id = str(uuid4())
+     with store._connect() as db:
++        parts = task8_set_parts("workbench_tasks", {'title': "Bearer legacy-secret /private/task.db", 'runtime_kind': "runtime=/opt/provider/config", 'created_at': "Bearer created-secret", 'updated_at': "updated=/etc/task.db"})
+         db.execute(
+-            "update tasks\n               set title=?,runtime_kind=?,created_at=?,updated_at=? where record_type='workbench_tasks' and legacy_key=?",
+-            (
+-                "Bearer legacy-secret /private/task.db",
+-                "runtime=/opt/provider/config",
+-                "Bearer created-secret",
+-                "updated=/etc/task.db",
+-                task.id,
+-            ),
+-        )
++            f"update tasks set {parts.sql} where record_type='workbench_tasks' and legacy_key=?",
++            (*parts.parameters, task.id),
++        )
++        parts = task8_set_parts("workbench_turns", {'client_request_id': "Bearer client-secret", 'user_text': "read /Users/derek/private.txt", 'error_code': "token=legacy-secret", 'error_detail': "failed at C:\\private\\secret.txt", 'started_at': "started=/root/secret", 'completed_at': "Bearer completed-secret", 'created_at': "created=/home/secret", 'updated_at': "updated=/opt/secret"})
+         db.execute(
+-            "update tasks\n               set client_request_id=?,user_text=?,error_code=?,error_detail=?,\n                   started_at=?,completed_at=?,created_at=?,updated_at=?\n               where record_type='workbench_turns' and legacy_key=?",
+-            (
+-                "Bearer client-secret",
+-                "read /Users/derek/private.txt",
+-
+-                "token=legacy-secret",
+-                "failed at C:\\private\\secret.txt",
+-                "started=/root/secret",
+-                "Bearer completed-secret",
+-                "created=/home/secret",
+-                "updated=/opt/secret",
+-                turn.id,
+-            ),
+-        )
+-        db.execute(
+-            """insert into workbench_attachments
+-               (id,task_id,client_request_id,filename,media_type,size_bytes,storage_path,content_sha256)
+-               values(?,?,?,?,?,?,?,?)""",
+-            (
+-                attachment_id,
+-                task_physical_id(db, "workbench_tasks", task.id),
+-                attachment_id,
+-                "/etc/private.txt",
+-                "text/plain",
+-                0,
+-                str(tmp_path / "internal-attachment"),
+-                "0" * 64,
+-            ),
+-        )
+-        db.execute(
+-            """insert into workbench_artifacts
+-               (id,turn_id,label,path,media_type)
+-               values(?,?,?,?,?)""",
+-            (
+-                artifact_id,
+-                task_physical_id(db, "workbench_turns", turn.id),
+-                "Bearer artifact-secret /root/report.txt",
+-                str(tmp_path / "internal-artifact"),
+-                "text/plain",
+-            ),
+-        )
++            f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
++            (*parts.parameters, turn.id),
++        )
++        insert_task12(db, "workbench_attachments", {
++            'id': attachment_id,
++            'task_id': task_physical_id(db, "workbench_tasks", task.id),
++            'client_request_id': attachment_id,
++            'filename': "/etc/private.txt",
++            'media_type': "text/plain",
++            'size_bytes': 0,
++            'storage_path': str(tmp_path / "internal-attachment"),
++            'content_sha256': "0" * 64,
++        })
++        insert_task12(db, "workbench_artifacts", {
++            'id': artifact_id,
++            'turn_id': task_physical_id(db, "workbench_turns", turn.id),
++            'label': "Bearer artifact-secret /root/report.txt",
++            'path': str(tmp_path / "internal-artifact"),
++            'media_type': "text/plain",
++        })
+ 
+     with _client(tmp_path) as client:
+         timeline = client.get(f"/api/workbench/tasks/{task.id}/timeline")
+@@ -648,9 +624,10 @@
+         client_request_id="white-box-turn-paths",
+     )
+     with store._connect() as db:
++        parts = task8_set_parts("workbench_turns", {'status': 'failed', 'error_code': 'provider_failed', 'error_detail': '执行 /usr/bin/printf 失败；api_key=credential-value-1234'})
+         db.execute(
+-            "update tasks\n               set status='failed',\n                   \n                   error_code='provider_failed',\n                   error_detail='执行 /usr/bin/printf 失败；api_key=credential-value-1234'\n               where record_type='workbench_turns' and legacy_key=?",
+-            (turn.id,),
++            f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
++            (*parts.parameters, turn.id),
+         )
+ 
+     with _client(tmp_path) as client:
+@@ -741,9 +718,10 @@
+                 f"/api/workbench/tasks/{task['id']}/turns/{uuid4()}"
+                 f"/confirmations/{uuid4()}/{action}", json={},
+             )
+-            assert response.status_code == 404
+-            assert response.json() == {"detail": "Not Found"}
+-
++            assert response.status_code == 405
++            assert response.json() == {"detail": "Method Not Allowed"}
++
++        assert not any("confirmation" in path for path in client.app.openapi()["paths"])
+ 
+ def test_slow_sse_snapshot_does_not_block_unrelated_async_request(
+     tmp_path: Path, monkeypatch
+@@ -986,19 +964,13 @@
+     artifact_path = tmp_path / "report.txt"
+     artifact_path.write_text("report", encoding="utf-8")
+     with store._connect() as db:
+-        db.execute(
+-            """
+-            insert into workbench_artifacts (id, turn_id, label, path, media_type)
+-            values (?, ?, ?, ?, ?)
+-            """,
+-            (
+-                artifact_id,
+-                task_physical_id(db, "workbench_turns", turn.id),
+-                "Bearer artifact-download-secret",
+-                str(artifact_path),
+-                "text/💥",
+-            ),
+-        )
++        insert_task12(db, "workbench_artifacts", {
++            'id': artifact_id,
++            'turn_id': task_physical_id(db, "workbench_turns", turn.id),
++            'label': "Bearer artifact-download-secret",
++            'path': str(artifact_path),
++            'media_type': "text/💥",
++        })
+ 
+     with _client(tmp_path) as client:
+         timeline = client.get(f"/api/workbench/tasks/{task.id}/timeline")
+@@ -1031,13 +1003,13 @@
+     link.symlink_to(target)
+     artifact_id = str(uuid4())
+     with store._connect() as db:
+-        db.execute(
+-            """
+-            insert into workbench_artifacts (id, turn_id, label, path, media_type)
+-            values (?, ?, ?, ?, ?)
+-            """,
+-            (artifact_id, task_physical_id(db, "workbench_turns", turn.id), "Report", str(link), "text/plain"),
+-        )
++        insert_task12(db, "workbench_artifacts", {
++            'id': artifact_id,
++            'turn_id': task_physical_id(db, "workbench_turns", turn.id),
++            'label': "Report",
++            'path': str(link),
++            'media_type': "text/plain",
++        })
+ 
+     with _client(tmp_path) as client:
+         response = client.get(
+@@ -1061,19 +1033,13 @@
+     linked_directory.symlink_to(real_directory, target_is_directory=True)
+     artifact_id = str(uuid4())
+     with store._connect() as db:
+-        db.execute(
+-            """
+-            insert into workbench_artifacts (id, turn_id, label, path, media_type)
+-            values (?, ?, ?, ?, ?)
+-            """,
+-            (
+-                artifact_id,
+-                task_physical_id(db, "workbench_turns", turn.id),
+-                "Report",
+-                str(linked_directory / "report.txt"),
+-                "text/plain",
+-            ),
+-        )
++        insert_task12(db, "workbench_artifacts", {
++            'id': artifact_id,
++            'turn_id': task_physical_id(db, "workbench_turns", turn.id),
++            'label': "Report",
++            'path': str(linked_directory / "report.txt"),
++            'media_type': "text/plain",
++        })
+ 
+     with _client(tmp_path) as client:
+         response = client.get(
+@@ -1097,13 +1063,13 @@
+     outside.write_text("outside-secret", encoding="utf-8")
+     artifact_id = str(uuid4())
+     with store._connect() as db:
+-        db.execute(
+-            """
+-            insert into workbench_artifacts (id, turn_id, label, path, media_type)
+-            values (?, ?, ?, ?, ?)
+-            """,
+-            (artifact_id, task_physical_id(db, "workbench_turns", turn.id), "Report", str(artifact_path), "text/plain"),
+-        )
++        insert_task12(db, "workbench_artifacts", {
++            'id': artifact_id,
++            'turn_id': task_physical_id(db, "workbench_turns", turn.id),
++            'label': "Report",
++            'path': str(artifact_path),
++            'media_type': "text/plain",
++        })
+ 
+     opened_fd = []
+     closed_artifacts = []
