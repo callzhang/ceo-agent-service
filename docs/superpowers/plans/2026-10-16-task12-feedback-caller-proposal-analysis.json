@@ -1888,7 +1888,9 @@
     "new_feedback_set_parts_calls": 15,
     "new_feedback_set_helper_bound_parameters": 0,
     "feedback_include_rowid_projection_calls": 0,
-    "terminal_patch_context_nonblank": true
+    "terminal_patch_context_nonblank": true,
+    "owned_temporary_removed": true,
+    "independent_insert_statement_sql_matches_root_frozen_source": true
   },
   "insert_expression_source_boundary": [
     {
@@ -2058,9 +2060,9 @@
     {
       "owner": "feedback_iteration_decision_items retained child schema",
       "endpoints": [
-        "decision_id -> Tasks.feedback_iteration_decision_public_id",
-        "feedback_key -> Tasks.feedback_processing_item_public_key",
-        "round_id -> Tasks.feedback_processing_round_public_id"
+        "decision_id -> tasks.\"feedback_iteration_decisions__id\"",
+        "feedback_key -> tasks.\"feedback_processing_items__feedback_key\"",
+        "round_id -> tasks.\"feedback_processing_rounds__id\""
       ],
       "obligation": "Root migration companion must translate the exact three native source-public FKs to the already declared kind-restricted full-UNIQUE Tasks20 public aliases; preserve all other child DDL/index/append-only trigger facts. This proposal changes no retained child declaration or row IDs."
     },
