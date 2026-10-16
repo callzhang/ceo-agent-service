@@ -31,10 +31,10 @@ Application AST scope: existing _lock and insert_task12 only; new Task12InsertPa
 
 ### Task 2: mechanical exact implementation
 
-- [ ] Claim only app/task12_storage.py, tests/test_task12_storage.py, tests/test_task12_native_parts.py, own claim and this plan implementation checkboxes.
-- [ ] Assert hashes above; copy exact3canonical files. No code redesign or current caller/constructor/manifest/migration selection.
-- [ ] Run pinned `PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python docs/superpowers/plans/2026-10-16-task12-native-parts-preflight.py --applied --with-declarations`.
-- [ ] Ruff --no-cache on exact3paths, ASTscope check and git diff --check. Commit only own hunks/files. No production DB/provider/nativeCLI/network/main/push/deploy.
+- [x] Claim only app/task12_storage.py, tests/test_task12_storage.py, tests/test_task12_native_parts.py, own claim and this plan implementation checkboxes.
+- [x] Assert hashes above; copy exact3canonical files. No code redesign or current caller/constructor/manifest/migration selection.
+- [x] Run pinned `PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python docs/superpowers/plans/2026-10-16-task12-native-parts-preflight.py --applied --with-declarations`: 884 passed in 59.41s; OWNED_TEMP_REMOVED True.
+- [x] Ruff --no-cache on exact3paths, ASTscope check and git diff --check passed. Commit only own hunks/files. No production DB/provider/nativeCLI/network/main/push/deploy.
 
 ### Task 3: sequential independent review
 

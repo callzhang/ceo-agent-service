@@ -1,6 +1,6 @@
-"""Caller-transactional writers for the twelve native Tasks source families.
+"""Native transactional writers and SQL parts for twelve Tasks source families.
 
-The target declaration remains unselected. Source ROWIDs/public keys and global
+The target declaration remains unselected. Caller connection contexts own commit. Source ROWIDs/public keys and global
 physical Tasks ids are distinct; no API here commits, migrates or calls a provider.
 """
 
@@ -15,6 +15,8 @@ from app.action_storage import (
     _raise_autoincrement_full,
     _source_bound_null,
 )
+from app.state_storage import _json_assignments
+from app.task8_storage import _scalar_json
 from app.task20_definitions import (
     TASK12_AUTOINCREMENT_KINDS,
     TASK12_PRIMARY_KEYS,
@@ -45,6 +47,51 @@ class Task12WriteResult:
     physical_id: int | None
 
 
+@dataclass(frozen=True)
+class Task12InsertParts:
+    sql: str
+    parameters: tuple
+    source_rowid: int
+    physical_id: int
+
+
+@dataclass(frozen=True)
+class Task12SetParts:
+    sql: str
+    parameters: tuple
+
+
+def task12_set_parts(
+    kind,
+    values,
+    *,
+    update_sql=None,
+    update_parameters=(),
+    payload_source="tasks.payload_json",
+):
+    """Pure payload SET for native bulk/CAS/implicit-DML statements.
+
+    Physical source identity/parent changes use the existing point writer or
+    explicit structural SQL at the caller. This fragment does not select rows.
+    """
+    _check(kind, values)
+    expressions = {} if update_sql is None else update_sql
+    if (set(values) | set(expressions)) - set(TASK20_PAYLOAD_FIELDS[kind]):
+        raise ValueError("native Tasks SET requires payload fields")
+    if set(values) & set(expressions):
+        raise ValueError("native Tasks SET field supplied twice")
+    assignments = {field: "?" for field in values} | {
+        field: "ceo_native_json(" + expression + ")"
+        for field, expression in expressions.items()
+    }
+    if not assignments:
+        raise ValueError("native Tasks SET requires fields")
+    return Task12SetParts(
+        "payload_json=" + _json_assignments(payload_source, assignments),
+        (*(_scalar_json(value) for value in values.values()), *update_parameters),
+    )
+
+
 def _check(kind, values):
     if kind not in TASK20_NEW_KINDS or set(values) - set(TASK20_FIELDS[kind]):
         raise ValueError("unsupported native Tasks kind or source field")
@@ -53,8 +100,8 @@ def _check(kind, values):
 
 
 def _lock(db):
-    if not db.in_transaction:
-        raise sqlite3.ProgrammingError("Tasks writes require a caller transaction")
+    # Native DML opens an implicit transaction when the caller has none.
+    # This existing write obtains the allocator lock without owning commit.
     db.execute("update tasks set id=id where 0")
 
 
@@ -202,7 +249,7 @@ def _key_physical(db, kind, values, identity):
     return None
 
 
-def insert_task12(
+def task12_insert_parts(
     db, kind, values, *, source_rowid=_UNSET, ignore=False, replace=False
 ):
     _check(kind, values)
@@ -234,17 +281,28 @@ def insert_task12(
     if physical is None:
         physical = _physical_next(db)
     expression, payload = _payload(db, kind, values, replace)
-    cursor = db.execute(
+    return Task12InsertParts(
         "insert "
         + mode
         + "into tasks(id,record_type,legacy_key,parent_id,payload_json) "
         "values(?,?,?,?," + expression + ")",
         (physical, kind, str(identity), _parent(db, kind, values), payload),
+        identity,
+        physical,
     )
+
+
+def insert_task12(
+    db, kind, values, *, source_rowid=_UNSET, ignore=False, replace=False
+):
+    parts = task12_insert_parts(
+        db, kind, values, source_rowid=source_rowid, ignore=ignore, replace=replace
+    )
+    cursor = db.execute(parts.sql, parts.parameters)
     return Task12WriteResult(
-        identity if cursor.rowcount else None,
+        parts.source_rowid if cursor.rowcount else None,
         cursor.rowcount,
-        physical if cursor.rowcount else None,
+        parts.physical_id if cursor.rowcount else None,
     )
 
 

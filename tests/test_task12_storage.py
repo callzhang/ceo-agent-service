@@ -419,13 +419,8 @@ def test_new_source_stream_survives_old_physical_allocator_full(db, target):
     snapshot(db, target, "wechat_memory_import_jobs")
 
 
-def test_writes_require_caller_transaction_and_do_not_commit(target):
+def test_writes_use_native_implicit_transaction_without_commit(target):
     target.commit()
-    with pytest.raises(sqlite3.ProgrammingError):
-        insert_task12(
-            target, "wechat_memory_import_jobs", supplied("wechat_memory_import_jobs")
-        )
-    target.execute("begin")
     result = insert_task12(
         target, "wechat_memory_import_jobs", supplied("wechat_memory_import_jobs")
     )
