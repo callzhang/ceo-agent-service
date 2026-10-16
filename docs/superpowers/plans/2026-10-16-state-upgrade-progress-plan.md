@@ -217,7 +217,6 @@ def test_progress_open_missing_database_does_not_create(tmp_path):
         with pytest.raises(sqlite3.OperationalError):
             store.set_service_state("upgrade", "missing")
         assert not path.exists()
-
 ```
 
 ## Root preflight and remaining integration
