@@ -10,8 +10,6 @@ const api = vi.hoisted(() => ({
   getTimeline: vi.fn(),
   getStats: vi.fn(),
   runtimeCapabilities: vi.fn(),
-  confirmAction: vi.fn(),
-  cancelAction: vi.fn(),
   uploadAttachment: vi.fn(),
   createTurn: vi.fn(),
   stopTurn: vi.fn(),
@@ -70,15 +68,12 @@ function emptyTimeline(task: Task = first, turns: Turn[] = []): Timeline {
     events: [],
     attachments: [],
     artifacts: [],
-    confirmations: [],
     next_cursor: "",
     has_more: false,
     events_has_more: false,
     events_next_cursor: 0,
     artifacts_has_more: false,
     artifacts_next_cursor: "",
-    confirmations_has_more: false,
-    confirmations_next_cursor: "",
     attachments_has_more: false,
     attachments_next_cursor: "",
   };
@@ -96,8 +91,7 @@ beforeEach(() => {
   } }]);
   api.getStats.mockResolvedValue({
     tasks: { total: 2, active: 2, archived: 0 },
-    turns: { queued: 0, running: 0, waiting_confirmation: 0, completed: 0, stopped: 0, failed: 0 },
-    confirmations: { pending: 0, confirmed: 0, cancelled: 0, executed: 0, failed: 0 },
+    turns: { queued: 0, running: 0, completed: 0, stopped: 0, failed: 0 },
     events: {}, attachments: 0, artifacts: 0,
     duration: { completed_count: 0, total_seconds: 0, average_seconds: 0 },
   });
@@ -1086,8 +1080,6 @@ describe("App", () => {
       events_next_cursor: 90,
       artifacts_has_more: true,
       artifacts_next_cursor: "artifact-cursor",
-      confirmations_has_more: true,
-      confirmations_next_cursor: "confirmation-cursor",
       attachments_has_more: true,
       attachments_next_cursor: "attachment-cursor",
     };
@@ -1104,14 +1096,6 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ...emptyTimeline(first, [stopped]),
-        confirmations: [{
-          id: "confirmation-page-2", turn_id: stopped.id, action_kind: "send", target: "群", summary: "发送", risk: "外部可见",
-          canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "executed",
-          decision_requested: "confirm", decision_requested_at: "", proposer_quiesced: true, created_at: "", decided_at: "",
-        }],
-      })
-      .mockResolvedValueOnce({
-        ...emptyTimeline(first, [stopped]),
         attachments: [{ id: "attachment-page-2", task_id: first.id, filename: "image.png", media_type: "image/png", size_bytes: 10, created_at: "" }],
       });
     window.history.replaceState({}, "", `/?task=${first.id}`);
@@ -1124,45 +1108,14 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "加载更多产物" }));
     await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(3, first.id, expect.objectContaining({ artifactAfter: "artifact-cursor" })));
 
-    await user.click(screen.getByRole("button", { name: "加载更多确认" }));
-    await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(4, first.id, expect.objectContaining({ confirmationAfter: "confirmation-cursor" })));
+    expect(screen.queryByRole("button", { name: "加载更多确认" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "加载更多附件" }));
-    await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(5, first.id, expect.objectContaining({ attachmentAfter: "attachment-cursor" })));
+    await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(4, first.id, expect.objectContaining({ attachmentAfter: "attachment-cursor" })));
     expect(await screen.findByText("任务已有 1 个附件")).toBeInTheDocument();
   });
 
-  it("shows legacy confirmations as read-only history", async () => {
-    vi.stubGlobal("EventSource", class {
-      onopen = null;
-      onerror = null;
-      addEventListener() {}
-      close() {}
-    });
-    const waiting: Turn = {
-      id: "turn-confirm", task_id: first.id, client_request_id: "confirm", user_text: "发送消息", status: "waiting_confirmation",
-      stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
-    };
-    const confirmation = {
-      id: "confirmation-1", turn_id: waiting.id, action_kind: "send", target: "群", summary: "发送", risk: "外部可见",
-      canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "pending" as const,
-      decision_requested: "", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
-    };
-    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
-    api.getTimeline.mockResolvedValueOnce({
-        ...emptyTimeline(first, [waiting]),
-        confirmations: [confirmation],
-        events: [{ id: 1, turn_id: waiting.id, sequence: 1, event_type: "confirmation_required", payload: { confirmation_id: confirmation.id }, created_at: "" }],
-      });
-    window.history.replaceState({}, "", `/?task=${first.id}`);
-    render(<App />);
-
-    expect(await screen.findByText("历史确认记录（只读）")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
-    expect(api.confirmAction).not.toHaveBeenCalled();
-  });
-
-  it("coalesces a confirmation progress event into an authoritative timeline refresh", async () => {
+  it("coalesces artifact progress into an authoritative timeline refresh", async () => {
     const sources: ProgressSource[] = [];
     class ProgressSource {
       onopen: ((event: Event) => void) | null = null;
@@ -1183,52 +1136,45 @@ describe("App", () => {
     }
     vi.stubGlobal("EventSource", ProgressSource);
     const waiting: Turn = {
-      id: "turn-progress", task_id: first.id, client_request_id: "progress", user_text: "发送消息", status: "waiting_confirmation",
+      id: "turn-progress", task_id: first.id, client_request_id: "progress", user_text: "发送消息", status: "running",
       stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
-    };
-    const pending = {
-      id: "confirmation-progress", turn_id: waiting.id, action_kind: "send", target: "群", summary: "发送", risk: "外部可见",
-      canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "pending" as const,
-      decision_requested: "", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
     };
     const authoritative = deferred<Timeline>();
     api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
     api.getTimeline
       .mockResolvedValueOnce({
         ...emptyTimeline(first, [waiting]),
-        confirmations: [pending],
-        events: [{ id: 1, turn_id: waiting.id, sequence: 1, event_type: "confirmation_required", payload: { confirmation_id: pending.id }, created_at: "" }],
+        events: [],
       })
       .mockReturnValueOnce(authoritative.promise);
     window.history.replaceState({}, "", `/?task=${first.id}`);
     await act(async () => { render(<App />); });
 
-    expect(await screen.findByText("旧版待确认操作不会再执行")).toBeInTheDocument();
+    expect(await screen.findByText("发送消息")).toBeInTheDocument();
     await waitFor(() => expect(sources).toHaveLength(1));
 
-    sources[0].emit("status_changed", 2, waiting.id, {
-      status: "queued",
-      confirmation_id: pending.id,
-      confirmation_status: "executed",
-    });
-    sources[0].emit("status_changed", 3, waiting.id, {
-      status: "running",
-      confirmation_id: pending.id,
-    });
-
-    expect(await screen.findByText("操作已执行")).toBeInTheDocument();
-    expect(screen.queryByText("旧版待确认操作不会再执行")).not.toBeInTheDocument();
+    sources[0].emit("artifact_created", 2, waiting.id, { artifact_id: "artifact-progress-1" });
+    sources[0].emit("artifact_created", 3, waiting.id, { artifact_id: "artifact-progress-2" });
     await waitFor(() => expect(api.getTimeline).toHaveBeenCalledTimes(2));
     await act(async () => authoritative.resolve({
       ...emptyTimeline({ ...first, state: "running" }, [{ ...waiting, status: "running" }]),
-      confirmations: [{ ...pending, status: "executed", proposer_quiesced: true }],
+      events: [
+        { id: 2, turn_id: waiting.id, sequence: 2, event_type: "artifact_created", payload: { artifact_id: "artifact-progress-1" }, created_at: "" },
+        { id: 3, turn_id: waiting.id, sequence: 3, event_type: "artifact_created", payload: { artifact_id: "artifact-progress-2" }, created_at: "" },
+      ],
+      artifacts: [
+        { id: "artifact-progress-1", turn_id: waiting.id, label: "新产物一", media_type: "text/plain", created_at: "", download_url: "/ignored" },
+        { id: "artifact-progress-2", turn_id: waiting.id, label: "新产物二", media_type: "text/plain", created_at: "", download_url: "/ignored" },
+      ],
     }));
 
     await waitFor(() => expect(within(screen.getByRole("button", { name: "打开任务 销售策略" })).getByText("执行中")).toBeInTheDocument());
-    expect(screen.getByText("操作已执行")).toBeInTheDocument();
+    const conversation = within(screen.getByTestId("conversation-timeline"));
+    expect(conversation.getByRole("link", { name: /新产物一/ })).toHaveAttribute("href", `/api/workbench/tasks/${first.id}/turns/${waiting.id}/artifacts/artifact-progress-1/download`);
+    expect(conversation.getByRole("link", { name: /新产物二/ })).toHaveAttribute("href", `/api/workbench/tasks/${first.id}/turns/${waiting.id}/artifacts/artifact-progress-2/download`);
   });
 
-  it("drops a scheduled confirmation refresh after switching tasks", async () => {
+  it("drops a scheduled artifact refresh after switching tasks", async () => {
     const sources: SwitchSource[] = [];
     class SwitchSource {
       onopen: ((event: Event) => void) | null = null;
@@ -1248,7 +1194,7 @@ describe("App", () => {
     }
     vi.stubGlobal("EventSource", SwitchSource);
     const waiting: Turn = {
-      id: "turn-stale-progress", task_id: first.id, client_request_id: "stale-progress", user_text: "会切换的等待回合", status: "waiting_confirmation",
+      id: "turn-stale-progress", task_id: first.id, client_request_id: "stale-progress", user_text: "会切换的等待回合", status: "running",
       stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
     };
     const staleRefresh = deferred<Timeline>();
@@ -1267,7 +1213,7 @@ describe("App", () => {
 
     await screen.findByText("会切换的等待回合");
     await waitFor(() => expect(sources).toHaveLength(1));
-    sources[0].emit("status_changed", 1, waiting.id, { status: "queued", confirmation_id: "confirmation-stale" });
+    sources[0].emit("artifact_created", 1, waiting.id, { artifact_id: "artifact-stale" });
     fireEvent.click(screen.getByRole("button", { name: "打开任务 产品规划" }));
     await screen.findByText("开始新的对话");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });

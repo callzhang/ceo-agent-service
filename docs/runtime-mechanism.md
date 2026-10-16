@@ -1,12 +1,14 @@
 # Current Runtime Mechanism
 
-Current Store/Email/Workbench constructors, typed task callers and the paired Store20/Email52 release select Tasks20 in this development branch. The twenty existing task families share one Tasks container with seven writable structural columns; generated source fields retain existing query and constraint semantics. Fresh creation and explicit missing-object repair preserve native behavior, current MAIN counters, retained feedback public-key FKs and Workbench confirmation/search/FTS auxiliaries. All twelve folded native tables remain absent. Historical task_storage/workbench_storage factories and earlier publication branches retain their original source roles.
+Current Store/Email/Workbench constructors, typed task callers and the paired Store20/Email52 release select Tasks20 in this development branch. The twenty existing task families share one Tasks container with seven writable structural columns; generated source fields retain existing query and constraint semantics. Fresh creation and explicit missing-object repair preserve native behavior, current MAIN counters, retained feedback public-key FKs and Workbench search/FTS auxiliaries. All twelve folded native tables remain absent. Historical task_storage/workbench_storage factories and earlier publication branches retain their original source roles.
 
 The paired release converts Tasks20 after State in the existing FK-off transaction and restores Tasks20 before State on inverse. Preparation binds exact source declarations; allocator presence is mutable state, so source rechecks compare variant/table declarations while carrying original presence bits for inverse. Conversion and inverse read current rows and counters, including native writes after preparation and target writes after conversion. No business-row snapshot is stored. Existing physical Tasks IDs, source public keys/ROWIDs, input pointers and scalar types are retained; inverse reconstructs all82 original columns with unrelated source padding as SQL NULL. Non-trigger allocator access uses main.sqlite_sequence; MAIN trigger SQL is unchanged.
 
 Current startup no longer invokes the obsolete direct feedback resolver or recurring round backfill, old receipt/item seeding or the two obsolete native guard-replacement methods. Normal batch creation, claim, association, evidence, batch resolution and reopen remain supported; the existing direct-resolution HTTP routes still return409 feedback_batch_required. No new policy gate, transaction owner or schema version is introduced.
 
-The selected development candidate has55 ordinary tables. This is intermediate: the final ten core tables plus Email migration ledger, full native CLI/fake-provider/UI acceptance and production approval remain open. Production has not been switched by this development selection.
+The canceled Workbench confirmation feature is removed from current storage, turn states, runtime events, recovery, API and UI. Native Agent CLI approval remains unchanged. The paired release checks the genuine source feature is empty before conversion and again before dropping its table; a nonempty legacy feature requires explicit disposition. Inverse carries only original table/index/trigger declarations and recreates the empty native table before restoring Tasks20. Removed POST routes are absent from OpenAPI; ordinary framework rejection is404 on the standalone router and405 behind the integrated app's existing SPA catch-all. Timeline fields, cursors and statistics no longer include confirmations.
+
+The selected development candidate has54 ordinary tables. This is intermediate: the final ten core tables plus Email migration ledger, full native CLI/fake-provider/UI acceptance and production approval remain open. Production has not been switched by this development selection.
 
 The paired State release captures exact actual/fresh declarations for sixteen
 native State families and migrates fifteen retained kinds into one state table
@@ -2895,7 +2897,7 @@ Consumer 捕获的历史来源文本可能合并多条消息；校验器按反�
 
 过程详情独立说明原生最终结果和工具过程的可用性；Friday 最终 Artifact 可读不表示工具过程也可读。可读的 Claude 记录没有受支持查看器时不提供错误的 Codex 链接。历史列表保留已采用的会议最终消息和目标，业务历史列表只读取服务采用的消息、标题与状态；原生搜索和单次运行过程详情在数据库快照关闭后按需读取。质量报告的信息性原生证据覆盖数量仅在当前内存报告/页面中展示，不写入小时状态文件，也不改变质量状态与违规规则。
 
-Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite 事件行只保存服务回放 ID、顺序和最小原生定位。工具开始与完成通过原生完成顺序定位，并按原生 item ID 配对输入与结果；只有完成记录时直接读取该条原生记录。历史文字以原生完成消息聚合回放。任务结束或进入等待确认后，在事务提交后释放正文缓存；失败与停止运行也按准确范围读取已有原生信息。最终文字不保存副本，详情按需读取 Codex/Claude 原生记录或 Friday Artifact；远端 Artifact 的读取在 SQLite 事务外进行。原生记录缺失时明确显示过程不可用，保留实际任务状态和服务附件记录。运行提供者的原始错误正文也不另存；服务保留失败状态、错误码和服务生成的公共原因，历史错误正文清除后由错误码生成展示原因。
+Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite 事件行只保存服务回放 ID、顺序和最小原生定位。工具开始与完成通过原生完成顺序定位，并按原生 item ID 配对输入与结果；只有完成记录时直接读取该条原生记录。历史文字以原生完成消息聚合回放。任务结束后，在事务提交后释放正文缓存；失败与停止运行也按准确范围读取已有原生信息。最终文字不保存副本，详情按需读取 Codex/Claude 原生记录或 Friday Artifact；远端 Artifact 的读取在 SQLite 事务外进行。原生记录缺失时明确显示过程不可用，保留实际任务状态和服务附件记录。运行提供者的原始错误正文也不另存；服务保留失败状态、错误码和服务生成的公共原因，历史错误正文清除后由错误码生成展示原因。
 
 定时配置正文存于 `scheduled_task_config_versions`，触发记录以 `snapshot_id` 引用不可变版本。数据库迁移保留运行 ID、状态和已排队输入。
 

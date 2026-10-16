@@ -21,7 +21,7 @@ SOURCE_TABLES = ("tasks", *TASK20_NEW_KINDS, CHILD)
 SOURCE_COUNTERS = ("tasks", *TASK12_AUTOINCREMENT_KINDS)
 # Frozen exact actual/fresh declarations, independent of index enumeration order.
 SOURCE_HASHES = {'actual': '928065cc65749194e5411af25bff547fa54b1209dcfd4608250b074aa27c4e7f', 'fresh': 'bef04f8f21d824003714e8ec06a30ce2ce40690fdec947fd86a38db2414cc4bb'}
-TARGET_TASKS_HASH = '7606f44ab526f4216537199be9f4ca4be6f4ae1eaf0ff67f6adb432710b18e2e'
+TARGET_TASKS_HASH = '1afb0380b4280bc061eea303bfbfc43262c0768aad47ead8f5e2d60dbc2da9ff'
 FK_REPLACEMENTS = (
     ("references feedback_iteration_decisions(id)",
      'references tasks("feedback_iteration_decisions__id")'),

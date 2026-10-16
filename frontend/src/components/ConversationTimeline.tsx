@@ -2,17 +2,14 @@ import { useEffect, useMemo, useRef } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 import { timelineBlocks } from "../events";
-import type { Artifact, Confirmation, Timeline, Turn, WorkbenchEvent } from "../types";
+import type { Artifact, Timeline, Turn, WorkbenchEvent } from "../types";
 import { ArtifactList } from "./ArtifactList";
-import { ConfirmationCard } from "./ConfirmationCard";
 import { displayText, ExecutionStep } from "./ExecutionStep";
 import { MarkdownContent } from "./MarkdownContent";
 
 interface ConversationTimelineProps {
   timeline: Timeline;
   activeTurnId: string | null;
-  onConfirm?: (confirmation: Confirmation) => Promise<void>;
-  onCancel?: (confirmation: Confirmation) => Promise<void>;
 }
 
 export function assistantTurnKey(turn: Turn) {
@@ -36,17 +33,16 @@ export function latestTurnScrollIndex(
   return turns.length ? firstItemIndex + turns.length - 1 : null;
 }
 
-function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, active }: {
+function TurnItem({ turn, events, artifactsById, taskId, active }: {
   turn: Turn;
   events: WorkbenchEvent[];
-  confirmationsById: Map<string, Confirmation>;
   artifactsById: Map<string, Artifact>;
   taskId: string;
   active: boolean;
 }) {
   const blocks = useMemo(() => timelineBlocks(turn.id, events, turn.status), [events, turn.id, turn.status]);
   const renderedText = blocks.some((block) => block.kind === "markdown");
-  const nonterminal = ["queued", "running", "waiting_confirmation"].includes(turn.status);
+  const nonterminal = ["queued", "running"].includes(turn.status);
   const authoritativeFinalText = !nonterminal && Boolean(turn.final_text);
   return (
     <article className="conversation-turn" data-status={turn.status} data-active={active || undefined}>
@@ -56,10 +52,6 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
           if (block.kind === "markdown") return !authoritativeFinalText ? <MarkdownContent key={block.key} text={block.text ?? ""} /> : null;
           if (block.kind === "thinking") return <details className="thinking-block" key={block.key}><summary>思考摘要</summary><p>{block.text}</p></details>;
           if (block.kind === "tool" || block.kind === "file") return <ExecutionStep key={block.key} kind={block.kind} status={block.status} payload={block.payload} startedAt={block.startedAt} completedAt={block.completedAt} />;
-          if (block.kind === "confirmation") {
-            const confirmation = confirmationsById.get(block.confirmationId ?? "");
-            return confirmation?.turn_id === turn.id ? <ConfirmationCard key={block.key} confirmation={confirmation} /> : null;
-          }
           const artifact = artifactsById.get(block.artifactId ?? "");
           return artifact?.turn_id === turn.id ? <ArtifactList key={block.key} taskId={taskId} turnId={turn.id} artifacts={[artifact]} /> : null;
         })}
@@ -67,7 +59,6 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
         {!authoritativeFinalText && !renderedText && turn.final_text && <MarkdownContent text={turn.final_text} />}
         {turn.status === "queued" && <p className="turn-state" role="status">已排队</p>}
         {turn.status === "running" && <p className="turn-state" role="status">执行中</p>}
-        {turn.status === "waiting_confirmation" && <p className="turn-state" role="status">等待确认</p>}
         {turn.status === "completed" && <p className="turn-state">已完成</p>}
         {turn.status === "stopped" && <p className="turn-state">已停止</p>}
         {turn.status === "failed" && <p className="turn-error" role="alert">执行失败：{displayText(turn.error_detail || turn.error_code, "未知错误")}</p>}
@@ -88,10 +79,6 @@ export function ConversationTimeline({ timeline, activeTurnId }: ConversationTim
     }
     return indexed;
   }, [timeline.events]);
-  const confirmationsById = useMemo(
-    () => new Map(timeline.confirmations.map((confirmation) => [confirmation.id, confirmation])),
-    [timeline.confirmations],
-  );
   const artifactsById = useMemo(
     () => new Map(timeline.artifacts.map((artifact) => [artifact.id, artifact])),
     [timeline.artifacts],
@@ -137,7 +124,6 @@ export function ConversationTimeline({ timeline, activeTurnId }: ConversationTim
           <TurnItem
             turn={turn}
             events={eventsByTurn.get(turn.id) ?? []}
-            confirmationsById={confirmationsById}
             artifactsById={artifactsById}
             taskId={timeline.task.id}
             active={turn.id === activeTurnId}

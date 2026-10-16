@@ -25,6 +25,10 @@ from app.state_definitions import state_projection
 from app.state_schema_release import (capture_state_source, migrate_state_schema,
     restore_state_schema, state_schema_is_current)
 from app.state_storage import update_state_rows
+from app.confirmation_schema_release import (
+    capture_confirmation_source, retire_confirmation_schema,
+    restore_confirmation_schema, verify_confirmation_retired,
+)
 from app.task20_schema_release import (
     capture_task20_source, migrate_task20_schema, restore_task20_schema,
 )
@@ -284,6 +288,7 @@ def _inverse_metadata(source):
         "configs": source["configs"],
         "state": source["state"],
         "tasks": source["tasks"],
+        "confirmation": source["confirmation"],
     }
 
 
@@ -373,6 +378,7 @@ class ActionEmailSchemaRelease:
         current["provider"] = capture_provider_state_source(db)
         current["configs"] = _project_config_source(db, current["action_variant"])
         current["state"] = capture_state_source(db)
+        current["confirmation"] = capture_confirmation_source(db)
         current["tasks"] = capture_task20_source(db)
         current_declarations = _inverse_metadata(current)
         source_declarations = _inverse_metadata(self.source_schema)
@@ -387,6 +393,7 @@ class ActionEmailSchemaRelease:
         self._verify_integrity(db)
 
     def _verify_target(self, db):
+        verify_confirmation_retired(db)
         if not task20_schema_is_current(db) or not task20_feedback_child_is_current(db):
             raise ValueError("paired Tasks20 target declaration mismatch")
         marker, versions = _markers(db, current=True)
@@ -450,6 +457,7 @@ class ActionEmailSchemaRelease:
                 migrate_config_schema(db, config_inverse)
                 migrate_state_schema(db, self.source_schema["state"])
                 migrate_task20_schema(db, self.source_schema["tasks"])
+                retire_confirmation_schema(db, self.source_schema["confirmation"])
                 now = datetime.now(timezone.utc).isoformat()
                 update_state_rows(db, "service_state",
                     {"value": self.target_store_version, "updated_at": now},
@@ -483,6 +491,7 @@ class ActionEmailSchemaRelease:
                     db.commit()
                     return
                 self._verify_target(db)
+                restore_confirmation_schema(db, self.source_schema["confirmation"])
                 restore_task20_schema(db, self.source_schema["tasks"])
                 restore_state_schema(db, self.source_schema["state"])
                 restore_config_schema(db, self.source_schema["configs"])
@@ -553,6 +562,7 @@ def prepare_action_email_schema_release(
         source["provider"] = capture_provider_state_source(db)
         source["configs"] = _project_config_source(db, source["action_variant"])
         source["state"] = capture_state_source(db)
+        source["confirmation"] = capture_confirmation_source(db)
         source["tasks"] = capture_task20_source(db)
         release = ActionEmailSchemaRelease(
             root, path, version, versions, source, _foreign_keys(db),

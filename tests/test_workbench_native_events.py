@@ -6,9 +6,15 @@ import pytest
 
 from app.run_storage import insert_run
 from app.workbench import native_events
-from app.task_storage import WORKBENCH_TURN_SQL, task_id_expression
+from app.task_storage import task_id_expression
+from app.task20_definitions import task20_projection
+from app.task8_storage import task8_set_parts
+
 from app.run_storage import WORKBENCH_EVENT_SQL
 from app.workbench.store import WorkbenchStore
+
+
+WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
 
 
 def _turn_with_tools(tmp_path: Path):
@@ -502,7 +508,11 @@ def test_terminal_cache_release_follows_commit_and_rollback_keeps_live_observati
     with pytest.raises(RuntimeError, match="rollback"):
         with store._connect() as db:
             db.execute("begin immediate")
-            db.execute("update tasks set status='failed' where record_type='workbench_turns' and legacy_key=?", (turn.id,))
+            parts = task8_set_parts("workbench_turns", {"status": "failed"})
+            db.execute(
+                f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
+                (*parts.parameters, turn.id),
+            )
             raise RuntimeError("rollback")
     assert store.get_turn(turn.id).status.value == "running"
     assert store.events_after(turn.id)[1].payload["text"] == "observed"

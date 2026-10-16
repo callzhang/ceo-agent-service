@@ -12,14 +12,13 @@ from app.task20_definitions import (
 )
 from app.task_storage import RETIRED_TASK_TABLES
 from app.workbench_storage import (
-    SOURCE_DECLARATIONS, RETIRED_WORKBENCH_TABLES, _child_ddl,
+    RETIRED_WORKBENCH_TABLES,
     SEARCH_TABLE_DDL, SEARCH_INDEX_DDL, SEARCH_FTS_DDL,
 )
 from app.run_storage import _schema_objects
 from app.configs_run_schema import _declarations as _run_declarations, _objects as _run_objects
 
-RETIRED_TASK_NAMES = tuple(dict.fromkeys((*RETIRED_TASK_TABLES, *RETIRED_WORKBENCH_TABLES, *TASK20_NEW_KINDS)))
-RETAINED_WORKBENCH_CHILDREN = ("workbench_confirmations",)
+RETIRED_TASK_NAMES = tuple(dict.fromkeys((*RETIRED_TASK_TABLES, *RETIRED_WORKBENCH_TABLES, *TASK20_NEW_KINDS, "workbench_confirmations")))
 
 FEEDBACK_CHILD_TABLE_DDL = 'CREATE TABLE feedback_iteration_decision_items (\n                    decision_id integer not null,\n                    feedback_key text not null,\n                    round_id integer not null,\n                    primary key(decision_id, feedback_key),\n                    foreign key(decision_id) references tasks("feedback_iteration_decisions__id"),\n                    foreign key(feedback_key) references tasks("feedback_processing_items__feedback_key"),\n                    foreign key(round_id) references tasks("feedback_processing_rounds__id")\n                )'
 FEEDBACK_CHILD_INDEX_DDL = ('CREATE INDEX idx_feedback_iteration_decision_items_feedback_round\n                    on feedback_iteration_decision_items(feedback_key, round_id, decision_id)',)
@@ -60,8 +59,7 @@ def install_current_task_child_guards(db):
                 "meeting_alignment_jobs" if (table, column) in {
                     ("meeting_memory_write_events", "meeting_job_id"),
                     ("meeting_alignment_delivery_claims", "job_id"),
-                } else "workbench_turns" if table == "workbench_confirmations"
-                else "reply_tasks"
+                } else "reply_tasks"
             )
             parent_label = {"meeting_alignment_jobs":"meeting job", "reply_tasks":"reply task",
                             "workbench_turns":"workbench turn"}[parent_type]
@@ -72,15 +70,7 @@ def install_current_task_child_guards(db):
 
 
 def create_current_workbench_auxiliary_schema(db):
-    """Retain confirmation/search auxiliaries without the two folded child tables."""
-    for table in RETAINED_WORKBENCH_CHILDREN:
-        for kind, _, sql in SOURCE_DECLARATIONS[table]:
-            if kind == "table":
-                db.execute(_child_ddl(sql).replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1))
-        for kind, _, sql in SOURCE_DECLARATIONS[table]:
-            if kind == "index":
-                db.execute(sql.replace("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX IF NOT EXISTS ", 1)
-                           .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1))
+    """Retain search auxiliaries; no folded children or legacy confirmations."""
     db.execute(SEARCH_TABLE_DDL.replace("create table ", "create table if not exists ", 1))
     db.execute(SEARCH_INDEX_DDL.replace("create index ", "create index if not exists ", 1))
     db.execute(SEARCH_FTS_DDL.replace("create virtual table ", "create virtual table if not exists ", 1))
@@ -94,7 +84,7 @@ def _current_objects():
         create_current_feedback_child_schema(reference)
         create_current_workbench_auxiliary_schema(reference)
         return {table: _schema_objects(reference,table) for table in (
-            "tasks","feedback_iteration_decision_items", *RETAINED_WORKBENCH_CHILDREN,
+            "tasks","feedback_iteration_decision_items",
             "codex_session_search_index","codex_session_search_fts",
         )}
 

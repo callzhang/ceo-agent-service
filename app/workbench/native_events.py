@@ -100,7 +100,7 @@ def terminal_cached_turn_ids(db: sqlite3.Connection, db_path: Path) -> list[str]
     placeholders = ",".join("?" for _ in ids)
     return [row["id"] for row in db.execute(
         f"select id from ({WORKBENCH_TURN_SQL}) as workbench_turns where id in ({placeholders}) "
-        "and status in ('completed','stopped','failed','waiting_confirmation')", ids
+        "and status in ('completed','stopped','failed')", ids
     )]
 
 

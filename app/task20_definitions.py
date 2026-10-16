@@ -583,7 +583,7 @@ def _checks(kind):
             f("task_sequence") + ">0",
             f("stop_requested") + " in (0,1)",
             f("status")
-            + " in ('queued','running','waiting_confirmation','completed','stopped','failed')",
+            + " in ('queued','running','completed','stopped','failed')",
         )
     if kind == "email_agent_classification_tasks":
         return (
@@ -781,7 +781,7 @@ def _definitions():
         "create unique index idx_task20_active_turn on tasks(parent_id) "
         "where record_type='workbench_turns' and "
         + task20_column("workbench_turns", "status")
-        + " in ('queued','running','waiting_confirmation')"
+        + " in ('queued','running')"
     )
     for ordinal, (kind, source_name, unique, fields) in enumerate(
         TASK20_NATIVE_INDEXES

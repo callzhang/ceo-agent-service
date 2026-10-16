@@ -20,7 +20,7 @@ function styleFor(selector: string) {
 function task(
   id: string,
   title: string,
-  state: "idle" | "queued" | "running" | "waiting_confirmation" | "completed" | "stopped" | "failed",
+  state: "idle" | "queued" | "running" | "completed" | "stopped" | "failed",
   updatedAt: string,
 ) {
   return {
@@ -241,7 +241,6 @@ describe("TaskList", () => {
           task("idle", "Idle", "idle", "2026-08-13 10:00:00"),
           task("queued", "Queued", "queued", "2026-08-13 10:00:00"),
           task("running", "Running", "running", "2026-08-13 10:00:00"),
-          task("confirm", "Confirm", "waiting_confirmation", "2026-08-13 10:00:00"),
           task("done", "Done", "completed", "2026-08-13 10:00:00"),
           task("stopped", "Stopped", "stopped", "2026-08-13 10:00:00"),
           task("failed", "Failed", "failed", "2026-08-13 10:00:00"),
@@ -254,7 +253,7 @@ describe("TaskList", () => {
       />,
     );
 
-    for (const label of ["空闲", "排队中", "执行中", "等待确认", "已完成", "已停止", "失败"]) {
+    for (const label of ["空闲", "排队中", "执行中", "已完成", "已停止", "失败"]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
   });

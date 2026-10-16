@@ -48,7 +48,6 @@ describe("Workbench presentation", () => {
     ["idle", "空闲"],
     ["queued", "排队中"],
     ["running", "执行中"],
-    ["waiting_confirmation", "等待确认"],
     ["completed", "已完成"],
     ["stopped", "已停止"],
     ["failed", "失败"],

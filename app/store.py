@@ -403,7 +403,6 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "tasks",
     "follow_up_send_attempts",
     "todo_evidence_candidates",
-    "workbench_confirmations",
     "feedback_iteration_decision_items",
     "business",
     "business_source_documents",
@@ -441,7 +440,6 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_meeting_alignment_runs_active_job",
     "idx_wechat_deliveries_task_generation",
     "idx_workbench_events_turn_id_id",
-    "idx_workbench_confirmations_turn_created_id",
     "idx_workbench_events_event_type",
     "idx_todo_evidence_candidates_todo",
     "idx_todo_evidence_candidates_status",
@@ -492,6 +490,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
       for sql in TASK20_INDEX_DDL),
 )
 STORE_SCHEMA_REMOVED_TABLES = (
+    "workbench_confirmations",
     *STATE_SOURCE_TABLES,
     *TASK20_NEW_KINDS,
     "business_tasks",
@@ -3183,7 +3182,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             # Workbench reconciliation continues on this same connection.
             if db.in_transaction:
                 db.commit()
-            self._reconcile_legacy_workbench_confirmations(db)
             meeting_memory_write_columns = {
                 row["name"]
                 for row in db.execute(
@@ -7427,71 +7425,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
 
 
-    @staticmethod
-    def _reconcile_legacy_workbench_confirmations(db: sqlite3.Connection) -> None:
-        rows = db.execute(
-            """
-            select id, turn_id from workbench_confirmations
-            where status='pending' and proposer_run_id=''
-            order by turn_id, created_at, id
-            """
-        ).fetchall()
-        if not rows:
-            return
-        result_json = json.dumps(
-            {
-                "code": "legacy_proposer_state_unknown",
-                "retryable": False,
-                "status": "failed",
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        affected_turn_ids: list[int] = []
-        for row in rows:
-            changed = db.execute(
-                """
-                update workbench_confirmations
-                set status='failed', result_json=?,
-                    decided_at=case when decided_at='' then current_timestamp else decided_at end,
-                    execution_owner='', execution_lease_expires_at='',
-                    execution_started_at='', authorization_consumed_at='',
-                    proposer_owner='', proposer_lease_expires_at='',
-                    proposer_quiesced_at='', decision_requested='',
-                    decision_requested_at=''
-                where id=? and status='pending' and proposer_run_id=''
-                """,
-                (result_json, row["id"]),
-            ).rowcount
-            if changed == 1 and row["turn_id"] not in affected_turn_ids:
-                affected_turn_ids.append(row["turn_id"])
-        for turn_id in affected_turn_ids:
-            turn = db.execute(
-                f"""select {task20_column('workbench_turns', 'status')} as status from tasks where record_type='workbench_turns' and id=?""", (turn_id,)
-            ).fetchone()
-            if turn is None or turn["status"] not in {
-                "queued",
-                "running",
-                "waiting_confirmation",
-            }:
-                continue
-            sequence = int(
-                db.execute(
-                    "select coalesce(max(sequence), 0) + 1 from runs where record_type='workbench_events' and task_id=?",
-                    (turn_id,),
-                ).fetchone()[0]
-            )
-            insert_run(db, "workbench_events", {
-                "task_id": turn_id, "sequence": sequence, "event_type": "turn_failed",
-                "payload_json": json.dumps({"code": "legacy_proposer_state_unknown", "status": "failed"}, sort_keys=True, separators=(",", ":")),
-            })
-            db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('workbench_turns', {}, update_sql={'status': "'failed'", 'lease_owner': "''", 'lease_expires_at': "''", 'error_code': "'legacy_proposer_state_unknown'", 'error_detail': "'Legacy confirmation proposer state is unknown.'", 'completed_at': f"""case when {task20_column('workbench_turns', 'completed_at')}='' then current_timestamp else {task20_column('workbench_turns', 'completed_at')} end""", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='workbench_turns' and id=? and {task20_column('workbench_turns', 'status')} in ('queued', 'running', 'waiting_confirmation')
-                """,
-                (turn_id,),
-            )
 
     @staticmethod
     @contextmanager
