@@ -19,13 +19,30 @@ index enumeration sequence numbers, including during current-fact inverse.
 An independent root read-only preparation against frozen source970a succeeds;
 this is neither application of the release nor cold constructor acceptance.
 
-Independent SPEC, subsequent fresh QUALITY and real copied-source cold
-publication/current writes/inverse/genuine old-code writes/reforward remain
-required. Other current test fixtures that issue native-table SQL still need
-separate closure; full CI has not run for this commit. The sixteen state
-families, remaining business/email/provenance consolidation and final retirement
-and publication gates remain open. Production has not been changed by this
-checkpoint; the complete destination is still ten core tables plus one ledger.
+Independent SPEC and fresh QUALITY now accept exact `6515d77f`, including
+wrong-owner name-collision refusal before repairs, native duplicate WeChat
+scope last-write-wins, and deterministic canonical schema across cold processes
+with different or unset hash seeds. The selected current-caller candidate is
+still unpublished.
+
+Root frozen-copy acceptance at that exact commit passed in244.045 seconds:
+two real cold publication subprocesses, current public writes, exact whole
+schema inverse, genuine archived7dad cold public reads/writes and reforward.
+All eighteen config families/6,823 initial rows preserve values, storage
+classes, ROWIDs and six allocator waters; current/new facts survive the inverse.
+Native joins also preserve original records in77 unrelated ordinary tables,
+including original actions/runs. quick_check is ok and the sole original
+runs190042-to-tasks FK finding is unchanged at each checkpoint. The source hash
+is unchanged; copied database/code/archive were removed. Metadata evidence is
+`../specs/2026-10-16-configs-current-cold-copy.json`.
+
+The intermediate target still has82 ordinary tables, excluding virtual, shadow
+and SQLite internal tables. Other current fixtures using retired native-table
+SQL, full CI, latest native Agent CLI acceptance, sixteen state families,
+remaining business/email/provenance consolidation and final retirement and
+publication gates remain open. No provider, native Agent CLI, real send,
+production write, main merge or deployment occurred. The complete destination
+remains ten core tables plus one ledger.
 
 ## Latest complete config storage and row transfer, 2026-10-15
 

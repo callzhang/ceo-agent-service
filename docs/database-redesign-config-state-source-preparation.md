@@ -951,3 +951,35 @@ removed with absence verified. No provider, native CLI, runtime selection,
 version activation, real send, push, merge or deployment occurred. The next
 work is current callers, fresh initialization and paired release integration;
 this helper acceptance does not finish the complete redesign.
+
+
+### Current callers and cold copied-source acceptance, 2026-10-16
+
+Independent SPEC and fresh QUALITY accept exact `6515d77f`. Their follow-ups
+correct wrong-owner object-name repair collisions, preserve native duplicate
+WeChat selection last-write-wins, and generate canonical CHECK declarations in
+stable field order across processes. No weaker schema comparison or fixed
+hash seed was introduced.
+
+Root actual-source acceptance passed in244.045 seconds, exit0. It used a new
+SQLite-backup copy of frozen970a and genuine archived7dad code, with two real
+cold publication subprocesses. Current public writes cover Skill versions,
+export and runtime load success/failure receipts, disabled schedules/pending
+runs, disabled fake Email accounts, duplicate WeChat scopes and nested receipt
+reads. Whole inverse preserves those current facts, restores the full original
+schema SQL, and allows genuine old code to cold-read and write further facts;
+reforward retains both generations. Config18 values/types/ROWIDs/six allocator
+waters and original records in77 unrelated ordinary tables (including original
+actions/runs) compare exactly using native joins. quick_check remains ok; the
+one original runs190042-to-tasks FK finding is unchanged. The metadata-only
+receipt is `superpowers/specs/2026-10-16-configs-current-cold-copy.json`.
+
+The copied database/code/archive were removed with absence checked and source
+hash unchanged. The outer proof-script directory was also removed after
+recording evidence, with absence verified. No native Agent CLI, provider or real send ran. Target82
+ordinary tables is an intermediate result; this does not complete ten-core-table
+plus ledger consolidation, full CI, latest native lifecycle or publication.
+Only aggregate elapsed time was captured, not per-phase timings. Two initial
+proof-preparation interface mistakes (missing caller read transaction and the
+Business parents metadata key) were corrected before publication; application
+code was unchanged during this acceptance.
