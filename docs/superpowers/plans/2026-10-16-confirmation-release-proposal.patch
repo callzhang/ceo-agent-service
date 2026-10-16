@@ -1,0 +1,153 @@
+--- a/app/action_email_schema_release.py
++++ b/app/action_email_schema_release.py
+@@ -25,6 +25,10 @@
+ from app.state_schema_release import (capture_state_source, migrate_state_schema,
+     restore_state_schema, state_schema_is_current)
+ from app.state_storage import update_state_rows
++from app.confirmation_schema_release import (
++    capture_confirmation_source, retire_confirmation_schema,
++    restore_confirmation_schema, verify_confirmation_retired,
++)
+ from app.task20_schema_release import (
+     capture_task20_source, migrate_task20_schema, restore_task20_schema,
+ )
+@@ -284,6 +288,7 @@
+         "configs": source["configs"],
+         "state": source["state"],
+         "tasks": source["tasks"],
++        "confirmation": source["confirmation"],
+     }
+ 
+ 
+@@ -373,6 +378,7 @@
+         current["provider"] = capture_provider_state_source(db)
+         current["configs"] = _project_config_source(db, current["action_variant"])
+         current["state"] = capture_state_source(db)
++        current["confirmation"] = capture_confirmation_source(db)
+         current["tasks"] = capture_task20_source(db)
+         current_declarations = _inverse_metadata(current)
+         source_declarations = _inverse_metadata(self.source_schema)
+@@ -387,6 +393,7 @@
+         self._verify_integrity(db)
+ 
+     def _verify_target(self, db):
++        verify_confirmation_retired(db)
+         if not task20_schema_is_current(db) or not task20_feedback_child_is_current(db):
+             raise ValueError("paired Tasks20 target declaration mismatch")
+         marker, versions = _markers(db, current=True)
+@@ -450,6 +457,7 @@
+                 migrate_config_schema(db, config_inverse)
+                 migrate_state_schema(db, self.source_schema["state"])
+                 migrate_task20_schema(db, self.source_schema["tasks"])
++                retire_confirmation_schema(db, self.source_schema["confirmation"])
+                 now = datetime.now(timezone.utc).isoformat()
+                 update_state_rows(db, "service_state",
+                     {"value": self.target_store_version, "updated_at": now},
+@@ -483,6 +491,7 @@
+                     db.commit()
+                     return
+                 self._verify_target(db)
++                restore_confirmation_schema(db, self.source_schema["confirmation"])
+                 restore_task20_schema(db, self.source_schema["tasks"])
+                 restore_state_schema(db, self.source_schema["state"])
+                 restore_config_schema(db, self.source_schema["configs"])
+@@ -553,6 +562,7 @@
+         source["provider"] = capture_provider_state_source(db)
+         source["configs"] = _project_config_source(db, source["action_variant"])
+         source["state"] = capture_state_source(db)
++        source["confirmation"] = capture_confirmation_source(db)
+         source["tasks"] = capture_task20_source(db)
+         release = ActionEmailSchemaRelease(
+             root, path, version, versions, source, _foreign_keys(db),
+--- a/app/task20_schema_release.py
++++ b/app/task20_schema_release.py
+@@ -21,7 +21,7 @@
+ SOURCE_COUNTERS = ("tasks", *TASK12_AUTOINCREMENT_KINDS)
+ # Frozen exact actual/fresh declarations, independent of index enumeration order.
+ SOURCE_HASHES = {'actual': '928065cc65749194e5411af25bff547fa54b1209dcfd4608250b074aa27c4e7f', 'fresh': 'bef04f8f21d824003714e8ec06a30ce2ce40690fdec947fd86a38db2414cc4bb'}
+-TARGET_TASKS_HASH = '7606f44ab526f4216537199be9f4ca4be6f4ae1eaf0ff67f6adb432710b18e2e'
++TARGET_TASKS_HASH = '1afb0380b4280bc061eea303bfbfc43262c0768aad47ead8f5e2d60dbc2da9ff'
+ FK_REPLACEMENTS = (
+     ("references feedback_iteration_decisions(id)",
+      'references tasks("feedback_iteration_decisions__id")'),
+--- /dev/null
++++ b/app/confirmation_schema_release.py
+@@ -0,0 +1,78 @@
++"""Retire the empty canceled Workbench feature in the caller's transaction.
++
++Inverse metadata contains its original declarations only. No business rows,
++receipts, task bodies or historical counter values are copied.
++"""
++import sqlite3
++
++from app.action_reply_storage import _fingerprint
++from app.run_storage import WORKBENCH_EVENT_SQL
++from app.task_storage import WORKBENCH_TURN_SQL
++from app.task20_definitions import task20_projection
++from app.task20_schema_release import _declaration
++
++TABLE = "workbench_confirmations"
++SOURCE_HASH = "e215afb029d2993691a8585b07a614667aca8cddedd8dd21b9b0a3f3335d982d"
++
++
++def _transaction(db):
++    if not db.in_transaction or db.execute("pragma foreign_keys").fetchone()[0]:
++        raise sqlite3.ProgrammingError("confirmation retirement requires caller FK-off transaction")
++    for name in (TABLE, "tasks", "runs"):
++        if db.execute("select 1 from temp.sqlite_schema where name=? collate nocase", (name,)).fetchone():
++            raise ValueError("confirmation retirement TEMP relation collision")
++
++
++def _metadata(metadata):
++    if not isinstance(metadata, dict) or set(metadata) != {"declaration"} or \
++            _fingerprint(metadata["declaration"]) != SOURCE_HASH:
++        raise ValueError("unsupported confirmation source metadata")
++
++
++def _empty_closure(db, *, current):
++    turns = task20_projection("workbench_turns") if current else WORKBENCH_TURN_SQL
++    if db.execute("select 1 from main.workbench_confirmations limit 1").fetchone() or \
++            db.execute("select 1 from (" + turns + ") where status='waiting_confirmation' limit 1").fetchone() or \
++            db.execute("select 1 from (" + WORKBENCH_EVENT_SQL + ") where event_type='confirmation_required' limit 1").fetchone():
++        raise ValueError("canceled confirmation source is nonempty; explicit disposition required")
++
++
++def capture_confirmation_source(db):
++    """Bind the genuine native declaration and empty feature before conversion."""
++    _transaction(db)
++    metadata = {"declaration": _declaration(db, TABLE)}
++    _metadata(metadata)
++    _empty_closure(db, current=False)
++    return metadata
++
++
++def retire_confirmation_schema(db, metadata):
++    """Remove only the original empty table, including its own indexes/guards."""
++    _transaction(db)
++    _metadata(metadata)
++    if _declaration(db, TABLE) != metadata["declaration"]:
++        raise ValueError("confirmation source declaration changed")
++    _empty_closure(db, current=True)
++    db.execute("drop table main.workbench_confirmations")
++    verify_confirmation_retired(db)
++
++
++def verify_confirmation_retired(db):
++    if db.execute("select 1 from main.sqlite_schema where name=? collate nocase", (TABLE,)).fetchone():
++        raise ValueError("retired confirmation relation remains")
++
++
++def restore_confirmation_schema(db, metadata):
++    """Restore the empty native declarations for the genuine predecessor."""
++    _transaction(db)
++    _metadata(metadata)
++    verify_confirmation_retired(db)
++    definition = metadata["declaration"]
++    db.execute(definition["sql"])
++    for index in definition["indexes"]:
++        if index["sql"] is not None:
++            db.execute(index["sql"])
++    for trigger in definition["triggers"]:
++        db.execute(trigger["sql"])
++    if _declaration(db, TABLE) != definition:
++        raise ValueError("confirmation inverse declaration differs")

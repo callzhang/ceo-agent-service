@@ -1,0 +1,90 @@
+{
+  "component": "approved legacy Workbench confirmation cancellation",
+  "component_status": "selected and independently accepted; final database redesign remains incomplete",
+  "selected_application_commit": "0ca8454b9e22449e89245999486dd58021c73a24",
+  "selection_manifest_sha256": "e92a7fb60ddeeaaabe7b73f629cad24b3bd7449c15c0d898aba1607e0a575354",
+  "exact_selected_files": 41,
+  "unchanged_native_pins": 5,
+  "canonical_spec": "approved",
+  "canonical_quality": "approved",
+  "applied_spec": "approved",
+  "applied_quality": "approved",
+  "focused_writer": {
+    "passed": 397,
+    "seconds": 37.1,
+    "ruff_changed_python_files": 21
+  },
+  "fresh_applied_spec": {
+    "passed": 184,
+    "seconds": 17.72,
+    "constructor_orders": [
+      "Store-first",
+      "Email-first",
+      "Workbench-first"
+    ],
+    "each_ordinary_tables": 54,
+    "fresh_foreign_keys_clean": true
+  },
+  "fresh_applied_quality": {
+    "passed": 54,
+    "seconds": 22.64,
+    "runtime_python_ruff_files": 13
+  },
+  "owner_full_api": {
+    "passed": 52,
+    "seconds": 160.99
+  },
+  "owner_frontend": {
+    "passed": 135,
+    "files": 7,
+    "typescript_vite_build": "passed"
+  },
+  "owner_full_store": {
+    "passed": 47,
+    "failed": 3,
+    "skipped": 0,
+    "failure_scope": "unchanged source13 unsupported hybrid config declaration fixture; same failures reproduced on unchanged original source"
+  },
+  "copy_preflight": {
+    "focused_passed": 315,
+    "focused_seconds": 16.13,
+    "copy_seconds": 382.274,
+    "whole_seconds": 399.437,
+    "table_counts": [
+      116,
+      54,
+      116,
+      54
+    ],
+    "candidate_base": "7111ea47546ac7cb242ff7267993868eacec6561",
+    "genuine_predecessor": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+    "current_fact_inverse": "passed; current target and genuine predecessor writes survive inverse/reforward",
+    "source_schema_markers_ledger_counters": "restored",
+    "unaffected_source_tables_exact": 113,
+    "source_foreign_key_baseline": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "new_foreign_key_findings": 0,
+    "scope": "fixed production-origin input, not a fresh live-data snapshot; complete runtime patch candidate before selection, selected bytes bound by manifest"
+  },
+  "original_frozen_input_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "sqlite_backup_api_copy_sha256": "2584df8d2c60f102f1238e9932b1941fcb5a2f8efcc8a2e051a75a0bab2ecaa7",
+  "root_owned_temporary_code_and_database_copies_removed": true,
+  "production_code_head_readonly": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+  "production_changed": false,
+  "pushed": false,
+  "deployed": false,
+  "provider_or_native_cli_or_outbound_invocation": false,
+  "current_candidate_ordinary_tables": 54,
+  "remaining_legacy_tables": 45,
+  "final_core_tables": 10,
+  "final_email_migration_ledger_tables": 1,
+  "next": "retire independent Codex search metadata/FTS, preserve existing native-reference semantics; continue remaining actions/business/runs/emails/provenance consolidation",
+  "open_acceptance": "final11; known stale source-shaped fixtures including3source13 cases; full native CLI with fake providers, audit/revision/recovery/UI/performance/CI and human-approved publication",
+  "cosmetic_note": "Three trailing blank EOF lines flagged by git show --check are exact canonical bytes; no functional source deviation."
+}
