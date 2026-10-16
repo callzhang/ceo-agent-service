@@ -1,0 +1,229 @@
+{
+  "status": "complete_mechanical_candidate_all_canonical_reviews_pass",
+  "base_commit": "64d39aa98903df0f32e1486f5a9b23a6e7754ff1",
+  "ordered_patches": [
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task8-store-caller-proposal.patch",
+      "sha256": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task8-workbench-caller-proposal.patch",
+      "sha256": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-email-native-caller-proposal.patch",
+      "sha256": "610bd87fb49ee22fca098fdaf887ccf62bd37e5462a9a8d2945440057304b8cc"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-store-misc-caller-proposal.patch",
+      "sha256": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-feedback-caller-proposal.patch",
+      "sha256": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-workbench-children-caller-proposal.patch",
+      "sha256": "f9e64c543a9aec532184a99ee9832d691635bdbaf4dfade9c515e25e3f268cc7"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-external-writers-caller-proposal.patch",
+      "sha256": "c52007327727e670dd55f434375b8aba3416112f369732717eba998102423415"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-console-readers-caller-proposal.patch",
+      "sha256": "a823ff570d1d8b6045f1289853831f7893531f78badc1281134bb80389f717df"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-remaining-readers-caller-proposal.patch",
+      "sha256": "618c2033a0ca47185819dad4a24a9f4f6409d1d368a1655bc8da4b13efa8898c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-store-constructor-proposal.patch",
+      "sha256": "013079516002034a88f015629ce333577601128b21ced9bc88c8532310f3f57d"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-paired-closure-proposal.patch",
+      "sha256": "f579a40c384e846f4a65c0de82af8244ff1e87dd82c9da7802bf96b4a182eb52"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-feedback-e2e-fixture-proposal.patch",
+      "sha256": "369a9ef1a788c98cc6ae06b1e055f79514e5ac6e58e110ad2f8c1223ab8cf1cb"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-workbench-private-fixture-proposal.patch",
+      "sha256": "598e1b33499cf5dd0a9d9fe65000b53d28af56de7d031e5b793294ec03b14b3b"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-feedback-retirement-test-proposal.patch",
+      "sha256": "3ffb68481e6bb6a23459e8dc32515bec9058e4f2d85d8b74b1ecbdc742344e6f"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-selection-documentation-proposal.patch",
+      "sha256": "c3b89a11ec9d3ef956ec4497d8f648beb5de2fb9392726044b29990c306fe456"
+    }
+  ],
+  "files": {
+    "app/action_email_schema_release.py": {
+      "before": "e9ba587757d2cf271119a2a2ff877d877a716727c0cd7eba6f7dc3ccc309564d",
+      "after": "758f361905f4beeb1e615c301ee8103dd2eda1cce6fe13846a37e2c5a70ae196"
+    },
+    "app/agent_cli.py": {
+      "before": "cd0476dc18e408ebcc069c8bffb617c71f0c53a47880bfaa7833694963018274",
+      "after": "fcd40c67fcfbec339a1c9ece44a0e77f5ba7b2a93837053ee18712216df105ac"
+    },
+    "app/attempt_rerun_presentation.py": {
+      "before": "e273f8fe73dceafa505dc8761c41772cb782a49b501ff0dcf398c5b97228020d",
+      "after": "c457fa0379cb079d50ea50dac574ef1152b4f115a019f30aeaa908c288a9439f"
+    },
+    "app/audit_web.py": {
+      "before": "036f4f46259485c5e341cab8171071b732377d2cee685d90f41eceb8d4dc77e7",
+      "after": "d10a0995be2abaf7cd6163e0337f474933d724081353a9d806050ad65b2b9559"
+    },
+    "app/cli.py": {
+      "before": "b573fc0d095916f6d0b96cf5eba7ffb0d5876c47962f29f99dc809fbfc3ac1b5",
+      "after": "eb3d201b9600aa76d371753501ec88dc6387d1b22f01ef254342d1151168f79d"
+    },
+    "app/dingtalk_delivery_repair.py": {
+      "before": "7adf012e42f87b343ca0955ec016e27a540b7da0f34a61f8c2eaf7dcb1bb4c1f",
+      "after": "02fed7987f18595e3f1e1e961af1ad7fc45520f8dbe8a69bffb01ad46225e924"
+    },
+    "app/dispatcher/adapters.py": {
+      "before": "7b7ab7d8b5225b66d666b8d744fca14bf77c6724ab4c2b739e5c31c149ae49ad",
+      "after": "e2962e5f5395a98e93b7d3b9cbb342de7f38f8f36c2eb11b7c240ac8402a2cf1"
+    },
+    "app/email_current_schema.py": {
+      "before": "06f72a6196cbb7202d8c7a757874781efa978ce6d5e9a27290581af160f5a924",
+      "after": "b00aba3e66453311707bf0bd9213acb1713b3b0c3fc3fcb7130851427db0eed4"
+    },
+    "app/email_store.py": {
+      "before": "c7f80cd9607cc0b1d500a698f341065e3b22f41b73a536f0ab3c8af88db5ecc9",
+      "after": "e0e61309164202bcaaeb677ed23cc8dbaca36c1c43d288e61b419c88cdc21ca5"
+    },
+    "app/email_task_adapter.py": {
+      "before": "dce93db6266af53c5a846f8f59ef14807ef8c7ebd79840c4a83b0ea093448230",
+      "after": "e47e1a967839b4fa22cd3e8c9f35ab174a223964802ca0501192db114afcf682"
+    },
+    "app/error_code_migration.py": {
+      "before": "047548f29f5a11aa64b86efe92658f6559a1062d77b83887072d34ede56029f1",
+      "after": "ed9fbcc4115b6123cc339c91a70046af0f760997db5e3f4d73acc173cedb246e"
+    },
+    "app/minutes_owner_backfill.py": {
+      "before": "692d7410feb72dfc054c586802f45aeddbd77332d6e5695e24dc85adb807307e",
+      "after": "f7cea67d2d13c56f553262d2f189bdafc6dbed20d52ae9b5b32a5047e5566060"
+    },
+    "app/quality_gate.py": {
+      "before": "c9888b13f4b4965a62793150d030cdbe3e85fe7ed8d45178ff9604eb9475da3f",
+      "after": "0a198fff93ce894bf721c3a888b963bb15d694387fd4e538ff1ac85d6793340a"
+    },
+    "app/reply_task_deferral.py": {
+      "before": "a7ff5a4a8b9077c98a8d51fdfd2abd221e8caade9886b20e09dd93486e79a64d",
+      "after": "487a00a890d95850a66838f6ece5820fd2c45ebb5a1247dcb02a65e6bd8a6bcc"
+    },
+    "app/reviewed_candidate_store.py": {
+      "before": "e1e9df1b6c9c247cbc1f8d19f96c1c25f93a02030b4798b26841a4fc39f2f15f",
+      "after": "8bc37995d49f1d0dafdc8663655de5145335918037ebd5d1cc1b2d15e7525321"
+    },
+    "app/rule_question_retirement.py": {
+      "before": "e2bf5b4fd78dd40fd557480b3c6c6211f56eb6d40cebb209b582fdc58f3cac8e",
+      "after": "73d78b8e5c638ab7b5183d7f1a10146e2d5a371eb475cc23f6b3c037063b6561"
+    },
+    "app/scheduled_task_recovery.py": {
+      "before": "fc521a22d9d90b2d438c7044479fded6ed15b69f375dca4720fa80c02072451f",
+      "after": "a4168d4a4a7da9b8a55589a50cfd09e433d460e6a8b0d2f672997b5c38aec7e2"
+    },
+    "app/storage_maintenance.py": {
+      "before": "d1021d40b06d5e78c680625a200fff3bb92eaa6d95338e72ad966c06acf522f6",
+      "after": "07f965f76e5583f0edd09be82ec53be838604594ab469bcafe93f301ed5f503c"
+    },
+    "app/store.py": {
+      "before": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+      "after": "72b40d7917af0cf48ffcb131d347c66799432efbec98a1f61e759d2804253d86"
+    },
+    "app/task12_storage.py": {
+      "before": "592da58189962bee520ae87b3504742495f5132fc481902bc72c11aa4766cf0d",
+      "after": "d695f644308e669d9cffa2f20f7803f31c23d6ff9d7463035a30262d105bf19c"
+    },
+    "app/task20_current_schema.py": {
+      "before": "48d5bd3817e0189eec0aa7744da94592286e307a7fdff3a51adab6e6b078e462",
+      "after": "db842484203c5add4b79dae41f599e86f94279c50b4bcaf4d8367e9b876cfb38"
+    },
+    "app/task20_definitions.py": {
+      "before": "d3e84f6d3ce871bf01b85fb160b1cf13162ca73b2644e39e593edc0b0c258773",
+      "after": "b7e23407ff77b37522639aaff0317d8fdccfac61c3f073ccd3d9774817e7785e"
+    },
+    "app/task20_schema_release.py": {
+      "before": "79df1e03cf9f5989bd21477ba19ca0038c0c90b43c285fd3449270877b78a151",
+      "after": "27389ce5aae538f8812a5db6351fb2fa37a9fcec221ecd74430f29f6be204caf"
+    },
+    "app/task8_storage.py": {
+      "before": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f",
+      "after": "8994bab2054b253a3001aab562d5c6dddd23cad3305b08068110cdea4f25cf6c"
+    },
+    "app/task_project_repair.py": {
+      "before": "387185c2da3e682f6311199bc4ec07866744f1de95b121e5734a60158c9db2b6",
+      "after": "614dd67df3da2a02dc177b09ec216a64604002d96dafc5b7c5c8873e6c773364"
+    },
+    "app/task_schema_release.py": {
+      "before": "76f138bd66987b7f76f3e9d06bdc89a7bd261f6a88749d2b4755c81ecc2498a3",
+      "after": "054ff56bcef746d5717810331b66cbf5dc9aed45d8dc5ca5b26d11e37d254667"
+    },
+    "app/task_semantic_import.py": {
+      "before": "e947e42c797aa05edfd8b1916f2b004bfcb9d1d55deea38ae02abc83edd5e035",
+      "after": "ae848ac19c8124772a2ff4c4480d95681074f4550991c37183eb5049170c47ff"
+    },
+    "app/work_summary_payload.py": {
+      "before": "dd4011560f7c7293b756a46a82e171ee98ad7b1e202fdd45f4f19cdd9c66c5c6",
+      "after": "fae1a40234c1c1d49605fee2c833f7d697cc6720866d76b5dd7efac566412e98"
+    },
+    "app/workbench/native_events.py": {
+      "before": "627dea69c179821fc18e1e97e37c6c96615134719c0536986bc0fa6f23f6a761",
+      "after": "1cf7a6de80676539fa5f5945cccda4327ac61eb4f1e059ffb40cefc9876b85e1"
+    },
+    "app/workbench/store.py": {
+      "before": "4a3bb9287dfea1f2e13e31be5ff2a9ac536a458ac079f30ccb1519848870e18e",
+      "after": "b9027194eb4f9f277630935bf2d00a36792047f626e6b0242667d22a7de070db"
+    },
+    "docs/architecture.md": {
+      "before": "1bfcda2e08d83ce4ea9d9dac6f7128ae88a76a4669afaddfa269867e89c4defe",
+      "after": "42788632e830e380cf58188f537f0f8579af674d7a53effe70ab0e17ca78118b"
+    },
+    "docs/runtime-mechanism.md": {
+      "before": "130dc6a5f9d63cb02ca8ff1040eee358cacdf7d32a176424810330b158b37734",
+      "after": "32f45425edbf8f80e1060fda402c7757369f53bc336f0ed0daabbb7d259d56d2"
+    },
+    "scripts/validate_task20_runtime_copy.py": {
+      "before": null,
+      "after": "8fc0119e3aa53bccb5eeca22aa179925006b776e8e602b4102c8a194991dbb32"
+    },
+    "tests/feedback_processing_fixtures.py": {
+      "before": null,
+      "after": "23af8b8f7ba2ad41085af6aa69bb5776517b41ebc0a785536628ef6f4177a79a"
+    },
+    "tests/test_audit_web.py": {
+      "before": "066a19b6bf9e47728e5e2e1de77303a9c740ecb88bc252334a765634f95feaba",
+      "after": "2cf6ab9e079a691b6187f4f55153db7f402f3d3a8653c7066c6d272bef5ad704"
+    },
+    "tests/test_console_web_api.py": {
+      "before": "0ef0f967fe8e859f4ae6598184b2e06aeaf0504c5fda7fa67890fee9e54ecb1d",
+      "after": "eeda5aacfe8f96ae722519d57cbac4f69d56983f9ab5d39229e279ac2825ec5b"
+    },
+    "tests/test_feedback_processing.py": {
+      "before": "d6c27781e0f4df585d656a6a42f004c56012145fa3a8311b440b6e4e45ab91f3",
+      "after": "c001c27ba3641a267b2acace6ab47bf37ae5e39dde771b0eabf259ac3607624b"
+    },
+    "tests/test_feedback_processing_e2e.py": {
+      "before": "cd53c776e4b85e0a37fa9f171d3fff922506926c1419c9a99b29701fcfd3ab83",
+      "after": "75ee781745fcd4f6fc85d59517211e9242e2f205c5a9b657871a3af6e64c431b"
+    },
+    "tests/test_workbench_store.py": {
+      "before": "60207b5e7a1b5c93daf8b3ecb2afb2c45dcb141b8f16d818a1cc281bde519bab",
+      "after": "76258eabf981c563722a3ccfa1ecd9f219da20d68b83fd669af28a1be925c623"
+    }
+  },
+  "installed_script_source": "docs/superpowers/plans/2026-10-16-task20-paired-actual-copy-installed-candidate.py",
+  "untouched_historical_source_hashes": {
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/workbench_storage.py": "03e99ec30333e9a6dbde422d06ef49b03bd2fb0c02211bb915fa7b94c3249398"
+  }
+}
