@@ -1,5 +1,14 @@
 # Current Runtime Mechanism
 
+Fifteen-kind configs, schedules and two typed Skill receipt kinds now have
+unselected storage implementations. No current constructor or schema marker
+selects them. Their writes require the caller transaction; native SQLITE_FULL
+is the source-defined exception that rolls back that transaction. Receipt DTOs
+retain the current Store conversions and reconstruct loaded_json from existing
+config relations, with no persisted load-body copy. Native malformed,
+noncanonical/BLOB load bodies and late binding remain explicit copy-validation
+exceptions; migration must prove exact reconstruction before retirement.
+
 The unpublished Store `2026-10-14.1`/Email52 candidate selects one typed
 `provider_state` table in fresh and current Email schema construction, converts
 the two source families through paired release, and uses the target in current

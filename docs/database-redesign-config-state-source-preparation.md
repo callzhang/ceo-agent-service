@@ -637,3 +637,27 @@ The plan's authoritative embedded patch has been refreshed to those bytes.
 This remains a retained, unselected prototype and documentation input; no
 repository application or test files, caller, migration, real database,
 provider, native CLI, main, push, or deploy were changed.
+### Repository implementation of accepted complete storage patch
+
+Root applied the canonical twelve-file patch with SHA-256
+`516bd969601a9b6b0134e96a59648e660ce420b7ce030ee7429d80916c05e99f`
+after SPEC acceptance and independent QUALITY acceptance of its self-reference
+repair. The delegated implementer had stopped at a claim because of a usage
+limit; inspection confirmed no application/test changes before root applied it.
+
+The actual worktree passed 132 focused cases across target integration,
+eight-kind source differential, original seven-kind storage, genuine archived
+account closure, receipt source oracle and Email action writes in 31.74 seconds.
+Ruff on all twelve patched files, focused compileall and diff checks passed.
+The newly owned pytest parent was removed and absence verified. An independent
+old-module versus current-module comparison found identical default-false
+schema objects in 112 flag/variant evaluations (including repeated flag sets).
+This verifies the existing action declaration paths remain unchanged by the
+new opt-in receipt extension. No current constructor selects the new storage.
+
+All fifteen config kinds, real schedules and two Skill receipt kinds now exist
+as repository storage code. Caller conversion, release/inverse, actual-copy
+reconstruction checks and physical retirement of the eighteen old source
+families remain incomplete. No production database, provider or native CLI
+was touched by this unit. The retained author prototype remains an active
+implementation/review input until final implementation acceptance.

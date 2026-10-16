@@ -1,5 +1,16 @@
 # CEO Agent Service Architecture
 
+The unselected configs storage now declares all fifteen existing config kinds
+(118 source fields), the real schedules definition (17 fields), and two Skill
+receipt action kinds (11 source fields). The receipt extension is explicitly
+opted in; default action declarations and current Store/Email selection remain
+unchanged. Successful load receipt bodies are derived from referenced bindings
+and revisions rather than persisted again. Source-shaped storage preserves
+native FK affinity, self-references, allocator streams and public receipt DTO
+conversion. Native AUTOINCREMENT exhaustion retains SQLITE_FULL and its whole
+transaction rollback. Caller conversion, migration/inverse and old-table
+retirement are still required before this storage can be selected.
+
 The unpublished Store20/Email52 candidate selects `provider_state` for provider
 observations and folder generations as two typed rows in one table. It keeps
 the source's account-scoped composite identities and twelve named fields;

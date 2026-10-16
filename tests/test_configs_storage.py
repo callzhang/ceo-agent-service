@@ -4,6 +4,7 @@ import sqlite3
 import pytest
 
 from app.action_storage import create_action_schema, insert_email_action
+from app.schedules_storage import create_schedules_schema
 from app.configs_definitions import (
     CONFIG_FIELDS, CONFIG_FRESH_PROJECTIONS, CONFIG_PROJECTIONS,
 )
@@ -18,9 +19,14 @@ from tests.test_email_action_writes import _databases
 
 def test_seven_declared_fields_and_order():
     actual = capture()["actual"]["tables"]
-    assert len(CONFIG_FIELDS) == 7
-    assert sum(map(len, CONFIG_FIELDS.values())) == 73
+    assert len(CONFIG_FIELDS) == 15
+    assert sum(map(len, CONFIG_FIELDS.values())) == 118
     with closing(sqlite3.connect(":memory:")) as db:
+        create_schedules_schema(db)
+        if not db.execute("select 1 from sqlite_master where name='actions'").fetchone():
+            create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk",
+                                 include_email=True, include_followup_sync=True,
+                                 include_skill_config_receipts=True)
         create_configs_schema(db)
         assert [row[1] for row in db.execute("pragma table_xinfo(configs)")
                 if row[6] == 0][:4] == ["id", "record_type", "legacy_key", "payload_json"]
@@ -34,8 +40,13 @@ def test_signed_rowids_and_reuse():
         db.execute("pragma foreign_keys=on")
         create_action_schema(
             db, include_reply=True, reply_variant="fresh_memory_fk",
-            include_email=True,
+            include_email=True, include_followup_sync=True, include_skill_config_receipts=True,
         )
+        create_schedules_schema(db)
+        if not db.execute("select 1 from sqlite_master where name='actions'").fetchone():
+            create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk",
+                                 include_email=True, include_followup_sync=True,
+                                 include_skill_config_receipts=True)
         create_configs_schema(db)
         db.execute("begin")
         account = {
@@ -128,8 +139,9 @@ def pair(variant):
         target.execute("pragma foreign_keys=on")
         create_action_schema(
             target, include_reply=True, reply_variant="fresh_memory_fk",
-            include_email=True,
+            include_email=True, include_followup_sync=True, include_skill_config_receipts=True,
         )
+        create_schedules_schema(target)
         create_configs_schema(target)
         target.execute("begin")
         yield source, target
@@ -428,8 +440,9 @@ def test_max_rowid_uses_native_overflow_allocator(variant):
      "email_unsubscribe_write_in_flight"),
 ))
 def test_account_blockers_use_current_typed_action_predicate_fixture(kind, status, error):
-    old_email, current = _databases()
+    old_email, current = _databases(include_skill_config_receipts=True)
     with closing(old_email), closing(current):
+        create_schedules_schema(current)
         create_configs_schema(current)
         current.commit()
         current.execute("begin")

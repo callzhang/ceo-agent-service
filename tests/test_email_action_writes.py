@@ -13,7 +13,7 @@ from app.action_storage import create_action_schema, email_action_projection
 from tests.test_email_action_storage import _cases, _source_tables
 
 
-def _databases():
+def _databases(*, include_skill_config_receipts=False):
     source = sqlite3.connect(":memory:")
     target = sqlite3.connect(":memory:")
     for db in (source, target):
@@ -29,7 +29,17 @@ def _databases():
                 source.execute(index["sql"])
         for trigger in table["triggers"]:
             source.execute(trigger["sql"])
-    create_action_schema(target, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
+    if include_skill_config_receipts:
+        from tests.configs_source_fixtures import ROOT
+        import json
+        business = json.loads((ROOT / "docs/superpowers/specs/2026-10-15-database-redesign-business-core-native-source.json").read_text())["actual"]["tables"]
+        for name in ("business_tasks", "business_task_signals"):
+            target.execute(business[name]["sql"])
+        create_action_schema(target, include_reply=True, reply_variant="fresh_memory_fk",
+                             include_email=True, include_followup_sync=True,
+                             include_skill_config_receipts=True)
+    else:
+        create_action_schema(target, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
     return source, target
 
 

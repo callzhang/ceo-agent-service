@@ -23,6 +23,16 @@ CONFIG_FIELDS = {
         input_schema_version seed observed_at snapshot_digest manifest_json frozen created_at
         folder_label_watermark important_label_watermark""".split()),
 }
+CONFIG_FIELDS.update({
+"managed_skills": tuple("id name display_name created_at".split()),
+"managed_skill_revisions": tuple("id skill_id revision_number content sha256 parent_revision_id source created_at".split()),
+"runtime_feedback_iteration_capabilities": tuple("config_id enabled created_at".split()),
+"runtime_skill_bindings": tuple("config_id skill_id revision_id enabled load_order purpose".split()),
+"runtime_skill_configs": tuple("id parent_id status created_at".split()),
+"scheduled_task_config_versions": tuple("id snapshot_json".split()),
+"scheduled_task_skill_refs": tuple("scheduled_task_id skill_source skill_name managed_skill_id managed_revision_id position".split()),
+"wechat_reply_scopes": tuple("account_id target_type target_id conversation_id display_name trigger_mode enabled binding_status binding_evidence_json disabled_reason last_discovered_at updated_at".split()),
+})
 CONFIG_FRESH_FIELDS = {
     **CONFIG_FIELDS,
     "email_accounts": tuple("""account_id display_name email_address imap_host imap_port
@@ -39,9 +49,21 @@ PREFIX = {
     "email_model_promotion_configs": "promotion",
     "email_training_snapshots": "snapshot",
 }
+PREFIX.update({
+"managed_skills": "skill", "managed_skill_revisions": "skill_revision",
+"runtime_feedback_iteration_capabilities": "feedback_capability",
+"runtime_skill_bindings": "skill_binding", "runtime_skill_configs": "runtime_config",
+"scheduled_task_config_versions": "schedule_config",
+"scheduled_task_skill_refs": "schedule_skill_ref", "wechat_reply_scopes": "wechat_scope",
+})
 ROWID_KINDS = (
     "email_accounts", "email_category_configs",
     "email_category_folder_bindings", "email_training_snapshots",
+)
+ROWID_KINDS += (
+"managed_skills", "managed_skill_revisions", "runtime_feedback_iteration_capabilities",
+"runtime_skill_bindings", "runtime_skill_configs", "scheduled_task_config_versions",
+"scheduled_task_skill_refs", "wechat_reply_scopes",
 )
 WITHOUT_ROWID_KINDS = (
     "email_category_description_revisions", "email_model_mode_transitions",
@@ -54,6 +76,11 @@ SCALAR_KEY = {
     "email_model_promotion_configs": "config_version",
     "email_training_snapshots": "snapshot_id",
 }
+SCALAR_KEY.update({
+"managed_skills": "id", "managed_skill_revisions": "id",
+"runtime_feedback_iteration_capabilities": "config_id", "runtime_skill_configs": "id",
+"scheduled_task_config_versions": "id",
+})
 PHYSICAL = {
     "email_accounts": ("account_id",),
     "email_category_configs": ("category_key",),
@@ -63,12 +90,34 @@ PHYSICAL = {
     "email_model_promotion_configs": (),
     "email_training_snapshots": ("snapshot_id", "snapshot_digest", "frozen"),
 }
+PHYSICAL.update({
+# aliases, not copied into payload_json.
+"managed_skills": ("id",),
+"managed_skill_revisions": ("id",),
+"runtime_feedback_iteration_capabilities": ("config_id",),
+"runtime_skill_bindings": (),
+"runtime_skill_configs": ("id", "status"),
+"scheduled_task_config_versions": ("id",),
+"scheduled_task_skill_refs": (),
+"wechat_reply_scopes": (),
+})
 DEFAULTS = {
     "email_accounts": {"imap_move_mode": "'move'", "agent_lookback_days": "30",
                        "scan_read_state": "'unread'", "model_lookback_days": "365"},
     "email_training_snapshots": {"frozen": "1", "folder_label_watermark": "0",
                                  "important_label_watermark": "0"},
 }
+DEFAULTS.update({
+"managed_skills": {"created_at": "current_timestamp"},
+"managed_skill_revisions": {"created_at": "current_timestamp"},
+"runtime_feedback_iteration_capabilities": {"created_at": "current_timestamp"},
+"runtime_skill_bindings": {"purpose": "''"},
+"runtime_skill_configs": {"created_at": "current_timestamp"},
+"wechat_reply_scopes": {"conversation_id": "''", "enabled": "1",
+    "binding_status": "'unverified'", "binding_evidence_json": "'{}'",
+    "disabled_reason": "''", "last_discovered_at": "''",
+    "updated_at": "current_timestamp"},
+})
 INTEGERS = {
     "email_accounts": set("""imap_port imap_tls smtp_port smtp_tls enabled
         scan_interval_seconds agent_lookback_days model_lookback_days""".split()),
@@ -77,6 +126,16 @@ INTEGERS = {
     "email_training_snapshots": {"seed", "frozen", "folder_label_watermark",
                                  "important_label_watermark"},
 }
+INTEGERS.update({
+"managed_skills": {"id"},
+"managed_skill_revisions": {"id", "skill_id", "revision_number", "parent_revision_id"},
+"runtime_feedback_iteration_capabilities": {"config_id", "enabled"},
+"runtime_skill_bindings": {"config_id", "skill_id", "revision_id", "enabled", "load_order"},
+"runtime_skill_configs": {"id", "parent_id"},
+"scheduled_task_config_versions": {"id"},
+"scheduled_task_skill_refs": {"scheduled_task_id", "managed_skill_id", "managed_revision_id", "position"},
+"wechat_reply_scopes": {"enabled"},
+})
 REALS = {
     "email_category_configs": {"threshold"},
     "email_model_promotion_configs": {"micro_f1_min", "category_precision_min",
@@ -92,11 +151,34 @@ REQUIRED = {
     "email_model_promotion_configs": set(CONFIG_FIELDS["email_model_promotion_configs"]),
     "email_training_snapshots": set(CONFIG_FIELDS["email_training_snapshots"]) - {"snapshot_id"},
 }
+REQUIRED.update({
+# omitted on INSERT because SQLite allocates them. Every other required source
+# column remains required after source defaults are applied.
+"managed_skills": {"name", "display_name", "created_at"},
+"managed_skill_revisions": {"skill_id", "revision_number", "content", "sha256", "source", "created_at"},
+"runtime_feedback_iteration_capabilities": {"config_id", "enabled", "created_at"},
+"runtime_skill_bindings": set(CONFIG_FIELDS["runtime_skill_bindings"]),
+"runtime_skill_configs": {"status", "created_at"},
+"scheduled_task_config_versions": {"snapshot_json"},
+"scheduled_task_skill_refs": {"scheduled_task_id", "skill_source", "skill_name", "position"},
+"wechat_reply_scopes": set(CONFIG_FIELDS["wechat_reply_scopes"]),
+})
 
+
+NUMERIC_SCALAR_KINDS = frozenset({
+    "managed_skills", "managed_skill_revisions",
+    "runtime_feedback_iteration_capabilities", "runtime_skill_configs",
+    "scheduled_task_config_versions",
+})
+AUTOINCREMENT_KINDS = frozenset({
+    "managed_skills", "managed_skill_revisions", "runtime_skill_configs",
+})
 
 def config_column(kind: str, field: str) -> str:
+    if (kind, field) == ("runtime_skill_configs", "status"):
+        return "runtime_config_status"
     if field == SCALAR_KEY.get(kind):
-        return "public_key"
+        return "numeric_public_key" if kind in NUMERIC_SCALAR_KINDS else "public_key"
     return PREFIX[kind] + "_" + field
 
 
@@ -179,6 +261,30 @@ RULES = {
         "snapshot_important_label_watermark>=0",
     ),
 }
+RULES.update({
+"managed_skills": (),
+"managed_skill_revisions": ("skill_revision_revision_number>0",),
+"runtime_feedback_iteration_capabilities": ("feedback_capability_enabled in (0,1)",),
+"runtime_skill_bindings": ("skill_binding_enabled in (0,1)", "skill_binding_load_order>=0"),
+"runtime_skill_configs": ("runtime_config_status in ('pending_restart','active','load_failed')",),
+"scheduled_task_config_versions": (),
+"scheduled_task_skill_refs": ("schedule_skill_ref_position>=0",),
+"wechat_reply_scopes": (),
+})
+
+# (child kind, source field, physical ref column, parent kind, delete action)
+CONFIG_REFS = (
+    ("managed_skill_revisions", "skill_id", "skill_revision_skill_ref", "managed_skills", "no action"),
+    ("managed_skill_revisions", "parent_revision_id", "skill_revision_parent_ref", "managed_skill_revisions", "no action"),
+    ("runtime_feedback_iteration_capabilities", "config_id", "feedback_capability_config_ref", "runtime_skill_configs", "no action"),
+    ("runtime_skill_bindings", "config_id", "skill_binding_config_ref", "runtime_skill_configs", "no action"),
+    ("runtime_skill_bindings", "skill_id", "skill_binding_skill_ref", "managed_skills", "no action"),
+    ("runtime_skill_bindings", "revision_id", "skill_binding_revision_ref", "managed_skill_revisions", "no action"),
+    ("runtime_skill_configs", "parent_id", "runtime_config_parent_ref", "runtime_skill_configs", "no action"),
+    ("scheduled_task_skill_refs", "managed_skill_id", "schedule_skill_ref_skill_ref", "managed_skills", "no action"),
+    ("scheduled_task_skill_refs", "managed_revision_id", "schedule_skill_ref_revision_ref", "managed_skill_revisions", "no action"),
+)
+SCHEDULE_REF = ("scheduled_task_skill_refs", "scheduled_task_id", "schedule_skill_ref_schedule_ref")
 
 def _affinity(kind: str, field: str) -> str:
     if field in INTEGERS.get(kind, ()):
@@ -205,6 +311,11 @@ def _definitions():
         "snapshot_snapshot_digest text", "snapshot_frozen integer",
         f"public_key text generated always as (case when record_type in ({wr}) "
         f"then {decoded_key} else source_key end) virtual",
+        "numeric_public_key integer generated always as (case when record_type in "
+        "('managed_skills','managed_skill_revisions','runtime_feedback_iteration_capabilities',"
+        "'runtime_skill_configs','scheduled_task_config_versions') "
+        "then cast(source_key as integer) end) virtual",
+        "runtime_config_status text",
         "binding_account_kind text generated always as "
         "(case when record_type='email_category_folder_bindings' then 'email_accounts' end) virtual",
         "binding_category_kind text generated always as "
@@ -220,7 +331,13 @@ def _definitions():
         "else json_valid(legacy_key) and json_type(legacy_key)='array' "
         "and json_array_length(legacy_key)=1 end)",
         "check((record_type in ('email_accounts','email_category_configs',"
-        "'email_training_snapshots')) or source_key is null)",
+        "'email_training_snapshots','managed_skills','managed_skill_revisions',"
+        "'runtime_feedback_iteration_capabilities','runtime_skill_configs',"
+        "'scheduled_task_config_versions')) or source_key is null)",
+        "check(record_type='runtime_skill_configs' or runtime_config_status is null)",
+        "check(record_type not in ('managed_skills','managed_skill_revisions',"
+        "'runtime_feedback_iteration_capabilities','runtime_skill_configs',"
+        "'scheduled_task_config_versions') or (source_key is not null and source_key=legacy_key))",
         "check(record_type='email_category_folder_bindings' "
         "or (binding_account_id is null and binding_category_key is null "
         "and binding_account_ref is null and binding_category_ref is null))",
@@ -268,6 +385,29 @@ def _definitions():
         conditions += [f"({rule})" for rule in RULES[kind]]
         checks.append(f"check(record_type<>'{kind}' or "
                       + " and ".join(f"({condition})" for condition in conditions) + ")")
+    for child, field, ref, parent, on_delete in CONFIG_REFS:
+        source = config_column(child, field)
+        # The scalar config_id of feedback capability is numeric_public_key.
+        kind_col, key_col = ref + "_kind", ref + "_public_key"
+        columns.extend((
+            f"{ref} integer",
+            f"{kind_col} text generated always as "
+            f"(case when record_type='{child}' then '{parent}' end) virtual",
+            f"{key_col} text generated always as "
+            f"(case when record_type='{child}' then cast({source} as text) end) virtual",
+        ))
+        checks.append(f"check(record_type='{child}' or {ref} is null)")
+        checks.append(f"check(record_type<>'{child}' or "
+                      f"(({source} is null and {ref} is null) or "
+                      f"({source} is not null and {ref} is not null)))")
+        checks.append(f"foreign key({ref},{kind_col},{key_col}) "
+                      f"references configs(id,record_type,public_key) "
+                      f"on update no action on delete {on_delete}")
+    child, field, ref = SCHEDULE_REF
+    source = config_column(child, field)
+    columns.append(f"{ref} integer references schedules(id) on update no action on delete no action")
+    checks += (f"check(record_type='{child}' or {ref} is null)",
+               f"check(record_type<>'{child}' or ({source} is not null and {ref}={source}))")
     table = "create table configs (" + ",".join(columns + checks) + ")"
     indexes = (
         "create unique index idx_configs_legacy on configs(record_type,legacy_key)",
@@ -284,6 +424,17 @@ def _definitions():
         "create unique index idx_configs_snapshot_digest on "
         "configs(snapshot_snapshot_digest) "
         "where record_type='email_training_snapshots'",
+    )
+    indexes += (
+        "create unique index idx_configs_skill_name on configs(skill_name) where record_type='managed_skills'",
+        "create unique index idx_configs_revision_identity on configs(skill_revision_skill_id,skill_revision_sha256,skill_revision_source) where record_type='managed_skill_revisions'",
+        "create unique index idx_configs_revision_number on configs(skill_revision_skill_id,skill_revision_revision_number) where record_type='managed_skill_revisions'",
+        "create unique index idx_configs_binding_skill on configs(skill_binding_config_id,skill_binding_skill_id) where record_type='runtime_skill_bindings'",
+        "create unique index idx_configs_binding_order on configs(skill_binding_config_id,skill_binding_load_order) where record_type='runtime_skill_bindings'",
+        "create unique index idx_configs_schedule_snapshot on configs(schedule_config_snapshot_json) where record_type='scheduled_task_config_versions'",
+        "create unique index idx_configs_schedule_ref_position on configs(schedule_skill_ref_scheduled_task_id,schedule_skill_ref_position) where record_type='scheduled_task_skill_refs'",
+        "create unique index idx_configs_wechat_scope on configs(wechat_scope_account_id,wechat_scope_target_type,wechat_scope_target_id) where record_type='wechat_reply_scopes'",
+        "create index idx_configs_binding_config_order on configs(skill_binding_config_id,skill_binding_load_order) where record_type='runtime_skill_bindings'",
     )
     immutable = WITHOUT_ROWID_KINDS
     triggers = []
@@ -316,6 +467,34 @@ def _definitions():
         f"(old.snapshot_frozen=0 and new.snapshot_frozen=1 and {frozen_same}) "
         "begin select raise(abort,'email training snapshot is immutable'); end",
     ))
+    for kind, error in (
+        ("managed_skill_revisions", "managed Skill revisions are immutable"),
+        ("runtime_feedback_iteration_capabilities", "feedback iteration capability records are immutable"),
+        ("runtime_skill_bindings", "runtime Skill bindings are immutable"),
+    ):
+        for event in ("update", "delete"):
+            triggers.append(f"create trigger trg_configs_{PREFIX[kind]}_{event} "
+                            f"before {event} on configs when old.record_type='{kind}' "
+                            f"begin select raise(abort,'{error}'); end")
+    triggers += (
+        "create trigger trg_configs_runtime_config_delete before delete on configs "
+        "when old.record_type='runtime_skill_configs' "
+        "begin select raise(abort,'runtime Skill configurations are immutable'); end",
+        "create trigger trg_configs_runtime_config_update before update on configs "
+        "when old.record_type='runtime_skill_configs' and ("
+        "new.id<>old.id or new.legacy_key<>old.legacy_key or "
+        "new.runtime_config_parent_ref is not old.runtime_config_parent_ref or "
+        "new.runtime_config_created_at<>old.runtime_config_created_at or "
+        "old.runtime_config_status<>'pending_restart' or "
+        "new.runtime_config_status not in ('active','load_failed') or "
+        "(new.runtime_config_status='active' and not exists("
+        "select 1 from actions a where a.record_type='runtime_skill_load_receipts' "
+        "and a.runtime_config_ref=old.id and a.skill_error='' )) or "
+        "(new.runtime_config_status='load_failed' and not exists("
+        "select 1 from actions a where a.record_type='runtime_skill_load_receipts' "
+        "and a.runtime_config_ref=old.id and a.skill_error<>'' ))) "
+        "begin select raise(abort,'runtime Skill activation requires matching load receipt'); end",
+    )
     blockers = (
         ("direct", "email_actions", "processing", "email_direct_action_in_flight"),
         ("reply", "email_reply_dispatch_claims", "dispatching",
@@ -333,6 +512,16 @@ def _definitions():
                 f"and a.email_status='{status}') "
                 f"begin select raise(abort,'{error}'); end"
             )
+    for kind in AUTOINCREMENT_KINDS:
+        name = "configs:" + kind
+        triggers.append(
+            f"create trigger trg_configs_{kind}_sequence before insert on configs "
+            f"when new.record_type='{kind}' begin "
+            f"insert into sqlite_sequence(name,seq) select '{name}',0 "
+            f"where not exists(select 1 from sqlite_sequence where name='{name}'); "
+            f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) "
+            f"where name='{name}'; end"
+        )
     return table, indexes, tuple(triggers)
 
 

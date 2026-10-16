@@ -6,10 +6,11 @@ import json
 import math
 import sqlite3
 
-from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key
+from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full
 from app.configs_definitions import (
     CONFIG_FIELDS, CONFIG_INDEX_DDL, CONFIG_TABLE_DDL, CONFIG_TRIGGER_DDL,
-    DEFAULTS, ROWID_KINDS, SCALAR_KEY, config_column, config_payload_fields,
+    AUTOINCREMENT_KINDS, CONFIG_REFS, DEFAULTS, NUMERIC_SCALAR_KINDS,
+    ROWID_KINDS, SCALAR_KEY, SCHEDULE_REF, config_column, config_payload_fields,
 )
 
 
@@ -20,6 +21,11 @@ class ConfigWriteResult:
 
 
 _UNSET = object()
+_SELF_REF = object()
+_NEXT_PHYSICAL_ID = (
+    "(select max(coalesce((select seq from sqlite_sequence where name='configs'),0),"
+    "coalesce((select max(id) from configs),0))+1)"
+)
 
 
 def create_configs_schema(db: sqlite3.Connection) -> None:
@@ -52,6 +58,13 @@ def _text_affinity(value):
         return scratch.execute("select value from source_key").fetchone()[0]
 
 
+def _integer_affinity(value):
+    with closing(sqlite3.connect(":memory:")) as scratch:
+        scratch.execute("create table source_key(value integer)")
+        scratch.execute("insert into source_key(value) values(?)", (value,))
+        return scratch.execute("select value from source_key").fetchone()[0]
+
+
 def _canonical_without_rowid_key(value) -> str:
     stored = _text_affinity(value)
     return json.dumps([_encoded_sqlite_value(stored)], ensure_ascii=False,
@@ -72,6 +85,47 @@ def _next_source_rowid(db: sqlite3.Connection, kind: str) -> int:
             (kind,),
         ))
         return scratch.execute("insert into source_rows default values").lastrowid
+
+
+MAX_ROWID = 2**63 - 1
+
+
+def _auto_sequence(db: sqlite3.Connection, kind: str) -> int:
+    row = db.execute("select seq from sqlite_sequence where name=?", ("configs:" + kind,)).fetchone()
+    return row[0] if row else 0
+
+
+def _reserve_auto(db: sqlite3.Connection, kind: str, value: int) -> None:
+    name = "configs:" + kind
+    db.execute("insert into sqlite_sequence(name,seq) select ?,0 "
+               "where not exists(select 1 from sqlite_sequence where name=?)", (name, name))
+    db.execute("update sqlite_sequence set seq=max(seq,?) where name=?", (value, name))
+
+
+def _next_auto_rowid(db: sqlite3.Connection, kind: str) -> int:
+    maximum = db.execute("select max(cast(legacy_key as integer)) from configs "
+                         "where record_type=?", (kind,)).fetchone()[0]
+    value = max(_auto_sequence(db, kind), maximum or 0, 0)
+    if value == MAX_ROWID:
+        if db.in_transaction:
+            db.rollback()
+        _raise_autoincrement_full()
+    return value + 1
+
+
+def _source_identity(db: sqlite3.Connection, kind: str, source_rowid) -> int:
+    if source_rowid is _UNSET or _source_bound_null(source_rowid):
+        return (_next_auto_rowid(db, kind) if kind in AUTOINCREMENT_KINDS
+                else _next_source_rowid(db, kind))
+    return _native_integer_primary_key(source_rowid)
+
+
+def _parent_id_numeric(db: sqlite3.Connection, kind: str, raw_key) -> int:
+    row = db.execute(
+        "select id from configs where record_type=? and numeric_public_key=?",
+        (kind, raw_key),
+    ).fetchone()
+    return row[0] if row else 0
 
 
 def _completed(db: sqlite3.Connection, kind: str, supplied: dict) -> dict:
@@ -121,6 +175,19 @@ def _stored(db: sqlite3.Connection, kind: str, complete: dict,
     if kind == "email_training_snapshots":
         data["snapshot_snapshot_digest"] = complete["snapshot_digest"]
         data["snapshot_frozen"] = complete["frozen"]
+    if kind in NUMERIC_SCALAR_KINDS:
+        data["source_key"] = str(complete[SCALAR_KEY[kind]])
+    if kind == "runtime_skill_configs":
+        data["runtime_config_status"] = complete["status"]
+    for child, field, ref, parent, _ in CONFIG_REFS:
+        if kind == child:
+            key = complete[field]
+            data[ref] = None if key is None else _parent_id_numeric(db, parent, key)
+    if kind == SCHEDULE_REF[0]:
+        key = complete[SCHEDULE_REF[1]]
+        data[SCHEDULE_REF[2]] = key if db.execute(
+            "select 1 from schedules where id=?", (key,)
+        ).fetchone() else 0
     return data
 
 
@@ -134,11 +201,16 @@ def insert_config(db: sqlite3.Connection, kind: str, values: dict, *,
                   source_rowid=_UNSET, ignore=False) -> ConfigWriteResult:
     _check(kind, values)
     _lock(db)
+    if kind in NUMERIC_SCALAR_KINDS and SCALAR_KEY[kind] in values:
+        supplied_id = values[SCALAR_KEY[kind]]
+        if source_rowid is not _UNSET and source_rowid != supplied_id:
+            raise ValueError("conflicting source integer primary key")
+        source_rowid = supplied_id
     if kind in ROWID_KINDS:
-        identity = (_next_source_rowid(db, kind)
-                    if source_rowid is _UNSET or _source_bound_null(source_rowid)
-                    else _native_integer_primary_key(source_rowid))
+        identity = _source_identity(db, kind, source_rowid)
         legacy_key = str(identity)
+        if kind in NUMERIC_SCALAR_KINDS:
+            values = {**values, SCALAR_KEY[kind]: identity}
     else:
         if source_rowid is not _UNSET:
             raise ValueError("WITHOUT ROWID config has no source rowid")
@@ -146,9 +218,17 @@ def insert_config(db: sqlite3.Connection, kind: str, values: dict, *,
         identity = None
     complete = _completed(db, kind, values)
     data = _stored(db, kind, complete, legacy_key)
+    for child, field, ref, parent, _ in CONFIG_REFS:
+        if child == parent == kind and complete[field] is not None:
+            if _integer_affinity(complete[field]) == identity:
+                data[ref] = _SELF_REF
     sql = ("insert " + ("or ignore " if ignore else "") + "into configs(" +
-           ",".join(data) + ") values(" + ",".join("?" for _ in data) + ")")
-    cursor = db.execute(sql, tuple(data.values()))
+           ",".join(data) + ") values(" + ",".join(
+               _NEXT_PHYSICAL_ID if value is _SELF_REF else "?"
+               for value in data.values()) + ")")
+    cursor = db.execute(sql, tuple(value for value in data.values() if value is not _SELF_REF))
+    if kind in AUTOINCREMENT_KINDS and cursor.rowcount:
+        _reserve_auto(db, kind, identity)
     return ConfigWriteResult(identity if cursor.rowcount else None, cursor.rowcount)
 
 
@@ -176,6 +256,13 @@ def update_config(db: sqlite3.Connection, kind: str, identity, values: dict, *,
     if kind in ROWID_KINDS:
         legacy = (key if new_source_rowid is _UNSET else
                   str(_native_integer_primary_key(new_source_rowid, update=True)))
+        if kind in NUMERIC_SCALAR_KINDS:
+            if SCALAR_KEY[kind] in values:
+                new_alias = _native_integer_primary_key(values[SCALAR_KEY[kind]], update=True)
+                if new_source_rowid is not _UNSET and new_alias != int(legacy):
+                    raise ValueError("conflicting source integer primary key update")
+                legacy = str(new_alias)
+            current[SCALAR_KEY[kind]] = int(legacy)
     else:
         if new_source_rowid is not _UNSET:
             raise ValueError("WITHOUT ROWID config has no source rowid")

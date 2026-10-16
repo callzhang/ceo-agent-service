@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 
+from app.schedules_storage import create_schedules_schema
 from app.configs_definitions import config_projection
 from app.configs_storage import (
     create_configs_schema, delete_config, insert_config, update_config,
@@ -78,7 +79,7 @@ def _assert_account_state(source, target, *, key, display, bindings):
 
 def test_published_fresh_account_update_and_delete_cascade(old_email_copy):
     _, source_path = old_email_copy
-    old_stub, target = _databases()
+    old_stub, target = _databases(include_skill_config_receipts=True)
     with closing(old_stub), closing(target), closing(sqlite3.connect(source_path)) as source:
         source.execute("pragma foreign_keys=on")
         predecessors = {
@@ -95,6 +96,7 @@ def test_published_fresh_account_update_and_delete_cascade(old_email_copy):
             "and tbl_name='email_accounts' and name like '%blocks_account_%'"
         ).fetchall()) == 6
 
+        create_schedules_schema(target)
         create_configs_schema(target)
         target.commit()
         target.execute("begin")
