@@ -1,4 +1,4 @@
-"""Unselected, source-bound State migration and current-fact inverse.
+"""Source-bound State migration and current-fact inverse.
 
 The caller owns one FK-off transaction and its rollback. Metadata contains only
 original declarations; no source row image, schema marker or runtime selection.
