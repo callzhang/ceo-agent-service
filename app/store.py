@@ -30791,6 +30791,109 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                               )
                         ) then 'uncertain'
                         when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
+                        -- The list and Attempt detail share the current task
+                        -- generation as their status source. Keep the action
+                        -- column as the historical operation label; do not
+                        -- leave successful terminal task states as legacy
+                        -- Attempt labels such as completed/commented.
+                        when exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and projected_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                        ) then (
+                            select case
+                                when projected_task.status='done'
+                                 and send_status='skipped'
+                                 and projected_run.status='completed'
+                                 and projected_run.id=(
+                                     select latest_current_run.id
+                                     from ({AGENT_RUN_SQL}) as latest_current_run
+                                     where latest_current_run.reply_task_id=projected_task.id
+                                       and latest_current_run.execution_generation=projected_task.execution_generation
+                                     order by coalesce(latest_current_run.proposal_revision, 0) desc,
+                                              case when latest_current_run.role='audit' then 1 else 0 end desc,
+                                              coalesce(latest_current_run.turn_attempt, 0) desc,
+                                              latest_current_run.id desc
+                                     limit 1
+                                 )
+                                 and projected_run.id=reply_attempts.agent_run_id
+                                then 'skipped'
+                                else projected_task.status
+                            end
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and projected_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                            limit 1
+                        )
+                        when exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and (
+                                  select latest_current_run.status
+                                  from ({AGENT_RUN_SQL}) as latest_current_run
+                                  where latest_current_run.reply_task_id=projected_task.id
+                                    and latest_current_run.execution_generation=projected_task.execution_generation
+                                  order by coalesce(latest_current_run.proposal_revision, 0) desc,
+                                           case when latest_current_run.role='audit' then 1 else 0 end desc,
+                                           coalesce(latest_current_run.turn_attempt, 0) desc,
+                                           latest_current_run.id desc
+                                  limit 1
+                              ) in ('pending', 'running', 'failed')
+                        ) then (
+                            select (
+                                select latest_current_run.status
+                                from ({AGENT_RUN_SQL}) as latest_current_run
+                                where latest_current_run.reply_task_id=projected_task.id
+                                  and latest_current_run.execution_generation=projected_task.execution_generation
+                                order by coalesce(latest_current_run.proposal_revision, 0) desc,
+                                         case when latest_current_run.role='audit' then 1 else 0 end desc,
+                                         coalesce(latest_current_run.turn_attempt, 0) desc,
+                                         latest_current_run.id desc
+                                limit 1
+                            )
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                            limit 1
+                        )
+                        when exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and projected_task.status in ('pending', 'processing', 'running')
+                        ) then (
+                            select case when projected_task.status='processing' then 'running'
+                                        else projected_task.status end
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and projected_task.status in ('pending', 'processing', 'running')
+                            limit 1
+                        )
                         -- Candidate completion is independent of delivery.
                         -- Only the latest delivery for this object and its
                         -- owning task generation supplies its send outcome.

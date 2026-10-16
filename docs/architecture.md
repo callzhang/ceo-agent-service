@@ -23,6 +23,12 @@ read snapshot and reuses its current-task/delivery reads for repeated failed
 message keys only within that request. Evidence is in
 `docs/console-query-performance.md`.
 
+Reply Attempt History status and status filters use the owning task's current
+execution generation, matching Attempt detail. The action field retains the
+historical operation label. Current unresolved System Execution uncertainty
+continues to override task closure; the projection does not modify the Attempt,
+candidate, or execution receipt.
+
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
 revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override
