@@ -557,21 +557,19 @@ def task20_column(kind, field):
     return _quote(kind + "__" + field)
 
 
-def task20_value(kind, field):
-    """Preserve native REAL reads when SQLite flattens an ordered subquery."""
-    column = task20_column(kind, field)
-    affinity = next(c[1] for c in TASK20_COLUMNS[kind] if c[0] == field)
-    if affinity == "REAL":
-        return (
-            "case when typeof("
-            + column
-            + ") in ('integer','real') then "
-            + column
-            + "+0.0 else "
-            + column
-            + " end"
-        )
-    return column
+def task20_projection_barrier(kind):
+    """Prevent SQLite flattening from dropping virtual REAL read conversion."""
+    return (
+        " limit -1 offset 0"
+        if any(column[1] == "REAL" for column in TASK20_COLUMNS[kind])
+        else ""
+    )
+
+
+def task20_source_projection(kind, query):
+    """Keep source suffix filtering/sorting outside the REAL flattening barrier."""
+    barrier = task20_projection_barrier(kind)
+    return "select * from(" + query + barrier + ") where 1" if barrier else query
 
 
 def _checks(kind):
@@ -925,7 +923,7 @@ def task20_projection(kind):
         raise ValueError("unsupported Tasks kind")
     result = []
     for field in TASK20_FIELDS[kind]:
-        value = task20_value(kind, field)
+        value = task20_column(kind, field)
         if kind == "reply_task_inputs" and field == "reply_task_id":
             value = "(select cast(p.legacy_key as integer) from tasks p where p.id=tasks.parent_id)"
         elif kind == "workbench_turns" and field == "task_id":
@@ -940,4 +938,7 @@ def task20_projection(kind):
                 + ")"
             )
         result.append(value + " as " + _quote(field))
-    return "select " + ",".join(result) + " from tasks where record_type=" + repr(kind)
+    return task20_source_projection(
+        kind,
+        "select " + ",".join(result) + " from tasks where record_type=" + repr(kind),
+    )

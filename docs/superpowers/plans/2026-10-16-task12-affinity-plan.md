@@ -21,8 +21,8 @@ Root complete candidate preflight:554passed/28.66s, Ruff and whitespace clean, O
 ### Task 1: exact mechanical transfer
 
 - [x] Root wrote complete code and22additional differential cases before app edits; red regression confirmed.
-- [ ] Claim exact3application/test files and own implementation row before editing.
-- [ ] Copy exact complete artifacts and verify SHA256:
+- [x] Claim exact3application/test files and own implementation row before editing.
+- [x] Copy exact complete artifacts and verify SHA256:
 
 ```python
 from pathlib import Path
@@ -40,7 +40,7 @@ for source,target,digest in (
 
 ### Task 2: focused acceptance
 
-- [ ] Run exact applied preflight:
+- [x] Run exact applied preflight: 554 passed/29.29s; OWNED_TEMP_REMOVED True.
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python docs/superpowers/plans/2026-10-16-task12-affinity-preflight.py --applied --with-declarations
@@ -50,7 +50,7 @@ git diff --check
 
 Expected554pass =229source-target checks +325declaration checks, with OWNED_TEMP_REMOVED True. New22cases cover both source profiles/REAL fields; numeric-string, nonnumeric text and BLOB comparisons; read predicates/scalar types; positive and negative guarded update/delete; suffix filtering/ordering; indexed single-row selection before materialization and untouched second row.
 
-- [ ] Commit only3app/test paths, own claim and this plan's transfer checkboxes (5paths). Do not alter earlier plan or canonical artifacts or other agents' claims.
+- [x] Commit only3app/test paths, own claim and this plan's transfer checkboxes (5paths). Do not alter earlier plan or canonical artifacts or other agents' claims.
 - [ ] Root obtains fresh SPEC on applied repair, then fresh QUALITY covering complete writer foundation and meaningful mutants. Resolve findings before acceptance; keep full10core+ledger goal active.
 
 ## Full-goal boundaries

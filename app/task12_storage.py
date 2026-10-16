@@ -24,7 +24,8 @@ from app.task20_definitions import (
     TASK20_NEW_KINDS,
     TASK20_PAYLOAD_FIELDS,
     task20_column,
-    task20_value,
+    task20_projection_barrier,
+    task20_source_projection,
 )
 
 _UNSET = object()
@@ -251,14 +252,15 @@ def task12_projection(kind, *, include_rowid=False):
     _check(kind, {})
     fields = ["cast(legacy_key as integer) as rowid"] if include_rowid else []
     fields.extend(
-        task20_value(kind, f) + ' as "' + f + '"' for f in TASK20_FIELDS[kind]
+        task20_column(kind, f) + ' as "' + f + '"' for f in TASK20_FIELDS[kind]
     )
-    return (
+    return task20_source_projection(
+        kind,
         "select "
         + ",".join(fields)
         + " from tasks where record_type="
         + repr(kind)
-        + _NUMERIC_SCOPE
+        + _NUMERIC_SCOPE,
     )
 
 
@@ -281,14 +283,16 @@ def update_task12(
     _lock(db)
     guard = " and (" + where_sql + ")" if where_sql else ""
     columns = ",".join(
-        task20_value(kind, f) + ' as "' + f + '"' for f in TASK20_FIELDS[kind]
+        task20_column(kind, f) + ' as "' + f + '"' for f in TASK20_FIELDS[kind]
     )
     row = db.execute(
         "select * from(select id as __physical_id,cast(legacy_key as integer) as rowid,"
         + columns
         + " from tasks where "
         + _KIND_PREDICATE
-        + ") where rowid=?"
+        + " and cast(legacy_key as integer)=?"
+        + task20_projection_barrier(kind)
+        + ") where 1"
         + guard,
         (kind, source_rowid, *parameters),
     ).fetchone()
@@ -327,12 +331,14 @@ def delete_task12(db, kind, source_rowid, *, where_sql="", parameters=()):
         + " and cast(legacy_key as integer)=? and id in "
         "(select __physical_id from(select id as __physical_id,cast(legacy_key as integer) as rowid,"
         + ",".join(
-            task20_value(kind, f) + ' as "' + f + '"' for f in TASK20_FIELDS[kind]
+            task20_column(kind, f) + ' as "' + f + '"' for f in TASK20_FIELDS[kind]
         )
         + " from tasks where "
         + _KIND_PREDICATE
+        + " and cast(legacy_key as integer)=?"
+        + task20_projection_barrier(kind)
         + ") where 1"
         + guard
         + ")",
-        (kind, source_rowid, kind, *parameters),
+        (kind, source_rowid, kind, source_rowid, *parameters),
     ).rowcount

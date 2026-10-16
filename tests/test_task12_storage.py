@@ -11,7 +11,11 @@ from app.task12_storage import (
     task12_projection,
     update_task12,
 )
-from app.task20_definitions import create_task20_schema, task20_column
+from app.task20_definitions import (
+    create_task20_schema,
+    task20_column,
+    task20_projection,
+)
 from tests.test_task20_definitions import insert as seed_task
 from tests.test_tasks12_native_source import (
     ACTUAL,
@@ -693,3 +697,162 @@ def test_delete_source_rowid_guard_is_available(db, target):
         == 1
     )
     snapshot(db, target, "wechat_memory_import_jobs")
+
+
+@pytest.mark.parametrize("field", ("objective_weight", "kr_weight"))
+@pytest.mark.parametrize(
+    "stored,probe",
+    ((2, "2"), ("2.5", "2.5"), ("native-text", "native-text"), (b"weight", b"weight")),
+)
+def test_real_comparison_affinity_reads_and_guarded_writes(
+    db, target, field, stored, probe
+):
+    kind = "okr_review_items"
+    data = supplied(kind) | {field: stored}
+    source_id = insert(db, kind, supplied=data).lastrowid
+    result = insert_task12(target, kind, data)
+    predicate = field + "=?"
+    native_count = db.execute(
+        "select count(*) from " + kind + " where " + predicate, (probe,)
+    ).fetchone()[0]
+    assert native_count == 1
+    for projection in (task12_projection(kind), task20_projection(kind)):
+        assert (
+            target.execute(
+                "select count(*) from (" + projection + ") where " + predicate, (probe,)
+            ).fetchone()[0]
+            == native_count
+        )
+        native = db.execute(
+            "select " + field + " from " + kind + " order by id"
+        ).fetchone()[0]
+        projected = target.execute(
+            "select " + field + " from (" + projection + ") order by id"
+        ).fetchone()[0]
+        assert (type(projected), projected) == (type(native), native)
+    assert (
+        update_task12(
+            target,
+            kind,
+            result.lastrowid,
+            {"kr_title": "bad"},
+            where_sql=predicate,
+            parameters=("wrong",),
+        )
+        == 0
+    )
+    expected = db.execute(
+        "update " + kind + " set kr_title='updated' where rowid=? and " + predicate,
+        (source_id, probe),
+    ).rowcount
+    assert expected == 1
+    assert (
+        update_task12(
+            target,
+            kind,
+            result.lastrowid,
+            {"kr_title": "updated"},
+            where_sql=predicate,
+            parameters=(probe,),
+        )
+        == expected
+    )
+    snapshot(db, target, kind)
+    assert (
+        delete_task12(
+            target, kind, result.lastrowid, where_sql=predicate, parameters=("wrong",)
+        )
+        == 0
+    )
+    expected = db.execute(
+        "delete from " + kind + " where rowid=? and " + predicate, (source_id, probe)
+    ).rowcount
+    assert expected == 1
+    assert (
+        delete_task12(
+            target, kind, result.lastrowid, where_sql=predicate, parameters=(probe,)
+        )
+        == expected
+    )
+    snapshot(db, target, kind)
+
+
+def test_real_guard_select_limits_before_materialization(db, target):
+    kind = "okr_review_items"
+    for suffix in ("a", "b"):
+        data = supplied(kind, suffix) | {"objective_weight": 2}
+        insert(db, kind, supplied=data)
+        result = insert_task12(target, kind, data)
+    statements = []
+    target.set_trace_callback(statements.append)
+    try:
+        assert (
+            update_task12(
+                target,
+                kind,
+                result.lastrowid,
+                {"kr_title": "updated"},
+                where_sql="objective_weight=?",
+                parameters=("2",),
+            )
+            == 1
+        )
+        assert (
+            delete_task12(
+                target,
+                kind,
+                result.lastrowid,
+                where_sql="objective_weight=?",
+                parameters=("2",),
+            )
+            == 1
+        )
+    finally:
+        target.set_trace_callback(None)
+    guarded = [
+        sql
+        for sql in statements
+        if "limit -1 offset 0" in sql
+        and (
+            sql.startswith("select * from(select")
+            or sql.startswith("delete from tasks")
+        )
+    ]
+    guarded = list(dict.fromkeys(guarded))
+    assert len(guarded) == 2
+    for sql in guarded:
+        assert (
+            "cast(legacy_key as integer)="
+            + str(result.lastrowid)
+            + " limit -1 offset 0"
+            in sql
+        )
+        plan = " ".join(
+            str(tuple(row)) for row in target.execute("explain query plan " + sql)
+        )
+        assert "idx_task20_numeric_identity" in plan
+    remaining = target.execute(
+        "select count(*) from (" + task12_projection(kind) + ")"
+    ).fetchone()[0]
+    assert remaining == 1
+
+
+@pytest.mark.parametrize("field", ("objective_weight", "kr_weight"))
+def test_real_public_projection_supports_filter_and_order_suffix(db, target, field):
+    kind = "okr_review_items"
+    for suffix, weight in (("a", 2), ("b", 3)):
+        data = supplied(kind, suffix) | {field: weight}
+        insert(db, kind, supplied=data)
+        insert_task12(target, kind, data)
+    for projection in (task12_projection(kind), task20_projection(kind)):
+        actual = target.execute(
+            projection + " and " + field + "=? order by id", ("2",)
+        ).fetchall()
+        expected = db.execute(
+            "select * from " + kind + " where " + field + "=? order by id", ("2",)
+        ).fetchall()
+        assert len(actual) == len(expected) == 1
+        assert (type(actual[0][field]), actual[0][field]) == (
+            type(expected[0][field]),
+            expected[0][field],
+        )
