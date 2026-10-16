@@ -63,3 +63,12 @@ def test_pending_offboarding_operations_need_a_safe_plan_not_premature_completio
         assert "do not demand immediate revocation that would interrupt active service" in text
         assert "Do not put credential values in OA records" in text
         assert "If no safe owner-and-timing plan is documented, identify only that gap" in text
+
+
+def test_preapproval_hiring_requisition_uses_business_line_decision_and_allows_new_role_absence() -> None:
+    for path in SKILL_PATHS:
+        text = path.read_text(encoding="utf-8")
+        assert "Recruitment approval is the **prerequisite** for the role to be created or appear in 小青" in text
+        assert "the absence of a Xiaoqing record before approval is not contrary evidence" in text
+        assert "The business-line owner's approval of the stated number is sufficient business approval" in text
+        assert "project/budget evidence is consistent" in text

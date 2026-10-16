@@ -73,6 +73,18 @@ def test_repository_consumer_release_manifest_includes_finance_review_assets():
     assert "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md" in sources
 
 
+def test_repository_consumer_release_manifest_includes_people_review_skill():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    source = "ci/shared-skills/stardust-oa-people-review/SKILL.md"
+    entry = next(item for item in manifest["files"] if item["source"] == source)
+
+    assert entry["target"] == "skills/stardust-oa-people-review/SKILL.md"
+    assert entry["new_sha256"] == _digest((root / source).read_bytes())
+
+
 def _skill(name: str, marker: bool, suffix: str) -> bytes:
     metadata = "metadata:\n  managed_by: ceo-agent-service\n" if marker else ""
     return (
@@ -87,7 +99,13 @@ def _fixture(tmp_path: Path):
     entries = []
     old = {}
     new = {}
-    for name in (*SKILLS, "dingtalk-oa-approval", "stardust-oa-finance-review", "ceo-wechat"):
+    for name in (
+        *SKILLS,
+        "dingtalk-oa-approval",
+        "stardust-oa-finance-review",
+        "stardust-oa-people-review",
+        "ceo-wechat",
+    ):
         rel = f"{name}/SKILL.md"
         previous = _skill(name, name in SKILLS, "old")
         replacement = _skill(name, name in SKILLS, "new")

@@ -28,6 +28,7 @@ EXPECTED_SOURCES = frozenset((
     "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
     "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
     "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
+    "ci/shared-skills/stardust-oa-people-review/SKILL.md",
     "app/defaults/audit_rules.md",
     "ci/shared-skills/ceo-wechat/SKILL.md",
 ))
