@@ -81,5 +81,5 @@ Convert all existing8andremaining12caller groups and coupled retained children; 
 
 Fresh QUALITY found two shadowed Workbench negative paths: three source CHECK cases and the parent INSERT guard reused an existing client_request_id. No declaration defect was reproduced; original declarations reject the independent invalid values. The complete adjacent canonical regression now supplies a distinct request ID, completed status and sequence2; both tests first insert the exact valid control under a savepoint, roll back, then change only the bad field/parent. The repaired canonical325case preflight passes; transfer the exact new regression hash above to tests/test_task20_definitions.py, rerun applied325cases/Ruff/diff, and commit only applied regression plus ownclaim/this repair checkbox. Application/canonical declaration SHA stays59938318 unchanged.
 
-- [ ] Mechanical writer transfers repaired canonical regression and verifies applied325cases.
+- [x] Mechanical writer transfers repaired canonical regression and verifies applied325cases.
 - [ ] Root confirms app unchanged, existing SPEC scope still holds, and QUALITY rechecks three CHECK deletion mutants plus the parent INSERT-trigger deletion mutant against the repaired tests before acceptance.
