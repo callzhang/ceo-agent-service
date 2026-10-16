@@ -861,7 +861,7 @@ source oracle and275 focused regressions. Source-bound final-hash copied proof:
 50 unaffected baseline tables identical, original FK finding unchanged and frozen
 input SHA unchanged. Installed275 tests/Ruff7 and a cold Store+Email54-table/
 Email52/fresh-FK control pass. Canonical SPEC and revised QUALITY pass; fresh
-applied reviews remain a separate receipt. The current runtime still selects54
+applied SPEC275 and QUALITY61/Ruff7 APPROVE the exact installed code c14cb181d. The current runtime still selects54
 ordinary tables and production is untouched. Runs11 current callers/coordinator
 and51-table cold startup are the next stage; the final11-table goal is incomplete.
 See `2026-10-16-runs11-consolidation-plan.md` and final-hash copy/applied receipts.
