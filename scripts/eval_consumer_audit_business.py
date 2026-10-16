@@ -83,7 +83,11 @@ REVIEW_SUBJECT_SOURCE = r'''
 import json, sys
 from app.agent_contracts import ConsumerAgentResult
 from app.reviewed_candidates import candidate_digest
-result = ConsumerAgentResult.model_validate(json.loads(sys.stdin.read()))
+payload = json.loads(sys.stdin.read())
+result = ConsumerAgentResult.model_validate(
+    payload["result"],
+    context={"persisted_evidence": True} if payload.get("persisted_evidence") else None,
+)
 print(json.dumps({"result": result.model_dump(mode="json"), "digest": candidate_digest(result)}, ensure_ascii=False))
 '''
 SOURCE_FILES = (
@@ -180,10 +184,13 @@ def normalize_role_result(root: Path, role: str, result: dict | None) -> dict:
     return {"ok": True, "error": "", **parsed}
 
 
-def normalize_review_subject(root: Path, result: dict) -> dict:
+def normalize_review_subject(
+    root: Path, result: dict, *, persisted_evidence: bool = False
+) -> dict:
+    payload = {"result": result, "persisted_evidence": persisted_evidence}
     completed = subprocess.run(
         [sys.executable, "-c", REVIEW_SUBJECT_SOURCE], cwd=root,
-        input=json.dumps(result, ensure_ascii=False), capture_output=True, text=True,
+        input=json.dumps(payload, ensure_ascii=False), capture_output=True, text=True,
         timeout=30, check=False, env={**os.environ, "PYTHONPATH": str(root)},
     )
     if completed.returncode:

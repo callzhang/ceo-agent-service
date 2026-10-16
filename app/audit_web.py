@@ -41,8 +41,8 @@ from fastapi.staticfiles import StaticFiles
 from app.external_failures import external_task_error_sql
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.agent_contracts import (
-    ConsumerAgentResult,
     DecisionOption,
+    parse_persisted_consumer_result,
 )
 from app.approval_history import (
     ApprovalHistoryResult,
@@ -11473,7 +11473,7 @@ def _consumer_result_fields(
     fields = [("Consumer 执行结果", f"run #{consumer.id}" if consumer else "—")]
     try:
         result = (
-            ConsumerAgentResult.model_validate_json(consumer.adopted_result_json)
+            parse_persisted_consumer_result(consumer.adopted_result_json)
             if consumer is not None and consumer.status != "failed"
             else None
         )
@@ -12840,7 +12840,7 @@ def _consumer_proposal_display(
         if run.role is not AgentRole.CONSUMER or not run.adopted_result_json.strip():
             continue
         try:
-            result = ConsumerAgentResult.model_validate_json(run.adopted_result_json)
+            result = parse_persisted_consumer_result(run.adopted_result_json)
         except ValueError:
             continue
         if result.proposal is None:

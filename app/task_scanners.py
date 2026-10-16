@@ -243,6 +243,7 @@ def minutes_work_item(
     digest: str,
     canonical: str,
     scheduled_consumer: Any = None,
+    transcript_unavailable: bool = False,
 ) -> WorkItem:
     """The Work Item a meeting's action items become; the scan and the owner backfill build it the same way."""
     title = str(minutes.get("title") or f"AI minutes {minutes_id}").strip()
@@ -261,6 +262,7 @@ def minutes_work_item(
                 "participants": [],
                 "source_conversation_kind": "minutes",
                 "source_conversation_title": title,
+                "source_transcript_unavailable": transcript_unavailable,
             },
             "scheduled_consumer": (
                 _task_scheduled_consumer_payload(scheduled_consumer)
@@ -353,11 +355,16 @@ def scan_meeting_todos(
         # Who is asked to do each action item is in the conversation around it,
         # not in the action item (its executor list is empty). A transcript that
         # cannot be read is retried next scan rather than queued without it.
+        transcript_unavailable = False
         try:
             paragraphs = get_minutes_transcript(minutes_id)["paragraphs"]
-        except Exception as exc:
-            errors.append(f"{minutes_id}: transcript: {exc}")
-            continue
+        except Exception:
+            # Meeting Todos and the DingTalk summary are independent evidence.
+            # Keep processing the item when the transcript endpoint alone is
+            # unavailable; Task receives an explicit marker so it cannot infer
+            # owners from a transcript it did not read.
+            paragraphs = []
+            transcript_unavailable = True
         # The DingTalk-generated summary is a second source for who owns each item;
         # a meeting whose summary is not ready yet is retried next scan rather than
         # queued without it, same as an unreadable transcript.
@@ -379,6 +386,7 @@ def scan_meeting_todos(
             digest=digest,
             canonical=canonical,
             scheduled_consumer=scheduled_consumer,
+            transcript_unavailable=transcript_unavailable,
         )
         store.enqueue_work_summary_input(
             source_type=item.source.type.value,

@@ -1,0 +1,44 @@
+{
+  "measured_at_utc": "2026-10-16T12:57:57.654176+00:00",
+  "read_only": true,
+  "production_head": "454bb72a5fcb42761046571280722fb9d2ba16f1",
+  "ordinary_table_count": 116,
+  "page_size": 4096,
+  "page_count": 120198,
+  "freelist_count": 29,
+  "files_bytes": {
+    "database": 492331008,
+    "wal": 4140632,
+    "shm": 32768
+  },
+  "provider_inventory": {
+    "table": "email_provider_observations",
+    "rows": 72184,
+    "allocated_bytes": {
+      "table": 13336576,
+      "folder_index": 2301952,
+      "identity_unique_index": 9355264
+    },
+    "field_utf8_bytes": {
+      "account_id": 1361674,
+      "stable_message_identity": 6784125,
+      "state": 723698,
+      "provider_folder_id": 182975,
+      "provider_folder_name": 182975,
+      "category_key": 18746,
+      "important": 35163,
+      "observed_at": 2309888,
+      "important_signals_json": 89070
+    }
+  },
+  "interpretation": [
+    "Provider inventory contains per-message current facts, not provider connection configuration.",
+    "The large identity and its unique index account for much of that inventory's allocation; important_signals_json is small in this measurement.",
+    "Production116 ordinary tables and last accepted intermediate candidate82 ordinary tables describe different databases; neither is the final ten-plus-ledger acceptance."
+  ],
+  "limits": [
+    "Filesystem WAL/SHM sizes may change during service writes.",
+    "dbstat reports allocated pages of individual table/index objects, not a new migration or exact future reclaim estimate.",
+    "This is not a new full row/retention-policy audit."
+  ]
+}

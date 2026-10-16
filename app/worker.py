@@ -23,7 +23,12 @@ from app.agent_context import (
     MaterialReference,
     PriorReceipt,
 )
-from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult
+from app.agent_contracts import (
+    AuditAgentResult,
+    AuditOutcome,
+    ConsumerAgentResult,
+    parse_persisted_consumer_result,
+)
 from app.agent_orchestrator import (
     EXTERNAL_DEPENDENCY_WAIT_ERRORS,
     AgentOrchestrator,
@@ -524,7 +529,7 @@ def _accepted_consumer_result(
     if adopted is None:
         return None
     try:
-        return ConsumerAgentResult.model_validate_json(adopted["candidate_json"])
+        return parse_persisted_consumer_result(adopted["candidate_json"])
     except ValidationError:
         return None
 
@@ -2820,7 +2825,7 @@ class DingTalkAutoReplyWorker:
         candidate = self.store.get_review_candidate(result.candidate_id) if result.candidate_id else None
         if candidate is None:
             return {}
-        data = ConsumerAgentResult.model_validate_json(candidate["candidate_json"])
+        data = parse_persisted_consumer_result(candidate["candidate_json"])
         current = self.store.current_reviewed_candidate(task.id, task.execution_generation)
         plan = data.proposal
         if current and current["selection_id"]:

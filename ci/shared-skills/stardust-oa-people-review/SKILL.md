@@ -33,6 +33,18 @@ Read the handover document, OA remarks/comments, and records for the receiving p
 
 This Skill does not yet define the completion standard, time-critical exceptions, or the authority of HR/manager/asset and account owners. An incomplete handover is a material gap: return it for a traceable handover record under the decision table. Do not infer approval authority from role title or past cases; escalate the exact unresolved branch with `needs_human`.
 
+### Explicit no-return instructions and target routing
+
+When the latest OA comments or an explicit instruction from the current authorized approver says not to return the approval to a named person, that instruction overrides the generic return-to-submitter route: do not return the approval to that person. Do not treat the instruction as evidence that the handover gap is resolved. Keep the handover evidence checks above, and do not approve solely because returning to the named person is prohibited.
+
+Before proposing another recipient, identify the exact unresolved handover item and who owns or can complete it. Route a correctable gap only to a valid OA target whose responsibility for that gap is supported by evidence. Do not assume the applicant, initiator, handover recipient, HR or an asset/account owner is the correct target based only on their title or presence in the workflow. If no such target is established, keep the current task pending with `no_action` and use `needs_human` for the unresolved routing decision. Do not ask that person to repeat already verified material.
+
+OA comments and linked records are eligible evidence for handover receipt. Match each confirmation to its recipient and the specific handover item; a later substantive recipient confirmation supersedes an older ‘待确认’ entry for the same item. A generic `AGREE` node alone does not replace item-level evidence. Do not ask the applicant to repeat or reformat a confirmation already verified in the current process comments or linked records. If evidence covers only part of the handover, request only the unresolved item or missing detail; do not restate items already confirmed.
+
+Resolve the commenter and the person referred to by an explicit no-return instruction against OA identities and the process roles before applying it; do not infer that ‘me’ means the applicant or initiator. The restriction excludes only the identified person. If the prohibited person is ambiguous, keep the task pending with `no_action` and use `needs_human` for the unresolved routing decision.
+
+Account and credential offboarding may be scheduled for the last working day or a controlled post-approval cutover when the employee still needs access for active work. Before approval, verify the responsible owner, timing, and dependencies; do not require a future operation to be complete. The plan must be specific enough to identify who will act and when, and must not extend beyond an established offboarding deadline without an explicit mitigation or decision. For active shared or service credentials, use an owner-coordinated rotation and validation plan; do not demand immediate revocation that would interrupt active service. Do not put credential values in OA records; a redacted secret is not a missing handover item. After the scheduled action is due, verify its completion through the appropriate owner or system record. If no safe owner-and-timing plan is documented, identify only that gap for the person who can establish it, or escalate the policy/authority question with `needs_human`.
+
 ## Promotion
 
 Read the full promotion plan, performance/history or feedback sources, meeting records, OA comments and attachments. Assess whether the evidence covers changed role responsibilities, demonstrated business outcomes, capability gaps, organizational collaboration, management methods, risk anticipation and measurable follow-up goals. Search current materials about the person, role and department to ground the proposed plan in actual needs.
@@ -41,20 +53,23 @@ The 2026 performance policy may inform performance evidence, but where it delega
 
 The current source set does not establish eligibility thresholds, time-in-role, cross-level exceptions, leveling/salary adjustment authority, exception approvers or approve/return/reject mappings. Where these matter, `rule_coverage < 1.0`; use `needs_human` and name the missing primary policy/authority.
 
-## Hiring requisition (招聘需求申请) (Derek, 2026-09-24)
+## Hiring requisition (招聘需求申请) (Derek, 2026-09-24; approval timing clarified 2026-10-13)
 
-Decide from the **hiring list** and the **interview situation**, both read from the 小青 interview system (`xiaoqing_interview` MCP), not from the applicant's own account. The list is the hiring plan (Derek: "招聘清单就是计划").
+Recruitment approval is the **prerequisite** for the role to be created or appear in 小青. Before the OA approval, a missing Xiaoqing role, candidate pipeline or separate approved-HC field is expected; it is not a gap, contradiction, reason to return, or reason for `needs_human`. Do not require the post-approval recruiting record to approve the preceding requisition. Use the submitted requisition and its budget/project evidence, together with the responsible business-line owner's explicit OA decision on the requested number. If that owner approves the stated number and project/budget evidence is consistent, approve the requisition without requiring an independent XiaoQing HC record. The approval result then enables the hiring plan/role to appear in 小青.
+
+Use the **hiring list** and **interview situation** in 小青 (`xiaoqing_interview` MCP) to track execution after approval and to review a specific candidate's hiring process. The list is the recruiting plan once the requisition has been approved (Derek: "招聘清单就是计划"). A prior Agent comment asking Derek to decide is not itself an outstanding decision after Derek or the responsible business-line owner has subsequently made that decision in the OA flow or current task instruction; reread the latest process state and apply the current decision.
 
 Where it is: call `get_dashboard_stats` with `period=all` (it also takes `jobStatus`, `priority`, `recruiter`, `jobId` filters). `data.job_process` is one row per job: `job_id`, `job_title`, `priority` (P0/P1), `recruiter`, and stage counts `total_count`, `resume_qualified_count`, `interviewed_count`, `first_interview_count`, `second_interview_count`, `third_interview_count`, `written_test_count`, `offer_count`, `awaiting_entry_count`, `abandoned_entry_count`, `onboarded_count`, plus `progress_summary` (for example "等待二面 1人"). Read the interview situation for a role with `search_candidates` (`job_title`, `stage`, `round`) and `list_candidate_interviews`.
 
 What the list does **not** contain: requested headcount, approved HC, remaining gap, target hires, or job open/closed status. `total_count` is the number of candidates, never a headcount. Do not treat it as one. The list is also scoped to what the logged-in user can see.
 
 How to judge:
-- Match the requisition to a job by `job_title`. The role is in the list and its pipeline supports the request (candidates in the stages the request implies, no unexplained gap) → the requisition is supported.
-- The role is **not** in the list → the plan does not contain it. Return it to the submitter to say which plan entry it belongs to; do not infer one.
-- The request states a headcount, or a level the list cannot show → that part cannot be verified from 小青: `needs_human`, naming the headcount claim.
+- For the **pre-approval requisition**, confirm the requested number in the OA form, the responsible business-line owner's decision in the OA flow, and consistency with available project and budget evidence. The business-line owner's approval of the stated number is sufficient business approval when those facts align; the absence of a Xiaoqing record before approval is not contrary evidence.
+- Candidate count is never headcount and cannot establish approved HC. Do not use pipeline stage counts to infer or veto the requested number.
+- If the responsible business-line owner has not decided, the number is disputed, or objective project/budget evidence conflicts, name that exact unresolved issue for the responsible decision maker.
+- After approval, match the created recruiting role by `job_title` and use its pipeline to track execution. A post-approval pipeline mismatch is a recruiting follow-up issue; it does not retroactively make the pre-approval role's absence a reason to reject the requisition.
 
-The hiring list and interview situation are read by us, not material the applicant supplies, so a missing one is never returned to the applicant. If the 小青 MCP cannot be reached (401 / needs login) or the tool returns nothing, that is a reading failure: report it and `needs_human`, naming exactly what could not be read. Never approve or reject on the applicant's description of the plan.
+The recruiting list and interview situation are read by us, not material the applicant supplies. They are not a pre-approval gate. If a specific post-approval execution review requires Xiaoqing and the MCP cannot be reached (401 / needs login), report the reading failure and `needs_human`, naming exactly what could not be read; do not convert that downstream tool failure into a rejection of an otherwise supported pre-approval requisition. Never infer the owner’s decision from the applicant's description of the plan.
 
 ## Probation confirmation (转正申请) (Derek, 2026-09-24)
 

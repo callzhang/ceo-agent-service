@@ -15,6 +15,35 @@ def test_latest_generation_run_overrides_stale_attempt_status():
     assert project_attempt_status(attempt, task, runs) == "done"
 
 
+def test_current_unresolved_execution_uncertainty_overrides_terminal_task():
+    attempt = SimpleNamespace(send_status="done", resolved_at="")
+    task = SimpleNamespace(status="done", execution_generation="g1")
+    run = SimpleNamespace(
+        id=2, execution_generation="g1", turn_attempt=0, proposal_revision=0,
+        role="audit", status="completed",
+    )
+    assert project_attempt_status(
+        attempt, task, [run], current_execution_status="uncertain"
+    ) == "uncertain"
+
+
+def test_resolved_attempt_keeps_resolution_projection_despite_old_uncertainty():
+    attempt = SimpleNamespace(send_status="skipped", resolved_at="verified-return", agent_run_id=1)
+    task = SimpleNamespace(status="done", execution_generation="g1")
+    assert project_attempt_status(
+        attempt,
+        task,
+        [SimpleNamespace(
+            id=1,
+            execution_generation="g1",
+            turn_attempt=0,
+            proposal_revision=0,
+            status="completed",
+        )],
+        current_execution_status="uncertain",
+    ) == "skipped"
+
+
 def test_last_effective_run_wins_within_current_generation():
     attempt = SimpleNamespace(send_status="pending")
     task = SimpleNamespace(status="processing", execution_generation="g1")

@@ -230,6 +230,7 @@ from app.action_storage import (
     _reply_variant_for,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
+    CANDIDATE_EXECUTION_SQL,
     REVIEW_CANDIDATE_SQL,
     EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
@@ -29708,146 +29709,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"select id as source_id, updated_at as occurred_at "
                 f"from ({REPLY_TASK_CURRENT_SQL}) where status='failed'"
             ),
-            "reply_attempts": f"""
-                with current_tasks as ({REPLY_TASK_CURRENT_SQL}),
-                task_attempts as (
-                    select cast(attempts.legacy_key as integer) as attempt_id,
-                           agent_run.task_id as task_id
-                    from actions as attempts
-                    join runs as agent_run
-                      on agent_run.id=attempts.attempt_agent_run_id
-                     and agent_run.record_type='agent_runs'
-                    where attempts.record_type='reply_attempts'
-                ),
-                latest_task_attempts as (
-                    select task_id, max(attempt_id) as latest_attempt_id
-                    from task_attempts
-                    group by task_id
-                ),
-                terminal_tasks as (
-                    select channel, conversation_id, trigger_message_id
-                    from current_tasks
-                    where status in ('done', 'skipped', 'needs_human')
-                ),
-                terminal_business_objects as (
-                    select current_business_object.business_object_key
-                    from business_object_tasks as current_business_object
-                    join current_tasks as task
-                      on task.id=current_business_object.reply_task_id
-                    where task.status in ('done', 'skipped', 'needs_human')
-                ),
-                terminal_attempts as (
-                    select attempt_channel as channel,
-                           attempt_conversation_id as conversation_id,
-                           attempt_trigger_message_id as trigger_message_id,
-                           max(cast(legacy_key as integer)) as terminal_id
-                    from actions
-                    where record_type='reply_attempts'
-                      and attempt_send_status in (
-                          'sent', 'completed', 'skipped', 'needs_human',
-                          'reacted', 'commented', 'calendar', 'document'
-                      )
-                    group by attempt_channel, attempt_conversation_id,
-                             attempt_trigger_message_id
-                )
-                select cast(attempts.legacy_key as integer) as source_id,
-                       attempts.attempt_updated_at as occurred_at
-                from actions as attempts
-                join runs as agent_run
-                  on agent_run.id=attempts.attempt_agent_run_id
-                 and agent_run.record_type='agent_runs'
-                join current_tasks as task
-                  on task.id=agent_run.task_id
-                 and task.execution_generation=agent_run.execution_generation
-                join latest_task_attempts as latest
-                  on latest.task_id=agent_run.task_id
-                where attempts.record_type='reply_attempts'
-                  and attempts.attempt_send_status='failed'
-                  and latest.latest_attempt_id=cast(attempts.legacy_key as integer)
-                  and task.status not in ('done', 'skipped', 'needs_human')
-                  and coalesce(attempts.attempt_resolved_at, '')=''
-                  and not exists (
-                      select 1 from terminal_tasks as terminal_task
-                      where terminal_task.channel=attempts.attempt_channel
-                        and terminal_task.conversation_id=attempts.attempt_conversation_id
-                        and terminal_task.trigger_message_id=attempts.attempt_trigger_message_id
-                  )
-                  and not exists (
-                      select 1 from terminal_business_objects as terminal_object
-                      where terminal_object.business_object_key=(
-                          'message:' || attempts.attempt_channel || ':' ||
-                          attempts.attempt_conversation_id || ':' ||
-                          attempts.attempt_trigger_message_id
-                      )
-                  )
-                union
-                select cast(attempts.legacy_key as integer) as source_id,
-                       attempts.attempt_updated_at as occurred_at
-                from actions as attempts
-                left join runs as agent_run
-                  on agent_run.id=attempts.attempt_agent_run_id
-                 and agent_run.record_type='agent_runs'
-                left join current_tasks as task on task.id=agent_run.task_id
-                left join latest_task_attempts as latest on latest.task_id=agent_run.task_id
-                left join terminal_attempts as terminal
-                  on terminal.channel=attempts.attempt_channel
-                 and terminal.conversation_id=attempts.attempt_conversation_id
-                 and terminal.trigger_message_id=attempts.attempt_trigger_message_id
-                where attempts.record_type='reply_attempts'
-                  and attempts.attempt_send_status='failed'
-                  and coalesce(attempts.attempt_resolved_at, '')=''
-                  and (latest.latest_attempt_id is null or latest.latest_attempt_id=
-                       cast(attempts.legacy_key as integer))
-                  and (agent_run.id is null or task.id is null)
-                  and (terminal.terminal_id is null or terminal.terminal_id <
-                       cast(attempts.legacy_key as integer))
-                  and not exists (
-                      select 1 from terminal_tasks as terminal_task
-                      where terminal_task.channel=attempts.attempt_channel
-                        and terminal_task.conversation_id=attempts.attempt_conversation_id
-                        and terminal_task.trigger_message_id=attempts.attempt_trigger_message_id
-                  )
-                  and not exists (
-                      select 1 from terminal_business_objects as terminal_object
-                      where terminal_object.business_object_key=(
-                          'message:' || attempts.attempt_channel || ':' ||
-                          attempts.attempt_conversation_id || ':' ||
-                          attempts.attempt_trigger_message_id
-                      )
-                  )
-                union
-                select cast(attempts.legacy_key as integer) as source_id,
-                       attempts.attempt_updated_at as occurred_at
-                from actions as attempts
-                join current_tasks as task
-                  on task.channel=attempts.attempt_channel
-                 and task.conversation_id=attempts.attempt_conversation_id
-                 and task.trigger_message_id=attempts.attempt_trigger_message_id
-                left join latest_task_attempts as latest
-                  on latest.task_id=task.id
-                left join runs as agent_run
-                  on agent_run.id=attempts.attempt_agent_run_id
-                 and agent_run.record_type='agent_runs'
-                left join current_tasks as run_task on run_task.id=agent_run.task_id
-                join wechat_deliveries as delivery
-                  on delivery.reply_task_id=task.id
-                 and delivery.execution_generation=task.execution_generation
-                 and delivery.conversation_id=attempts.attempt_conversation_id
-                where attempts.record_type='reply_attempts'
-                  and attempts.attempt_send_status='failed'
-                  and (latest.latest_attempt_id is null or latest.latest_attempt_id=
-                       cast(attempts.legacy_key as integer))
-                  and attempts.attempt_channel='wechat'
-                  and (run_task.id is null or agent_run.execution_generation=
-                       run_task.execution_generation)
-                  and delivery.status in ('failed', 'send_unknown')
-                  and delivery.id=(
-                      select max(current_delivery.id)
-                      from wechat_deliveries as current_delivery
-                      where current_delivery.reply_task_id=task.id
-                        and current_delivery.execution_generation=task.execution_generation
-                  )
-            """,
+            "reply_attempts": (
+                "select source_id, occurred_at from ("
+                + self._operation_logs_base_query(("reply_attempts",))
+                + ") where status='failed'"
+            ),
             "meeting_alignment_runs": f"""
                 select runs.id as source_id, runs.created_at as occurred_at
                 from ({MEETING_RUN_SQL}) as runs
@@ -29954,42 +29820,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, db: sqlite3.Connection, attempt_ids: list[int]
     ) -> list[sqlite3.Row]:
         placeholders = ",".join("?" for _ in attempt_ids)
-        history_type = history_types.reply_attempt_history_type_sql("reply_attempts")
+        base = self._operation_logs_base_query(("reply_attempts",), attempt_ids)
         return db.execute(
-            f"""
-            select
-                'reply:' || reply_attempts.id as id,
-                'reply_attempts' as source_table,
-                reply_attempts.id as source_id,
-                reply_attempts.updated_at as occurred_at,
-                'Reply' as category,
-                reply_attempts.action as action,
-                'failed' as status,
-                {history_type} as history_type,
-                reply_attempts.trigger_sender as source_actor,
-                reply_attempts.conversation_title as context,
-                reply_attempts.trigger_text as summary,
-                trim(
-                    coalesce(
-                        nullif(reply_attempts.final_reply_text, ''),
-                        nullif(reply_attempts.audit_summary, ''),
-                        ''
-                    )
-                    || case when reply_attempts.send_error<>''
-                            then char(10) || reply_attempts.send_error else '' end
-                    || case when coalesce(reply_attempts.resolved_at, '')<>''
-                            then char(10) || 'Resolved: ' || reply_attempts.resolution
-                            else '' end,
-                    char(10)
-                ) as detail,
-                reply_attempts.conversation_id as conversation_id,
-                reply_attempts.trigger_message_id as message_id,
-                0 as project_id,
-                0 as todo_id,
-                0 as follow_up_id
-            from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
-            where reply_attempts.id in ({placeholders})
-            """,
+            "select * from (" + base + ") as failed_attempts "
+            f"where source_id in ({placeholders}) and status='failed'",
             tuple(attempt_ids),
         ).fetchall()
 
@@ -30062,6 +29896,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         source_tables: tuple[str, ...] | None = None,
         reply_attempt_ids: list[int] | tuple[int, ...] | None = None,
     ) -> str:
+        oa_status_projection = """(
+            (reply_attempts.action='oa_approval'
+             or coalesce(reply_attempts.oa_process_instance_id, '')<>'')
+            and reply_attempts.send_status in (
+                'blocked', 'completed', 'commented', 'decision_selected', 'failed',
+                'recovered', 'skipped'
+            )
+        )"""
         query = f"""
             select
                     'error:' || id as id,
@@ -30116,7 +29958,180 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     'Reply' as category,
                     action as action,
                     case
+                        -- Current unresolved System Execution uncertainty
+                        -- outranks a terminal task status. Resolved attempts
+                        -- keep their existing resolution projection.
+                        when send_status<>'skipped' and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as uncertain_attempt_run
+                            join ({CANDIDATE_REVIEW_SQL}) as uncertain_review
+                              on uncertain_review.audit_run_id=uncertain_attempt_run.id
+                            join ({REVIEW_CANDIDATE_SQL}) as uncertain_candidate
+                              on uncertain_candidate.id=uncertain_review.candidate_id
+                            join ({REPLY_TASK_CURRENT_SQL}) as uncertain_task
+                              on uncertain_task.id=uncertain_candidate.task_id
+                             and uncertain_task.execution_generation=uncertain_candidate.execution_generation
+                            join ({CANDIDATE_EXECUTION_SQL}) as uncertain_execution
+                              on uncertain_execution.candidate_id=uncertain_candidate.id
+                            where uncertain_attempt_run.id=reply_attempts.agent_run_id
+                              and uncertain_task.execution_generation=uncertain_attempt_run.execution_generation
+                              and uncertain_execution.status='uncertain'
+                              and uncertain_candidate.id=(
+                                  select max(current_candidate.id)
+                                  from ({REVIEW_CANDIDATE_SQL}) as current_candidate
+                                  where current_candidate.task_id=uncertain_task.id
+                                    and current_candidate.execution_generation=uncertain_task.execution_generation
+                              )
+                        ) then 'uncertain'
+                        -- A failed legacy OA Attempt can point to a task whose
+                        -- current execution is still awaiting an external
+                        -- receipt. Detail resolves this from the task even
+                        -- when the historical run link is missing or stale.
+                        -- Preserve that uncertainty before projecting the
+                        -- task's terminal failure below.
+                        when {oa_status_projection} and send_status='failed' and exists (
+                            select 1
+                            from ({REPLY_TASK_CURRENT_SQL}) as uncertain_message_task
+                            where uncertain_message_task.channel=reply_attempts.channel
+                              and uncertain_message_task.conversation_id=reply_attempts.conversation_id
+                              and uncertain_message_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and uncertain_message_task.status='failed'
+                              and uncertain_message_task.error='external_action_uncertain'
+                        ) then 'uncertain'
                         when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
+                        -- The list and Attempt detail share the current task
+                        -- generation as their status source. Keep the action
+                        -- column as the historical operation label; do not
+                        -- leave successful terminal task states as legacy
+                        -- Attempt labels such as completed/commented.
+                        when {oa_status_projection} and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and projected_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                        ) then (
+                            select case
+                                when projected_task.status='done'
+                                 and send_status='skipped'
+                                 and projected_run.status='completed'
+                                 and projected_run.id=(
+                                     select latest_current_run.id
+                                     from ({AGENT_RUN_SQL}) as latest_current_run
+                                     where latest_current_run.reply_task_id=projected_task.id
+                                       and latest_current_run.execution_generation=projected_task.execution_generation
+                                     order by coalesce(latest_current_run.proposal_revision, 0) desc,
+                                              case when latest_current_run.role='audit' then 1 else 0 end desc,
+                                              coalesce(latest_current_run.turn_attempt, 0) desc,
+                                              latest_current_run.id desc
+                                     limit 1
+                                 )
+                                 and projected_run.id=reply_attempts.agent_run_id
+                                then 'skipped'
+                                else projected_task.status
+                            end
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and projected_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                            limit 1
+                        )
+                        when {oa_status_projection}
+                         and not exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                         ) and exists (
+                            select 1
+                            from ({REPLY_TASK_CURRENT_SQL}) as message_task
+                            where message_task.channel=reply_attempts.channel
+                              and message_task.conversation_id=reply_attempts.conversation_id
+                              and message_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and message_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(message_task.error, '')<>'external_action_uncertain'
+                        ) then (
+                            select message_task.status
+                            from ({REPLY_TASK_CURRENT_SQL}) as message_task
+                            where message_task.channel=reply_attempts.channel
+                              and message_task.conversation_id=reply_attempts.conversation_id
+                              and message_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and message_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(message_task.error, '')<>'external_action_uncertain'
+                            order by message_task.id desc
+                            limit 1
+                        )
+                        when {oa_status_projection} and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and (
+                                  select latest_current_run.status
+                                  from ({AGENT_RUN_SQL}) as latest_current_run
+                                  where latest_current_run.reply_task_id=projected_task.id
+                                    and latest_current_run.execution_generation=projected_task.execution_generation
+                                  order by coalesce(latest_current_run.proposal_revision, 0) desc,
+                                           case when latest_current_run.role='audit' then 1 else 0 end desc,
+                                           coalesce(latest_current_run.turn_attempt, 0) desc,
+                                           latest_current_run.id desc
+                                  limit 1
+                              ) in ('pending', 'running', 'failed')
+                        ) then (
+                            select (
+                                select latest_current_run.status
+                                from ({AGENT_RUN_SQL}) as latest_current_run
+                                where latest_current_run.reply_task_id=projected_task.id
+                                  and latest_current_run.execution_generation=projected_task.execution_generation
+                                order by coalesce(latest_current_run.proposal_revision, 0) desc,
+                                         case when latest_current_run.role='audit' then 1 else 0 end desc,
+                                         coalesce(latest_current_run.turn_attempt, 0) desc,
+                                         latest_current_run.id desc
+                                limit 1
+                            )
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                            limit 1
+                        )
+                        when {oa_status_projection} and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and projected_task.status in ('pending', 'processing', 'running')
+                        ) then (
+                            select case when projected_task.status='processing' then 'running'
+                                        else projected_task.status end
+                            from ({AGENT_RUN_SQL}) as projected_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                              on projected_task.id=projected_run.reply_task_id
+                            where projected_run.id=reply_attempts.agent_run_id
+                              and projected_run.execution_generation=projected_task.execution_generation
+                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and projected_task.status in ('pending', 'processing', 'running')
+                            limit 1
+                        )
+                        -- With no owning task, keep the Attempt's own failure
+                        -- or block status. The generic supersession rule can
+                        -- call an old row `recovered`, but Attempt detail has
+                        -- no current task generation to project in this case.
+                        when {oa_status_projection} and send_status in ('blocked', 'failed')
+                            then send_status
                         -- Candidate completion is independent of delivery.
                         -- Only the latest delivery for this object and its
                         -- owning task generation supplies its send outcome.
@@ -30136,6 +30151,35 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                                     and current_delivery.execution_generation=delivery_task.execution_generation
                               )
                         ) then 'failed'
+                        -- Attempt detail follows the stable AgentRun task ID.
+                        -- The current task's DingTalk trigger key can change
+                        -- during OA scanning, so terminal state must not be
+                        -- inferred only from the historical message key.
+                        when send_status='failed' and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                              on bound_current_task.id=bound_attempt_run.reply_task_id
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                              and coalesce(bound_current_task.error, '')='external_action_uncertain'
+                        ) then 'uncertain'
+                        when send_status='failed' and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                              on bound_current_task.id=bound_attempt_run.reply_task_id
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                              and bound_current_task.status in ('done', 'skipped', 'needs_human')
+                              and coalesce(bound_current_task.error, '')<>'external_action_uncertain'
+                        ) then (
+                            select bound_current_task.status
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                              on bound_current_task.id=bound_attempt_run.reply_task_id
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                              and coalesce(bound_current_task.error, '')<>'external_action_uncertain'
+                            limit 1
+                        )
                         -- A failed attempt whose own task was handed to Derek
                         -- reads `needs_human`, not `recovered`. The task and
                         -- the attempt are two projections of one piece of

@@ -11,6 +11,7 @@ from app.agent_contracts import (
     ConsumerProposal,
     ProposedAction,
     SystemExecutionResult,
+    parse_persisted_consumer_result,
 )
 from app.external_action_identity import expected_external_action
 from app.reviewed_candidates import candidate_digest
@@ -88,7 +89,7 @@ class SystemExecutor:
         if adopted is None:
             return False
         try:
-            prior = ConsumerAgentResult.model_validate_json(adopted["candidate_json"])
+            prior = parse_persisted_consumer_result(adopted["candidate_json"])
         except ValueError:
             return False
         plans = ([prior.proposal] if prior.proposal is not None else []) + [
@@ -195,7 +196,7 @@ class SystemExecutor:
         row = self.store.current_reviewed_candidate(task.id, task.execution_generation)
         if row is None or row["execution_generation"] != task.execution_generation or row["id"] != candidate_id or row["review_id"] != review_id:
             return self._failure("approved_candidate_missing", "No current approved candidate")
-        candidate = ConsumerAgentResult.model_validate_json(row["candidate_json"])
+        candidate = parse_persisted_consumer_result(row["candidate_json"])
         if candidate_digest(candidate) != row["candidate_digest"]:
             return self._failure("candidate_digest_mismatch", "Stored candidate content changed")
         if candidate.outcome.value == "needs_human":

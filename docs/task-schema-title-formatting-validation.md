@@ -35,3 +35,7 @@ Formal deploy completes e4fdb5d2 ->86772bcd (CLI exit0). Production checkout is 
 After verification, the two owned anonymous Stores and frozen baseline fixture were removed (3633870 bytes). Committed cases/results and both original CLI-native sessions remain; no production/user files were removed.
 
 Later descendant production633f5e59 retains the same titleless native schema SHA05b8c4e15d7b2a967d9b1fe1af26ad7dd847d8f5d4c23b4ccf47cf6423ee0c97,26624 compact chars. Health, Status, Attention, History and public Settings now all return200 after independent Console performance releases; source/process/operational readback is therefore available at this descendant. Earlier timeouts remain recorded and are not attributed to schema formatting. See task_inline_skill_once.production.v1.json.
+
+## Current generator regression baseline
+
+The later `972190d3` change added Task project-selector identity fields and updated the checked-in schema. The original `71be9fce...` generator digest therefore no longer described current main. `tests/test_task_schema_annotation_titles.py` now checks semantic equality with the checked-in schema and freezes its current canonical SHA `9cacda2641f39cd268b5dd3999adf4df7841734c2fc807c815d158fef5ab34b5`. Integral floats are normalized to integers for the digest because JSON Schema treats `0` and `0.0` as the same numeric bound; this keeps the regression stable across Pydantic JSON-rendering versions without weakening field, description, constraint, or literal-value checks.

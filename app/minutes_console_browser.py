@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+import subprocess
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -294,36 +295,56 @@ def _service_profile_dir() -> Path:
 def signed_in_console(profile_dir: Path | None = None, *, org: str = ""):
     """Open the console in the service's headless Chrome, signed in as Derek.
 
-    The browser carries the daily copy of Derek's own Chrome cookies, which
-    authenticates him as far as the organisation picker. The copy is written
-    over the profile on every launch, so the console's own `access_token` never
-    survives a run and the organisation is chosen every time -- which is why
-    there is no stored console session here, and nothing to renew.
+    Refresh the owner's cookie copy on every launch and restore its session
+    cookies with Chrome's native session startup. Otherwise Chrome removes
+    the copied console access token before the first request. A genuinely
+    expired login still requires the owner's ordinary Chrome login handoff.
     """
     from playwright.sync_api import sync_playwright
 
     from app.service_browser import launch_service_chrome
 
     wanted = org or MINUTES_CONSOLE_ORG
+    profile = profile_dir or _service_profile_dir()
     with sync_playwright() as playwright:
+        # Chrome ignores --restore-last-session for a new profile. Initialize
+        # it without visiting a site, then the normal launcher refreshes the
+        # cookie copy before the real launch. Cookie expiry is unchanged.
+        if not (profile / "Default" / "Preferences").is_file():
+            launch_service_chrome(playwright, profile).close()
         context = launch_service_chrome(
-            playwright, profile_dir or _service_profile_dir()
+            playwright, profile, args=["--restore-last-session"],
         )
         try:
             page = context.new_page()
+            for restored_page in tuple(context.pages):
+                if restored_page is not page:
+                    restored_page.close()
             page.goto(HISTORY_URL, wait_until="domcontentloaded", timeout=45_000)
             page.wait_for_timeout(_CONSOLE_SETTLE_MS)
-            if LOGIN_HOST in page.url:
-                _pick_organisation(page, wanted)
-            if MINUTES_CONSOLE_HOST not in page.url:
-                raise MinutesBrowserSessionExpired(
-                    "the copy of Derek's Chrome cookies no longer carries a "
-                    f"DingTalk login (stopped at {page.url[:120]}); open "
-                    "DingTalk in Chrome and let `sync-chrome-cookies` run"
+            try:
+                if LOGIN_HOST in page.url:
+                    _pick_organisation(page, wanted)
+                if MINUTES_CONSOLE_HOST not in page.url:
+                    raise MinutesBrowserSessionExpired(
+                        "the copy of Derek's Chrome cookies no longer carries a "
+                        f"DingTalk login (stopped at {page.url[:120]}); open "
+                        "DingTalk in Chrome and let `sync-chrome-cookies` run"
+                    )
+            except MinutesBrowserSessionExpired:
+                subprocess.run(
+                    ["/usr/bin/open", "-a", "Google Chrome", HISTORY_URL], check=True,
                 )
+                raise
             yield PlaywrightMinutesConsole(page)
         finally:
-            context.close()
+            # Session restoration must retain cookies, not reload old minute
+            # URLs or grow a saved tab list on every scheduled invocation.
+            try:
+                for open_page in context.pages:
+                    open_page.goto("about:blank", wait_until="domcontentloaded")
+            finally:
+                context.close()
 
 
 def _pick_organisation(page, org: str) -> None:

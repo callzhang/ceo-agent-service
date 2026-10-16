@@ -19,7 +19,9 @@ def _candidate(*, outcome="proposal", actions=None, options=None):
             "quality_explanation": "Need choice", "no_external_action_evidence": [{"assertion": "None", "references": ["attempt:1"]}],
             "conclusion": "Choose"} if outcome == "needs_human" else None,
         "error": {"code": "", "retryable": False, "authorization_required": False},
-        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0, "information_completeness": 1.0,
+        "risk": "low", "confidence": 1.0,
+        "rule_coverage": 0.4 if outcome == "needs_human" else 1.0,
+        "information_completeness": 1.0,
     })
 
 

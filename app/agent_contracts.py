@@ -9,11 +9,13 @@ from pydantic import (
     JsonValue,
     StrictInt,
     StrictStr,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
 
 from app.agent_result import AgentError
+from app.decision_quality import require_needs_human_decision_quality
 
 
 class RiskLevel(StrEnum):
@@ -509,12 +511,19 @@ class ConsumerAgentResult(BaseModel):
         return tuple(value) if isinstance(value, list) else value
 
     @model_validator(mode="after")
-    def validate_payload(self) -> "ConsumerAgentResult":
+    def validate_payload(self, info: ValidationInfo) -> "ConsumerAgentResult":
         if (self.stage_index > 0) != (self.predecessor_review_id is not None):
             raise ValueError("later stage requires predecessor_review_id")
         if (self.outcome is ConsumerOutcome.PROPOSAL) != (self.proposal is not None):
             raise ValueError("proposal is required only for proposal outcome")
         if self.outcome is ConsumerOutcome.NEEDS_HUMAN:
+            if not (info.context or {}).get("persisted_evidence", False):
+                require_needs_human_decision_quality(
+                    risk=self.risk,
+                    confidence=self.confidence,
+                    rule_coverage=self.rule_coverage,
+                    information_completeness=self.information_completeness,
+                )
             if not ((2 <= len(self.decision_options) <= 4 and self.requested_input is None) or (not self.decision_options and self.requested_input)):
                 raise ValueError("needs_human requires two to four options or requested_input")
             keys = [option.key for option in self.decision_options]
@@ -542,6 +551,22 @@ class ConsumerAgentResult(BaseModel):
         if self.continue_after_execution and self.outcome is not ConsumerOutcome.PROPOSAL:
             raise ValueError("only a proposal can continue after execution")
         return self
+
+
+def parse_persisted_consumer_result(
+    value: str | bytes | dict[str, object],
+) -> ConsumerAgentResult:
+    """Read a result admitted and persisted by an earlier runtime.
+
+    The score gate governs admission of new model output. It must not rewrite
+    historical candidates while recovering a reviewed action, comparing a
+    rejected parent, or reconstructing its recorded outcome. New candidates
+    still pass the gate before persistence and Audit review.
+    """
+    context = {"persisted_evidence": True}
+    if isinstance(value, (str, bytes)):
+        return ConsumerAgentResult.model_validate_json(value, context=context)
+    return ConsumerAgentResult.model_validate(value, context=context)
 
 
 class AuditOutcome(StrEnum):

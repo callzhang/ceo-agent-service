@@ -7150,6 +7150,17 @@ def test_task_agent_prompt_reads_minutes_owners_from_the_conversation_around_eac
     assert "meeting_summary" in prompt
     assert "A team, department, participant, speaker" in prompt
 
+    incomplete_item = _work_item().model_copy(
+        update={
+            "context": _work_item().context.model_copy(
+                update={"source_transcript_unavailable": True}
+            )
+        }
+    )
+    incomplete_prompt = build_task_agent_prompt(incomplete_item, "context")
+    assert "The meeting transcript was unavailable for this source." in incomplete_prompt
+    assert "Do not infer an individual owner" in incomplete_prompt
+
 
 def test_update_restating_current_fields_adds_the_owner_and_an_unchanged_item_is_skipped_not_fatal(
     tmp_path,

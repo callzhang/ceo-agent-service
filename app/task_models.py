@@ -261,6 +261,7 @@ class WorkItemContext(BaseModel):
     participants: list[str] = Field(default_factory=list)
     source_conversation_kind: WorkItemSourceKind
     source_conversation_title: str = ""
+    source_transcript_unavailable: bool = False
 
 
 class WorkItemTaskSignals(BaseModel):
@@ -667,7 +668,7 @@ class TaskDecision(StrictTaskModel):
     )
     project_link_evidence: list[SourceCitation] = Field(
         default_factory=list,
-        description="Original evidence linking this Task to the selected Project. Reuse an unchanged confirmed existing link without manufacturing a Task update.",
+        description="Original evidence linking this Task to the selected Project. When project is null, this list must be empty; evidence alone does not select or register a Project. Reuse an unchanged confirmed existing link without manufacturing a Task update.",
     )
     suggestion: TaskSuggestion | None = Field(
         default=None,
@@ -1038,9 +1039,10 @@ class TaskAgentDecision(StrictTaskModel):
                     )
                 )
 
+        support_problems: list[str] = []
         covered: set[tuple[str, int | str]] = set()
         covered_titles: set[str] = set()
-        for assessment in self.project_assessments:
+        for assessment_index, assessment in enumerate(self.project_assessments):
             if assessment.project_title in covered_titles:
                 raise ValueError(
                     "each exact current Project title requires exactly one assessment"
@@ -1065,12 +1067,13 @@ class TaskAgentDecision(StrictTaskModel):
                 )
             for index in assessment.decision_indexes:
                 if index >= len(self.task_decisions):
-                    raise ValueError(
+                    support_problems.append(
                         "project assessment decision index is out of bounds"
                     )
+                    continue
                 task = self.task_decisions[index]
                 if task.action == "skip":
-                    raise ValueError(
+                    support_problems.append(
                         "project assessment cannot reference a skip decision"
                     )
                 if (
@@ -1078,7 +1081,12 @@ class TaskAgentDecision(StrictTaskModel):
                     and task.project is None
                     and task.action in {"record_candidate", "create_task"}
                 ):
-                    raise ValueError("new supporting Task requires a Project selector")
+                    support_problems.append(
+                        "new supporting Task requires a Project selector: "
+                        f"project_assessments[{assessment_index}].decision_indexes "
+                        f"references task_decisions[{index}].project is null, "
+                        f"but this assessment selects {key!r}"
+                    )
                 if (
                     task.project is not None
                     and project_key(
@@ -1086,8 +1094,12 @@ class TaskAgentDecision(StrictTaskModel):
                     )
                     != key
                 ):
-                    raise ValueError(
-                        "supporting Task selector must match the assessment Project"
+                    support_problems.append(
+                        "supporting Task selector must match the assessment Project: "
+                        f"project_assessments[{assessment_index}].decision_indexes "
+                        f"references task_decisions[{index}].project="
+                        f"{project_key(task.project.anchor_id, task.project.project_decision_index)!r}, "
+                        f"but this assessment selects {key!r}"
                     )
             if assessment.attention_proposal is not None:
                 if (
@@ -1098,6 +1110,8 @@ class TaskAgentDecision(StrictTaskModel):
                         "attention proposal and assessment must use the same assessment_basis"
                     )
 
+        if support_problems:
+            raise ValueError("; ".join(support_problems))
         if required_projects - covered:
             raise ValueError(
                 "every relevant structured Project requires exactly one project assessment"
