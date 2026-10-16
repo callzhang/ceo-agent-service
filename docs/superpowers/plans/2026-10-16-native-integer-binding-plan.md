@@ -115,10 +115,12 @@ def test_invalid_integer_lease_candidate_preserves_outer_work(pair, integer, num
 - [x] Root native source reproduction and complete test-process proposal preflight: new28 cases yield16fail/12pass before correction; after correction new28 plus314 adjacent cases yield342pass in17.25s. Ruff passes; own /tmp TemporaryDirectory automatically removed and absence verified.
 - [x] Implement exact function/new28 cases; run the same focused342 matrix, Ruff and plain diff check. Canonical code equality and every other module AST must remain unchanged.
 - [x] Add scoped behavior paragraphs to docs/architecture.md and docs/runtime-mechanism.md in the implementation commit; mark shared correction only, no State runtime activation.
-- [ ] Fresh independent SPEC, then fresh QUALITY.
-- [ ] After acceptance, remove the redundant db.execute("select ?", (generation,)) from the unselected dispatcher proposal only; source-native overflow now comes from shared codec before writer lock. Re-review the exact dispatcher proposal and regenerate its artifact hashes.
+- [x] Fresh independent SPEC342/18.61s plus14 probes, then fresh QUALITY342/18.22s plus109 native-binding/16 JSON-byte/12 existing-lease probes.
+- [x] After acceptance, remove the redundant db.execute("select ?", (generation,)) from the unselected dispatcher proposal only; source-native overflow now comes from shared codec before writer lock. Re-review the exact dispatcher proposal and regenerate its artifact hashes.
 - [ ] Continue complete atomic State caller/constructor/version/progress/publication closure and full copied-data/genuine-old-code/native-CLI evidence before selecting the release.
 
 Root preflight did not edit runtime/test files or any actual database. Source metadata remains immutable; no source retirement, provider/native/send, main/push/deploy or production action. Legal plain integers and booleans keep their existing encoded values; original finite REAL and published Reply format tests remain in the adjacent matrix. The canonical test distinguishes bound underlying integers from overloaded comparison/conversion methods using the real sqlite3 SELECT binder, and verifies invalid State lease candidates preserve prior caller writes and outer transaction ownership across both actual/fresh native DDL variants.
 
 The unresolved denied cleanup /private/tmp/state-upsert-impl.694bXO remains untouched.
+
+Acceptance:756a6c7e core and b4ff0720 trimmed unselected dispatcher proposal pass sequential independent review; receipt ../specs/2026-10-16-state-caller-readiness.json.

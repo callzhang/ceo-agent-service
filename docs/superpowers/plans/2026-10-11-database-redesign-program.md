@@ -1,5 +1,13 @@
 # Database Redesign Program
 
+## Latest State caller readiness, 2026-10-16
+
+Native integer binding756a6c7e is independently SPEC/QUALITY accepted342 each. The trimmed dispatcher19-callable proposal b4ff0720 is independently SPEC610 matched checkpoints+10 overflow traces and QUALITY22 checkpoints/index/transaction checks accepted as a proposal only. Root exercises the exact Store27-method proposal61 calls per actual/fresh variant with typed State/source-ROWID fact agreement; clocks are normalized and no target cold constructor is claimed. State bulk UPDATE b778f49f is independently SPEC417 plus6460 field checkpoints and QUALITY DIFFERENT547-case matrix plus48 behavior probes accepted; all current State callers remain unselected.
+
+Constructor research now identifies Store14 native DDL/four ALTER/backfill removals, explicit fresh/current role before State installation/marker use, cached/current State shape checks, two runtime Email State exclusions while preserving archived factories, and direct periodic/UI/version readers that must move in the same cutover. The next implementation must assemble complete State caller/constructor/version/progress/publication closure; do not activate isolated proposed methods against the existing native layout.
+
+Exact current evidence is ../specs/2026-10-16-state-caller-readiness.json. This supersedes the old integer-encoding proposal blocker and prior pending bulk reviews at their stated scopes. Latest accepted combined copy remains82 ordinary tables; State67 and final10+ledger still require applied-copy/current-fact inverse/genuine old-code/cold/native-CLI/final names+FTS proof. Production/main/push/deploy and real sends remain untouched.
+
 ## Latest State caller prerequisites, 2026-10-16
 
 Explicit upgrade-progress source/current binding is implemented and independently accepted at e06e1e9d/9cfb7226 (28cases per review plus12 quality transaction-boundary probes), but no current publication/entrypoint selects it. Store caller review found a source-ROWID index tie defect;59b27ac6 corrects the two nonunique org indexes and updates the unselected target fingerprint to327c94f68a9354f8766dfebb9ef7c85c9d03c2a4b27f95387eb88cc32fabc1f2, with8 regressions/314 focused tests and fresh SPEC acceptance. Fresh QUALITY also passes314 cases plus4 row-order/update probes, with immutable source metadata and the other18 indexes unchanged. The complete Store27-method and dispatcher19-callable patches are unselected proposals. Dispatcher SPEC found a shared integer-subclass overflow encoding gap; fix that mechanism and remove its redundant generation SELECT before acceptance.
