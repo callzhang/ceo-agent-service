@@ -59,18 +59,6 @@ def _next_rowid(db, kind):
         return allocator.execute("insert into ids default values").lastrowid
 
 
-def _completed(db, kind, values, *, replace=False):
-    fields = STATE_FIELDS[kind]
-    defaults = STATE_DEFAULTS[kind]
-    not_null = STATE_NOT_NULL[kind]
-    expressions = [
-        ("coalesce(?," + defaults[field] + ")" if replace and field in not_null
-         and field in defaults else "?") if field in values else defaults.get(field, "null")
-        for field in fields
-    ]
-    parameters = tuple(values[field] for field in fields if field in values)
-    row = db.execute("select " + ",".join(expressions), parameters).fetchone()
-    return dict(zip(fields, row, strict=True))
 
 
 def _conflict(ignore, replace):
@@ -82,12 +70,22 @@ def _conflict(ignore, replace):
 def insert_state(db, kind, values, *, source_rowid=_UNSET, ignore=False, replace=False):
     _check(kind, values)
     mode = _conflict(ignore, replace)
+    bound = {
+        field: value for field, value in values.items()
+        if not (replace and field in STATE_NOT_NULL[kind]
+                and field in STATE_DEFAULTS[kind] and _source_bound_null(value))
+    }
+    defaults = {
+        field: "json_quote(" + STATE_DEFAULTS[kind].get(field, "null") + ")"
+        for field in STATE_FIELDS[kind] if field not in bound
+    }
     _lock(db)
     identity = (_next_rowid(db, kind) if source_rowid is _UNSET or _source_bound_null(source_rowid)
                 else _native_integer_primary_key(source_rowid))
     cursor = db.execute(
-        "insert " + mode + "into state(record_type,legacy_key,payload_json) values(?,?,?)",
-        (kind, str(identity), _native_payload(_completed(db, kind, values, replace=replace))),
+        "insert " + mode + "into state(record_type,legacy_key,payload_json) values(?,?," +
+        _json_assignments("?", defaults) + ")",
+        (kind, str(identity), _native_payload(bound)),
     )
     return StateWriteResult(identity if cursor.rowcount else None, cursor.rowcount)
 
@@ -115,12 +113,20 @@ def update_state(db, kind, source_rowid, values, *, new_source_rowid=_UNSET,
                 _native_integer_primary_key(new_source_rowid, update=True))
     complete = dict(zip(fields, tuple(row)[1:], strict=True))
     complete.update(values)
-    if replace:
-        complete = _completed(db, kind, complete, replace=True)
+    bound = {
+        field: value for field, value in complete.items()
+        if not (replace and field in STATE_NOT_NULL[kind]
+                and field in STATE_DEFAULTS[kind] and _source_bound_null(value))
+    }
+    defaults = {
+        field: "json_quote(" + STATE_DEFAULTS[kind][field] + ")"
+        for field in complete if field not in bound
+    }
     return db.execute(
-        "update " + mode + "state set legacy_key=?,payload_json=? "
-        "where record_type=? and legacy_key=?",
-        (str(identity), _native_payload(complete), kind, str(old_identity)),
+        "update " + mode + "state set legacy_key=?,payload_json=" +
+        _json_assignments("?", defaults) +
+        " where record_type=? and legacy_key=?",
+        (str(identity), _native_payload(bound), kind, str(old_identity)),
     ).rowcount
 
 
