@@ -1168,3 +1168,12 @@ ledger, coordinator or repository updater selects it. The last actual copied
 candidate still has 82 ordinary tables; 67 is a future integrated cutover
 expectation. Final ten-plus-ledger acceptance remains open. Independent SPEC
 then QUALITY review follows this local implementation commit.
+
+
+## Independent pure State release and actual-copy acceptance, 2026-10-16
+
+Exact869a783a passes fresh SPEC365 in16.15s and then fresh QUALITY365 in16.34s. Independent extra probes12/8 cover signed identity extrema, nullable PK duplicates/BLOB, TEMP dependencies, partial-DDL rollback, missing/extra/changed target facts before source deletion and read-only predicate behavior. Canonical two blocks and exactly six CSV rows match; source capture and accepted foundation remain unchanged. Both review-owned temporary roots are removed.
+
+Root then verifies a new owned frozen970a State-only copy in59.132s. Original116 ordinary tables become101 after sixteen State families are consolidated into one; inverse restores116. Native symmetric BINARY/typeof/ROWID comparisons check all15 retained State families, all100 unrelated native families and original allocator rows; all116 original declarations and facts match after exact inverse. A single proof-owned inserted/updated service_state fact survives cold reopening, inverse and reforward while all original records stay exact. quick_check is ok; only the original runs190042-to-tasks FK finding remains. Frozen source SHA970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320 is verified before and after; the owned database directory is removed and absence checked. Receipt is superpowers/specs/2026-10-16-state-release-actual-copy.json; proof script SHA29c27dd7e69f0f3c6466b775c856e596992764abf708158d9d5b0434d3725dcb.
+
+This is an isolated State component proof using the original116-table source. It is not a new101-table combined candidate: the last accepted combined candidate remains82, and67 is only the future expectation after actual State caller/publication integration. No current constructor/caller/version/updater/coordinator was activated, no genuine predecessor cold constructor or native Agent CLI was run in this proof, and no provider/send/main/push/production action occurred. Atomic runtime/publication closure, combined copied-data/genuine-old-code proof and final10+ledger acceptance remain required.

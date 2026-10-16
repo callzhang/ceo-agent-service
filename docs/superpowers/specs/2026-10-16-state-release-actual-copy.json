@@ -1,0 +1,108 @@
+{
+  "kind": "unselected-state-release-independent-review-and-frozen-copy-acceptance",
+  "date": "2026-10-16",
+  "candidate_commit": "869a783ab5f8c48e2232b895d1b7991ad7d6a0d0",
+  "baseline": "7cd264bf",
+  "foundation_accepted_commit": "b14198dff02c917540bf805a4174e0afc8821eb3",
+  "files_sha256": {
+    "app/state_schema_release.py": "0809f8b38121e7eed87010b47cac74e09156f7987fb639d4a561ee69799efaff",
+    "tests/test_state_schema_release.py": "5d144867cb6311a0e2021ba0c211c2e6ddbd424c6134a944fccc3297ba9cd71a",
+    "reviewed_plan": "60ec36a4b6310de62c36c36534259a20a14d81ccf3c5f30cc29131a2d6f00dc8",
+    "six_disposition_field_map": "888fcf45f6e6bcdfd533c9deec26a681b7c3c992465a4eb23b7fdcb5684ba8b5"
+  },
+  "source_metadata_sha256": "604496766a335d63fe334a263bde8028cd53c6bc5311acb97a5ef48876ae2aff",
+  "interpreter": {
+    "python": "3.13.12",
+    "sqlite": "3.50.4"
+  },
+  "implementation": {
+    "new_release_tests": 29,
+    "foundation": 147,
+    "source_oracle": 172,
+    "native_codec": 17,
+    "passed": 365,
+    "seconds": 17.12,
+    "missing_module_red": true,
+    "ruff_compile_canonical_blocks_diff": "PASS",
+    "owned_temp_removed": true
+  },
+  "spec": {
+    "verdict": "PASS",
+    "passed": 365,
+    "seconds": 16.15,
+    "supplemental_probes": 12,
+    "supplemental_scope": [
+      "ROWID extrema and duplicate nullable primary keys with BLOB facts, actual/fresh",
+      "Read-only target predicate",
+      "TEMP forward view/trigger and inverse view dependency refusal",
+      "Caller rollback after second native DROP and second inverse CREATE"
+    ],
+    "canonical_code_and_six_csv_rows_exact": true,
+    "owned_temp_removed": true
+  },
+  "quality": {
+    "verdict": "PASS",
+    "passed": 365,
+    "seconds": 16.34,
+    "supplemental_probes": 8,
+    "supplemental_scope": [
+      "Missing target row, extra target row and changed value/type all rejected before source DROP",
+      "Caller rollback restores original image",
+      "Target predicate preserves data/declarations/total_changes"
+    ],
+    "canonical_code_and_six_csv_rows_exact": true,
+    "ruff_compile_diff": "PASS",
+    "owned_temp_removed": true
+  },
+  "root_actual_copy": {
+    "verdict": "PASS",
+    "seconds": 59.132,
+    "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "source_ordinary": 116,
+    "state_only_target_ordinary": 101,
+    "whole_inverse_ordinary": 116,
+    "unchanged_unrelated_native_tables": 100,
+    "retained_state_families": 15,
+    "original_declarations_all_exact": true,
+    "current_state_insert_update_cold_reopen_inverse_reforward": true,
+    "quick_check": "ok",
+    "original_fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "owned_temp_removed": true,
+    "source_sha_before_and_after_unchanged": true,
+    "original_allocator_values_types_and_rowids_exact": true,
+    "genuine_predecessor_cli": false,
+    "combined_release_selected": false,
+    "production": false,
+    "proof_script_sha256": "29c27dd7e69f0f3c6466b775c856e596992764abf708158d9d5b0434d3725dcb",
+    "scope": "State-only source-bound component rehearsal on a new frozen970a copy; not the combined82-table release or current caller activation",
+    "comparison": "Symmetric native SQLite EXCEPT of signed source ROWID, every stored original value with explicit BINARY collation and typeof, exact table declarations, original allocator rows and FK findings. Fifteen retained State families checked against readonly attached original before native drops;100 unrelated native families unchanged. All116 original families/declarations exact after first inverse; subsequent inverse preserves exactly one proof-owned new service_state fact with updated value and original116-row facts unchanged.",
+    "actual_source_fields_retired_only_after_checks": "corpus0 rows; four unused actual conversation values INTEGER0/NULL/NULL/NULL; inverse restores original declarations/defaults",
+    "fake_current_state_records": 1,
+    "external_actions": 0
+  },
+  "boundaries": {
+    "runtime_selected": false,
+    "current_callers": false,
+    "constructors": false,
+    "version_readers": false,
+    "repository_updater_transition": false,
+    "paired_publication_integration": false,
+    "genuine_predecessor_cold_read_write": false,
+    "native_agent_cli": false,
+    "latest_full_ci": false,
+    "push_or_main_merge": false,
+    "production": false,
+    "last_accepted_combined_candidate_ordinary": 82,
+    "future_integrated_state_only_expectation": 67,
+    "final_goal": "ten core tables plus one migration ledger",
+    "goal_complete": false
+  },
+  "next": "Atomic State current caller/constructor/version marker/repository-updater/paired-publication closure, then combined actual-copy/genuine-predecessor cold proof. Final reusable harness/native fake-outbound/CI/final table set remain required before production approval."
+}

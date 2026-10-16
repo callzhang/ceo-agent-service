@@ -506,9 +506,9 @@ Stage only the six owned CSV rows and owned doc hunks after inspection; commit `
 
 ## Task 4: Independent acceptance and later integration
 
-- [ ] **Step 1:** Fresh SPEC review after implementation verifies exact source hashes/declarations, all six guarded dispositions, retained identity/value/type copy, exact original-schema inverse from current facts, no-body metadata, read-only predicate, external dependencies and caller rollback.
-- [ ] **Step 2:** Fresh QUALITY review only after SPEC passes checks transaction boundaries, source constraint preservation, simplicity and regression strength.
-- [ ] **Step 3:** Root records this bounded acceptance, then continues the separate atomic caller/constructor/version-reader/repository-updater/paired-publication closure and actual-copy/genuine-predecessor verification. The final reusable harness, native CLI fake-outbound branches, CI, final ten-core-plus-ledger and production approval remain required.
+- [x] **Step 1:** Fresh SPEC review after implementation verifies exact source hashes/declarations, all six guarded dispositions, retained identity/value/type copy, exact original-schema inverse from current facts, no-body metadata, read-only predicate, external dependencies and caller rollback. PASS365 in16.15s and12 additional actual/fresh probes.
+- [x] **Step 2:** Fresh QUALITY review only after SPEC passes checks transaction boundaries, source constraint preservation, simplicity and regression strength. PASS365 in16.34s plus8 corruption/predicate probes.
+- [x] **Step 3:** Root records this bounded acceptance in ../specs/2026-10-16-state-release-actual-copy.json, including59.132s frozen State-only actual proof116-to101-to116, all116 original declarations/facts,100 unrelated native families and allocator unchanged, cold new-current-fact inverse/reforward, source hash unchanged and owned copy removed. Root continues the separate atomic caller/constructor/version-reader/repository-updater/paired-publication closure and combined actual-copy/genuine-predecessor verification. The final reusable harness, native CLI fake-outbound branches, CI, final ten-core-plus-ledger and production approval remain required.
 
 ## Self-review
 
