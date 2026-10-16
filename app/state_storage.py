@@ -187,11 +187,16 @@ def upsert_state(db, kind, values, updates, *, insert_json=None,
                             *update_parameters, *where_parameters)).rowcount
 
 
-def update_state_rows(db, kind, values, *, where_sql="", parameters=(), replace=False):
-    """One native UPDATE for source-field predicates; caller owns transaction."""
+def update_state_rows(db, kind, values, *, update_json=None, update_parameters=(),
+                      where_sql="", parameters=(), replace=False):
+    """One native UPDATE; trusted encoded-JSON expressions run in this statement."""
+    update_json = {} if update_json is None else update_json
     _check(kind, values)
-    if not values:
+    _check(kind, update_json)
+    if not values and not update_json:
         raise ValueError("State bulk UPDATE requires fields")
+    if set(values) & set(update_json):
+        raise ValueError("State UPDATE field supplied twice")
     expressions = {}
     bindings = []
     for field, value in values.items():
@@ -204,10 +209,15 @@ def update_state_rows(db, kind, values, *, where_sql="", parameters=(), replace=
                 _encoded_native_sqlite_value(value), ensure_ascii=False,
                 allow_nan=False, separators=(",", ":"),
             ))
+    for field, expression in update_json.items():
+        if replace and field in STATE_NOT_NULL[kind] and field in STATE_DEFAULTS[kind]:
+            expression = ("coalesce(nullif(json(" + expression +
+                          "),'null'),json_quote(" + STATE_DEFAULTS[kind][field] + "))")
+        expressions[field] = expression
     _lock(db)
     sql = "update " + ("or replace " if replace else "") + "state set payload_json="
     sql += _json_assignments("state.payload_json", expressions)
     sql += " where record_type=?"
     if where_sql:
         sql += " and (" + where_sql + ")"
-    return db.execute(sql, (*bindings, kind, *parameters)).rowcount
+    return db.execute(sql, (*bindings, *update_parameters, kind, *parameters)).rowcount
