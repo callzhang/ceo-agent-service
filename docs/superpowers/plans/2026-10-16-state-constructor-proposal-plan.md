@@ -19,8 +19,8 @@ Root disposable preflight reconstructed the exact70-method base, applied all fou
 - [x] Prepare complete four-file patch and compile all candidates.
 - [x] Run owned synthetic fresh constructors in both orders/reopens and existing index-repair row preservation.
 - [ ] Correct and independently accept State point INSERT/ORREPLACE default-clock foundation before treating caller closure as accepted.
-- [ ] Add complete executable regression code for every changed constructor/marker/manifest behavior before application edits, including wrong-owner index namespace, current malformed State/extra source names/TEMP shadows, native paired-source refusal before any journal/schema/data change, both known missing index repairs, nonrepairable missing State/index refusal and zero synthetic session backfill.
-- [ ] Independently SPEC then QUALITY review the exact proposal and regressions.
+- [x] Add complete executable regression code for every changed constructor/marker/manifest behavior before application edits, including wrong-owner index namespace, current malformed State/extra source names/TEMP shadows, native paired-source refusal before any journal/schema/data change, both known missing index repairs, nonrepairable missing State/index refusal and zero synthetic session backfill.
+- [x] Independently SPEC then QUALITY review the exact proposal and regressions.
 - [ ] Close current Email/direct/version/progress/publication entrypoints and activate the whole State unit together; do not apply these four files in isolation.
 - [ ] Verify whole actual database-copy forward/current-fact inverse and current production predecessor cold reads/writes/reforward, then native CLI(fake outbound) and UI flows. Production/main deployment still requires final user approval.
 
@@ -57,3 +57,9 @@ for order in ("store-first","email-first"):
 ```
 
 The recorded table count uses pragma_table_list type='table' with internal names excluded for67 ordinary tables. The probe's older len(tables) expression includes five additional FTS virtual/shadow entries and reports72.
+
+Complete executable regression is the adjacent2026-10-16-state-constructor-regression.py (SHAd9714f726b4a345d334d52e83027cc26b7639978c4a4b8accbb7bdaf67542b0f), copied to tests/test_state_constructor_current.py only when selecting the whole closure. Root disposable four-file candidate with accepted-design point clock implementation passed20 tests in5.50s. Initial seed-commit fixture correction is recorded in the readiness receipt; no app constructor edits occurred.
+
+Revision2 corrects independent QUALITY P2: bootstrap source names now include all State target index names in main, and reject TEMP collisions for all sixteen sources, State and all target index names before any journal/DDL mutation. The complete adjacentpatch and regression are updated. Root214pass5.09s: previous20 plus194 freshnamespace cases. Store candidate7170541ad442ae56253a0847fe15de323f54727f8973ef22fb1b409aa7060fed; patch ef63860c30e4d9d2acce919dcf32e6af1b35b1a5e2d2f1f51cac2590fc5c4849. Otherthreecandidatefilesunchanged. Fresh independent SPEC thenQUALITY re-review required before acceptance; no app constructor activation.
+
+Revision2 accepted as an unselected constructor proposal: independentSPEC214/6.58s and QUALITY214/5.24s plus26 currentadversarial/5.19s and12 formerfresh repros allPASS. Complete currentcaller/progress/publication closure remains required beforeapp activation.

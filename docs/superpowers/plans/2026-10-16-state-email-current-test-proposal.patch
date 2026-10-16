@@ -1,0 +1,7 @@
+--- a/tests/test_email_store.py
++++ b/tests/test_email_store.py
+@@ -17,0 +18 @@
++from app.state_definitions import state_projection
+@@ -7336 +7337 @@
+-    assert len(_fetchall(database, "select * from email_scan_cursors")) == 0
++    assert len(_fetchall(database, "select * from (" + state_projection("email_scan_cursors") + ")")) == 0

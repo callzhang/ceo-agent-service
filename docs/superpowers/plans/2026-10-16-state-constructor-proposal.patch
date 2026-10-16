@@ -6,7 +6,7 @@
 -from app.state_definitions import state_projection
 -from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
 +from app.state_definitions import STATE_INDEX_DDL, state_projection
-+from app.state_schema_release import SOURCE_TABLES as STATE_SOURCE_TABLES, state_schema_is_current
++from app.state_schema_release import SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES, state_schema_is_current
 +from app.state_storage import create_state_schema, insert_state, state_json_field, update_state_rows, upsert_state
 @@ -217 +218,0 @@
 -from app.action_reply_storage import migrate_action_reply_schema
@@ -294,7 +294,14 @@
 @@ -8642 +8492 @@
 -    def _require_supported_store_bootstrap_source(self) -> None:
 +    def _require_supported_store_bootstrap_source(self) -> bool:
-@@ -8648,4 +8498,4 @@
+@@ -8645,0 +8496,6 @@
++            state_names = (*STATE_SOURCE_TABLES, "state", *STATE_TARGET_INDEXES)
++            if db.execute(
++                "select 1 from temp.sqlite_schema where name collate nocase in ("
++                + ",".join("?" for _ in state_names) + ") limit 1", state_names,
++            ).fetchone() is not None:
++                raise sqlite3.IntegrityError("unsupported State TEMP name collision")
+@@ -8648,4 +8504,4 @@
 -                db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
 -                if "service_state" in tables else None
 -            )
@@ -302,13 +309,13 @@
 +                db.execute(f"select value from ({state_projection('service_state')}) where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
 +                if "state" in tables else None
 +            )
-+            store_tables = {"state", *STATE_SOURCE_TABLES, "tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
-@@ -8683,0 +8534 @@
++            store_tables = {"state", *STATE_SOURCE_TABLES, *STATE_TARGET_INDEXES, "tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
+@@ -8683,0 +8540 @@
 +                and state_current_or_known_dispatcher_index_repair(db)
-@@ -8686 +8537 @@
+@@ -8686 +8543 @@
 -                return
 +                return False
-@@ -8697,23 +8547,0 @@
+@@ -8697,23 +8553,0 @@
 -        finally:
 -            db.close()
 -
@@ -332,7 +339,7 @@
 -                raise RuntimeError("typed task migration manifest differs")
 -            db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
 -            db.commit()
-@@ -8722,0 +8551,2 @@
+@@ -8722,0 +8557,2 @@
 +
 +    
 --- a/app/action_email_schema_release.py

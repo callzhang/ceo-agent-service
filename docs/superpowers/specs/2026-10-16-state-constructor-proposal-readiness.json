@@ -2,9 +2,9 @@
   "date": "2026-10-16",
   "scope": "Unselected four-file constructor proposal only; complete runtime caller/publication closure remains required",
   "store_base_sha256": "b548e907d20eeb1edb02ab9555e13044cc7bf693f2d1ebef8f600abb1fb8d6c5",
-  "proposal_sha256": "fc301216366fc51c359f220527562c40b830b6e2c0514f153107f9e2bb951ea5",
+  "proposal_sha256": "ef63860c30e4d9d2acce919dcf32e6af1b35b1a5e2d2f1f51cac2590fc5c4849",
   "candidates": {
-    "app/store.py": "e6700e9b3a8d21d745b21406a4d57f7e858c7539d4bcbb96bb771dfae68e10cc",
+    "app/store.py": "7170541ad442ae56253a0847fe15de323f54727f8973ef22fb1b409aa7060fed",
     "app/action_email_schema_release.py": "10119b5f9745b9c579d4cb9b40b5ae0dc794238b4ff071dca2ae05671eb2dd89",
     "app/email_current_schema.py": "06f72a6196cbb7202d8c7a757874781efa978ce6d5e9a27290581af160f5a924",
     "app/email_store.py": "9e02860962447adad7f62fcea9e74b2d9a1b244790b4dd02e95dba94c58d4e9d"
@@ -28,7 +28,7 @@
     "email_tables": 2
   },
   "remaining": [
-    "Complete regression code for malformed/current/source role constructor boundaries before app edits",
+    "Independent SPEC then QUALITY of constructor proposal and exact20-case regression",
     "Independent SPEC then QUALITY of proposal",
     "Current Email/direct consumer/version-reader closure",
     "Paired release/progress binding activation",
@@ -38,5 +38,55 @@
   ],
   "current_constructor_selected": false,
   "production_changed": false,
-  "dependency": "Mixed23 QUALITY identified insert_state/update_state statement-default clock defect; foundation correction required before accepting caller/constructor closure."
+  "dependency": "Mixed23 QUALITY identified insert_state/update_state statement-default clock defect; foundation correction required before accepting caller/constructor closure.",
+  "root_constructor_regression": {
+    "tests": 20,
+    "seconds": 5.5,
+    "test_proposal": "2026-10-16-state-constructor-regression.py",
+    "sha256": "7084c7429e47cfc7b8fd069db9447601a3350cb654b918c3ace10ffc13fe82ac",
+    "coverage": "both constructor orders/reopens; both missing dispatcher indexes/combined repair with lease row preservation and no legacy session synthesis; malformed/missing/extra/wrong-owner shapes refused without data/schema changes; TEMP source shadow refused; native19/51 paired source refused before journal changes",
+    "fixture_correction": "Initial three repair cases omitted db.commit before closing seed connection, causing seed rollback; explicit fixture commit corrected before accepted20-pass run.",
+    "state_storage_prerequisite_sha": "ebbedf3dd2a7b7b69094adac32b558f90343327137917612ee58e1ff34e59b12",
+    "independent_review_pending": true
+  },
+  "previous_revision": {
+    "patch_sha256": "fc301216366fc51c359f220527562c40b830b6e2c0514f153107f9e2bb951ea5",
+    "store_sha256": "e6700e9b3a8d21d745b21406a4d57f7e858c7539d4bcbb96bb771dfae68e10cc",
+    "spec": {
+      "status": "PASS",
+      "tests": 20,
+      "seconds": 5.95
+    },
+    "quality": {
+      "status": "P2",
+      "base_tests": 20,
+      "base_seconds": 5.08,
+      "current_adversarial_passed": 26,
+      "current_adversarial_seconds": 5.39,
+      "fresh_repro_failures": 12,
+      "finding": "Fresh source collision set omitted State target-index names and TEMP State/source/index namespace. Rejected fresh construction could switch WAL and persist partial State/schema."
+    }
+  },
+  "fresh_source_correction": {
+    "root_tests": 214,
+    "seconds": 5.09,
+    "regression_sha256": "d9714f726b4a345d334d52e83027cc26b7639978c4a4b8accbb7bdaf67542b0f",
+    "coverage": "Prior20 plus all20 reserved State target index names as uppercase unrelated index/table/view forbothconstructors; all37 State source/target/index names as connection-localTEMPtables forbothconstructors. Preserve originalfilehash,journalmode,unrelatedrows,no partialState."
+  },
+  "independent_spec": {
+    "status": "PASS",
+    "tests": 214,
+    "seconds": 6.58,
+    "only_incremental_changes": "Store StateTargetIndex import, TEMP State namespace preflight, maincollision State index names. Removing them exactlyrestores previousStoree6700e9b."
+  },
+  "independent_quality": {
+    "status": "PASS",
+    "tests": 214,
+    "seconds": 5.24,
+    "current_adversarial": 26,
+    "current_adversarial_seconds": 5.19,
+    "former_fresh_repro_cases": 12,
+    "former_fresh_repros_now_pass": true,
+    "proof": "Both constructors refuse originalfresh main index/table/view/TEMP state/source/actualindexowner conflicts beforeWAL/DDL. Full filehash/schema/rows/journal unchanged; no state/WAL/SHM. Current repair still onlytwo indexes."
+  }
 }
