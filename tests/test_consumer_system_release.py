@@ -34,7 +34,7 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
-    assert entry["old_sha256"] == "7e7a8c6ba4ed4d403ac8a9b743a4c128beea74f98dda9577e52ea91e2cf438f0"
+    assert entry["old_sha256"] == "766eb3a6a2432523e04c26182ccc0f39749f2f1f7ebb4d2958ebfa5b36686359"
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
 
 
