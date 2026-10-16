@@ -37,6 +37,19 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
 
 
+def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    entry = next(
+        item for item in manifest["files"]
+        if item["source"] == "ci/shared-skills/ceo-message-triage/SKILL.md"
+    )
+
+    assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+
+
 def _skill(name: str, marker: bool, suffix: str) -> bytes:
     metadata = "metadata:\n  managed_by: ceo-agent-service\n" if marker else ""
     return (

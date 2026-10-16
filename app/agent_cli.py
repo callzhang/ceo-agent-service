@@ -8,6 +8,7 @@ import hashlib
 import errno
 import importlib
 import json
+import mimetypes
 import os
 import shutil
 import sqlite3
@@ -409,7 +410,7 @@ def read_spreadsheet(
 
 
 def read_text_file(path: str) -> dict[str, object]:
-    """Read bounded text, PDF, or OOXML material without shell access."""
+    """Read bounded text, image, PDF, or OOXML material without shell access."""
     material_path = Path(path).expanduser().resolve(strict=True)
     if not any(material_path.is_relative_to(root) for root in TEXT_MATERIAL_ROOTS):
         raise AgentReadOnlyViolationError("text_material_path_forbidden")
@@ -449,6 +450,9 @@ def read_text_file(path: str) -> dict[str, object]:
                 raise AgentReadOnlyViolationError("spreadsheet_file_invalid") from exc
             except ElementTree.ParseError as exc:
                 raise AgentReadOnlyViolationError("spreadsheet_xml_invalid") from exc
+        image_mime, _encoding = mimetypes.guess_type(material_path.name)
+        if image_mime and image_mime.startswith("image/"):
+            return _read_image_material(material_file, material_path)
         material_file.seek(0)
         content_bytes = material_file.read(MAX_TEXT_MATERIAL_BYTES + 1)
     if len(content_bytes) > MAX_TEXT_MATERIAL_BYTES:
@@ -462,6 +466,51 @@ def read_text_file(path: str) -> dict[str, object]:
         "path": str(material_path),
         "sha256": hashlib.sha256(content_bytes).hexdigest(),
     }
+
+
+def _read_image_material(material_file, material_path: Path) -> dict[str, object]:
+    try:
+        completed = run_bounded_process(
+            [
+                sys.executable,
+                str(Path.home() / ".agents/skills/ocr/scripts/ocr.py"),
+                str(material_path),
+                "--format",
+                "json",
+            ],
+            timeout=PDF_OCR_TIMEOUT_SECONDS,
+        )
+        if completed.returncode:
+            raise ValueError("OCR process failed")
+        response = json.loads(completed.stdout)
+        items = response["data"]
+        if not isinstance(items, list) or len(items) != 1:
+            raise ValueError("OCR returned an unexpected number of sources")
+        item = items[0]
+        if not isinstance(item, dict):
+            raise ValueError("OCR returned a malformed source")
+        if item.get("source_id") != f"input-1:{material_path.name}":
+            raise ValueError("OCR source does not match the requested file")
+        content = item.get("text")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("OCR returned empty image text")
+        material_file.seek(0)
+        result: dict[str, object] = {
+            "format": "image",
+            "content": content,
+            "path": str(material_path),
+            "sha256": hashlib.file_digest(material_file, "sha256").hexdigest(),
+        }
+        confidence = item.get("confidence")
+        if confidence is not None:
+            result["confidence"] = confidence
+        warnings = item.get("warnings") or []
+        if warnings:
+            result["warnings"] = warnings
+        return result
+    except (OSError, subprocess.TimeoutExpired, ProcessOutputLimitError,
+            ValueError, KeyError, TypeError) as exc:
+        raise AgentReadOnlyViolationError("image_material_ocr_unavailable") from exc
 
 
 def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
@@ -1378,8 +1427,8 @@ def build_role_server(
         """Read the body of one exact DingTalk Drive attachment for OA review.
 
         Use after drive metadata identifies an accessible attachment node. Returns
-        bounded PDF, workbook, presentation, or text contents. Scanned PDF pages
-        are read through the configured Stardust OCR client. OCR failure is a
+        bounded image, PDF, workbook, presentation, or text contents. Images
+        and scanned PDF pages use the configured Stardust OCR client. OCR failure is a
         technical read failure, not missing applicant material.
         """
         nonlocal drive_material_directory
