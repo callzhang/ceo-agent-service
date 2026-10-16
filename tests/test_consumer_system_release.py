@@ -34,7 +34,34 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
+    assert entry["old_sha256"] == "7e7a8c6ba4ed4d403ac8a9b743a4c128beea74f98dda9577e52ea91e2cf438f0"
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+
+
+def test_release_manifest_pins_current_finance_card_and_active_managed_skill_hashes():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    entries = {item["source"]: item for item in manifest["files"]}
+    finance_source = "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
+
+    assert entries[finance_source]["old_sha256"] == (
+        "e9ab732503f6c35c89af8c3a9424836c8e3cf9e29752c59a4a6b20dbef5d89fb"
+    )
+    assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
+    assert {
+        source: entries[source]["old_managed_sha256"]
+        for source in (
+            "ci/shared-skills/ceo-calendar-invite/SKILL.md",
+            "ci/shared-skills/ceo-message-triage/SKILL.md",
+            "ci/shared-skills/ceo-weekly-report/SKILL.md",
+        )
+    } == {
+        "ci/shared-skills/ceo-calendar-invite/SKILL.md": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
+        "ci/shared-skills/ceo-message-triage/SKILL.md": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
+        "ci/shared-skills/ceo-weekly-report/SKILL.md": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09",
+    }
 
 
 def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest():
