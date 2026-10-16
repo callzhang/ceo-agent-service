@@ -27,6 +27,26 @@ def test_candidate_profiles_match_independent_actual_and_native_constructor_decl
             tuple(row) for row in NATIVE_PROFILES[profile][name])
 
 
+@pytest.mark.parametrize('kind', RUN11_NEW_KINDS)
+@pytest.mark.parametrize('public_id', (0, -1, 42))
+def test_explicit_public_primary_key_collision_matches_native(pair, kind, public_id):
+    native, target, profile = pair
+    payload = values(kind) | {'id': public_id}
+    native_insert(native, kind, payload)
+    insert_run11_fact(target, kind, payload, source_variant=profile)
+    if kind == 'codex_session_search_index':
+        payload['session_id'] = 'different-session'
+    for db, current in ((native, False), (target, True)):
+        with pytest.raises(sqlite3.IntegrityError) as error:
+            if current:
+                insert_run11_fact(db, kind, payload, source_variant=profile)
+            else:
+                native_insert(db, kind, payload)
+        assert error.value.sqlite_errorcode & 255 == sqlite3.SQLITE_CONSTRAINT
+        assert db.in_transaction
+    assert snapshot(target, kind, current=True) == snapshot(native, kind, current=False)
+
+
 @pytest.fixture(params=('actual','fresh'))
 def pair(request):
     with closing(sqlite3.connect(':memory:')) as native, closing(sqlite3.connect(':memory:')) as target:

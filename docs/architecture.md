@@ -1,5 +1,18 @@
 # CEO Agent Service Architecture
 
+The unselected Runs11 foundation is installed in `runs11_definitions`,
+`runs11_storage` and `runs11_schema_release`. It preserves all62 original Runs
+columns and adds only19 actual fields from search metadata, classifier runtime
+samples and setup events. Public source IDs retain independent current counters;
+original-eight physical IDs and attempted-allocation reservations survive inverse.
+The pure release folds those three native tables and retires derived title FTS;
+inverse reads current facts and rebuilds title FTS without a body/shadow snapshot.
+Installed focused tests pass275 cases, and a frozen-source copy proves
+116→54→51→54→51 with current writes, declarations/types/counters and the original
+FK findings preserved. Current callers, constructors and the paired coordinator
+still select54 tables; this foundation does not activate51 or change production.
+The final goal remains ten core tables plus the Email migration ledger.
+
 Current Store/Email/Workbench constructors, typed task callers and the paired Store20/Email52 release select Tasks20 in this development branch. The twenty existing task families share one Tasks container with seven writable structural columns; generated source fields retain existing query and constraint semantics. Fresh creation and explicit missing-object repair preserve native behavior, current MAIN counters, retained feedback public-key FKs and Workbench search/FTS auxiliaries. All twelve folded native tables remain absent. Historical task_storage/workbench_storage factories and earlier publication branches retain their original source roles.
 
 The paired release converts Tasks20 after State in the existing FK-off transaction and restores Tasks20 before State on inverse. Preparation binds exact source declarations; allocator presence is mutable state, so source rechecks compare variant/table declarations while carrying original presence bits for inverse. Conversion and inverse read current rows and counters, including native writes after preparation and target writes after conversion. No business-row snapshot is stored. Existing physical Tasks IDs, source public keys/ROWIDs, input pointers and scalar types are retained; inverse reconstructs all82 original columns with unrelated source padding as SQL NULL. Non-trigger allocator access uses main.sqlite_sequence; MAIN trigger SQL is unchanged.

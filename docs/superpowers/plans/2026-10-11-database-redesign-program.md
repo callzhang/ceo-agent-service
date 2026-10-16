@@ -851,3 +851,17 @@ Cumulative real current constructor/public regression34/31.85s passes whole busi
 Currentcode e29560247 selects20kindTasks/currentconstructors/callers/publication/pairedrelease afterexact39filemanifest. Writer1384+42passes; freshSPEC11 plus3constructororders/cold55; QUALITY126controls pass. RootINSTALLEDactualcopy251.438s116→55→116→55 passes nativeafterprepare/currenttarget/predecessor3jobs allfields/types/counters,113unaffectedtables, alloriginal witness-familyrows, markers/fullEmailledger/nativeDDL/FKbaseline; source970a unchanged andallownedcopiesremoved. Fullreceipt specs/2026-10-16-task20-coupled-installed-acceptance.json. This supersedes67 as the last integrated installedcopy count, notproduction andnotfinal11.61native-namefixtureowners183sites andothercurrent/sourcefixture roles remain explicitly open, notwhole-suitegreen.
 
 Next approvedremainingrouting is 2026-10-16-remaining-55-to-11-routing.md. BotholdWorkbenchconfirmation andindependentsearchindex/FTS remainintermediate dependencies slatedforretirement; preserveexisting7searchmetadatafacts ratherthanblindlyderive700rowsfromallruns (2alias/title/session mismatches,54nonmembers,timestampsdiffer). Confirmationcurrentcreate/validator/recovery/API/UIclosure needs separate exactcomponent; originalnativefactories remainhistoricaloracles. No furtherappimplementation started, no main/push/productionmutation/deploy; final11/nativefakeoutbound/UI/performance/CI/humanapproval stillrequired.
+
+
+### 2026-10-16 Runs11 unselected implementation checkpoint
+
+Installed the three pure Runs11 declaration/writer/release modules plus native
+source oracle and275 focused regressions. Source-bound final-hash copied proof:
+116→54→51→54→51,474.445s, current writes/types/counters/source declarations intact,
+50 unaffected baseline tables identical, original FK finding unchanged and frozen
+input SHA unchanged. Installed275 tests/Ruff7 and a cold Store+Email54-table/
+Email52/fresh-FK control pass. Canonical SPEC and revised QUALITY pass; fresh
+applied reviews remain a separate receipt. The current runtime still selects54
+ordinary tables and production is untouched. Runs11 current callers/coordinator
+and51-table cold startup are the next stage; the final11-table goal is incomplete.
+See `2026-10-16-runs11-consolidation-plan.md` and final-hash copy/applied receipts.

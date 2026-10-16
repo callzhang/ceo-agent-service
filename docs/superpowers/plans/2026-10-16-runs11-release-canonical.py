@@ -152,16 +152,19 @@ def _stage(db, name, query):
 
 def _compare(db, name, query):
     fields = _fields(name)
-    typed = ','.join(map(_quote, fields)) + ',' + ','.join(
-        'typeof(' + _quote(field) + ')' for field in fields)
-    left = 'select ' + typed + ' from temp.' + _quote(STAGES[name])
-    right = 'select ' + typed + ' from (' + query + ')'
+    stage = 'temp.' + _quote(STAGES[name])
     if db.execute('select count(*) from temp.' + _quote(STAGES[name])).fetchone()[0] != db.execute(
             'select count(*) from (' + query + ')').fetchone()[0]:
         raise ValueError('Runs11 source fact count differs')
-    for a, b in ((left, right), (right, left)):
-        if db.execute('select 1 from (' + a + ' except ' + b + ') limit 1').fetchone():
-            raise ValueError('Runs11 source identity, value or storage class differs')
+    # Every source has an exact unique integer ID. Equal counts and an indexed
+    # one-to-one ID join prove the same facts without sorting all62 stored fields
+    # of hundreds of thousands of old Runs twice into disk-backed TEMP btrees.
+    differences = ' or '.join(
+        'not(s.' + _quote(field) + ' is r.' + _quote(field) + ') or typeof(s.'
+        + _quote(field) + ')<>typeof(r.' + _quote(field) + ')' for field in fields)
+    if db.execute('select 1 from ' + stage + ' s left join (' + query + ') r on r.id=s.id '
+                  'where r.id is null or (' + differences + ') limit 1').fetchone():
+        raise ValueError('Runs11 source identity, value or storage class differs')
 
 
 def _finish(db):

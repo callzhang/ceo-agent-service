@@ -22,7 +22,7 @@ Runtime sample's global latest2048 retention and rate latest200 fallback remain 
 
 - [x] **Target declarations and source-shaped parts.** New canonical `runs11_definitions`/`runs11_storage` under this plan before app installation: extend current mapped eight-kind Runs to eleven kinds with explicit source NN/CHECK/unique/type-exclusive columns, partial indexes replacing source PK access paths, original62 fields/triggers/indexes/FKs unchanged. Public numeric IDs remain scoped; internal physical IDs remain positive/native and distinct. New writers use actual source defaults and source ID affinity. Preserve closed original single-VALUES INSERT/OR IGNORE statements/cursor contracts. No whole-repo refactor.
 - [x] **Counter differential.** Track only original-eight native attempted allocations in `runs:published` with the existing Tasks BEFORE-attempt formula, including successful IGNORE and ABORT/savepoint/rollback behavior. New three source families each use their own current `runs:<source_kind>` public AUTO stream; new-kind internal physical allocations never advance the old published stream. Read native current waters at conversion, never preparation. Initialize each current stream preserving absent versus0 rather than storing stale counter values; validate whether presence can live entirely in those current streams. Prove native FULL and transaction scope before application; source3 have no BEFORE triggers. Reuse existing native key/FULL/physical allocator mechanisms only after source-backed differential, including old global FULL versus independent new-source streams.
-- [ ] **Pure source-bound transfer and inverse.** New component binds exact actual/fresh Runs and three source declarations, including original mapped/native FK stage. Stage every one of62 old stored columns without affinity changes and all original source fields/ROWIDs. Original eight physical IDs and incoming Actions/self FKs stay exact. Preserve current waters/deleted-high values; metadata stores only declarations, not bodies, row snapshots or stale water numbers. Drop source families/FTS in the existing caller transaction. Inverse reads current target facts, recreates exact original native definitions, current source public waters and only current original-eight Runs reservation. Reject unsupported mixed declarations/TEMP shadows before mutation; no new general policy layer.
+- [x] **Pure source-bound transfer and inverse.** New component binds exact actual/fresh Runs and three source declarations, including original mapped/native FK stage. Stage every one of62 old stored columns without affinity changes and all original source fields/ROWIDs. Original eight physical IDs and incoming Actions/self FKs stay exact. Preserve current waters/deleted-high values; metadata stores only declarations, not bodies, row snapshots or stale water numbers. Drop source families/FTS in the existing caller transaction. Inverse reads current target facts, recreates exact original native definitions, current source public waters and only current original-eight Runs reservation. Reject unsupported mixed declarations/TEMP shadows before mutation; no new general policy layer.
 - [ ] **Current callers and constructor closure.** Existing `AutoReplyStore.upsert_codex_session_search_index` and search read a source-shaped Runs projection; remove obsolete cache arguments and persistent FTS mutations without changing search. Current Store setup writer/reader use exact source-shaped writers/projection and returned source ID. Email sample writer/readers, current completeness/repair declarations and quality_gate's existence/raw SQL branch must all change together. Current Store/Email/Workbench creation and exact recognition select Runs11; stop current search table/FTS creators/recognizers/rebuilds. Preserve historical factories. Factor current config metadata predicates from historical Runs-shape checks where necessary; never accept both layouts as a hidden compatibility fallback.
 - [ ] **Paired coordinator and copied source.** Source capture before conversion; Runs11 after Config/State/Tasks and canceled-confirmation retirement, inverse Runs11 before Config inverse. Original component shape validators keep native roles; current final predicates require exact Runs11 and retired names absent. Keep same unpublished Store20/Email52 pair, JSON child transport, locking, commit/rollback and baseline FK policy. Fresh constructor orders must all yield51; fixed source116→51→116→51. Target new metadata/sample/setup writes, original8 native writes after preparation, inverse, genuine44ee predecessor writes and reforward must all preserve current facts and counters.
 - [ ] **Tests and behavior docs.** Narrow RED/GREEN native/candidate differential, positive original8/nonmember/alias/native-corpus controls, sample retention/quality gates, setup public readback and ordinary Workbench/Agent APIs. Convert only actual stale physical test fixtures; retain business/security assertions. Update architecture/runtime in selection commit. No whole suite/live-service tests; native CLI/fake provider/UI/performance/CI/final11 acceptance remains final program work.
@@ -49,3 +49,34 @@ checker is separate and its receipt must match the final canonical hashes before
 claiming copied-source acceptance. No app selection or production change occurs
 in this checkpoint. The isolated installed candidate still has54 ordinary tables;
 51 is an unselected pure-component candidate, and the final target remains11.
+
+### Current caller integration constraint: native input ordering
+
+The actual Store search currently reads metadata with `order by updated_at desc`.
+On the pinned native source table, equal timestamps preserve public ROWID order.
+A two-row native/target probe demonstrated public IDs `[1,2]` on the old table but
+`[2,1]` on the unqualified replacement projection due to the target access path.
+The replacement reader must use `order by updated_at desc,id asc` to preserve
+that source input order. The pure release regression proves the explicit
+projection equals native complete tuples for the actual/fresh source profiles;
+the current public search caller remains to be integrated and tested. Do not
+claim schema row equality alone proves native-corpus/ranking/tie behavior.
+
+## Installed unselected foundation acceptance
+
+The final runtime hashes passed the frozen-source copy sequence116→54→51→54→51
+in474.445s. All231340 original Runs,700 metadata,2048 samples and22 setup events
+transfer exactly. Three target source writes retain public IDs701/5639/23 and an
+original-kind runtime write retains physical ID365090 through inverse. All50
+unaffected54-table baseline families retain complete row/type/ROWID digests;
+source declarations, current source counters and logical rebuilt title FTS verify.
+The pre-existing Runs190042→Tasks FK finding remains unchanged; no new finding.
+The frozen source SHA970a remains unchanged and the owned copy directory is gone.
+
+Seven app/test/fixture files are exact installed canonical copies. Applied275
+focused tests and Ruff7 pass; a cold Store+Email control still creates54 ordinary
+tables, Email ledger52 and clean fresh FKs. This proves only the unselected
+foundation. Next implement the current Store/Email/search/quality_gate callers,
+current schema recognition/repair and paired JSON coordinator together, then test
+all three51-table constructor orders and the complete paired116↔51 inverse with
+genuine predecessor writes. No main/push/production/restart/deploy was performed.

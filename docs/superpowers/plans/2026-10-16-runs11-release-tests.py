@@ -11,7 +11,7 @@ from app.runs11_definitions import RUN11_NEW_KINDS, RUN11_FIELDS, RUN11_BASE_COL
 from app.runs11_storage import insert_run11_fact
 from app.runs11_schema_release import (
     SOURCES, STAGES, STREAMS, FTS, capture_run11_source, migrate_run11_schema,
-    restore_run11_schema, run11_schema_is_current,
+    restore_run11_schema, run11_schema_is_current, _stage, _compare,
 )
 from app.task20_schema_release import _sequence, _set_sequence
 from app.workbench_storage import SEARCH_FTS_DDL
@@ -147,6 +147,22 @@ def test_source_multiplicity_and_missing_native_pointer_are_preserved(source):
     assert facts(db, RUN11_NEW_KINDS[0]) == expected
 
 
+def test_native_metadata_input_tie_order_has_an_explicit_current_projection(source):
+    db, _variant = source
+    name = 'codex_session_search_index'
+    native_insert(db, name, values(name, 2) | {'source_id': '0'})
+    db.execute("update codex_session_search_index set updated_at='same timestamp'")
+    expected = [tuple(row) for row in db.execute(
+        'select * from codex_session_search_index order by updated_at desc')]
+    assert [row[0] for row in expected] == [1, 2]
+    metadata = capture_run11_source(db)
+    map_runs_to_configs(db)
+    migrate_run11_schema(db, metadata)
+    actual = [tuple(row) for row in db.execute(
+        'select * from ('+run11_projection(name)+') order by updated_at desc,id asc')]
+    assert actual == expected
+
+
 @pytest.mark.parametrize('collision', (*SOURCES, FTS, *STAGES.values()))
 def test_temp_collision_rejected_before_source_change(source, collision):
     db, _variant = source
@@ -222,3 +238,32 @@ def test_fk_on_and_missing_transaction_rejected(source):
     db.execute('begin')
     with pytest.raises(sqlite3.ProgrammingError):
         capture_run11_source(db)
+
+
+@pytest.mark.parametrize('change', ('identity', 'value', 'type'))
+def test_indexed_fact_comparison_rejects_same_count_differences(source, change):
+    db, _variant = source
+    name = 'codex_session_search_index'
+    _stage(db, name, 'select * from '+name)
+    expressions = dict.fromkeys(RUN11_FIELDS[name])
+    expressions.update({field: '"'+field+'"' for field in expressions})
+    field, expression = {'identity': ('id', 'id+1'),
+                         'value': ('title', "'different title'"),
+                         'type': ('id', 'cast(id as real)')}[change]
+    expressions[field] = expression
+    query = 'select '+','.join(value+' as "'+key+'"' for key, value in expressions.items())+' from '+name
+    with pytest.raises(ValueError, match='identity, value or storage class'):
+        _compare(db, name, query)
+
+
+def test_original_runs_fact_comparison_uses_primary_key_without_sort(source):
+    db, _variant = source
+    _stage(db, 'runs', 'select * from runs')
+    statements = []
+    db.set_trace_callback(statements.append)
+    _compare(db, 'runs', 'select * from runs')
+    db.set_trace_callback(None)
+    comparison = next(sql for sql in statements if 'left join' in sql)
+    plan = [row[3] for row in db.execute('explain query plan '+comparison)]
+    assert any('INTEGER PRIMARY KEY' in operation for operation in plan)
+    assert not any('TEMP B-TREE' in operation for operation in plan)

@@ -1,0 +1,19 @@
+{
+  "scope": "Installed unselected Runs11 foundation only; current constructors remain54. No51 caller/coordinator/current-schema selection or production acceptance.",
+  "hashes": {
+    "app/runs11_definitions.py": "4e39bd7fb03c1ffb0f476c7d8b0251e430bb1d865528edba8cd67f03de570176",
+    "app/runs11_storage.py": "3a6fbd0064720236d1a90ed079b2921331305114f7601fb5373097d32a944bd5",
+    "app/runs11_schema_release.py": "9730fae5af1e1a2b6735e2dafe1c84901ae632eabba41cb70805077dbf5e1281",
+    "tests/test_runs11_definitions.py": "4bebc9286b81f0ae510459fa199d43b9a685f5171ae16b714165e97bdc395eb1",
+    "tests/test_runs11_storage.py": "da1d03eae1efb29e6ccbcd77f92692e46b82a5873e372a8c47ac154e8688c494",
+    "tests/test_runs11_schema_release.py": "c92154a45a8f824ee91306c0773405d675bd37e6e1bd226075432eeef51355e9",
+    "tests/fixtures/runs11-native-source-oracle.json": "ed0c98618591f6d81a0bc9303ab29b94178a1dd5f850498a1c940d52afda6c89"
+  },
+  "pytest": "........................................................................ [ 26%]\n........................................................................ [ 52%]\n........................................................................ [ 78%]\n...........................................................              [100%]\n275 passed in 3.28s",
+  "cold_control": {
+    "current_store_email_tables": 54,
+    "email_ledger": 52,
+    "fresh_foreign_keys_clean": true
+  },
+  "status": "passed"
+}
