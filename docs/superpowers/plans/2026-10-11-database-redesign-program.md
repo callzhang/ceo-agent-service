@@ -1,5 +1,11 @@
 # Database Redesign Program
 
+## Published predecessor refreshed, 2026-10-16
+
+The unselected additional20-method Store lifecycle/recovery proposal now passes sequential independent SPEC106 actual/fresh observations and fresh QUALITY44 paired concurrency/transaction/scalar scenarios. Exact method signatures, prior27 DAO methods and all other method ASTs remain unchanged. This is proposal acceptance, not current caller/constructor activation or full workflow proof. Exact identities and limits are in ../specs/2026-10-16-state-store-lifecycle-readiness.json.
+
+Read-only production inspection at12:44:27UTC finds checkout and observed origin/main454bb72a5fcb42761046571280722fb9d2ba16f1, Store2026-10-13.5/Email51, no target State table and the same exact actual sixteen-family State source declaration. Prior genuine7dad rollback receipts are historical evidence; final rollback must exercise genuine current production code. Preserve the newly published runtime/History/status fixes through a normal merge into this isolated feature branch before constructor/caller activation and final copy/native proofs. The production checkout/database are not changed by this inspection. Exact metadata is ../specs/2026-10-16-state-production-source-readback.json.
+
 ## Latest State caller readiness, 2026-10-16
 
 Native integer binding756a6c7e is independently SPEC/QUALITY accepted342 each. The trimmed dispatcher19-callable proposal b4ff0720 is independently SPEC610 matched checkpoints+10 overflow traces and QUALITY22 checkpoints/index/transaction checks accepted as a proposal only. Root exercises the exact Store27-method proposal61 calls per actual/fresh variant with typed State/source-ROWID fact agreement; clocks are normalized and no target cold constructor is claimed. State bulk UPDATE b778f49f is independently SPEC417 plus6460 field checkpoints and QUALITY DIFFERENT547-case matrix plus48 behavior probes accepted; all current State callers remain unselected.

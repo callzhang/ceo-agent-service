@@ -1,0 +1,360 @@
+--- a/app/store.py
++++ b/app/store.py
+@@ -98 +98 @@
+-from app.state_storage import insert_state, state_json_field, upsert_state
++from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
+@@ -13005 +13005 @@
+-                    "delete from codex_session_locks where conversation_id=?",
++                    "delete from state where record_type='codex_session_locks' and conversation_id=?",
+@@ -13157 +13157 @@
+-                    "delete from codex_session_locks where conversation_id=?",
++                    "delete from state where record_type='codex_session_locks' and conversation_id=?",
+@@ -13229 +13229 @@
+-                    "delete from codex_session_locks where conversation_id=?",
++                    "delete from state where record_type='codex_session_locks' and conversation_id=?",
+@@ -17726,0 +17727,2 @@
++            lease_projection = "(" + state_projection("dispatcher_claim_leases") + ")"
++            lock_projection = "(" + state_projection("codex_session_locks") + ")"
+@@ -17730 +17732 @@
+-                "select 1 from dispatcher_claim_leases claim "
++                f"select 1 from {lease_projection} claim "
+@@ -17754 +17756 @@
+-                           from codex_session_locks
++                           from {lock_projection} as codex_session_locks
+@@ -17772,2 +17774,2 @@
+-                delete from codex_session_locks
+-                where owner in ({owner_placeholders})
++                delete from state
++                where record_type='codex_session_locks' and owner in ({owner_placeholders})
+@@ -17985,11 +17987,7 @@
+-        db.execute(
+-                """
+-                insert into conversation_runtime_sessions (
+-                    conversation_id, route_name, session_id, contract_hash, updated_at
+-                ) values (?, ?, ?, ?, ?)
+-                on conflict(conversation_id, route_name) do update set
+-                    session_id=excluded.session_id,
+-                    contract_hash=excluded.contract_hash,
+-                    updated_at=excluded.updated_at
+-                """,
+-                (conversation_id, route_name, session_id, contract_hash, now_text),
++        upsert_state(
++            db, "conversation_runtime_sessions",
++            {"conversation_id": conversation_id, "route_name": route_name,
++             "session_id": session_id, "contract_hash": contract_hash,
++             "updated_at": now_text},
++            {field: state_json_field(field) for field in
++             ("session_id", "contract_hash", "updated_at")},
+@@ -17998,7 +17996,5 @@
+-            db.execute(
+-                    """
+-                    update conversations
+-                    set codex_session_id=?, codex_session_contract_hash=?
+-                    where conversation_id=?
+-                    """,
+-                    (session_id, contract_hash, conversation_id),
++            update_state_rows(
++                db, "conversations",
++                {"codex_session_id": session_id,
++                 "codex_session_contract_hash": contract_hash},
++                where_sql="conversation_id=?", parameters=(conversation_id,),
+@@ -18013,0 +18010 @@
++        projection = "(" + state_projection("conversation_runtime_sessions") + ")"
+@@ -18017,2 +18014,2 @@
+-                    """
+-                    select session_id from conversation_runtime_sessions
++                    f"""
++                    select session_id from {projection}
+@@ -18025,2 +18022,2 @@
+-                    """
+-                    select session_id from conversation_runtime_sessions
++                    f"""
++                    select session_id from {projection}
+@@ -18037,0 +18035 @@
++        projection = "(" + state_projection("conversation_runtime_sessions") + ")"
+@@ -18040,2 +18038,2 @@
+-                """
+-                select contract_hash from conversation_runtime_sessions
++                f"""
++                select contract_hash from {projection}
+@@ -18061 +18059 @@
+-                "delete from conversation_runtime_sessions where conversation_id=?",
++                "delete from state where record_type='conversation_runtime_sessions' and conversation_id=?",
+@@ -18064,9 +18062,7 @@
+-            legacy = db.execute(
+-                """
+-                update conversations
+-                set codex_session_id=null, codex_session_contract_hash=''
+-                where conversation_id=? and codex_session_id is not null
+-                """,
+-                (conversation_id,),
+-            )
+-            return max(cursor.rowcount, legacy.rowcount)
++            legacy = update_state_rows(
++                db, "conversations",
++                {"codex_session_id": None, "codex_session_contract_hash": ""},
++                where_sql="conversation_id=? and codex_session_id is not null",
++                parameters=(conversation_id,),
++            )
++            return max(cursor.rowcount, legacy)
+@@ -18102,2 +18098,2 @@
+-                delete from conversation_runtime_sessions
+-                where conversation_id=? and route_name=?
++                delete from state
++                where record_type='conversation_runtime_sessions' and conversation_id=? and route_name=?
+@@ -18110,8 +18106,5 @@
+-                legacy = db.execute(
+-                    f"""
+-                    update conversations
+-                    set codex_session_id=null, codex_session_contract_hash=''
+-                    where conversation_id=?
+-                      and codex_session_id in ({placeholders})
+-                    """,
+-                    (conversation_id, *expected_session_ids),
++                legacy = update_state_rows(
++                    db, "conversations",
++                    {"codex_session_id": None, "codex_session_contract_hash": ""},
++                    where_sql=f"conversation_id=? and codex_session_id in ({placeholders})",
++                    parameters=(conversation_id, *expected_session_ids),
+@@ -18119 +18112 @@
+-                cleared = max(cleared, legacy.rowcount)
++                cleared = max(cleared, legacy)
+@@ -18134,0 +18128 @@
++        projection = "(" + state_projection("runtime_route_pauses") + ")"
+@@ -18137 +18131 @@
+-                "select retry_at from runtime_route_pauses where route_name=?",
++                f"select retry_at from {projection} where route_name=?",
+@@ -18144 +18138 @@
+-                    "delete from runtime_route_pauses where route_name=? and retry_at<=?",
++                    "delete from state where record_type='runtime_route_pauses' and route_name=? and retry_at<=?",
+@@ -18147,9 +18141,7 @@
+-            cursor = db.execute(
+-                """
+-                insert into runtime_route_pauses (
+-                    route_name, failure_code, retry_at, opened_at, updated_at
+-                ) values (?, ?, ?, ?, ?)
+-                """,
+-                (route_name, failure_code, retry_at_text, now_text, now_text),
+-            )
+-            return cursor.rowcount == 1
++            inserted = insert_state(
++                db, "runtime_route_pauses",
++                {"route_name": route_name, "failure_code": failure_code,
++                 "retry_at": retry_at_text, "opened_at": now_text,
++                 "updated_at": now_text},
++            )
++            return inserted.rowcount == 1
+@@ -18163,0 +18156 @@
++        projection = "(" + state_projection("runtime_route_pauses") + ")"
+@@ -18166,2 +18159,2 @@
+-                """
+-                select failure_code, retry_at from runtime_route_pauses
++                f"""
++                select failure_code, retry_at from {projection}
+@@ -18176 +18169 @@
+-                    "delete from runtime_route_pauses where route_name=? and retry_at<=?",
++                    "delete from state where record_type='runtime_route_pauses' and route_name=? and retry_at<=?",
+@@ -18186 +18179 @@
+-                "delete from runtime_route_pauses where route_name=?", (route_name,)
++                "delete from state where record_type='runtime_route_pauses' and route_name=?", (route_name,)
+@@ -18236,16 +18229,9 @@
+-            sessions = db.execute(
+-                """
+-                update or replace conversation_runtime_sessions
+-                   set route_name=?
+-                 where route_name=?
+-                """,
+-                (new_name, old_name),
+-            ).rowcount
+-            pauses = db.execute(
+-                """
+-                update or replace runtime_route_pauses
+-                   set route_name=?, updated_at=?
+-                 where route_name=?
+-                """,
+-                (new_name, now_text, old_name),
+-            ).rowcount
++            sessions = update_state_rows(
++                db, "conversation_runtime_sessions", {"route_name": new_name},
++                where_sql="route_name=?", parameters=(old_name,), replace=True,
++            )
++            pauses = update_state_rows(
++                db, "runtime_route_pauses",
++                {"route_name": new_name, "updated_at": now_text},
++                where_sql="route_name=?", parameters=(old_name,), replace=True,
++            )
+@@ -18253 +18239,2 @@
+-                "select value from service_state where key=?", (old_key,)
++                f"select value from ({state_projection('service_state')}) where key=?",
++                (old_key,),
+@@ -18260,0 +18248,8 @@
++                upsert_state(
++                    db, "service_state",
++                    {"key": new_key,
++                     "value": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
++                    {"value": state_json_field("value"),
++                     "updated_at": "json_quote(current_timestamp)"},
++                    insert_json={"updated_at": "json_quote(current_timestamp)"},
++                )
+@@ -18262,13 +18257,2 @@
+-                    """
+-                    insert into service_state (key, value, updated_at)
+-                    values (?, ?, current_timestamp)
+-                    on conflict(key) do update set
+-                        value=excluded.value,
+-                        updated_at=current_timestamp
+-                    """,
+-                    (
+-                        new_key,
+-                        json.dumps(
+-                            payload, ensure_ascii=False, sort_keys=True
+-                        ),
+-                    ),
++                    "delete from state where record_type='service_state' and key=?",
++                    (old_key,),
+@@ -18276 +18259,0 @@
+-                db.execute("delete from service_state where key=?", (old_key,))
+@@ -18307,13 +18290,18 @@
+-            cursor = db.execute(
+-                """
+-                update conversations
+-                set codex_session_contract_hash=?
+-                where conversation_id=?
+-                """,
+-                (contract_hash, conversation_id),
+-            )
+-            db.execute(
+-                """
+-                insert into conversation_runtime_sessions (
+-                    conversation_id, route_name, session_id,
+-                    contract_hash, updated_at
++            changed = update_state_rows(
++                db, "conversations", {"codex_session_contract_hash": contract_hash},
++                where_sql="conversation_id=?", parameters=(conversation_id,),
++            )
++            row = db.execute(
++                f"select conversation_id, codex_session_id from ({state_projection('conversations')}) "
++                "where conversation_id=? and codex_session_id is not null "
++                "and codex_session_id<>''",
++                (conversation_id,),
++            ).fetchone()
++            if row is not None:
++                upsert_state(
++                    db, "conversation_runtime_sessions",
++                    {"conversation_id": row["conversation_id"],
++                     "route_name": "codex_oauth", "session_id": row["codex_session_id"],
++                     "contract_hash": contract_hash, "updated_at": now_text},
++                    {field: state_json_field(field) for field in
++                     ("session_id", "contract_hash", "updated_at")},
+@@ -18321,12 +18309 @@
+-                select conversation_id, 'codex_oauth', codex_session_id, ?, ?
+-                from conversations
+-                where conversation_id=? and codex_session_id is not null
+-                  and codex_session_id<>''
+-                on conflict(conversation_id, route_name) do update set
+-                    session_id=excluded.session_id,
+-                    contract_hash=excluded.contract_hash,
+-                    updated_at=excluded.updated_at
+-                """,
+-                (contract_hash, now_text, conversation_id),
+-            )
+-            return cursor.rowcount
++            return changed
+@@ -18343,2 +18320,2 @@
+-                    delete from codex_session_locks
+-                    where conversation_id=?
++                    delete from state
++                    where record_type='codex_session_locks' and conversation_id=?
+@@ -18352,6 +18329,4 @@
+-                cursor = db.execute(
+-                    """
+-                    insert or ignore into codex_session_locks (conversation_id, owner)
+-                    values (?, ?)
+-                    """,
+-                    (conversation_id, owner),
++                inserted = insert_state(
++                    db, "codex_session_locks",
++                    {"conversation_id": conversation_id, "owner": owner},
++                    ignore=True,
+@@ -18359 +18334 @@
+-                if cursor.rowcount == 1:
++                if inserted.rowcount == 1:
+@@ -18362 +18337,2 @@
+-                    "select owner from codex_session_locks where conversation_id=?",
++                    f"select owner from ({state_projection('codex_session_locks')}) "
++                    "where conversation_id=?",
+@@ -18378,2 +18354,2 @@
+-                    delete from codex_session_locks
+-                    where conversation_id=? and owner=?
++                    delete from state
++                    where record_type='codex_session_locks' and conversation_id=? and owner=?
+@@ -18386 +18362 @@
+-                    "select 1 from codex_session_locks where conversation_id=?",
++                    f"select 1 from ({state_projection('codex_session_locks')}) where conversation_id=?",
+@@ -18410,7 +18386,5 @@
+-                cursor = db.execute(
+-                    """
+-                    update codex_session_locks
+-                    set locked_at=?
+-                    where conversation_id=? and owner=? and locked_at>?
+-                    """,
+-                    (now_text, conversation_id, owner, stale_before),
++                db.execute("begin")
++                changed = update_state_rows(
++                    db, "codex_session_locks", {"locked_at": now_text},
++                    where_sql="conversation_id=? and owner=? and locked_at>?",
++                    parameters=(conversation_id, owner, stale_before),
+@@ -18418 +18392 @@
+-                return cursor.rowcount == 1
++                return changed == 1
+@@ -18766,8 +18740,7 @@
+-            cursor = db.execute(
+-                """
+-                update conversations
+-                set codex_session_id=null, codex_session_contract_hash=''
+-                where codex_session_id is not null and codex_session_id != ''
+-                """
+-            )
+-            return cursor.rowcount
++            db.execute("begin")
++            changed = update_state_rows(
++                db, "conversations",
++                {"codex_session_id": None, "codex_session_contract_hash": ""},
++                where_sql="codex_session_id is not null and codex_session_id != ''",
++            )
++            return changed
+@@ -18777,9 +18750,7 @@
+-            cursor = db.execute(
+-                """
+-                update conversations
+-                set codex_session_id=null, codex_session_contract_hash=''
+-                where conversation_id=?
+-                """,
+-                (conversation_id,),
+-            )
+-            return cursor.rowcount
++            db.execute("begin")
++            changed = update_state_rows(
++                db, "conversations",
++                {"codex_session_id": None, "codex_session_contract_hash": ""},
++                where_sql="conversation_id=?", parameters=(conversation_id,),
++            )
++            return changed
+@@ -18795,9 +18766,8 @@
+-            cursor = db.execute(
+-                """
+-                update conversations
+-                set codex_session_id=null, codex_session_contract_hash=''
+-                where conversation_id=? and codex_session_id=?
+-                """,
+-                (conversation_id, expected_session_id),
+-            )
+-            return cursor.rowcount
++            db.execute("begin")
++            changed = update_state_rows(
++                db, "conversations",
++                {"codex_session_id": None, "codex_session_contract_hash": ""},
++                where_sql="conversation_id=? and codex_session_id=?",
++                parameters=(conversation_id, expected_session_id),
++            )
++            return changed
