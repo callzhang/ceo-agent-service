@@ -68,7 +68,7 @@ Unselected Tasks20 executable declaration: app/task20_definitions.py compiles20s
 ```
 
 - [x] Commit only the2new app/test modules, own claim row, the two exact doc paragraphs and own implementation checkboxes. No main/push/production/deploy.
-- [ ] Fresh independent SPEC verifies source field/constraint/identity/index/trigger coverage and unchanged selection boundaries; then fresh QUALITY checks meaningful negative controls and native edge behavior. Root resolves findings before accepting.
+- [x] Fresh independent SPEC325/9.52s and QUALITY completed. QUALITY P2 repaired without app changes; SPEC repair22/0.72s and QUALITY22/0.75s plus4constraint deletion mutants accept the repaired tests. Root acceptance: ../specs/2026-10-16-task20-definitions-acceptance.json.
 
 ### Following execution gates (not completed by this declaration)
 
@@ -82,4 +82,4 @@ Convert all existing8andremaining12caller groups and coupled retained children; 
 Fresh QUALITY found two shadowed Workbench negative paths: three source CHECK cases and the parent INSERT guard reused an existing client_request_id. No declaration defect was reproduced; original declarations reject the independent invalid values. The complete adjacent canonical regression now supplies a distinct request ID, completed status and sequence2; both tests first insert the exact valid control under a savepoint, roll back, then change only the bad field/parent. The repaired canonical325case preflight passes; transfer the exact new regression hash above to tests/test_task20_definitions.py, rerun applied325cases/Ruff/diff, and commit only applied regression plus ownclaim/this repair checkbox. Application/canonical declaration SHA stays59938318 unchanged.
 
 - [x] Mechanical writer transfers repaired canonical regression and verifies applied325cases.
-- [ ] Root confirms app unchanged, existing SPEC scope still holds, and QUALITY rechecks three CHECK deletion mutants plus the parent INSERT-trigger deletion mutant against the repaired tests before acceptance.
+- [x] Root confirms app exactSHA unchanged; bounded SPEC repairPASS and QUALITY22/0.75s, all4original mutants caught. Source/allocator/caller/migration/native/final11 gates remain open.

@@ -1,6 +1,6 @@
 # Tasks20 精确字段与关系映射
 
-本文件把已经发布的8种 Tasks 和剩余12个来源表汇入同一张 `tasks` 的方向细化为字段清单。目标仍是10张核心表加1张 Email migration ledger；这里的20是记录类型数，不是新表数。当前是待落实为可执行DDL的映射，未选择运行时或迁移任何真实数据库。
+本文件把已经发布的8种 Tasks 和剩余12个来源表汇入同一张 `tasks` 的方向细化为字段清单。目标仍是10张核心表加1张 Email migration ledger；这里的20是记录类型数，不是新表数。字段映射已落实为未选择运行时的可执行DDL，并通过独立审查；事务写入器、调用方和真实数据库迁移尚未切换。
 
 逐字段机器清单：[2026-10-16-tasks20-field-map.json](superpowers/specs/2026-10-16-tasks20-field-map.json)。267项当前字段中，265项来自原已确认CSV；另外2项是已发布的 `current_input_id`、`claimed_input_id` 物理指针，原设计已要求只保存一份输入版本指针。它们不是本次新增业务字段。
 
@@ -49,7 +49,7 @@
 
 ## 实施顺序和验收
 
-1. 把267项映射编译成20种有限payload声明，生成确切getter、NOT NULL/CHECK、索引、FK和触发器；保留实际与fresh源布局差异供逆迁移使用。原生源oracle已434用例通过并经独立审查，不等于目标DDL已通过。
+1. 已把267项映射编译成20种有限payload声明及getter、NOT NULL/CHECK、索引、FK和触发器。目标声明325用例及独立SPEC/QUALITY通过；Workbench测试的重复键盲点已修正，4个约束删除实验全部被抓住。原生源oracle434用例仍是独立源基线；目标写入器/分配器和逆迁移尚未完成。
 2. 逐组转换真实SQL读写：当前业务映射；邮件分类和历史队列；OA/OKR/WeChat；反馈batch/item/round/decision及关联子表；Workbench文件元数据和恢复。既有状态、事务、CAS、结果和回执不改变，不增加审批或安全策略。
 3. 先在副本迁移，执行当前API写入，按当前事实逆迁移，使用真实旧代码读写，再向前迁移；核对原声明、分配水位、所有原行和精确新增行、FK基线及冷启动。
 4. 副本上使用真实Codex CLI和对外发送替身覆盖创建、执行、审查退回/修订、失败恢复、业务结果和回执；再做受影响UI及最终普通表数验收。最后才进入已授权边界内的发布流程。
@@ -58,3 +58,6 @@
 
 
 Unselected Tasks20 executable declaration: app/task20_definitions.py compiles20source kinds/267source fields into one Tasks table with7writable structural columns and constrained generated source getters. tests/test_task20_definitions.py passes325synthetic-memory cases including source-derived NOT NULL success controls, existing CHECKs/uniques, physical/public parent relationships, current mapping aliases/times, nullable/BLOB keys,3retained feedback FK endpoints and native decision REPLACE. No historical factory/default/constructor/currentcaller/allocator/migration/source retirement is selected by this addition; final10core+ledger remains open.
+
+
+声明层验收记录：[2026-10-16-task20-definitions-acceptance.json](superpowers/specs/2026-10-16-task20-definitions-acceptance.json)。应用声明提交388d486e；测试控制修正30c2c4b9，应用SHA保持不变。新建临时验证目录已清理，生产数据库和运行路径未修改。

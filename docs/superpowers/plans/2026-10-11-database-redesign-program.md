@@ -769,3 +769,10 @@ Tasks20 exact field mapping prepared and independently SPEC-checked: docs/databa
 
 
 Unselected Tasks20 executable declaration: app/task20_definitions.py compiles20source kinds/267source fields into one Tasks table with7writable structural columns and constrained generated source getters. tests/test_task20_definitions.py passes325synthetic-memory cases including source-derived NOT NULL success controls, existing CHECKs/uniques, physical/public parent relationships, current mapping aliases/times, nullable/BLOB keys,3retained feedback FK endpoints and native decision REPLACE. No historical factory/default/constructor/currentcaller/allocator/migration/source retirement is selected by this addition; final10core+ledger remains open.
+
+
+### Tasks20 executable declaration accepted, 2026-10-16
+
+Unselected app/task20_definitions.py at388d486e now implements the exact267source-field/20kind finite declaration with7stored structural columns, generated source getters,51indices and22triggers. Root325synthetic cases pass; independent SPEC325/9.52s verifies field/affinity/default/CHECK/index/trigger/FK coverage. QUALITY reproduced a P2 test blind spot in3Workbench CHECK negatives andparentINSERTnegative; canonical41046920 +applied30c2c4b9 add valid distinct savepoint controls, with no app change. Repaired325/9.92s, bounded SPEC22/0.72s andQUALITY22/0.75s pass; all4original deletion mutants now caught. Earlier20unknown-key mutants and243NN controls remain applicable.351appAST/Ruff/diff/hash checks pass; newly owned temps removed. Receipt specs/2026-10-16-task20-definitions-acceptance.json.
+
+This is a real code foundation, still unselected: historical/current factories, constructors, callers and production are unchanged. Next implement independent source-kind allocators andtransactional writers (including sourceROWID exposure, ignored inserts/FULL scopes and referencedbatch REPLACEphysical identity), then all8+12caller conversions, coupled children andcopied-DB currentfact forward/inverse/truepredecessor/reforward. Native fake-outbound/UI/remainingfamilies/final11/CI/approvedpublication remain open; no full design completion is claimed.
