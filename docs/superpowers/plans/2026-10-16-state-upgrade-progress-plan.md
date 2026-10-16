@@ -226,7 +226,7 @@ The complete proposed class was executed in an owned temporary namespace, replac
 
 - [x] Write complete class and tests before application mutation.
 - [x] Root extract/compile/Ruff/19-case preflight and owned temporary cleanup.
-- [ ] Implement exact class and regression module, run existing updater publication tests.
+- [x] Implement exact class and regression module, run existing updater publication tests.
 - [ ] Fresh independent SPEC review, then fresh QUALITY review.
 - [ ] As part of the later single atomic current-State cutover, bind initial source/current role before the first progress read/write in deploy.py, repository_updater.main and cli.py; pass the same real progress-store instance to prepare_database_schema_release and the paired release. Keep generic fake stores/protocol unchanged.
 - [ ] Preserve the stable Email migration ledger as the release authority. Validate an explicit source/current version pair; never choose another storage path after a missing-table exception.

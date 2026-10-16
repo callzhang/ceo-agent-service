@@ -48,37 +48,59 @@ class UpgradeStateStore(Protocol):
 
 
 class ExistingSchemaUpgradeStateStore:
-    """Persist deploy progress without constructing a newer application store.
+    """Persist deploy progress using the release's explicitly selected schema.
 
-    A full AutoReplyStore construction can migrate the live database before
-    the quiet wait and backup. The existing service_state table is enough for
-    this upgrader's progress record.
+    This DAO never constructs an application store or migrates the database.
+    The paired publication binds the committed schema role; it rebinds source
+    only after a successful inverse commit.
     """
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = Path(database_path)
+        self.bind_schema_source()
+
+    def bind_schema_source(self) -> None:
+        self._state_schema_current = False
+
+    def bind_schema_current(self) -> None:
+        self._state_schema_current = True
 
     def get_service_state(self, key: str) -> str | None:
+        from app.state_definitions import state_projection
+
+        projection = ("(" + state_projection("service_state") + ")"
+                      if self._state_schema_current else "service_state")
         with sqlite3.connect(
             f"file:{self.database_path}?mode=rw", uri=True, timeout=30
         ) as db:
-            row = db.execute("select value from service_state where key=?", (key,)).fetchone()
+            row = db.execute(
+                f"select value from {projection} where key=?", (key,)
+            ).fetchone()
             return None if row is None else str(row[0])
 
     def set_service_state(self, key: str, value: str) -> None:
+        from app.state_storage import state_json_field, upsert_state
+
         for attempt in range(UPGRADE_STATE_WRITE_RETRY_ATTEMPTS):
             try:
                 with sqlite3.connect(
                     f"file:{self.database_path}?mode=rw", uri=True, timeout=30
                 ) as db:
                     db.execute("begin immediate")
-                    db.execute(
-                        """insert into service_state (key, value, updated_at)
-                           values (?, ?, current_timestamp)
-                           on conflict(key) do update set
-                             value=excluded.value, updated_at=current_timestamp""",
-                        (key, value),
-                    )
+                    if self._state_schema_current:
+                        upsert_state(
+                            db, "service_state", {"key": key, "value": value},
+                            {"value": state_json_field("value"),
+                             "updated_at": "json_quote(current_timestamp)"},
+                        )
+                    else:
+                        db.execute(
+                            """insert into service_state (key, value, updated_at)
+                               values (?, ?, current_timestamp)
+                               on conflict(key) do update set
+                                 value=excluded.value, updated_at=current_timestamp""",
+                            (key, value),
+                        )
                 return
             except sqlite3.OperationalError as exc:
                 message = str(exc).casefold()
