@@ -53,5 +53,5 @@ The final API deliberately supports SQL INSERT expressions only for existing non
 Four actual/fresh available/exhausted-round cases assert unsupported expression rejection before any SQL, then verify the bound round path still inserts or produces native SQLITE_FULL with prior caller work preserved. Ten cases cover all five source AUTO kinds followed by successful native bound controls. Exact-scalar diagnostics now use the existing non-AUTO feedback item attempt_id INTEGER field (which natively retains nonintegral REAL); the no-default NULL diagnostic uses actual workbench_artifacts.label. Candidate64/5.00s passes; final scoped1075 pending.
 
 - [x] Final scoped1075/71.50s PASS, owned temp removed. Previous API boundary regression14failed/50deselected0.90s reproduces unsupported admission; this is API contract rejection evidence, not14native equivalence failures. The independent native mismatch was2/8cases above.
-- [ ] Exact final app/test transfer and applied64, with mechanical receipt correction (previous writer8/42deselected was not50; separate SPEC50/4.09s).
+- [x] Exact final app/test transfer and applied64, with mechanical receipt correction (previous writer8/42deselected was not50; separate SPEC50/4.09s).
 - [ ] Sequential SPEC rereview and QUALITY rereview of narrowed contract.

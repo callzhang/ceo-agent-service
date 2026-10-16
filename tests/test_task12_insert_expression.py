@@ -111,7 +111,7 @@ def test_subquery_is_not_preselected_or_evaluated_by_parts(db, target, owner):
 
 @pytest.mark.parametrize("value", (1.2345678901234567, 2**53 + 1, 0.0))
 def test_scalar_real_is_exact_and_evaluated_once_at_execution(db, target, value):
-    kind = "okr_review_items"
+    kind = KIND
     calls = [0, 0]
     for n, connection in enumerate((db, target)):
         prepare(connection)
@@ -122,15 +122,15 @@ def test_scalar_real_is_exact_and_evaluated_once_at_execution(db, target, value)
 
         connection.create_function("rhs", 0, rhs)
     values = supplied(kind)
-    values.pop("objective_weight", None)
+    values.pop("attempt_id", None)
     proposed = task12_insert_parts(
-        target, kind, values, insert_sql={"objective_weight": "rhs()"}
+        target, kind, values, insert_sql={"attempt_id": "rhs()"}
     )
     assert calls == [0, 0]
     db.execute(
-        "insert into okr_review_items("
+        "insert into feedback_processing_items("
         + ",".join(values)
-        + ",objective_weight) values("
+        + ",attempt_id) values("
         + ",".join("?" for _ in values)
         + ",rhs())",
         tuple(values.values()),
@@ -290,23 +290,94 @@ def test_replace_expression_and_default_evaluate_once_and_lazily(db, target, val
 
 
 def test_replace_null_required_expression_without_default_still_rejects(db, target):
-    kind = "okr_review_items"
+    kind = "workbench_artifacts"
     for connection in (db, target):
         prepare(connection)
     values = supplied(kind)
-    values.pop("request_id")
+    values.pop("label")
     proposed = task12_insert_parts(
-        target, kind, values, replace=True, insert_sql={"request_id": "null"}
+        target, kind, values, replace=True, insert_sql={"label": "null"}
     )
     with pytest.raises(sqlite3.IntegrityError):
         db.execute(
-            "insert or replace into okr_review_items("
+            "insert or replace into workbench_artifacts("
             + ",".join(values)
-            + ",request_id) values("
+            + ",label) values("
             + ",".join("?" for _ in values)
             + ",null)",
             tuple(values.values()),
         )
     with pytest.raises(sqlite3.IntegrityError):
         target.execute(proposed.sql, proposed.parameters)
+    snapshot(db, target, kind)
+
+
+@pytest.mark.parametrize("exhausted", (False, True))
+def test_preinsert_round_guard_input_remains_bound_before_any_preparation(
+    db, target, exhausted
+):
+    kind = "feedback_processing_rounds"
+    if exhausted:
+        data = supplied(kind) | {"id": 2**63 - 1}
+        insert(db, kind, data)
+        insert_task12(target, kind, data)
+        for connection in (db, target):
+            connection.commit()
+            connection.execute("create table caller_sentinel(value)")
+            connection.execute("insert into caller_sentinel values(7)")
+    values = supplied(kind, "b")
+    unbound = dict(values)
+    unbound.pop("round_number")
+    trace = []
+    target.set_trace_callback(trace.append)
+    # Scalar SQL is unsupported for an input the existing allocator must inspect.
+    # Reject before locks, source allocator checks, or any caller-visible write.
+    with pytest.raises(ValueError, match="non-AUTOINCREMENT"):
+        task12_insert_parts(target, kind, unbound, insert_sql={"round_number": "1"})
+    assert trace == []
+    target.set_trace_callback(None)
+    if exhausted:
+        for connection, operation in (
+            (db, lambda: insert(db, kind, values)),
+            (target, lambda: insert_task12(target, kind, values)),
+        ):
+            with pytest.raises(sqlite3.OperationalError) as error:
+                operation()
+            assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+            assert connection.in_transaction
+            assert (
+                connection.execute("select value from caller_sentinel").fetchone()[0]
+                == 7
+            )
+    else:
+        native = insert(db, kind, values)
+        actual = insert_task12(target, kind, values)
+        assert actual.lastrowid == native.lastrowid == 1
+    snapshot(db, target, kind)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    (
+        "feedback_iteration_decisions",
+        "feedback_processing_rounds",
+        "oa_notification_events",
+        "okr_review_items",
+        "wechat_memory_import_jobs",
+    ),
+)
+def test_independent_autoincrement_sources_keep_bound_insert_inputs(db, target, kind):
+    data = supplied(kind)
+    data.pop("created_at")
+    trace = []
+    target.set_trace_callback(trace.append)
+    with pytest.raises(ValueError, match="non-AUTOINCREMENT"):
+        task12_insert_parts(
+            target, kind, data, insert_sql={"created_at": "'scalar-clock'"}
+        )
+    assert trace == []
+    target.set_trace_callback(None)
+    native = insert(db, kind, supplied(kind))
+    actual = insert_task12(target, kind, supplied(kind))
+    assert actual.lastrowid == native.lastrowid == 1
     snapshot(db, target, kind)
