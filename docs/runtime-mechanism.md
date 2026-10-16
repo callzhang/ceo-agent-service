@@ -9,6 +9,15 @@ config relations, with no persisted load-body copy. Native malformed,
 noncanonical/BLOB load bodies and late binding remain explicit copy-validation
 exceptions; migration must prove exact reconstruction before retirement.
 
+The config row-transfer engine is also unselected. Its forward and inverse
+read current rows under caller snapshots, require an FK-off destination
+transaction and leave rollback to the caller. Inverse reads current target
+facts, including receipts appended after conversion. Exact source declarations,
+values/types/rowids, receipt body reconstruction and six allocator waters are
+verified; no row snapshot is persisted. Same-connection copy permits old source
+tables only during the pre-retirement transaction; runtime schema validation
+continues to require their retirement after release.
+
 The unpublished Store `2026-10-14.1`/Email52 candidate selects one typed
 `provider_state` table in fresh and current Email schema construction, converts
 the two source families through paired release, and uses the target in current

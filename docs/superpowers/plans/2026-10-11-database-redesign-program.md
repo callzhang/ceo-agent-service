@@ -1,5 +1,25 @@
 # Database Redesign Program
 
+## Latest complete config storage and row transfer, 2026-10-15
+
+Commit `2de877ea` implements all fifteen config kinds, real schedules and two
+Skill receipt kinds as unselected storage, applying the reviewed canonical
+patch exactly. The actual worktree passed132 focused cases, Ruff/compile/diff
+checks and unchanged default action-object comparisons. This supersedes the
+seven-kind-only implementation boundary recorded below, without selecting any
+new runtime constructor or changing production tables.
+
+The next row-transfer unit covers eighteen families/146 source fields. Its
+thirteen transfer and thirty-five integrated cases pass; independent review
+found no concrete blocker. Final frozen-source proof converts and inverses all
+6823 rows, including4105 byte-exact derived load receipts and1939 export
+receipts, with exact types/rowids and six allocator waters. Both in-memory
+targets pass quick_check and source970a is unchanged. This proves only the row
+engine: native source tables still must be retired in a coordinated release,
+with current callers, retained `runs` FK endpoints, training-observation
+retirement, action rebuild, inverse and exact paired markers all closed. No
+production mutation, publication or schema/table-count reduction occurs here.
+
 ## Latest unselected configs storage and live readback, 2026-10-15
 
 Fresh sequential independent SPEC and QUALITY accept `dc15505d`'s seven Email

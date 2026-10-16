@@ -11,6 +11,15 @@ conversion. Native AUTOINCREMENT exhaustion retains SQLITE_FULL and its whole
 transaction rollback. Caller conversion, migration/inverse and old-table
 retirement are still required before this storage can be selected.
 
+`configs_schema_transfer` provides the unselected eighteen-family row copy
+and current-fact inverse between installed declarations. It preserves native
+values, storage classes, signed source rowids and six allocator streams;
+shared physical references are resolved before insertion, including cycles.
+Both sides require caller transactions and the destination requires FK-off
+mode. It does not install/drop schemas or change markers. The release still
+needs retained-child FK translation, source-table retirement and caller
+selection; the row engine alone cannot activate this schema.
+
 The unpublished Store20/Email52 candidate selects `provider_state` for provider
 observations and folder generations as two typed rows in one table. It keeps
 the source's account-scoped composite identities and twelve named fields;

@@ -661,3 +661,46 @@ reconstruction checks and physical retirement of the eighteen old source
 families remain incomplete. No production database, provider or native CLI
 was touched by this unit. The retained author prototype remains an active
 implementation/review input until final implementation acceptance.
+### Source-bound row transfer and current-fact inverse
+
+`app/configs_schema_transfer.py` implements the row conversion needed by the
+future atomic config/schedule release. It covers exactly eighteen source
+families and 146 existing fields (118 configs,17 schedules,11 receipts).
+Metadata contains only frozen actual/fresh declarations; it contains no row
+snapshot, document body or copied trajectory. Forward maps typed physical
+references before insertion, including forward/cyclic source parents, while
+retaining public identities and hidden signed ROWIDs. Inverse reads current
+target facts into installed empty native declarations. Both directions retain
+all six AUTOINCREMENT waters and leave transaction completion to the caller.
+
+The initial missing-module RED was followed by eleven focused synthetic cases;
+the inverse-FK regression also failed when its comparison was removed in a
+transient in-process control. Two additional actual/fresh same-connection tests
+first failed because the runtime validator correctly requires old source tables
+absent. Transfer now compares the exact target action objects directly while
+the pre-retirement transaction still has source tables; runtime validation is
+unchanged. All thirteen transfer cases and thirty-five integrated storage cases
+passed together: **48 passed in 5.47 seconds**. Ruff, compileall and diff checks
+passed, and owned pytest temporary roots were removed with absence checked.
+
+Independent read-only review passed the initial ten-case engine, independently
+running those ten tests, and subsequently accepted the bounded inverse FK and
+same-connection corrections. It did not claim full release acceptance.
+
+The final executed module SHA-256 is
+`9fcf96b0e4bd226a2b60ec98602ab118e25dedcf0410c422b8d89877bb35bbc3`.
+On immutable frozen970a source, all **6,823 rows** across all eighteen families
+copied into in-memory targets and restored into in-memory original declarations.
+The 4,105 load receipts reconstruct byte-exactly and the 1,939 export receipts
+preserve their native values. Both quick checks returned `ok`; exact row/value/
+storage-class/ROWID checks and six sequence comparisons passed. Source was
+opened mode=ro/query_only and its whole-file hash remained unchanged.
+`superpowers/specs/2026-10-15-configs-row-transfer-actual.json` records only
+counts, waters, executed hash and scope. The final run took5.802seconds; timings
+from earlier runs varied widely, so this is not a speedup claim.
+
+This unit does not rewrite `runs` FKs, retire empty training observations,
+rebuild existing action rows, drop the eighteen native families, install schema
+markers or convert current callers. Its target requires the already declared
+opt-in follow-up/sync action scaffold; those caller/release paths also remain
+unselected. All are still required for the final ten-core-plus-ledger release.
