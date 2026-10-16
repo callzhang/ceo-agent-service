@@ -1,0 +1,305 @@
+{
+  "scope": "unselected documentation proposal; no app edit / database execution / constructor / migration selection",
+  "prerequisite_patches_in_order": [
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task8-store-caller-proposal.patch",
+      "sha256": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task8-workbench-caller-proposal.patch",
+      "sha256": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-email-native-caller-proposal.patch",
+      "sha256": "610bd87fb49ee22fca098fdaf887ccf62bd37e5462a9a8d2945440057304b8cc"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-store-misc-caller-proposal.patch",
+      "sha256": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-feedback-caller-proposal.patch",
+      "sha256": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-workbench-children-caller-proposal.patch",
+      "sha256": "f9e64c543a9aec532184a99ee9832d691635bdbaf4dfade9c515e25e3f268cc7"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-external-writers-caller-proposal.patch",
+      "sha256": "c52007327727e670dd55f434375b8aba3416112f369732717eba998102423415"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-console-readers-caller-proposal.patch",
+      "sha256": "a823ff570d1d8b6045f1289853831f7893531f78badc1281134bb80389f717df"
+    }
+  ],
+  "patch_sha256": "618c2033a0ca47185819dad4a24a9f4f6409d1d368a1655bc8da4b13efa8898c",
+  "helper_sha256": {
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f",
+    "app/task12_storage.py": "127311aa2ed303066fc3dd325a5642c0e61725a2d8db3b5bedfc218e804e013f",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86"
+  },
+  "modules": [
+    {
+      "file": "app/attempt_rerun_presentation.py",
+      "working_source_sha256": "e273f8fe73dceafa505dc8761c41772cb782a49b501ff0dcf398c5b97228020d",
+      "after_prerequisites_sha256": "e273f8fe73dceafa505dc8761c41772cb782a49b501ff0dcf398c5b97228020d",
+      "candidate_sha256": "c457fa0379cb079d50ea50dac574ef1152b4f115a019f30aeaa908c288a9439f",
+      "functions": 1,
+      "unchanged_function_asts": 1,
+      "changed_functions": [],
+      "sql_parameter_calls_exact": 1
+    },
+    {
+      "file": "app/minutes_owner_backfill.py",
+      "working_source_sha256": "692d7410feb72dfc054c586802f45aeddbd77332d6e5695e24dc85adb807307e",
+      "after_prerequisites_sha256": "692d7410feb72dfc054c586802f45aeddbd77332d6e5695e24dc85adb807307e",
+      "candidate_sha256": "f7cea67d2d13c56f553262d2f189bdafc6dbed20d52ae9b5b32a5047e5566060",
+      "functions": 2,
+      "unchanged_function_asts": 2,
+      "changed_functions": [],
+      "sql_parameter_calls_exact": 2
+    },
+    {
+      "file": "app/task_project_repair.py",
+      "working_source_sha256": "387185c2da3e682f6311199bc4ec07866744f1de95b121e5734a60158c9db2b6",
+      "after_prerequisites_sha256": "387185c2da3e682f6311199bc4ec07866744f1de95b121e5734a60158c9db2b6",
+      "candidate_sha256": "614dd67df3da2a02dc177b09ec216a64604002d96dafc5b7c5c8873e6c773364",
+      "functions": 14,
+      "unchanged_function_asts": 14,
+      "changed_functions": [],
+      "sql_parameter_calls_exact": 19
+    },
+    {
+      "file": "app/cli.py",
+      "working_source_sha256": "b573fc0d095916f6d0b96cf5eba7ffb0d5876c47962f29f99dc809fbfc3ac1b5",
+      "after_prerequisites_sha256": "b573fc0d095916f6d0b96cf5eba7ffb0d5876c47962f29f99dc809fbfc3ac1b5",
+      "candidate_sha256": "eb3d201b9600aa76d371753501ec88dc6387d1b22f01ef254342d1151168f79d",
+      "functions": 158,
+      "unchanged_function_asts": 158,
+      "changed_functions": [],
+      "sql_parameter_calls_exact": 4
+    },
+    {
+      "file": "app/agent_cli.py",
+      "working_source_sha256": "cd0476dc18e408ebcc069c8bffb617c71f0c53a47880bfaa7833694963018274",
+      "after_prerequisites_sha256": "cd0476dc18e408ebcc069c8bffb617c71f0c53a47880bfaa7833694963018274",
+      "candidate_sha256": "fcd40c67fcfbec339a1c9ece44a0e77f5ba7b2a93837053ee18712216df105ac",
+      "functions": 86,
+      "unchanged_function_asts": 86,
+      "changed_functions": [],
+      "sql_parameter_calls_exact": 2
+    },
+    {
+      "file": "app/task_semantic_import.py",
+      "working_source_sha256": "e947e42c797aa05edfd8b1916f2b004bfcb9d1d55deea38ae02abc83edd5e035",
+      "after_prerequisites_sha256": "e947e42c797aa05edfd8b1916f2b004bfcb9d1d55deea38ae02abc83edd5e035",
+      "candidate_sha256": "ae848ac19c8124772a2ff4c4480d95681074f4550991c37183eb5049170c47ff",
+      "functions": 21,
+      "unchanged_function_asts": 21,
+      "changed_functions": [],
+      "sql_parameter_calls_exact": 19
+    },
+    {
+      "file": "app/email_store.py",
+      "working_source_sha256": "c7f80cd9607cc0b1d500a698f341065e3b22f41b73a536f0ab3c8af88db5ecc9",
+      "after_prerequisites_sha256": "f4554c4233c2a2ee29fd74dc30532164f27d06836d5481d836233f88b3a3a89e",
+      "candidate_sha256": "27042bcf1233ddf31c0843e337d1aeb8863091aa3ab85d9e6bc9b7970c2f90e6",
+      "functions": 351,
+      "unchanged_function_asts": 351,
+      "changed_functions": [],
+      "sql_parameter_calls_exact": 674
+    },
+    {
+      "file": "app/workbench/native_events.py",
+      "working_source_sha256": "627dea69c179821fc18e1e97e37c6c96615134719c0536986bc0fa6f23f6a761",
+      "after_prerequisites_sha256": "627dea69c179821fc18e1e97e37c6c96615134719c0536986bc0fa6f23f6a761",
+      "candidate_sha256": "1cf7a6de80676539fa5f5945cccda4327ac61eb4f1e059ffb40cefc9876b85e1",
+      "functions": 13,
+      "unchanged_function_asts": 13,
+      "changed_functions": [],
+      "sql_parameter_calls_exact": 5
+    },
+    {
+      "file": "app/store.py",
+      "working_source_sha256": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+      "after_prerequisites_sha256": "13dbf3724919fbeac89b7d2aca895ca2651339b3fcb35a322e56ef10d108d55b",
+      "candidate_sha256": "2d82e4140b34a38025b9b7129d4c90d6262e806d49a9239401f990b633a8c6e5",
+      "functions": 807,
+      "unchanged_function_asts": 806,
+      "changed_functions": [
+        "AutoReplyStore._runtime_operation_parent_exists"
+      ],
+      "sql_parameter_calls_exact": 1227
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "working_source_sha256": "d1021d40b06d5e78c680625a200fff3bb92eaa6d95338e72ad966c06acf522f6",
+      "after_prerequisites_sha256": "78a897414c9abc9f030344f32c555a9dd8d2df135c6c5fd2a2241e8546bbc34a",
+      "candidate_sha256": "07f965f76e5583f0edd09be82ec53be838604594ab469bcafe93f301ed5f503c",
+      "functions": 7,
+      "unchanged_function_asts": 6,
+      "changed_functions": [
+        "compact_done_email_classification_inputs"
+      ],
+      "sql_parameter_calls_exact": 23
+    }
+  ],
+  "verification": {
+    "cumulative_prerequisite_apply": true,
+    "patch_apply_and_reverse_bytes": true,
+    "compile_in_memory": true,
+    "ruff_no_cache": true,
+    "database_forbidden_imports": [
+      "app/attempt_rerun_presentation.py",
+      "app/minutes_owner_backfill.py",
+      "app/task_project_repair.py",
+      "app/cli.py",
+      "app/agent_cli.py",
+      "app/task_semantic_import.py",
+      "app/email_store.py",
+      "app/workbench/native_events.py",
+      "app/store.py",
+      "app/storage_maintenance.py"
+    ],
+    "database_connections": 0,
+    "pure_sql_builders": true,
+    "all_signatures_exact": true,
+    "all_execute_parameter_and_keyword_asts_exact": true,
+    "transaction_asts_exact": true,
+    "unrelated_module_statements_exact": true
+  },
+  "remaining_native_task_storage_imports": [
+    {
+      "file": "app/store.py",
+      "names": [
+        "SOURCE_COLUMNS",
+        "task_id_expression",
+        "RETIRED_TASK_TABLES",
+        "create_task_schema",
+        "task_schema_is_current",
+        "install_task_child_guards"
+      ]
+    },
+    {
+      "file": "app/error_code_migration.py",
+      "names": [
+        "task_id_expression"
+      ]
+    },
+    {
+      "file": "app/workbench_schema_release.py",
+      "names": [
+        "validate_reply_input_references",
+        "validate_meeting_run_references"
+      ]
+    },
+    {
+      "file": "app/work_summary_payload.py",
+      "names": [
+        "task_id_expression"
+      ]
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "names": [
+        "TEXT_TASK_TYPES",
+        "WORKBENCH_TASK_COLUMNS",
+        "WORKBENCH_TASK_SQL",
+        "WORKBENCH_TURN_SQL",
+        "_capture_table",
+        "_declared_task_objects",
+        "_rebuild",
+        "create_task_schema",
+        "insert_task",
+        "install_task_child_guards",
+        "task_schema_is_current",
+        "validate_reply_input_references",
+        "validate_meeting_run_references"
+      ]
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "names": [
+        "RETIRED_TASK_TABLES",
+        "REPLY_TASK_SQL",
+        "MEETING_JOB_SQL",
+        "_validate_source_declarations",
+        "capture_task_schema",
+        "restore_task_schema",
+        "task_schema_is_current",
+        "validate_reply_input_references",
+        "validate_meeting_run_references"
+      ]
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "names": [
+        "task_id_expression"
+      ]
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "names": [
+        "task_id_expression"
+      ]
+    },
+    {
+      "file": "app/workbench/store.py",
+      "names": [
+        "task_physical_id",
+        "task_id_expression"
+      ]
+    },
+    {
+      "file": "app/workbench/native_events.py",
+      "names": [
+        "task_id_expression"
+      ]
+    }
+  ],
+  "preserved_source_oracles": [
+    {
+      "file": "app/task_storage.py",
+      "sha256": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+      "copied_candidate_byte_identical": true
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "sha256": "03e99ec30333e9a6dbde422d06ef49b03bd2fb0c02211bb915fa7b94c3249398",
+      "copied_candidate_byte_identical": true
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "sha256": "76f138bd66987b7f76f3e9d06bdc89a7bd261f6a88749d2b4755c81ecc2498a3",
+      "copied_candidate_byte_identical": true
+    },
+    {
+      "file": "app/workbench_schema_release.py",
+      "sha256": "648252ac454ee60ccfcc039b9b9c7adda2b5fdcca2c836ccd6df688b163279f2",
+      "copied_candidate_byte_identical": true
+    },
+    {
+      "file": "app/email_classification_schema.py",
+      "sha256": "1dc0b37896aff86987a3ca6e724269a849b23e688f23fd55e2dd6e44a66447f7",
+      "copied_candidate_byte_identical": true
+    },
+    {
+      "file": "app/email_current_schema.py",
+      "sha256": "06f72a6196cbb7202d8c7a757874781efa978ce6d5e9a27290581af160f5a924",
+      "copied_candidate_byte_identical": true
+    },
+    {
+      "file": "app/state_publication_sources.py",
+      "sha256": "ae115ec3b00feb3193b4ff9a7b4fc22485387d30373730003b896d46890f2b3b",
+      "copied_candidate_byte_identical": true
+    },
+    {
+      "file": "app/email_publication_sources.py",
+      "sha256": "8940394a151d3b591bd7d2006e3f1f0b715b75caca2b4db579d47249d3fe6c3d",
+      "copied_candidate_byte_identical": true
+    }
+  ]
+}
