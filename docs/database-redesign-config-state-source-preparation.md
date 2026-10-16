@@ -1022,3 +1022,24 @@ Final exact ten-file pytest: **153 passed, 1 Starlette deprecation warning in
 59.36 seconds**. Scoped Ruff, compileall, and `git diff --check` passed. No
 application/schema/validator code, real database, provider, native CLI, send,
 push, main merge, or deploy changed here.
+
+### Source-phase installer test correction, 2026-10-16
+
+Fresh SPEC review of `98297c3d` found that a neutral metadata test had
+replaced `create_email_action_external_triggers` with a test-local copy of the
+current runtime loop. The test could pass if the production installer never
+ran. The corrected test separates two contracts: a typed current target checks
+both action variants against `EmailStore._validate_schema_shape`, including
+missing and malformed retained plan-switch blockers; a genuine native
+source-phase parent layout calls the production
+`create_email_action_external_triggers` helper for transaction rollback,
+idempotence, and nonrepair of an existing malformed blocker. The current
+runtime's inline installer loop is separate and is not claimed to be tested by
+the source-phase helper case.
+
+The four split cases pass. A negative control that replaced the real helper
+with a function that raises failed both source-phase installer cases (2 failed,
+15 deselected); the unmodified validation file passed 17/17. The exact ten-file
+rerun passed 155/155 in 58.75 seconds with the same Starlette deprecation
+warning. Scoped Ruff, compileall, and diff checks passed. No application logic
+or accepted source fingerprint changed.
