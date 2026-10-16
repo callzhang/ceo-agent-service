@@ -16,7 +16,7 @@
     "app/email_store.py": "f4554c4233c2a2ee29fd74dc30532164f27d06836d5481d836233f88b3a3a89e",
     "app/email_task_adapter.py": "e47e1a967839b4fa22cd3e8c9f35ab174a223964802ca0501192db114afcf682"
   },
-  "patch_sha256": "0a9860933dab4bb8c321128fc83faf66a08f5dfbc814ee6f9e4eeb847f590987",
+  "patch_sha256": "610bd87fb49ee22fca098fdaf887ccf62bd37e5462a9a8d2945440057304b8cc",
   "canonical_task12_sha256": "8a7a84db53006065697ae44a2e39dc27a2008ca2687b6ddfc54e23ff9cc1729a",
   "module_scope": "Only two source-shaped finite projection/column maps and Task12/Task20 imports added; original module maps, factories, other classes remain AST exact.",
   "methods": {
@@ -5760,7 +5760,9 @@
     "constructor_selection": false,
     "copy_inverse_native_acceptance": false,
     "task_owned_temp_removed": true,
-    "source_app_modules_remain_exact": true
+    "source_app_modules_remain_exact": true,
+    "patch_serialization": "Blank unified-diff context lines serialized without a single space; current git apply/check/reverse preserves exact candidate/source SHA and git diff --check stays clean.",
+    "second_roundtrip_temp_removed": true
   },
   "source_statement_correspondence": {
     "adapter": "19 native direct source statements -> 10 source-shaped read projections, two native implicit/explicit insert_task12 calls, five native UPDATEs using pure SET fragments and two native raw bulk-capable DELETEs; no source-row loop introduced.",

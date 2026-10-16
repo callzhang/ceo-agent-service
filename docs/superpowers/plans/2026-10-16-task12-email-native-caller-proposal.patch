@@ -16,8 +16,8 @@
 +    field: task20_column(_EMAIL_HISTORICAL_KIND, field)
 +    for field in TASK20_FIELDS[_EMAIL_HISTORICAL_KIND]
 +}
- 
- 
+
+
  # Finite Email29 source-shaped reads used by the current DAO and validators.
 @@ -7310,7 +7322,7 @@
          except ValueError as exc:
@@ -160,8 +160,8 @@
 +++ b/app/email_task_adapter.py
 @@ -60,6 +60,17 @@
  from app.skill_features import FeatureRegistry
- 
- 
+
+
 +from app.task12_storage import insert_task12, task12_projection, task12_set_parts
 +from app.task20_definitions import TASK20_FIELDS, task20_column
 +
@@ -206,7 +206,7 @@
              elif row["input_json"] != input_json:
 @@ -342,26 +350,19 @@
          """
- 
+
          with self.email_store._connect() as db:
 -            db.execute(
 -                """
@@ -230,7 +230,7 @@
 +                'lease_expires_at': self._timestamp(self._now() + timedelta(hours=6)),
 +                'input_json': '{}',
 +            }, replace=True)
- 
+
      def close_offline_task(self, task_id: str) -> None:
          with self.email_store._connect() as db:
              db.execute(
@@ -239,9 +239,9 @@
 +                f"delete from tasks where record_type='email_agent_classification_tasks' and {_EMAIL_CLASSIFICATION_COLUMNS['task_id']}=? and {_EMAIL_CLASSIFICATION_COLUMNS['input_json']}='{{}}'",
                  (task_id,),
              )
- 
+
 @@ -370,8 +371,7 @@
- 
+
          with self.email_store._connect() as db:
              return db.execute(
 -                "delete from email_agent_classification_tasks "
@@ -249,7 +249,7 @@
 +                f"delete from tasks where record_type='email_agent_classification_tasks' and {_EMAIL_CLASSIFICATION_COLUMNS['owner']}=? and {_EMAIL_CLASSIFICATION_COLUMNS['input_json']}='{{}}'",
                  (owner,),
              ).rowcount
- 
+
 @@ -379,7 +379,7 @@
          with self.email_store._connect() as db:
              return (
@@ -260,7 +260,7 @@
                  ).fetchone()
                  is not None
 @@ -392,9 +392,9 @@
- 
+
          with self.email_store._connect() as db:
              rows = db.execute(
 -                """
@@ -303,7 +303,7 @@
 +                f"and {_EMAIL_CLASSIFICATION_COLUMNS['task_id']} in ({placeholders})",
 +                (*parts.parameters, *selected),
              ).rowcount
- 
+
      def claim_next(self, *, owner: str) -> EmailClassificationTask | None:
 @@ -450,8 +451,8 @@
          )
@@ -360,7 +360,7 @@
              ).fetchone()
          assert claimed is not None
 @@ -495,27 +500,24 @@
- 
+
      def _expire_running_claims(self, db: sqlite3.Connection, *, now: str) -> int:
          expired = db.execute(
 -            """
@@ -397,7 +397,7 @@
 +                (*parts.parameters, row['task_id']),
              )
          return len(expired)
- 
+
 @@ -571,33 +573,39 @@
              if status == "done":
                  db.execute("begin immediate")
