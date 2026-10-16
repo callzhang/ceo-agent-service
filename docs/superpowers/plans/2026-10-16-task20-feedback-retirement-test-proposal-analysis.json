@@ -1,0 +1,1549 @@
+{
+  "scope": "Unselected docs-only test proposal; synthetic owned copy only; no app/tests root edits or runtime activation",
+  "prerequisite_patch_hashes": {
+    "2026-10-16-task8-store-caller-proposal.patch": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+    "2026-10-16-task8-workbench-caller-proposal.patch": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26",
+    "2026-10-16-task12-email-native-caller-proposal.patch": "610bd87fb49ee22fca098fdaf887ccf62bd37e5462a9a8d2945440057304b8cc",
+    "2026-10-16-task12-store-misc-caller-proposal.patch": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4",
+    "2026-10-16-task12-feedback-caller-proposal.patch": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d",
+    "2026-10-16-task12-workbench-children-caller-proposal.patch": "f9e64c543a9aec532184a99ee9832d691635bdbaf4dfade9c515e25e3f268cc7",
+    "2026-10-16-task20-external-writers-caller-proposal.patch": "c52007327727e670dd55f434375b8aba3416112f369732717eba998102423415",
+    "2026-10-16-task20-console-readers-caller-proposal.patch": "a823ff570d1d8b6045f1289853831f7893531f78badc1281134bb80389f717df",
+    "2026-10-16-task20-remaining-readers-caller-proposal.patch": "618c2033a0ca47185819dad4a24a9f4f6409d1d368a1655bc8da4b13efa8898c",
+    "2026-10-16-task20-store-constructor-proposal.patch": "013079516002034a88f015629ce333577601128b21ced9bc88c8532310f3f57d",
+    "2026-10-16-task20-paired-closure-proposal.patch": "f579a40c384e846f4a65c0de82af8244ff1e87dd82c9da7802bf96b4a182eb52"
+  },
+  "files": {
+    "tests/feedback_processing_fixtures.py": {
+      "before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after_sha256": "23af8b8f7ba2ad41085af6aa69bb5776517b41ebc0a785536628ef6f4177a79a"
+    },
+    "tests/test_feedback_processing.py": {
+      "before_sha256": "d6c27781e0f4df585d656a6a42f004c56012145fa3a8311b440b6e4e45ab91f3",
+      "after_sha256": "c001c27ba3641a267b2acace6ab47bf37ae5e39dde771b0eabf259ac3607624b"
+    },
+    "tests/test_audit_web.py": {
+      "before_sha256": "066a19b6bf9e47728e5e2e1de77303a9c740ecb88bc252334a765634f95feaba",
+      "after_sha256": "2cf6ab9e079a691b6187f4f55153db7f402f3d3a8653c7066c6d272bef5ad704"
+    },
+    "tests/test_console_web_api.py": {
+      "before_sha256": "0ef0f967fe8e859f4ae6598184b2e06aeaf0504c5fda7fa67890fee9e54ecb1d",
+      "after_sha256": "eeda5aacfe8f96ae722519d57cbac4f69d56983f9ab5d39229e279ac2825ec5b"
+    }
+  },
+  "patch_sha256": "3ffb68481e6bb6a23459e8dc32515bec9058e4f2d85d8b74b1ecbdc742344e6f",
+  "changed_top_level_functions": {
+    "tests/test_feedback_processing.py": [
+      "test_batch_resolved_event_projection_and_status_transition_are_consistent",
+      "test_claim_rejects_unknown_or_resolved_keys_atomically",
+      "test_feedback_cold_reopen_preserves_current_batch_rounds_and_sources",
+      "test_feedback_round_backfill_self_heals_current_schema_and_interruption",
+      "test_feedback_round_reconciliation_clears_ambiguous_matching_history",
+      "test_feedback_round_reconciliation_requires_pointer_ownership_and_batch",
+      "test_reopen_existing_batch_is_idempotent_after_source_resolution",
+      "test_resolved_event_projection_and_status_transition_are_consistent",
+      "test_round_reconciliation_clears_stale_non_latest_matching_pointer"
+    ],
+    "tests/test_audit_web.py": [
+      "test_user_feedback_nav_badge_shows_pending_count"
+    ],
+    "tests/test_console_web_api.py": [
+      "test_console_feedback_pending_badge_is_global_when_filtered_to_resolved"
+    ]
+  },
+  "retired_current_startup_tests": [
+    "test_feedback_round_backfill_self_heals_current_schema_and_interruption",
+    "test_feedback_round_reconciliation_requires_pointer_ownership_and_batch",
+    "test_feedback_round_reconciliation_clears_ambiguous_matching_history",
+    "test_round_reconciliation_clears_stale_non_latest_matching_pointer"
+  ],
+  "historical_functions_ast_unchanged": [
+    "test_feedback_round_backfill_preserves_legacy_receipts_and_source",
+    "test_migrated_v1_processing_round_resolves_idempotently_and_reopens"
+  ],
+  "pytest_nodes": [
+    "tests/test_feedback_processing.py::test_claim_rejects_unknown_or_resolved_keys_atomically",
+    "tests/test_feedback_processing.py::test_reopen_existing_batch_is_idempotent_after_source_resolution",
+    "tests/test_feedback_processing.py::test_batch_resolved_event_projection_and_status_transition_are_consistent",
+    "tests/test_feedback_processing.py::test_feedback_cold_reopen_preserves_current_batch_rounds_and_sources",
+    "tests/test_audit_web.py::test_user_feedback_nav_badge_shows_pending_count",
+    "tests/test_console_web_api.py::test_console_feedback_pending_badge_is_global_when_filtered_to_resolved",
+    "tests/test_audit_web.py::test_user_feedback_resolve_route_requires_processing_batch",
+    "tests/test_console_web_api.py::test_feedback_direct_resolve_requires_batch"
+  ],
+  "pytest_returncode": 0,
+  "pytest_output": "........                                                                 [100%]\n=============================== warnings summary ===============================\n../../../Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/lib/python3.13/site-packages/starlette/testclient.py:53\n  /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/lib/python3.13/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.\n    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n8 passed, 1 warning in 11.31s\n",
+  "compile_ruff_apply_reverse_reapply": "pass",
+  "remaining_separate_native_literal_fixture_inventory": [
+    {
+      "owner": "test_feedback_processing_schema_is_additive_and_reopen_is_idempotent",
+      "line": 85,
+      "literal_sites": [
+        {
+          "line": 109,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 110,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        },
+        {
+          "line": 111,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 112,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 113,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_feedback_round_schema_is_additive_and_idempotent",
+      "line": 121,
+      "literal_sites": [
+        {
+          "line": 144,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 149,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 150,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 141,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 160,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_feedback_transition_batch_queries_use_expected_indexes",
+      "line": 216,
+      "literal_sites": [
+        {
+          "line": 224,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_feedback_round_schema_requires_positive_round_number",
+      "line": 336,
+      "literal_sites": [
+        {
+          "line": 343,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 372,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 352,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 365,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 379,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_feedback_round_schema_rejects_unknown_receipt_version",
+      "line": 388,
+      "literal_sites": [
+        {
+          "line": 393,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_feedback_round_positive_invariant_upgrades_semantic_decoy_without_rebuild",
+      "line": 409,
+      "literal_sites": [
+        {
+          "line": 418,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 420,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 449,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 455,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 489,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 555,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 461,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 475,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 505,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 520,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 534,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 547,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 562,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_cached_round_manifest_replaces_literal_case_decoys",
+      "line": 581,
+      "literal_sites": [
+        {
+          "line": 616,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 624,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 642,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 656,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 631,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_feedback_round_upgrade_rejects_existing_invalid_storage_without_mutation",
+      "line": 695,
+      "literal_sites": [
+        {
+          "line": 704,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 706,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 735,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 741,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 747,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 760,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 807,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 790,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "_rebuild_feedback_round_table_without_integer_check",
+      "line": 830,
+      "literal_sites": [
+        {
+          "line": 833,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 835,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 864,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 870,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_cached_store_revalidates_invalid_round_storage_before_fast_return",
+      "line": 877,
+      "literal_sites": [
+        {
+          "line": 888,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 906,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_feedback_round_guard_installation_blocks_concurrent_invalid_writer",
+      "line": 943,
+      "literal_sites": [
+        {
+          "line": 953,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 1000,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 1009,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 1051,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 1058,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_feedback_round_backfill_preserves_legacy_receipts_and_source",
+      "line": 1065,
+      "literal_sites": [
+        {
+          "line": 1085,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        },
+        {
+          "line": 1096,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 1113,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 1131,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 1147,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 1166,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 1154,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 1140,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 1150,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 1170,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 1176,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 1185,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 1227,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 1256,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 1248,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_legacy_text_processing_ids_are_read_as_integers",
+      "line": 1885,
+      "literal_sites": [
+        {
+          "line": 1891,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_claim_retry_is_idempotent_without_duplicate_items",
+      "line": 1927,
+      "literal_sites": [
+        {
+          "line": 1934,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 1935,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "_seed_resolved_feedback_round",
+      "line": 2027,
+      "literal_sites": [
+        {
+          "line": 2044,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        },
+        {
+          "line": 2052,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2114,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 2148,
+          "native_names": [
+            "feedback_events"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_reopen_resolved_item_preserves_history_and_clears_projection_atomically",
+      "line": 2193,
+      "literal_sites": [
+        {
+          "line": 2201,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2206,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 2235,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2240,
+          "native_names": [
+            "feedback_events"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_reopen_processing_raises_typed_error_without_mutation",
+      "line": 2275,
+      "literal_sites": [
+        {
+          "line": 2280,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2289,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_reopen_incomplete_history_rolls_back_atomically",
+      "line": 2294,
+      "literal_sites": [
+        {
+          "line": 2299,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2302,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2307,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2312,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 2317,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 2322,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 2331,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 2332,
+          "native_names": [
+            "feedback_events"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_reopened_claim_creates_empty_next_round_and_transitions_newest_first",
+      "line": 2336,
+      "literal_sites": [
+        {
+          "line": 2369,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_batch_claim_rolls_back_when_one_pending_item_has_inconsistent_history",
+      "line": 2373,
+      "literal_sites": [
+        {
+          "line": 2381,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2394,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_stale_or_ambiguous_current_round_cannot_be_mutated",
+      "line": 2472,
+      "literal_sites": [
+        {
+          "line": 2483,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 2480,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2481,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 2502,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2503,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolve_rolls_back_entire_batch_on_one_invalid_current_round",
+      "line": 2602,
+      "literal_sites": [
+        {
+          "line": 2627,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_unresolved_batch_cannot_bypass_current_round_receipt",
+      "line": 2643,
+      "literal_sites": [
+        {
+          "line": 2649,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "_feedback_processing_snapshot",
+      "line": 2671,
+      "literal_sites": [
+        {
+          "line": 2681,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 2682,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 2683,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2685,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_reopen_rejects_incomplete_resolved_round_receipt_without_mutation",
+      "line": 2733,
+      "literal_sites": [
+        {
+          "line": 2721,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2722,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2723,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2724,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2725,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2726,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2727,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2728,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2729,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2730,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2753,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2749,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2745,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_claim_rejects_existing_batch_requested_count_mismatch_without_mutation",
+      "line": 2769,
+      "literal_sites": [
+        {
+          "line": 2777,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolve_rejects_missing_source_feedback_before_any_mutation",
+      "line": 2787,
+      "literal_sites": [
+        {
+          "line": 2791,
+          "native_names": [
+            "feedback_events"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolve_shares_one_timestamp_across_delayed_multi_item_batch",
+      "line": 2816,
+      "literal_sites": [
+        {
+          "line": 2856,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 2873,
+          "native_names": [
+            "feedback_events",
+            "feedback_processing_batches",
+            "feedback_processing_items",
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolve_rejects_orphan_round_in_batch_before_any_mutation",
+      "line": 2911,
+      "literal_sites": [
+        {
+          "line": 2916,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolve_rejects_missing_item_for_batch_round_before_any_mutation",
+      "line": 2932,
+      "literal_sites": [
+        {
+          "line": 2939,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_reopen_malformed_round_pointer_is_typed_and_atomic",
+      "line": 2952,
+      "literal_sites": [
+        {
+          "line": 2959,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_feedback_item_reader_rejects_malformed_round_pointer",
+      "line": 2972,
+      "literal_sites": [
+        {
+          "line": 2979,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_task2_writes_reject_malformed_round_pointer_with_domain_error",
+      "line": 2988,
+      "literal_sites": [
+        {
+          "line": 2996,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 3006,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "_ensure_receipt_version_column",
+      "line": 3027,
+      "literal_sites": [
+        {
+          "line": 3035,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3031,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_legacy_v1_complete_receipt_reopens_without_synthetic_backlog",
+      "line": 3073,
+      "literal_sites": [
+        {
+          "line": 3079,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3094,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_pre_scope_receipt_schema_migrates_legacy_replay_and_reopen",
+      "line": 3101,
+      "literal_sites": [
+        {
+          "line": 3106,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3113,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3116,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_receipt_version_migration_marks_only_valid_existing_backlog_v2",
+      "line": 3126,
+      "literal_sites": [
+        {
+          "line": 3144,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3148,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3157,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "_make_stale_resolved_round_pointer",
+      "line": 3178,
+      "literal_sites": [
+        {
+          "line": 3193,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolved_batch_shortcut_rejects_corrupt_batch_only_state",
+      "line": 3237,
+      "literal_sites": [
+        {
+          "line": 3242,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolved_batch_idempotency_requires_shared_batch_completion_timestamp",
+      "line": 3418,
+      "literal_sites": [
+        {
+          "line": 3411,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        },
+        {
+          "line": 3413,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_current_resolved_batch_idempotency_requires_exact_terminal_projection",
+      "line": 3496,
+      "literal_sites": [
+        {
+          "line": 3505,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 3510,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_reopened_resolved_batch_idempotency_requires_cleared_pending_projection",
+      "line": 3539,
+      "literal_sites": [
+        {
+          "line": 3552,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_old_resolved_batch_idempotency_validates_newer_processing_lineage",
+      "line": 3566,
+      "literal_sites": [
+        {
+          "line": 3575,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_old_resolved_batch_idempotency_requires_newer_batch_definition",
+      "line": 3652,
+      "literal_sites": [
+        {
+          "line": 3667,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        },
+        {
+          "line": 3671,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        },
+        {
+          "line": 3676,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_old_resolved_batch_idempotency_requires_complete_newer_membership",
+      "line": 3690,
+      "literal_sites": [
+        {
+          "line": 3703,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3713,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 3722,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolved_newer_batch_requires_one_common_member_receipt",
+      "line": 3768,
+      "literal_sites": [
+        {
+          "line": 3782,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3788,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_processing_newer_batch_requires_v2_round_with_empty_backlog",
+      "line": 3803,
+      "literal_sites": [
+        {
+          "line": 3816,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3821,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_newer_batch_member_pointer_must_target_global_latest_round",
+      "line": 3839,
+      "literal_sites": [
+        {
+          "line": 3851,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_claim_uses_one_timestamp_for_rounds_and_claim_transitions",
+      "line": 3934,
+      "literal_sites": [
+        {
+          "line": 3956,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 3973,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolved_v2_batch_rejects_empty_claim_timestamp_pair",
+      "line": 3987,
+      "literal_sites": [
+        {
+          "line": 3992,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_v2_newer_batch_requires_one_shared_claim_timestamp",
+      "line": 4013,
+      "literal_sites": [
+        {
+          "line": 4025,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_delayed_newer_batch_claim_remains_valid_for_old_batch_idempotency",
+      "line": 4047,
+      "literal_sites": [
+        {
+          "line": 4071,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "_insert_orphan_feedback_batch_transition",
+      "line": 4120,
+      "literal_sites": [
+        {
+          "line": 4158,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 4129,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "_corrupt_resolved_batch_sibling",
+      "line": 4274,
+      "literal_sites": [
+        {
+          "line": 4281,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 4301,
+          "native_names": [
+            "feedback_events"
+          ]
+        },
+        {
+          "line": 4306,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        },
+        {
+          "line": 4313,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 4318,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolved_batch_no_evidence_retry_requires_common_persisted_receipt",
+      "line": 4359,
+      "literal_sites": [
+        {
+          "line": 4396,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 4402,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolved_batch_transition_validation_uses_two_bounded_queries",
+      "line": 4417,
+      "literal_sites": [
+        {
+          "line": 4426,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_reopened_resolved_batch_reuses_two_grouped_transition_queries",
+      "line": 4454,
+      "literal_sites": [
+        {
+          "line": 4469,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_old_batch_reuses_grouped_newer_resolved_transition_validation",
+      "line": 4631,
+      "literal_sites": [
+        {
+          "line": 4644,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_processing_batch_entrypoints_require_centralized_lineage",
+      "line": 4748,
+      "literal_sites": [
+        {
+          "line": 4797,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 4804,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 4784,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 4815,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        },
+        {
+          "line": 4827,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 4831,
+          "native_names": [
+            "feedback_events"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_migrated_v1_processing_round_resolves_idempotently_and_reopens",
+      "line": 4847,
+      "literal_sites": [
+        {
+          "line": 4859,
+          "native_names": [
+            "feedback_processing_batches"
+          ]
+        },
+        {
+          "line": 4864,
+          "native_names": [
+            "feedback_processing_items"
+          ]
+        },
+        {
+          "line": 4881,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "test_resolved_transition_multiset_rejects_alternate_reopen_reason",
+      "line": 4920,
+      "literal_sites": [
+        {
+          "line": 4928,
+          "native_names": [
+            "feedback_processing_rounds"
+          ]
+        }
+      ]
+    }
+  ],
+  "remaining_separate_native_literal_owner_count": 61,
+  "remaining_separate_native_literal_site_count": 183,
+  "scope_note": "Inventory is lexical native-name literals in unchanged feedback file function owners; not an execution failure inventory. Genuine historical source tests remain unchanged; no passing claim for unchanged native fixtures."
+}
