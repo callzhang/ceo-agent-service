@@ -1085,3 +1085,10 @@ The mechanical worker handed off the canonical test and its claim with no proces
 Worker verification:172 new native-source cases plus6 original metadata cases pass (178/1.06s); three process-local SQL mutants each fail exactly two intended actual/fresh cases with170 deselected. Root independently reran the same178 cases successfully (1.04s) and checked canonical byte equality before handoff; final Ruff, syntax and diff checks pass. Disposable pytest roots were removed. This evidence binds Python3.13.12/SQLite3.50.4 at the recorded project interpreter; earlier3.53 briefing text is not this run's runtime.
 
 This is a source-only oracle for all sixteen families and actual91/fresh87 named columns. Fresh SPEC then QUALITY review remain open. No target `state` table, caller selection, retirement, schema release, actual database writes, provider/native CLI/send, main merge or deployment is selected by this commit. The full ten-core-plus-ledger goal is incomplete. Root's separate finite-REAL preflight receipt records a current Configs synthetic losslessness gap that must be fixed before reusing its codec for State.
+
+
+## State native oracle independent acceptance, 2026-10-16
+
+Fresh SPEC then fresh QUALITY both accept exact`50fbd70a3eaa89e67e36b9f646ce4bebc1dc7ae6`. SPEC independently passes178 cases/1.27s and each of three mutants produces its exact two intended failures. QUALITY independently passes178/1.02s plus Ruff/diff/canonical equality. Both verify unchanged test, source fixture and captured metadata hashes, remove owned pytest roots, and leave a clean worktree. The bounded receipt is `superpowers/specs/2026-10-16-state-source-oracle-acceptance.json`.
+
+This closes only the literal state source oracle. Target schema/caller cutover/current-fact inverse remain unselected. The newly confirmed finite-REAL gap is scoped for correction on unpublished native-source kinds while preserving the already-published Reply declaration and payload contract. Full10+ledger and final copy/native acceptance remain open.

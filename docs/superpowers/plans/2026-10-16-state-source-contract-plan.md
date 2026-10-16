@@ -365,9 +365,9 @@ git commit -m "test: freeze native state storage behavior"
 
 ## Task 2: Independent acceptance
 
-- [ ] Root obtains fresh SPEC review against this exact contract and the committed actual/fresh metadata. The reviewer must inspect source-case independence and rerun the172 cases; the three mutants must fail without editing source artifacts.
-- [ ] After SPEC PASS, root obtains fresh QUALITY review for fixture correctness, affinity/default/null identity coverage and no incidental runtime behavior.
-- [ ] Root records the exact reviewed SHA and source-only boundary. The full ten-core-plus-ledger goal remains active.
+- [x] Root obtains fresh SPEC review against this exact contract and the committed actual/fresh metadata. The reviewer must inspect source-case independence and rerun the172 cases; the three mutants must fail without editing source artifacts.
+- [x] After SPEC PASS, root obtains fresh QUALITY review for fixture correctness, affinity/default/null identity coverage and no incidental runtime behavior.
+- [x] Root records the exact reviewed SHA and source-only boundary. The full ten-core-plus-ledger goal remains active.
 - [ ] Root proceeds to a state target/caller/release plan using the independently researched current closure. Do not add compatibility tables/views, duplicate state or native read fallback.
 
 ## Next atomic state integration boundary

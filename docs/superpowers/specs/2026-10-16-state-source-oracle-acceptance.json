@@ -1,0 +1,40 @@
+{
+  "reviewed_commit": "50fbd70a3eaa89e67e36b9f646ce4bebc1dc7ae6",
+  "scope": "Native source behavior oracle only; no target selection or schema migration",
+  "runtime": {
+    "python": "3.13.12",
+    "sqlite": "3.50.4"
+  },
+  "spec": {
+    "status": "PASS",
+    "tests_passed": 178,
+    "seconds": 1.27,
+    "mutants": {
+      "nullable_primary_key": "2 failed, 170 deselected;0.07s",
+      "text_affinity": "2 failed, 170 deselected;0.07s",
+      "generation_check": "2 failed, 170 deselected;0.06s"
+    }
+  },
+  "quality": {
+    "status": "PASS",
+    "tests_passed": 178,
+    "seconds": 1.02,
+    "ruff": "PASS",
+    "diff_check": "PASS",
+    "canonical_plan_byte_equality": true
+  },
+  "hashes_unchanged": {
+    "tests/test_state_source_contract.py": "433f02ecc261457de3836c9b1282654be0e75aadc35579d150dade51f43c7f8c",
+    "tests/configs_source_fixtures.py": "94327c7c78a62057085070c6ac0293f81d3489f827f98fe724e390913c18c41a",
+    "source_metadata": "604496766a335d63fe334a263bde8028cd53c6bc5311acb97a5ef48876ae2aff"
+  },
+  "source_families": 16,
+  "actual_fields": 91,
+  "fresh_fields": 87,
+  "owned_temporaries_removed": true,
+  "actual_database_access": 0,
+  "native_cli_starts": 0,
+  "external_sends": 0,
+  "production_writes": 0,
+  "remaining": "Exact native REAL codec, State target/callers/forward/inverse, remaining approved consolidation and final copied-source/native/CI/publication gates"
+}
