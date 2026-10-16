@@ -2,8 +2,8 @@
 
 Callers retain the native statement verb, CTE/FROM/WHERE/RETURNING and cursor.
 These builders do not access a connection or select a runtime schema.
-Proposal only: native differential tests and complete implementation plan remain
-required before application transfer.
+Current callers/constructors do not select this storage; connection registration
+and the complete paired migration/caller conversion remain release-owned.
 """
 
 from dataclasses import dataclass
@@ -35,6 +35,20 @@ class Task8SetParts:
     parameters: tuple
 
 
+def _scalar_json(value):
+    return json.dumps(
+        _encoded_native_sqlite_value(value),
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+
+
+def register_task8_functions(db):
+    """Install the exact scalar codec; never begin, commit or select a schema."""
+    db.create_function("ceo_native_json", 1, _scalar_json, deterministic=True)
+
+
 def _quote(name):
     return '"' + name.replace('"', '""') + '"'
 
@@ -62,23 +76,29 @@ def task8_insert_parts(
     kind,
     values,
     *,
-    insert_json=None,
+    insert_sql=None,
     insert_parameters=(),
     structural_sql=None,
     structural_parameters=(),
 ):
-    """Compile native INSERT parts; expression parameters follow payload binding."""
-    expressions = {} if insert_json is None else insert_json
+    """Compile native scalar INSERT parts; expression parameters follow payload binding."""
+    expressions = {} if insert_sql is None else insert_sql
     physical_sql = {} if structural_sql is None else structural_sql
     payload, physical = _partition(kind, values, expressions, physical_sql)
     defaults = {
-        field: "json_quote(" + TASK20_DEFAULTS[kind].get(field, "null") + ")"
+        field: "ceo_native_json(" + TASK20_DEFAULTS[kind].get(field, "null") + ")"
         for field in TASK20_PAYLOAD_FIELDS[kind]
         if field not in payload and field not in expressions
     }
     columns = ["record_type", *physical, *physical_sql, "payload_json"]
     scalar_sql = [repr(kind), *("?" for _ in physical), *physical_sql.values()]
-    scalar_sql.append(_json_assignments("?", defaults | expressions))
+    scalar_sql.append(
+        _json_assignments(
+            "?",
+            defaults
+            | {f: "ceo_native_json(" + expr + ")" for f, expr in expressions.items()},
+        )
+    )
     return Task8InsertParts(
         ",".join(map(_quote, columns)),
         ",".join(scalar_sql),
@@ -95,17 +115,19 @@ def task8_set_parts(
     kind,
     values,
     *,
-    update_json=None,
+    update_sql=None,
     update_parameters=(),
     structural_sql=None,
     structural_parameters=(),
     payload_source="tasks.payload_json",
 ):
-    """Compile one native SET; all RHS expressions still see the original row."""
-    expressions = {} if update_json is None else update_json
+    """Compile native scalar SET; each RHS is evaluated once on the original row."""
+    expressions = {} if update_sql is None else update_sql
     physical_sql = {} if structural_sql is None else structural_sql
     payload, physical = _partition(kind, values, expressions, physical_sql)
-    json_expressions = {field: "?" for field in payload} | expressions
+    json_expressions = {field: "?" for field in payload} | {
+        f: "ceo_native_json(" + expr + ")" for f, expr in expressions.items()
+    }
     assignments = []
     if json_expressions:
         assignments.append(
@@ -117,26 +139,11 @@ def task8_set_parts(
     )
     if not assignments:
         raise ValueError("existing Tasks SET requires fields")
-    encoded = tuple(
-        json.dumps(
-            _encoded_native_sqlite_value(value),
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        )
-        for value in payload.values()
-    )
+    encoded = tuple(_scalar_json(value) for value in payload.values())
     return Task8SetParts(
         ",".join(assignments),
         (*encoded, *update_parameters, *physical.values(), *structural_parameters),
     )
-
-
-def task8_json_field(kind, field, source="tasks"):
-    """Read an existing payload leaf without losing native scalar codec tags."""
-    if kind not in TASK8_KINDS or field not in TASK20_PAYLOAD_FIELDS[kind]:
-        raise ValueError("unsupported existing Tasks payload field")
-    return _quote(source) + ".payload_json->'$." + field + "'"
 
 
 def task8_meeting_returning():

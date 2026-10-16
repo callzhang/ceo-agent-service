@@ -3656,5 +3656,106 @@
     "physical_columns": 82,
     "indices": 23,
     "triggers": 8
-  }
+  },
+  "source_insert_defaults": {
+    "reply_tasks": {
+      "channel": "'dingtalk'",
+      "available_at": "''",
+      "force_new_decision": "0",
+      "oa_url": "''",
+      "manual_rerun_attempt_id": "0",
+      "status": "'pending'",
+      "attempts": "0",
+      "error": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp",
+      "execution_generation": "'initial'",
+      "manual_rerun_revision_key": "''",
+      "recovery_code": "''",
+      "business_object_key": "''",
+      "input_version": "1",
+      "claimed_input_version": "0"
+    },
+    "reply_task_inputs": {
+      "trigger_message_json": "'{}'",
+      "oa_url": "''",
+      "input_revision_key": "''",
+      "created_at": "current_timestamp",
+      "input_provenance_json": "'{}'",
+      "input_compacted": "0"
+    },
+    "work_summary_inputs": {
+      "status": "'pending'",
+      "attempts": "0",
+      "error": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp",
+      "available_at": "''",
+      "source_created_at": "''",
+      "body_sha256": "''",
+      "body_bytes": "0",
+      "body_compacted": "0"
+    },
+    "meeting_alignment_jobs": {
+      "title": "''",
+      "source_json": "'{}'",
+      "participants_json": "'[]'",
+      "ended_at": "''",
+      "eligible_at": "''",
+      "status": "'waiting'",
+      "attempts": "0",
+      "available_at": "''",
+      "error": "''",
+      "decision_json": "'{}'",
+      "target_kind": "''",
+      "target_id": "''",
+      "target_title": "''",
+      "mentions_json": "'[]'",
+      "final_message": "''",
+      "send_result_json": "'{}'",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp",
+      "calendar_summary_status": "'not_started'",
+      "calendar_summary_result_json": "'{}'"
+    },
+    "okr_review_requests": {
+      "trigger_sender_user_id": "''",
+      "okr_source_json": "'{}'",
+      "status": "'pending'",
+      "error": "''",
+      "codex_session_id": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp"
+    },
+    "weekly_okr_analysis_jobs": {
+      "status": "'running'",
+      "lease_owner": "''",
+      "lease_expires_at": "''",
+      "error": "''",
+      "created_at": "current_timestamp",
+      "finished_at": "''",
+      "updated_at": "current_timestamp"
+    },
+    "workbench_tasks": {
+      "provider_session_ref": "''",
+      "archived_at": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp"
+    },
+    "workbench_turns": {
+      "stop_requested": "0",
+      "error_code": "''",
+      "error_detail": "''",
+      "resume_context": "''",
+      "lease_owner": "''",
+      "lease_expires_at": "''",
+      "execution_run_id": "''",
+      "runtime_quiesced_run_id": "''",
+      "started_at": "''",
+      "completed_at": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp"
+    }
+  },
+  "source_insert_contract": "Original insert_task fills omitted per-kind SQL defaults in the same native INSERT; explicit None is not replaced. Other native physical columns default NULL. Numeric explicit legacy_key binding normalization belongs to original insert_task, not a SQL-fragment compiler."
 }
