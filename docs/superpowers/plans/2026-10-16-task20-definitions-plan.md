@@ -32,7 +32,7 @@ for source,target,digest in (
      '59938318c8dacb836b7601c6c2f63671901a0232f7f23881007ef59fcef0c2c5'),
     ('docs/superpowers/plans/2026-10-16-task20-definitions-regression.py',
      'tests/test_task20_definitions.py',
-     '44c09abc52f8f0631313713451ae64ffef8b156919885b81bf890d20fc937349'),
+     'dea543a9867ca35ab49c14458dbe86c5c55df2496f2462d5d564be502715a215'),
 ):
     assert hashlib.sha256((root/source).read_bytes()).hexdigest()==digest
     shutil.copyfile(root/source,root/target)
@@ -75,3 +75,11 @@ Unselected Tasks20 executable declaration: app/task20_definitions.py compiles20s
 Build source-kind allocators and transactional writers, preserving independent high waters and ignored inserts/FULL transaction behavior. New batch INSERT OR REPLACE must preserve the physical identity referenced by decision children while advancing its source hiddenROWID/public key semantics: a raw shared-table replacement that assigns a different physical ID would invalidate otherwise source-legal child references. This is a storage writer requirement, not new effect reconciliation or policy.
 
 Convert all existing8andremaining12caller groups and coupled retained children; migrate on a copied DB with existing8IDs intact; execute current writes/inverse/true predecessor writes/reforward and verify exact original declarations/current facts/allocators. Complete real native CLI with fake outbound and UI workflows, remainingActions/Business/Emails/Provenance/retirements, final11ordinarytable inventory, CI and approved production publication. The complete approved design goal remains active.
+
+
+### QUALITY regression repair
+
+Fresh QUALITY found two shadowed Workbench negative paths: three source CHECK cases and the parent INSERT guard reused an existing client_request_id. No declaration defect was reproduced; original declarations reject the independent invalid values. The complete adjacent canonical regression now supplies a distinct request ID, completed status and sequence2; both tests first insert the exact valid control under a savepoint, roll back, then change only the bad field/parent. The repaired canonical325case preflight passes; transfer the exact new regression hash above to tests/test_task20_definitions.py, rerun applied325cases/Ruff/diff, and commit only applied regression plus ownclaim/this repair checkbox. Application/canonical declaration SHA stays59938318 unchanged.
+
+- [ ] Mechanical writer transfers repaired canonical regression and verifies applied325cases.
+- [ ] Root confirms app unchanged, existing SPEC scope still holds, and QUALITY rechecks three CHECK deletion mutants plus the parent INSERT-trigger deletion mutant against the repaired tests before acceptance.

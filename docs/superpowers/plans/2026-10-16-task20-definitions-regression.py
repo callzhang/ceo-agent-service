@@ -296,8 +296,19 @@ def test_unknown_payload_field_rejected(db, kind):
 )
 def test_retained_source_checks(db, kind, field, bad):
     parent = {"workbench_turns": -12, "workbench_attachments": -12}.get(kind)
+    changes = (
+        dict(client_request_id="check-control", task_sequence=2, status="completed")
+        if kind == "workbench_turns"
+        else {}
+    )
+    values = payload(db, kind, **changes)
+    db.execute("savepoint source_check_control")
+    insert(db, kind, parent_id=parent, values=values)
+    db.execute("rollback to source_check_control")
+    db.execute("release source_check_control")
+    values[field] = bad
     with pytest.raises(sqlite3.IntegrityError):
-        insert(db, kind, parent_id=parent, values=payload(db, kind, **{field: bad}))
+        insert(db, kind, parent_id=parent, values=values)
 
 
 @pytest.mark.parametrize(
@@ -312,8 +323,6 @@ def test_retained_source_checks(db, kind, field, bad):
     ),
 )
 def test_typed_parent_insert_and_update_guards(db, kind, parent):
-    with pytest.raises(sqlite3.IntegrityError):
-        insert(db, kind, legacy_key="2", parent_id=parent)
     correct = {
         "business_object_tasks": -11,
         "workbench_artifacts": -13,
@@ -322,10 +331,21 @@ def test_typed_parent_insert_and_update_guards(db, kind, parent):
         "reply_task_inputs": -11,
         "workbench_turns": -12,
     }[kind]
-    if kind == "workbench_turns":
-        physical = -13
-    else:
-        physical = insert(db, kind, legacy_key="2", parent_id=correct).lastrowid
+    changes = (
+        dict(client_request_id="parent-control", task_sequence=2, status="completed")
+        if kind == "workbench_turns"
+        else {}
+    )
+    values = payload(db, kind, **changes)
+    db.execute("savepoint typed_parent_control")
+    insert(db, kind, legacy_key="2", parent_id=correct, values=values)
+    db.execute("rollback to typed_parent_control")
+    db.execute("release typed_parent_control")
+    with pytest.raises(sqlite3.IntegrityError):
+        insert(db, kind, legacy_key="2", parent_id=parent, values=values)
+    physical = insert(
+        db, kind, legacy_key="2", parent_id=correct, values=values
+    ).lastrowid
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("update tasks set parent_id=? where id=?", (parent, physical))
 
