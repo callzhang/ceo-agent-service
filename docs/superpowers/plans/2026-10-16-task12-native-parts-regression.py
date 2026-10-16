@@ -125,7 +125,7 @@ def test_bulk_constraint_abort_keeps_original_rows_and_earlier_work(db, target):
     for connection in (db, target):
         connection.execute("create table caller_sentinel(value)")
         connection.execute("insert into caller_sentinel values(7)")
-    expression = "case when task_id='task-a' then '{}' else 'bad-json' end"
+    expression = "case when task_id='task-a' then '{\"changed\":1}' else 'bad-json' end"
     with pytest.raises(sqlite3.IntegrityError) as left:
         db.execute(
             "update email_agent_classification_tasks set input_json=" + expression
@@ -136,7 +136,7 @@ def test_bulk_constraint_abort_keeps_original_rows_and_earlier_work(db, target):
         update_sql={
             "input_json": "case when "
             + task20_column(kind, "task_id")
-            + "='task-a' then '{}' else 'bad-json' end"
+            + "='task-a' then '{\"changed\":1}' else 'bad-json' end"
         },
     )
     with pytest.raises(sqlite3.IntegrityError) as right:
@@ -273,3 +273,31 @@ def test_set_builder_does_not_touch_connection_or_begin_transaction(target):
         task12_set_parts(kind, {}, update_sql={"invented_field": "1"})
     with pytest.raises(ValueError):
         task12_set_parts(kind, {"status": "done"}, update_sql={"status": "'failed'"})
+
+
+def test_interdependent_old_rhs_storage_diagnostic(db, target):
+    """Storage diagnostic; real classifier claim uses independent counters."""
+    kind = seed_classification(db, target)
+    db.execute(
+        "update email_agent_classification_tasks set generation=generation+1,attempt_count=generation+attempt_count where task_id='task-a'"
+    )
+    parts = task12_set_parts(
+        kind,
+        {},
+        update_sql={
+            "generation": task20_column(kind, "generation") + "+1",
+            "attempt_count": task20_column(kind, "generation")
+            + "+"
+            + task20_column(kind, "attempt_count"),
+        },
+    )
+    target.execute(
+        "update tasks set "
+        + parts.sql
+        + " where record_type=? and "
+        + task20_column(kind, "task_id")
+        + "='task-a'",
+        (*parts.parameters, kind),
+    )
+    rows = snapshot(db, target, kind)
+    assert (rows[0]["generation"], rows[0]["attempt_count"]) == (2, 3)

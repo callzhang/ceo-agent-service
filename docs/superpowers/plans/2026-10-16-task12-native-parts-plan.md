@@ -16,7 +16,7 @@ The complete evidence is 2026-10-16-task12-email-caller-proposal-analysis.md/.js
 
 - `2026-10-16-task12-native-parts-candidate.py` → `app/task12_storage.py`; SHA256 `8a7a84db53006065697ae44a2e39dc27a2008ca2687b6ddfc54e23ff9cc1729a`.
 - `2026-10-16-task12-native-parts-existing-regression.py` → `tests/test_task12_storage.py`; SHA256 `75010ec38557551986151ee70dd51671192accfce556f9b011ed103584eb50b7`.
-- `2026-10-16-task12-native-parts-regression.py` → `tests/test_task12_native_parts.py`; SHA256 `8ca3da44a77e1d52e24b06ea17cba6537a3e4b965d0a655ffbaef35caeb9ecfa`.
+- `2026-10-16-task12-native-parts-regression.py` → `tests/test_task12_native_parts.py`; SHA256 `17fdce18f29166c373b3712ce58b1f61ec82061ede7c99f7f72963d602a10c6c`.
 
 Preflight 2026-10-16-task12-native-parts-preflight.py copies all code/tests under its owned /tmp tree then removes it. Default uses exact complete candidate and changed old regression; --applied uses installed app/tests. --with-declarations runs focused new44 +old239 Task12+276Task8+325declarations. --before-repair restores only the original _lock guard in the disposable candidate; meaningful RED selects implicit tests, no missing-API collection errors.
 
@@ -47,3 +47,9 @@ Application AST scope: existing _lock and insert_task12 only; new Task12InsertPa
 Email proposals must use exact task12_projection source shape (including hidden source ROWID where diagnostics require), preserve public task_id strings versus globalphysical IDs, binding order, owner/generation/status CAS, current JSON parsing/input immutability and done-only compaction. Historical native conflict target is generated key columns with exact partial predicate record_type='email_historical_candidates', SET RHS uses decoded excluded.generated source leaves encoded once by ceo_native_json. Only fields normalized_text/provider_message_json/uidvalidity/uid/updated_at change on conflict. INSERT parts expose structural physical id and source rowid separately; raw returned cursor.lastrowid is physical and must not be advertised as public source rowid. Existing point writer returns its existing source-shaped result.
 
 Both Store and Email _open_connection registration remains part of COMPLETE Tasks20 cutover, inherited by Workbench; this component does not activate hooks. Source12 remaining caller groups, retained feedback endpoints, constructors/fresh/current manifest, copied nonempty forward/current-fact inverse/genuine predecessor writes/reforward, real CLI fake-outbound/UI/business results/receipts and final10core+Emailledger remain open. Latest actual-copy67tables is not final11. No main merge/push/production write/restart/deploy without final human approval.
+
+QUALITY regression correction: original bulk ABORT first valid row assigned its existing `{}` value, so a per-row UPDATE mutant survived. Both source/target CASE branches now visibly write `{"changed":1}` before the later invalid JSON; unchanged application. Root final44focused rerun passes3.64s; original884 app matrix remains historical unchanged-application evidence. Quality repaired mutation recheck pending.
+
+Additional2-case storage diagnostic (actual classifier claim uses independent counters): generation=generation+1 and attempt_count=generation+attempt_count must read original row simultaneously. Independent native source gives(2,3), left-to-right substitution mutant gives(2,4). Persisted in canonical+installed regression, application unchanged; final46focused rerun below.
+
+Final test-only followup: root46/3.58s; fresh QUALITY46/3.55s → per-rowABORT2fail0.27s → oldRHS2fail0.29s → restored46/3.43s. Allsemanticvalue failures aftervalidfixtures. App8a7a84... unchanged, final regression17fdce18...; no repeatfull886run claimed.
