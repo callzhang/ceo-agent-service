@@ -17,7 +17,7 @@ Native current8 callers use single VALUES automatic physical allocation with pla
 ## Complete canonical artifacts
 
 - `docs/superpowers/plans/2026-10-16-task8-allocator-candidate.py` -> `app/task20_definitions.py`; SHA256 `cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0`.
-- `docs/superpowers/plans/2026-10-16-task8-allocator-regression.py` -> `tests/test_task8_allocator.py`; SHA256 `bf2f99fb5e903e6e0c2a11f96f2666c0d4db10e97c38af77ce5e0265c6d60db5`.
+- `docs/superpowers/plans/2026-10-16-task8-allocator-regression.py` -> `tests/test_task8_allocator.py`; SHA256 `c27823e6d9de6028e962cce1adfa7f9520a6b61797702fb658ab5d17cbe72752`.
 
 Preflight: `docs/superpowers/plans/2026-10-16-task8-allocator-preflight.py`; it copies app/tests into a task-owned /tmp tree and removes it. `--applied` uses installed app/test; default uses complete canonical files. `--before-repair` disables only new trigger in the copied module, leaving initializer/fixtures intact to prove missing state retention.
 
@@ -44,3 +44,5 @@ Preflight: `docs/superpowers/plans/2026-10-16-task8-allocator-preflight.py`; it 
 ## Remaining full cutover
 
 Initializer must be selected explicitly inside both complete paired migration and fresh constructor transaction, reset AFTER all bulk inserts. Inverse reads tasks:published with original metadata for absence/zero, and checks surviving old8 IDs against restored water. Current source-eight counter cannot simply copy global Tasks water after new12 writes. Complete all20 caller/construction/feedback endpoints first, then copy current writes/current-fact inverse/genuine predecessor writes/reforward. Native CLI fake outbound/UI/business result/receipt, all remaining families and final10core+Emailledger acceptance remain open. Last integrated copy67ordinary tables is not final11. No production publication without final human approval.
+
+QUALITY regression supplement: four actual/fresh cases persist earlier caller-write rollback and caller-savepoint survival across initializer. App SHA unchanged. Independent control4pass; commit-before-DML mutant4fail (persisted sentinel/no-such-savepoint), no setup failures. Final focused125 installed run/root commit below supersedes121-case regression hash; original961 full application proof remains unchanged-source evidence.

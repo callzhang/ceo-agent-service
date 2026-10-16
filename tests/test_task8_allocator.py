@@ -177,3 +177,26 @@ def test_source_absence_zero_and_deleted_high_provenance(pair, initial):
     native_insert(native, "reply_tasks", values)
     target_insert(target, "reply_tasks", values)
     assert water(native) == water(target) == water(target, "tasks:published") == (initial or 0)+1
+
+
+def test_initializer_keeps_prior_caller_work_rollbackable(pair):
+    native, target = pair
+    for db in (native, target):
+        db.execute("create table sentinel(value integer)")
+        db.execute("begin")
+        db.execute("insert into sentinel values(7)")
+    initialize_task8_sequence(target, 0)
+    for db in (native, target):
+        db.rollback()
+    assert list(native.execute("select * from sentinel")) == list(target.execute("select * from sentinel")) == []
+
+
+def test_initializer_retains_callers_savepoint(pair):
+    native, target = pair
+    for db in (native, target):
+        db.execute("begin")
+        db.execute("savepoint caller")
+    initialize_task8_sequence(target, 0)
+    for db in (native, target):
+        db.execute("rollback to caller")
+    assert target.execute("select seq from sqlite_sequence where name='tasks:published'").fetchone() is None
