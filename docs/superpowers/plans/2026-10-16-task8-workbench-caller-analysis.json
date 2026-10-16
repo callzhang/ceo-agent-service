@@ -1,0 +1,176 @@
+{
+  "source_commit": "d618b0646979e50e09fae8f363b1a63046b54410",
+  "source_path": "app/workbench/store.py",
+  "source_sha256": "4a3bb9287dfea1f2e13e31be5ff2a9ac536a458ac079f30ccb1519848870e18e",
+  "candidate_sha256": "59e56e58f9c071631b47e60827a931681ba14b2657115f1e14aee8cfae0d012a",
+  "patch_sha256": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26",
+  "update_count": 12,
+  "insert_count": 2,
+  "changed_methods": [
+    "create_task",
+    "get_task_summary",
+    "list_tasks_with_state",
+    "rename_task",
+    "archive_task",
+    "create_turn",
+    "claim_next_turn",
+    "renew_turn_lease",
+    "request_stop",
+    "timeline_snapshot",
+    "set_provider_session",
+    "mark_confirmation_proposer_quiesced",
+    "finish_confirmation_execution",
+    "cancel_confirmation_execution",
+    "_recover_expired_turns_in_transaction",
+    "_transition_turn"
+  ],
+  "signature_count": 79,
+  "unchanged_methods": [
+    "WorkbenchConflictError.__init__",
+    "WorkbenchStore.__init__",
+    "WorkbenchStore._after_attachment_temp_created",
+    "WorkbenchStore._append_control_event",
+    "WorkbenchStore._artifact_from_row",
+    "WorkbenchStore._attachment_from_row",
+    "WorkbenchStore._attachment_lock",
+    "WorkbenchStore._attachment_task_directory",
+    "WorkbenchStore._canonical_uuid",
+    "WorkbenchStore._commit_attachment_metadata",
+    "WorkbenchStore._confirmation_from_row",
+    "WorkbenchStore._connect",
+    "WorkbenchStore._event_from_row",
+    "WorkbenchStore._fsync_attachment_file",
+    "WorkbenchStore._fsync_directory",
+    "WorkbenchStore._managed_directory",
+    "WorkbenchStore._reconcile_attachments",
+    "WorkbenchStore._require_confirmation",
+    "WorkbenchStore._require_executor_lease",
+    "WorkbenchStore._require_lease",
+    "WorkbenchStore._require_task",
+    "WorkbenchStore._require_turn",
+    "WorkbenchStore._resolve_pending_confirmations",
+    "WorkbenchStore._safe_attachment_unlink",
+    "WorkbenchStore._task_from_row",
+    "WorkbenchStore._turn_from_row",
+    "WorkbenchStore._write_attachment_temp",
+    "WorkbenchStore.append_artifact_event",
+    "WorkbenchStore.append_event",
+    "WorkbenchStore.attachment_paths_for_executor",
+    "WorkbenchStore.claim_confirmation_execution",
+    "WorkbenchStore.complete_turn",
+    "WorkbenchStore.confirmation_is_quiesced",
+    "WorkbenchStore.confirmation_quiescence",
+    "WorkbenchStore.consume_confirmation_authorization",
+    "WorkbenchStore.create_confirmation",
+    "WorkbenchStore.event_stream_snapshot",
+    "WorkbenchStore.events_after",
+    "WorkbenchStore.execution_run_id_for_executor",
+    "WorkbenchStore.get_artifact",
+    "WorkbenchStore.get_confirmation",
+    "WorkbenchStore.get_task",
+    "WorkbenchStore.get_turn",
+    "WorkbenchStore.list_artifacts",
+    "WorkbenchStore.list_attachments",
+    "WorkbenchStore.list_confirmations",
+    "WorkbenchStore.list_tasks",
+    "WorkbenchStore.list_turns",
+    "WorkbenchStore.reconcile_confirmed_without_result",
+    "WorkbenchStore.reconcile_confirmed_without_result_batch",
+    "WorkbenchStore.reconcile_unquiesced_proposer_batch",
+    "WorkbenchStore.reconcile_unquiesced_proposers",
+    "WorkbenchStore.recover_expired_turns",
+    "WorkbenchStore.renew_confirmation_execution_lease",
+    "WorkbenchStore.renew_confirmation_proposer",
+    "WorkbenchStore.requested_quiesced_confirmation_ids",
+    "WorkbenchStore.resume_context_for_executor",
+    "WorkbenchStore.save_attachment",
+    "WorkbenchStore.workbench_stats",
+    "_begin_immediate_with_retry",
+    "_derive_task_title",
+    "_json_object_text",
+    "_reject_json_constant"
+  ],
+  "validation": {
+    "git_apply_check": "PASS",
+    "applied_candidate_byte_equal": "PASS",
+    "python_version": "3.13.12",
+    "compile": "PASS",
+    "ruff_with_repository_config": "PASS",
+    "all_79_signatures_returns_decorators_unchanged": "PASS",
+    "63_unselected_function_bodies_unchanged": "PASS",
+    "all_preexisting_module_assignments_unchanged": "PASS",
+    "12_update_execute_parameter_tuples_unchanged": "PASS",
+    "rowcount_comparisons_unchanged_except_SQL": 10,
+    "transaction_control_execute_calls_unchanged": 24,
+    "12_payload_only_empty_bound_value_SETs": "PASS",
+    "constructors_codec_registration_unchanged": "PASS",
+    "owned_temp_removed": true
+  },
+  "boundaries": {
+    "proposal_only": true,
+    "app_or_tests_edited": false,
+    "db_opened": false,
+    "method_differential_tests_run": false,
+    "runtime_selected": false,
+    "source_sha256_after_validation": "4a3bb9287dfea1f2e13e31be5ff2a9ac536a458ac079f30ccb1519848870e18e"
+  },
+  "dependency_sha256": {
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f",
+    "app/task20_definitions.py": "884563de85c27369c8306f1745bdf819916fcf9249a31cf8889307845289ef5c",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/workbench/native_events.py": "627dea69c179821fc18e1e97e37c6c96615134719c0536986bc0fa6f23f6a761",
+    "docs/superpowers/specs/2026-10-16-task8-native-source.json": "44f386b8d35acb23af0ef8597963ac9a67094a153f78dce02f61ba52a9f688e0"
+  },
+  "source_anchors": {
+    "inserts": [
+      215,
+      502
+    ],
+    "updates": [
+      298,
+      328,
+      512,
+      662,
+      703,
+      730,
+      1215,
+      1431,
+      1824,
+      1910,
+      2137,
+      2466
+    ],
+    "direct_reads": [
+      229,
+      275,
+      970
+    ],
+    "projection_suffix_qualifier": [
+      984
+    ],
+    "retained_child_projections_unchanged": [
+      92,
+      96,
+      106
+    ]
+  },
+  "unresolved_integration_dependencies": [
+    {
+      "path": "app/workbench/native_events.py",
+      "anchors": [
+        30,
+        99,
+        173
+      ],
+      "requirement": "Select typed turn projection with original native/body semantics during wholecutover; test nonempty terminal cache and agent-event hydration."
+    },
+    {
+      "paths": [
+        "app/store.py",
+        "app/email_store.py"
+      ],
+      "requirement": "Register exact Tasks8 native scalar codec in both existing _open_connection methods at complete cutover; Workbench inherits Store."
+    }
+  ],
+  "cleanup": "Removed exact task-owned /private/tmp/task8-workbench-proposal.nLu4vB (/tmp symlink); absence verified."
+}
