@@ -1,5 +1,16 @@
 # Current Runtime Mechanism
 
+An unselected pure-schema config release now composes the exact native
+eighteen-family copy, 29-to-31-kind Email action rebuild, mapped real `runs`
+FKs, and retirement of the eighteen old families plus the approved empty
+training-observation table. Its forward and inverse require a caller-owned
+FK-off transaction, never commit and never persist a row snapshot. Existing
+action facts use SQLite TEMP staging and preserve physical IDs, values, storage
+classes and sequence waters; inverse restores current facts written after
+forward conversion. The final predicate requires exact configs, schedules,
+Skill-extended actions, mapped runs and absence of nineteen native names.
+Current constructors, schema markers and callers do not select this path.
+
 Unselected retained-runs FK rebuilding uses SQLite TEMP staging and SQL value/
 storage-class comparisons rather than loading the whole runs table into Python.
 The stage exists only inside the caller's FK-off migration transaction: it is
@@ -21,7 +32,7 @@ is the source-defined exception that rolls back that transaction. Receipt DTOs
 retain the current Store conversions and reconstruct loaded_json from existing
 config relations, with no persisted load-body copy. Native malformed,
 noncanonical/BLOB load bodies and late binding remain explicit copy-validation
-exceptions; migration must prove exact reconstruction before retirement.
+exceptions; the release preflights exact reconstruction before retirement.
 
 The config row-transfer engine is also unselected. Its forward and inverse
 read current rows under caller snapshots, require an FK-off destination
@@ -29,13 +40,14 @@ transaction and leave rollback to the caller. Inverse reads current target
 facts, including receipts appended after conversion. Exact source declarations,
 values/types/rowids, receipt body reconstruction and six allocator waters are
 verified; no row snapshot is persisted. Same-connection copy permits old source
-tables only during the pre-retirement transaction; runtime schema validation
-continues to require their retirement after release.
+tables only during the pre-retirement transaction; the release coordinator
+retires them before its final exact schema predicate can succeed.
 
 Exact source capture supports the six account blockers already translated by
 Email13, including its fresh counterpart, and rejects partial mixtures. This
 permits the row engine to follow existing Email/Business/Provider conversion
-on a copy; it does not activate the final config release.
+on a copy. The paired caller will use the Email52 source variants; synthetic
+cross-variant declaration tests do not select extra runtime paths.
 
 The Skill receipt opt-in composes with Email actions independently of the
 follow-up/sync opt-in. The transfer engine checks the exact declaration for

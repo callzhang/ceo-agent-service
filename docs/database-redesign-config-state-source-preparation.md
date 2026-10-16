@@ -872,5 +872,39 @@ proof took 15.562s. Peak resident-set usage reported by Darwin getrusage was
 and measurement differ. Exact executed hashes and stage times are recorded in
 `superpowers/specs/2026-10-15-configs-retained-runs-streaming-actual.json`.
 The reviewed prototype directory was removed by its author and absence checked.
-No runtime constructor or marker is selected, and native source parents remain;
-complete config migration, current callers and source retirement are next.
+At that proof stage no runtime constructor or marker was selected and native
+source parents remained. The unselected coordinator below subsequently added
+synthetic source retirement; caller selection is still open.
+
+### Unselected full config schema coordinator
+
+`app/configs_schema_release.py` now composes the accepted row transfer and
+retained-runs translator in a caller-owned FK-off transaction. It binds the
+finite native eighteen-family declaration, independently binds the exact
+Email29 action variant, and checks the actual/fresh declaration of the empty
+training-observation table. The production paired path would invoke it after
+Email13, so its current source profiles are `actual_email52` and
+`fresh_email52`; synthetic controls also exercise the two original config
+fingerprints independently of the two action variants. Those controls do not
+claim an original config source plus Email29 is a full published source.
+
+Forward installs configs/schedules, stages old actions in SQLite TEMP, rebuilds
+only the Skill receipt extension, copies eighteen families and six source
+allocator waters, maps the two real Workbench `runs` FKs, and retires all
+eighteen old tables plus the exact empty observation table. Its final predicate
+requires those nineteen names absent, exact configs/schedules, the 31-kind
+Email+Skill action declaration, and mapped real runs. Inverse recreates source
+declarations from metadata, reconstructs current target facts and allocator
+waters, restores native run FKs and 29-kind actions, and removes only synthetic
+config/Skill allocator aliases. It leaves rollback to the caller and neither
+direction changes Store/Email markers or current constructors.
+
+The focused synthetic suite covers the four config fingerprints crossed with
+the two independent action variants, post-forward schedule/config/run and
+Skill export/success/failure plus non-Skill action writes, exact native DDL on
+inverse, second forward, unrelated run orphan preservation, nonempty
+observation and noncanonical receipt refusal, changed/mixed declarations,
+inverse broken-target FK refusal, and savepoint rollback after a mid-copy
+failure. This unit has no real database, provider, native CLI or production
+effect. Caller integration, actual combined-copy proof, and publication are
+separate work.

@@ -1,5 +1,20 @@
 # CEO Agent Service Architecture
 
+The unselected `configs_schema_release` coordinator composes the reviewed
+eighteen-family row transfer with the retained-runs FK translator. In one
+caller-owned FK-off transaction it installs `configs` and `schedules`, rebuilds
+the exact current Email29 `actions` declaration with only the two Skill
+receipt kinds, copies and verifies config facts, maps the two `runs` FKs, then
+retires all eighteen native families and the exact empty
+`email_training_snapshot_observations` table. SQLite TEMP staging preserves
+existing action rows, physical IDs, storage classes and allocator waters
+without a Python action-row image. The inverse reconstructs native declarations
+from metadata and reads current target facts, including later config, schedule,
+run, Skill receipt and non-Skill action writes. The final declaration predicate
+checks the mapped runs, selected 31-kind actions and absence of all nineteen
+retired tables. No constructor, schema marker or runtime caller selects this
+coordinator yet; the paired Email release must first establish Email29/Email52.
+
 The unselected retained-runs translator now stages stored columns in a
 transaction-lifetime SQLite TEMP table instead of Python row/type matrices.
 Before dropping the source and after inserting the replacement, indexed ID
@@ -25,22 +40,24 @@ unchanged. Successful load receipt bodies are derived from referenced bindings
 and revisions rather than persisted again. Source-shaped storage preserves
 native FK affinity, self-references, allocator streams and public receipt DTO
 conversion. Native AUTOINCREMENT exhaustion retains SQLITE_FULL and its whole
-transaction rollback. Caller conversion, migration/inverse and old-table
-retirement are still required before this storage can be selected.
+transaction rollback. The separate unselected schema coordinator now supplies
+migration, inverse and old-table retirement; caller conversion and release
+selection remain open.
 
 `configs_schema_transfer` provides the unselected eighteen-family row copy
 and current-fact inverse between installed declarations. It preserves native
 values, storage classes, signed source rowids and six allocator streams;
 shared physical references are resolved before insertion, including cycles.
 Both sides require caller transactions and the destination requires FK-off
-mode. It does not install/drop schemas or change markers. The release still
-needs retained-child FK translation, source-table retirement and caller
-selection; the row engine alone cannot activate this schema.
+mode. It does not install/drop schemas or change markers. The separate
+coordinator supplies FK translation and source-table retirement, but caller
+selection remains open; the row engine alone cannot activate this schema.
 
 Source capture also recognizes the exact account-trigger declarations produced
 by the existing Email13 migration, for both actual and fresh sources. Copied
-sequential migration plus config row transfer/inverse is verified; constructors,
-retained-child FKs and final source-table retirement remain unselected.
+sequential migration plus config row transfer/inverse is verified. The
+coordinator handles retained-child FKs and final source-table retirement on
+synthetic sources; constructors and production selection remain unselected.
 
 Skill receipts require the current Email action scaffold; the independent
 follow-up/sync kinds are optional. This removes an unneeded declaration
