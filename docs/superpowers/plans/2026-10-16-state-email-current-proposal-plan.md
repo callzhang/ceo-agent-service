@@ -20,12 +20,12 @@ Base EmailStore SHA9e02860962447adad7f62fcea9e74b2d9a1b244790b4dd02e95dba94c58d4
 | email_processing_progress | Only cursor source replaced; config join, sorting, counts and separate throughput connection unchanged. |
 | _unsubscribe_cancellation_decision | Same supplied connection and exact pending-key fence. Active leases remain only reply/scheduled_execution, same task ID, owner nonempty and terminal empty; no expiry/generation/PID filters. |
 
-The complete test fixture adjustment is2026-10-16-state-email-current-test-proposal.patch: add State projection import and change only the atomic scan rollback test's final direct native cursor-table assertion to its State projection. The persisted business/plan/action rollback assertions remain unchanged. It is a test adjustment to the new physical target; no application alias is introduced.
+The complete three-file test fixture adjustment is2026-10-16-state-email-current-test-proposal.patch: project the atomic scan rollback test's final cursor assertion; seed the dispatcher namespace test through State inside its original transaction; apply exact pure State migration in the typed current validation fixture before committing current markers. Imports support these three changes. Persisted business/plan/action rollback assertions and the native source oracle remain unchanged; no application alias is introduced.
 
 - [x] Read-only finite inventory: nine current methods/thirteen direct SQL statements; archived factories and source schema dictionaries remain native. No obsolete helper proved removable.
 - [x] Complete executable9-method proposal, compile and exactASTscope check. Root disposable actual constructors/currentcursor-CAS/modelprogress+scanrollback10 tests passed2.37s with the exact fixture assertion adaptation. Initial harness/obsolete-assert corrections are recorded in ../specs/2026-10-16-state-email-current-readiness.json.
 - [x] Complete historical queue/traversal, processing API and unsubscribe cancellation/fence/owner integration checks, including current complete module chain and actual/fresh SQL scalar/CAS differential edge cases. Existing useful files: test_email_worker historical queue cases, test_email_web_api processing-progress three cases, test_email_unsubscribe_direct principal cancellation and namespace/serialization cases; adapt physical seed statements explicitly in test proposals if they still name retired tables.
-- [ ] Fresh independent SPEC then QUALITY of exactproposal, preserving every unrelated method/function AST and all native archived declarations.
+- [x] Fresh independent SPEC then QUALITY of exactproposal, preserving every unrelated method/function AST and all native archived declarations.
 - [ ] Select whole State currentconsumers, marker/version/progress/coordinator closure together; never activate this proposal alone.
 - [ ] Actual DBcopy forward/current-factinverse/genuinecurrentpredecessorcoldreads+writes/reforward, native CLI with fake outbound and UI flow proof, then remaining sourcefamilies to final10core+ledger. No production/main publication without final approval.
 
@@ -33,3 +33,7 @@ Verification uses pinned /Users/derek/Projects/ceo-agent-service/.worktrees/task
 
 
 Root integration now27PASS16.14s. Adjacent testpatch explicitly adapts threeexisting physical-target fixtures: atomiccursor rollback assertion, dispatcherState seed in originaltransaction, currentvalidation pureState migration beforemarker commit. Native historical sourceoracle stays unchanged. Both trackedstatic registry/effect-map JSON files are copied to the owned disposableapp tree; no runtime settings or realdata. Existing Starlette deprecation only. More actual/fresh scalar/CAS/ownership adversarial coverage belongs independentreview and finalwhole-State validation; this is not actualcopy/nativeCLI/production acceptance.
+
+Fresh independent SPEC PASS: exact27tests17.40s plus468 actual/fresh original-method SQL differential checkpoints. Static nine-method/unchanged270method/signature/archive and exactlythree fixture-function changes verified. Plan's stale one-file fixture description corrected to the actual three-file scope before QUALITY; proposal bytes unchanged.
+
+IndependentQUALITY PASS13/9.17s with7adversarial+6existing instances,12cancellationdifferentialcheckpoints andrealwritercontention/rollback; no findings. Acceptedcomponent remains unselected pending wholeState atomicconsumer/version/progress/publication closure.

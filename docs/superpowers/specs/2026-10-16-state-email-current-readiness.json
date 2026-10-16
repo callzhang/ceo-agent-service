@@ -59,5 +59,23 @@
     "actual_or_production_db_access": false
   },
   "test_patch_sha256": "51ef1038786bd0d005964d8db3174a2471053bf82d5891d26c4e347260be18e8",
-  "independent_spec": "RUNNING"
+  "independent_spec": {
+    "status": "PASS",
+    "focused_tests": 27,
+    "seconds": 17.4,
+    "native_actual_fresh_differential_checkpoints": 468,
+    "scope": "Exactly9changedmethods/270unchanged/signatures/nativearchives preserved; exact3fixturefunctions; bothfreshconstructororders67ordinary only.",
+    "doc_correction": "Stale initial single-fixture description corrected to current3file patch beforeQUALITY; bothpatches unchanged."
+  },
+  "independent_quality": {
+    "status": "PASS",
+    "focused_tests": 13,
+    "seconds": 9.17,
+    "new_adversarial_instances": 7,
+    "existing_regression_instances": 6,
+    "cancellation_native_differential_checkpoints": 12,
+    "coverage": "Actual/fresh transactionrollback/kindisolation; realIMMEDIATEwritercontention/CAS; nullablehistory/midpage/lateconstraintall-or-nothing; BLOB/malformed/LIKEprogress; exactsuppliedconnection fence/leaseownershipincludingexpired/stalegen/nonexistentPID/namespace/leadingzeroID/owner/terminal variations; readonlypreviewbyte/factpreservation andprocessingAPI.",
+    "harness_corrections": "Missing trackedmetadata andincompletehistoricalsyntheticcandidate fixed onlyunderownedtmp beforeaccepted13pass run.",
+    "warning": "ExistingStarletteBlockingPortal deprecationonly."
+  }
 }
