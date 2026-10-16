@@ -6,6 +6,13 @@ from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
 from app.run_storage import insert_run
 from app.task_storage import REPLY_TASK_SQL, task_physical_id
+from app.schedules_storage import insert_schedule
+from app.scheduled_config_storage import intern_scheduled_config
+
+
+def _schedule(db, identity):
+    assert insert_schedule(db, dict(id=identity, name="Report", prompt="p",
+        cron_expression="0 * * * *", timezone="UTC", runtime_id="", enabled=1)) == identity
 
 
 @pytest.mark.parametrize("source", ["reply", "error"])
@@ -44,13 +51,8 @@ def test_attention_recovery_does_not_search_unrelated_successes_first(
             db.execute(
                 "insert into errors(conversation_id,message_id,kind,detail) values ('unrelated-chat','message','read','failed')"
             )
-        db.execute(
-            "insert into scheduled_tasks(id,name,prompt,cron_expression,timezone,runtime_id,enabled) values (1,'Report','p','0 * * * *','UTC','',1)"
-        )
-        db.execute("insert or ignore into scheduled_task_config_versions(snapshot_json) values ('{}')")
-        snapshot_id = db.execute(
-            "select id from scheduled_task_config_versions where snapshot_json='{}'"
-        ).fetchone()[0]
+        _schedule(db, 1)
+        snapshot_id = intern_scheduled_config(db, "{}")
         for index in range(20000):
             insert_run(db, 'scheduled_task_runs', {
                 'event_id': f"event-{index}",
@@ -124,14 +126,9 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
             db.execute(
                 "insert into errors(conversation_id,message_id,kind,detail) values ('scheduled-task-run:10','event-10','read','failed')"
             )
-        db.executemany(
-            "insert into scheduled_tasks(id,name,prompt,cron_expression,timezone,runtime_id,enabled) values (?,'Report','p','0 * * * *','UTC','',1)",
-            [(1,), (2,)],
-        )
-        db.execute("insert or ignore into scheduled_task_config_versions(snapshot_json) values ('{}')")
-        snapshot_id = db.execute(
-            "select id from scheduled_task_config_versions where snapshot_json='{}'"
-        ).fetchone()[0]
+        _schedule(db, 1)
+        _schedule(db, 2)
+        snapshot_id = intern_scheduled_config(db, "{}")
         for run_id, event_id, scheduled_id, dispatch_status, execution_kind, execution_id in (
             (10, 'event-10', 1, 'dispatched', 'reply_task', str(tasks[0].id)),
             (later_id, f'event-{later_id}', schedule_id, dispatch, kind, str(tasks[1].id)),

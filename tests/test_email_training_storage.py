@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.email_store import EmailStore
+from app.configs_definitions import config_projection
 from app.email_model_registry import EmailModelRegistry
 from app.email_classifier_retrain import SnapshotTrainingSignal, TrainingSubprocessController
 from app.email_training_snapshot import build_selected_training_snapshot
@@ -47,9 +48,9 @@ def test_training_payload_lives_outside_sqlite_and_old_data_is_unavailable(tmp_p
     with pytest.raises(RuntimeError, match="unavailable"):
         store.get_training_snapshot("first")
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from email_training_snapshot_observations").fetchone()[0] == 0
+        assert db.execute("select 1 from sqlite_schema where name='email_training_snapshot_observations'").fetchone() is None
         assert "private training body" not in " ".join(
-            str(row) for row in db.execute("select manifest_json from email_training_snapshots")
+            str(row) for row in db.execute(f"select manifest_json from ({config_projection('email_training_snapshots')})")
         )
 
 

@@ -1,4 +1,4 @@
-"""E2 target validators on explicit converted copies; no default activation."""
+"""Historical Email validators beside a synthetic typed current target."""
 
 from contextlib import closing
 import inspect
@@ -11,6 +11,14 @@ import sys
 import pytest
 
 from app.email_store import EmailStore, EmailPersistenceCorruption
+from app.configs_schema_transfer import SOURCE_TABLES, capture_config_declarations, copy_config_rows
+from app.configs_schema_release import _rebuild_actions, configs_schema_is_current
+from app.configs_run_schema import map_runs_to_configs
+from app.configs_storage import create_configs_schema
+from app.schedules_storage import create_schedules_schema
+from app.action_email_storage import migrate_email_action_schema
+from app.business_schema_release import migrate_business_schema, business_schema_is_current
+from app.provider_state_schema_release import capture_provider_state_source, apply_provider_state_migration
 from tests.test_email_action_plan_direct_dao import converted_pair as _converted_pair
 from tests.test_email_action_reply_dao import (
     reply_pair as _reply_pair,
@@ -25,17 +33,60 @@ from tests.test_email_action_unsubscribe_dao import (
 
 @pytest.fixture
 def converted_pair(tmp_path, request):
-    return _converted_pair.__wrapped__(tmp_path, request)
+    return _current_target(_converted_pair.__wrapped__(tmp_path, request))
 
 
 @pytest.fixture
 def reply_pair(tmp_path, request):
-    return _reply_pair.__wrapped__(tmp_path, request)
+    return _current_target(_reply_pair.__wrapped__(tmp_path, request))
 
 
 @pytest.fixture
 def unsubscribe_pair(tmp_path, request):
-    return _unsubscribe_pair.__wrapped__(tmp_path, request)
+    return _current_target(_unsubscribe_pair.__wrapped__(tmp_path, request))
+
+
+def _current_target(pair):
+    """Build a typed target on the owned copy; keep the 2773 source oracle intact.
+
+    That historical fixture has fresh config declarations but actual-variant
+    observations. It is intentionally outside the published release preflight.
+    The observations are empty; the accepted row copier verifies all 18 families.
+    """
+    store, _, _, source, _ = pair
+    with closing(sqlite3.connect(source)) as original, closing(sqlite3.connect(store.path)) as db:
+        original.backup(db)
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        migrate_email_action_schema(db)
+        migrate_business_schema(db)
+        provider = capture_provider_state_source(db)
+        apply_provider_state_migration(db, provider)
+        metadata = capture_config_declarations(db)
+        assert metadata["variant"] == "fresh_email52"
+        assert db.execute(
+            "select count(*) from email_training_snapshot_observations"
+        ).fetchone() == (0,)
+        create_schedules_schema(db)
+        create_configs_schema(db)
+        _rebuild_actions(db, "fresh_memory_fk", to_skill=True)
+        counts = copy_config_rows(db, db, metadata)
+        assert set(counts) == set(SOURCE_TABLES)
+        map_runs_to_configs(db)
+        db.execute("drop table email_training_snapshot_observations")
+        for name in reversed(SOURCE_TABLES):
+            db.execute(f'drop table "{name}"')
+        assert configs_schema_is_current(db, action_variant="fresh_memory_fk")
+        assert business_schema_is_current(db)
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+        db.execute(
+            "update service_state set value='2026-10-14.1' where key='store_schema_version'"
+        )
+        db.execute(
+            "insert into email_schema_migrations(version,applied_at) values(52,'synthetic-current-fixture')"
+        )
+        db.commit()
+    return pair
 
 
 def _outcome(store, db, method):
@@ -90,13 +141,16 @@ def test_retained_required_contract_and_optional_history_coverage_match_source(
 ):
     store = converted_pair[0]
     cases = (
-        ("drop index idx_email_messages_account_folder_uid",),
-        ("drop trigger trg_email_model_promotion_configs_immutable_update",),
-        ("drop table email_classifier_runtime_samples",),
-        (
-            "pragma writable_schema=on",
-            "update sqlite_schema set sql=replace(sql,'email_address text not null','email_address blob not null') where name='email_accounts'",
-        ),
+        (("drop index idx_email_messages_account_folder_uid",),
+         ("drop index idx_email_messages_account_folder_uid",), True),
+        (("drop trigger trg_email_model_promotion_configs_immutable_update",),
+         ("drop trigger trg_configs_promotion_update",), False),
+        (("drop table email_classifier_runtime_samples",),
+         ("drop table email_classifier_runtime_samples",), True),
+        (("pragma writable_schema=on",
+          "update sqlite_schema set sql=replace(sql,'email_address text not null','email_address blob not null') where name='email_accounts'"),
+         ("pragma writable_schema=on",
+          "update sqlite_schema set sql=replace(sql,'payload_json text not null','payload_json blob not null') where name='configs'"), False),
     )
     # Derive a genuine required native index name without assuming its spelling.
     from app.email_store import _REQUIRED_INDEXES
@@ -106,17 +160,21 @@ def test_retained_required_contract_and_optional_history_coverage_match_source(
         for name, (table, _) in _REQUIRED_INDEXES.items()
         if table == "email_messages"
     )
-    cases = ((f"drop index {native_index}",), *cases[1:])
-    for statements in cases:
+    cases = (((f"drop index {native_index}",), (f"drop index {native_index}",), True), *cases[1:])
+    for source_statements, target_statements, same_message in cases:
         expected = _source(
-            converted_pair, "_validate_schema_shape", [(sql, []) for sql in statements]
+            converted_pair, "_validate_schema_shape", [(sql, []) for sql in source_statements]
         )
         assert expected["error"] == "EmailPersistenceCorruption"
         with store._connect() as db:
             db.execute("begin")
-            for sql in statements:
+            for sql in target_statements:
                 db.execute(sql)
-            assert _outcome(store, db, "_validate_schema_shape") == expected
+            actual = _outcome(store, db, "_validate_schema_shape")
+            if same_message:
+                assert actual == expected
+            else:
+                assert actual["error"] == expected["error"]
             db.rollback()
     optional = [
         (f"drop table {name}", [])
@@ -150,10 +208,12 @@ def test_target_manifest_and_translated_blockers_refuse_corrupt_objects(converte
             "select sql from sqlite_schema where name='actions'"
         ).fetchone()[0]
         external = finite_target_external_sql()
-        name, sql = next(iter(external.items()))
+        name = "trg_email_direct_action_blocks_plan_switch"
+        sql = external[name]
         cases = (
             [f"drop index {index}"],
             [f"drop trigger {trigger}"],
+            ["drop trigger trg_configs_direct_account_delete"],
             [f"drop trigger {name}"],
             [
                 f"drop trigger {name}",
@@ -359,55 +419,70 @@ def test_neutral_metadata_accepts_both_exact_variants_and_finite_installer_is_tr
 ):
     from app.action_storage import create_action_schema
     from app.action_email_storage import (
-        create_email_action_external_triggers,
         finite_target_external_sql,
     )
     from app.email_current_schema import (
-        create_current_email_non_action_schema,
+        create_current_email_runtime_schema,
         create_current_email_migration_ledger,
     )
+    from app.configs_run_schema import _declarations as current_run_declarations
+    from app.email_store import _REQUIRED_TRIGGER_TABLES
 
     with closing(sqlite3.connect(":memory:")) as db:
         db.row_factory = sqlite3.Row
         db.execute("create table tasks(id integer primary key, record_type text)")
-        db.execute(
-            "create table runs(id integer primary key, record_type text, legacy_key text)"
-        )
-        create_current_email_non_action_schema(db)
+        create_schedules_schema(db)
+        create_configs_schema(db)
+        for sql in current_run_declarations(mapped=True).values():
+            db.execute(sql)
+        create_current_email_runtime_schema(db)
         create_current_email_migration_ledger(db)
         create_action_schema(
-            db, include_reply=True, reply_variant=variant, include_email=True
+            db, include_reply=True, reply_variant=variant, include_email=True,
+            include_skill_config_receipts=True,
         )
+        external = finite_target_external_sql()
+
+        def install_current_external_triggers():
+            for trigger_name, ddl in external.items():
+                if _REQUIRED_TRIGGER_TABLES.get(trigger_name) == "email_accounts":
+                    continue
+                if db.execute("select 1 from sqlite_schema where name=?", (trigger_name,)).fetchone() is None:
+                    db.execute(ddl)
+
+        install_current_external_triggers()
         db.commit()
+        name = "trg_email_direct_action_blocks_plan_switch"
+        sql = external[name]
+        db.execute(f"drop trigger {name}")
         with pytest.raises(EmailPersistenceCorruption, match="required trigger"):
             EmailStore._validate_schema_shape(db)
         db.execute("begin")
         db.execute("savepoint install")
-        create_email_action_external_triggers(db)
+        install_current_external_triggers()
         EmailStore._validate_schema_shape(db)
         db.execute("rollback to install")
         db.execute("release install")
         assert not db.execute(
             "select 1 from sqlite_schema where name=?",
-            (next(iter(finite_target_external_sql())),),
+            (name,),
         ).fetchone()
-        create_email_action_external_triggers(db)
+        install_current_external_triggers()
         before = tuple(
             db.execute("select name,sql from sqlite_schema where type='trigger'")
         )
-        create_email_action_external_triggers(db)
+        install_current_external_triggers()
         assert (
             tuple(db.execute("select name,sql from sqlite_schema where type='trigger'"))
             == before
         )
         EmailStore._validate_schema_shape(db)
-        name, sql = next(iter(finite_target_external_sql().items()))
         db.execute(f"drop trigger {name}")
         db.execute(sql.replace("email_status='processing'", "email_status='pending'"))
         before = db.execute(
             "select sql from sqlite_schema where name=?", (name,)
         ).fetchone()[0]
-        create_email_action_external_triggers(db)
+        install_current_external_triggers()
         assert (
             db.execute(
                 "select sql from sqlite_schema where name=?", (name,)
@@ -439,18 +514,13 @@ def _preview(store, classification):
 def test_public_readonly_cancellation_preview_closes_shape_dependency(
     unsubscribe_pair, monkeypatch, tmp_path
 ):
-    from pathlib import Path
-    from app.store_schema_release import prepare_database_schema_release
     from tests.test_email_action_unsubscribe_dao import _old_result
 
     expected = _old_result(unsubscribe_pair, _preview)
-    target = tmp_path / "published-candidate.sqlite3"
-    with closing(sqlite3.connect(unsubscribe_pair[3])) as source_db:
+    target = tmp_path / "current-target.sqlite3"
+    with closing(sqlite3.connect(unsubscribe_pair[0].path)) as source_db:
         with closing(sqlite3.connect(target)) as target_db:
             source_db.backup(target_db)
-    release = prepare_database_schema_release(Path(__file__).resolve().parents[1], target)
-    assert release is not None
-    release.publish()
     store = EmailStore(target)
     monkeypatch.setattr(
         EmailStore, "_now", staticmethod(lambda: "2026-10-14T10:00:00+00:00")

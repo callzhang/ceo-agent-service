@@ -983,3 +983,42 @@ Only aggregate elapsed time was captured, not per-phase timings. Two initial
 proof-preparation interface mistakes (missing caller read transaction and the
 Business parents metadata key) were corrected before publication; application
 code was unchanged during this acceptance.
+
+### Bounded current fixture closure, 2026-10-16
+
+The ten selected current/source test files initially had 50 failures and 103
+passes. Current fixtures still queried or mutated retired `email_accounts`,
+`email_category_configs`, `email_training_snapshots`, `scheduled_tasks`, and
+`scheduled_task_config_versions` tables, or expected the empty retired training
+observation table. Their current setup now uses the accepted typed Configs and
+Schedules projections/writers. Account-change readback, queued snapshot, seed
+rollback, private training-body, Attention cost, and current corruption
+assertions remain executable. The archived Email51 seed and 2773 validator
+source oracles remain separate and unchanged.
+
+The 2773 validator helper's source has `fresh_email52` Config declarations but
+an `actual` training-observation declaration (fingerprint
+`002c18708d22a42212460b9d7c35b5dd5943a396386c5346a50aa06b4c87b587`).
+It correctly fails paired release preflight, which requires the fresh
+observation declaration. Validation tests therefore keep that genuine old
+database only as their source oracle and rebuild a separate owned target copy
+through the accepted Email, Business, Provider, and Config transfer primitives.
+The Config copier verifies all eighteen families' row values, SQLite types,
+source identities, and foreign keys; the fixture checks the observation family
+is empty before retiring it. This is synthetic test setup, not paired publisher
+acceptance. The supported frozen-source cold publication and inverse have their
+own receipt at `superpowers/specs/2026-10-16-configs-current-cold-copy.json`
+(commit `18657800`).
+
+The cancellation-preview test now copies that typed current fixture, constructs
+a real `EmailStore` on the copy, calls the public read-only preview, and compares
+both SQLite dump and file bytes before/after. Its original
+`prepare_database_schema_release`/`publish` call cannot accept the mixed 2773
+source and is no longer exercised by this test; the supported-source cold
+publication receipt above covers that separate release path. The current
+fixture's Email52 and Store marker are confined to its owned synthetic target.
+
+Final exact ten-file pytest: **153 passed, 1 Starlette deprecation warning in
+59.36 seconds**. Scoped Ruff, compileall, and `git diff --check` passed. No
+application/schema/validator code, real database, provider, native CLI, send,
+push, main merge, or deploy changed here.

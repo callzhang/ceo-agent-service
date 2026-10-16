@@ -13,6 +13,18 @@ from tests.test_email_action_reconcile import (
 )
 from tests.test_email_store import _task2_account_values
 from app.email_store import email_imap_configuration_snapshot
+from app.configs_definitions import config_projection
+from app.configs_storage import update_config
+
+
+def _change_account(store, values):
+    with store._connect() as db:
+        db.execute("begin immediate")
+        rowid = db.execute(
+            f"select rowid from ({config_projection('email_accounts', include_rowid=True)}) where account_id=?",
+            (ACCOUNT,),
+        ).fetchone()[0]
+        assert update_config(db, "email_accounts", rowid, values) == 1
 
 
 def _release(store, failed, **kwargs):
@@ -56,8 +68,7 @@ def test_account_changed_during_readback_cannot_release(tmp_path):
     session = ReadOnlyFakeSession(messages={"INBOX": {9: ("<account-race@example.com>", set())}})
 
     def changed_connection():
-        with store._connect() as db:
-            db.execute("update email_accounts set imap_username='different' where account_id=?", (ACCOUNT,))
+        _change_account(store, {"imap_username": "different"})
         return _factory(session)()
 
     changed_connection.account_configuration_snapshot = email_imap_configuration_snapshot(store.get_account(ACCOUNT))
@@ -78,8 +89,7 @@ def test_factory_configuration_changed_before_command_cannot_release(tmp_path):
     session = ReadOnlyFakeSession(messages={"INBOX": {9: ("<old-factory@example.com>", set())}})
     factory = _factory(session)
     factory.account_configuration_snapshot = email_imap_configuration_snapshot(store.get_account(ACCOUNT))
-    with store._connect() as db:
-        db.execute("update email_accounts set imap_username='different' where account_id=?", (ACCOUNT,))
+    _change_account(store, {"imap_username": "different"})
     report = release_source_verified_retry(
         store, account_id=ACCOUNT, action_id=action_id, provider_factory=factory, apply=True,
     )
@@ -95,8 +105,7 @@ def test_account_changed_after_release_cannot_claim(tmp_path, claim_exact):
         failed, source_locator=failed.action.locator, source_revision="source-v1",
         requested_at="2026-10-12T06:00:00+00:00", apply=True,
     )
-    with store._connect() as db:
-        db.execute("update email_accounts set imap_host='other.example.com' where account_id=?", (ACCOUNT,))
+    _change_account(store, {"imap_host": "other.example.com"})
     if claim_exact:
         claim = store.claim_direct_action(action_id=action_id, claimed_at="2026-10-12T07:00:00+00:00")
     else:

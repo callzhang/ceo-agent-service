@@ -11,6 +11,9 @@ import pytest
 
 from app.email_current_schema import create_current_email_non_action_schema
 from app.email_store import EmailStore
+from app.configs_definitions import config_projection
+from app.configs_storage import create_configs_schema, insert_config, update_config
+from app.action_storage import create_action_schema
 
 
 _FIXED = datetime(2026, 10, 14, 10, tzinfo=timezone.utc)
@@ -26,7 +29,7 @@ def _facts(db):
         table: [
             dict(row)
             for row in db.execute(
-                f"select * from {table} order by "
+                f"select * from ({config_projection(table)}) order by "
                 + (
                     "category_key"
                     if table == "email_category_configs"
@@ -43,6 +46,8 @@ def _facts(db):
 def _fresh(db):
     db.row_factory = sqlite3.Row
     create_current_email_non_action_schema(db)
+    create_configs_schema(db)
+    db.execute("begin")
     store = object.__new__(EmailStore)
     store._now = lambda: _FIXED.isoformat()
     store._account_now = lambda: _FIXED
@@ -183,24 +188,23 @@ def test_fresh_helper_boundary_preserves_existing_config_set_and_promotion(
     config.update(threshold=0.73, config_version="existing-config")
     with closing(sqlite3.connect(":memory:")) as db:
         store = _fresh(db)
-        db.execute(
-            "insert into email_category_configs("
-            + ",".join(config)
-            + ") values("
-            + ",".join("?" for _ in config)
-            + ")",
-            tuple(config.values()),
-        )
-        db.execute(
-            "insert into email_model_promotion_configs values(?,?,?,?,?,?)",
+        insert_config(db, "email_category_configs", config)
+        insert_config(db, "email_model_promotion_configs", dict(zip(
+            ("config_version", "micro_f1_min", "category_precision_min",
+             "category_validation_samples_min", "p95_latency_max_ms", "created_at"),
             ("existing-promotion", 0.92, 0.91, 25, 250.0, _FIXED.isoformat()),
-        )
+        )))
         if has_revision:
-            row = db.execute("select * from email_category_configs").fetchone()
-            store._append_category_description_revision(db, row)
-            db.execute(
-                "update email_category_configs set config_version='new-current-config', threshold=0.74"
-            )
+            create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk",
+                                 include_email=True, include_skill_config_receipts=True)
+            row = db.execute(config_projection("email_category_configs")).fetchone()
+            store._append_category_description_revision(db, row, current=True)
+            rowid = db.execute(
+                f"select rowid from ({config_projection('email_category_configs', include_rowid=True)})"
+            ).fetchone()[0]
+            assert update_config(db, "email_category_configs", rowid, {
+                "config_version": "new-current-config", "threshold": 0.74,
+            }) == 1
         before = _facts(db)
         store._seed_current_fresh_state(db)
         after = _facts(db)
@@ -223,7 +227,7 @@ def test_fresh_helper_boundary_preserves_existing_config_set_and_promotion(
             revision = after["email_category_description_revisions"][0]
             assert revision["config_version"] == "existing-config"
             assert json.loads(revision["config_json"]) == store._category_config_row(
-                db.execute("select * from email_category_configs").fetchone()
+                db.execute(config_projection("email_category_configs")).fetchone()
             )
         store._seed_current_fresh_state(db)
         assert _facts(db) == after
@@ -235,6 +239,8 @@ def test_fresh_helper_keeps_native_uuid4_and_monotonic_revision_clock():
     with closing(sqlite3.connect(":memory:")) as db:
         db.row_factory = sqlite3.Row
         create_current_email_non_action_schema(db)
+        create_configs_schema(db)
+        db.execute("begin")
         store = object.__new__(EmailStore)
         before = datetime.now(timezone.utc)
         store._seed_current_fresh_state(db)
@@ -291,8 +297,10 @@ def test_fresh_seed_success_remains_inside_caller_savepoint():
 def test_seed_failure_leaves_rollback_control_with_original_caller(boundary):
     with closing(sqlite3.connect(":memory:")) as db:
         store = _fresh(db)
-        db.execute("""create trigger seed_fault before insert on email_category_description_revisions
-            when new.category_key='work' begin select raise(abort,'seed_fault');end""")
+        db.execute("""create trigger seed_fault before insert on configs
+            when new.record_type='email_category_description_revisions'
+             and new.revision_category_key='work'
+            begin select raise(abort,'seed_fault');end""")
         db.execute("create table caller_note(value)")
         db.commit()
         if boundary == "transaction":

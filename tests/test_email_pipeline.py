@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import sqlite3
+from app.configs_definitions import config_projection
+from app.configs_storage import update_config
 from threading import Barrier, Event, Thread
 
 import pytest
@@ -620,15 +622,15 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
     correction_begin_attempted.clear()
     writer = sqlite3.connect(database, timeout=30)
     writer.execute("begin immediate")
-    writer.execute(
-        """
-        update email_category_configs
-        set actions_json='["move"]',
-            action_parameters_json='{"move":{"target_folder":"Important"}}',
-            config_version='personal-v2'
-        where category_key='personal'
-        """
-    )
+    rowid = writer.execute(
+        f"select rowid from ({config_projection('email_category_configs', include_rowid=True)}) "
+        "where category_key='personal'"
+    ).fetchone()[0]
+    assert update_config(writer, "email_category_configs", rowid, {
+        "actions_json": '["move"]',
+        "action_parameters_json": '{"move":{"target_folder":"Important"}}',
+        "config_version": "personal-v2",
+    }) == 1
     results = []
     failures = []
 
@@ -668,7 +670,7 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
     }
     with sqlite3.connect(database) as db:
         committed_config_version = db.execute(
-            "select config_version from email_category_configs "
+            f"select config_version from ({config_projection('email_category_configs')}) "
             "where category_key='personal'"
         ).fetchone()[0]
         current_plan_and_action = db.execute(
