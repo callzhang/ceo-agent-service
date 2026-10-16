@@ -8,7 +8,7 @@ from app.action_storage import (
     _native_payload, _source_bound_null,
 )
 from app.state_definitions import (
-    STATE_DEFAULTS, STATE_FIELDS, STATE_INDEX_DDL, STATE_TABLE_DDL,
+    STATE_DEFAULTS, STATE_FIELDS, STATE_INDEX_DDL, STATE_NOT_NULL, STATE_TABLE_DDL,
     _quote,
 )
 
@@ -57,10 +57,15 @@ def _next_rowid(db, kind):
         return allocator.execute("insert into ids default values").lastrowid
 
 
-def _completed(db, kind, values):
+def _completed(db, kind, values, *, replace=False):
     fields = STATE_FIELDS[kind]
-    expressions = ["?" if field in values else STATE_DEFAULTS[kind].get(field, "null")
-                   for field in fields]
+    defaults = STATE_DEFAULTS[kind]
+    not_null = STATE_NOT_NULL[kind]
+    expressions = [
+        ("coalesce(?," + defaults[field] + ")" if replace and field in not_null
+         and field in defaults else "?") if field in values else defaults.get(field, "null")
+        for field in fields
+    ]
     parameters = tuple(values[field] for field in fields if field in values)
     row = db.execute("select " + ",".join(expressions), parameters).fetchone()
     return dict(zip(fields, row, strict=True))
@@ -80,7 +85,7 @@ def insert_state(db, kind, values, *, source_rowid=_UNSET, ignore=False, replace
                 else _native_integer_primary_key(source_rowid))
     cursor = db.execute(
         "insert " + mode + "into state(record_type,legacy_key,payload_json) values(?,?,?)",
-        (kind, str(identity), _native_payload(_completed(db, kind, values))),
+        (kind, str(identity), _native_payload(_completed(db, kind, values, replace=replace))),
     )
     return StateWriteResult(identity if cursor.rowcount else None, cursor.rowcount)
 
@@ -108,6 +113,8 @@ def update_state(db, kind, source_rowid, values, *, new_source_rowid=_UNSET,
                 _native_integer_primary_key(new_source_rowid, update=True))
     complete = dict(zip(fields, tuple(row)[1:], strict=True))
     complete.update(values)
+    if replace:
+        complete = _completed(db, kind, complete, replace=True)
     return db.execute(
         "update " + mode + "state set legacy_key=?,payload_json=? "
         "where record_type=? and legacy_key=?",

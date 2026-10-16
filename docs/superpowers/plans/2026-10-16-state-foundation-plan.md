@@ -18,13 +18,15 @@ The proposal omits empty, unconsumed `corpus_sources` and four actual-only conve
 
 Only source constraints are represented: original NOT NULL, primary-key uniqueness including nullable single TEXT keys, dispatcher generation>=0 and strict cursor uidvalidity>0/last_seen_uid>=0. No new JSON-field, boolean, enum, status, FK, trigger, authorization or retention policy is introduced. Encoded payload completeness/type shape is a storage representation constraint.
 
+Fresh SPEC review found a native `OR REPLACE` counterexample: explicit bound NULL in `service_state.updated_at` inserts the original `CURRENT_TIMESTAMP` default, and an update of `dispatcher_claim_leases.owner` to NULL inserts the original empty-string default. A Python float NaN binds as SQLite NULL and follows the same source behavior. The target's field NOT NULL check cannot perform this substitution after encoding. The point-write helper therefore evaluates `coalesce(?, original_default_sql)` in SQLite's existing completion SELECT only for an explicitly supplied original NOT NULL field with a default under `replace=True`; matched updates do this after their guarded read. Nullable fields and original NOT NULL fields without defaults keep native NULL and abort behavior. A failed guarded update evaluates no default. Tests compare both actual and fresh original tables against the target with a deterministic, connection-local `current_timestamp` function.
+
 The common stored fields are id/record_type/legacy_key/payload_json; all62 original-field aliases are VIRTUAL. Independent signed source ROWIDs, including0/negative/deleted-highest reuse, remain distinct from the global physical id. At INT64_MAX, a bounded-lifetime in-memory native SQLite allocator reproduces SQLite's random free-positive branch, matching existing Configs/Email practice; normal allocation uses the per-kind maximum and no scratch connection. There is no persistent auxiliary table or counter.
 
 Writes require a caller-owned transaction and acquire its writer lock before guarded reads/identity allocation. A single-row update is one SQLite UPDATE after one guarded read under that lock. No helper commits, outer rollbacks, read-path repair, alternate runtime storage or compatibility routing. Future callers must begin transactions explicitly and evaluate source SQL expressions in SQLite; multirow source-statement ABORT semantics require explicit caller handling before selection. This plan does not claim those callers are already converted.
 
 The dispatcher terminal index includes record_type, terminal_at and the source ROWID expression. A disposable counterexample showed that omitting leading record_type caused SQLite to choose the source identity index and sort in a temporary B-tree. The final plan requires the native prune tie order and an index-backed no-sort plan. Organization name/open-id indices remain nonunique; no ordering policy is added to unordered public lookups.
 
-Root preflight extracted all three complete modules below into a task-owned overlay package:135 tests passed in2.08s; Ruff passed; the directory was removed and absence verified. An earlier prototype had a declaration-order syntax error; corrected before this plan. A subsequent terminal-index query-plan failure was corrected as described above. No repository app/test files were changed by preflight.
+Root's original pre-correction proposal extracted the earlier three modules into a task-owned overlay package:135 tests passed in2.08s; Ruff passed; the directory was removed and absence verified. An earlier prototype had a declaration-order syntax error; corrected before that proposal. A subsequent terminal-index query-plan failure was corrected as described above. No repository app/test files were changed by that preflight. The updated complete blocks below instead include the SPEC `OR REPLACE` correction; their focused State/source/codec matrix passed336 tests in16.15s after the final assertion.
 
 ## Task 1: Install the exact synthetic differential test
 
@@ -43,7 +45,8 @@ import json
 import pytest
 
 from app.state_definitions import (
-    STATE_FIELDS, STATE_PRIMARY_KEYS, STATE_TYPES, _quote, state_projection,
+    STATE_DEFAULTS, STATE_FIELDS, STATE_NOT_NULL, STATE_PRIMARY_KEYS,
+    STATE_TYPES, _quote, state_projection,
 )
 from app.state_storage import create_state_schema, insert_state, update_state, delete_state
 from tests.configs_source_fixtures import capture, source_db
@@ -240,6 +243,74 @@ def test_update_replace_source_rowid_and_outer_savepoint(pair):
         db.execute("rollback to outer_work")
         db.execute("release outer_work")
         assert db.in_transaction
+    assert facts(source, "service_state") == facts(target, "service_state", True)
+
+
+@pytest.mark.parametrize("bound", (None, float("nan")), ids=("null", "nan"))
+@pytest.mark.parametrize("operation", ("insert", "update"))
+def test_replace_null_uses_native_notnull_defaults(pair, bound, operation):
+    source, target, variant = pair
+    for db in (source, target):
+        db.create_function("current_timestamp", 0, lambda: "2026-10-16 12:34:56")
+    for kind, defaults in STATE_DEFAULTS.items():
+        for field in defaults:
+            if field not in STATE_NOT_NULL[kind]:
+                continue
+            source.execute("delete from " + _quote(kind))
+            target.execute("delete from state")
+            values = required(variant, kind, field)
+            if operation == "insert":
+                changed = values | {field: bound}
+                source.execute(
+                    "insert or replace into " + _quote(kind) + "(" +
+                    ",".join(map(_quote, changed)) + ") values(" +
+                    ",".join("?" for _ in changed) + ")", tuple(changed.values()))
+                assert insert_state(target, kind, changed, replace=True).rowcount == 1
+            else:
+                native_insert(source, kind, values)
+                insert_state(target, kind, values)
+                assert source.execute("update or replace " + _quote(kind) + " set " +
+                                      _quote(field) + "=? where rowid=1", (bound,)).rowcount == 1
+                assert update_state(target, kind, 1, {field: bound}, replace=True) == 1
+            assert facts(source, kind) == facts(target, kind, True), (
+                variant, operation, kind, field, bound)
+
+
+def test_replace_preserves_nullable_null_and_defaultless_notnull_abort(pair):
+    source, target, _ = pair
+    for bound in (None, float("nan")):
+        source.execute("delete from service_state")
+        target.execute("delete from state")
+        values = {"key": "key", "value": "value", "updated_at": "time"}
+        native_insert(source, "service_state", values)
+        insert_state(target, "service_state", values)
+        assert source.execute("update or replace service_state set key=? where rowid=1",
+                              (bound,)).rowcount == 1
+        assert update_state(target, "service_state", 1, {"key": bound}, replace=True) == 1
+        assert facts(source, "service_state") == facts(target, "service_state", True)
+        with pytest.raises(sqlite3.IntegrityError):
+            source.execute("update or replace service_state set value=? where rowid=1", (bound,))
+        with pytest.raises(sqlite3.IntegrityError):
+            update_state(target, "service_state", 1, {"value": bound}, replace=True)
+        assert source.in_transaction and target.in_transaction
+        assert facts(source, "service_state") == facts(target, "service_state", True)
+
+
+def test_replace_failed_cas_does_not_evaluate_default(pair):
+    source, target, _ = pair
+    values = {"key": "key", "value": "value", "updated_at": "time"}
+    native_insert(source, "service_state", values)
+    insert_state(target, "service_state", values)
+
+    def unexpected_clock():
+        raise AssertionError("no matching row should evaluate a default")
+
+    for db in (source, target):
+        db.create_function("current_timestamp", 0, unexpected_clock)
+    assert source.execute("update or replace service_state set updated_at=null "
+                          "where rowid=1 and value='wrong'").rowcount == 0
+    assert update_state(target, "service_state", 1, {"updated_at": None}, replace=True,
+                        where_sql="value=?", parameters=("wrong",)) == 0
     assert facts(source, "service_state") == facts(target, "service_state", True)
 
 
@@ -671,7 +742,7 @@ from app.action_storage import (
     _native_payload, _source_bound_null,
 )
 from app.state_definitions import (
-    STATE_DEFAULTS, STATE_FIELDS, STATE_INDEX_DDL, STATE_TABLE_DDL,
+    STATE_DEFAULTS, STATE_FIELDS, STATE_INDEX_DDL, STATE_NOT_NULL, STATE_TABLE_DDL,
     _quote,
 )
 
@@ -720,10 +791,15 @@ def _next_rowid(db, kind):
         return allocator.execute("insert into ids default values").lastrowid
 
 
-def _completed(db, kind, values):
+def _completed(db, kind, values, *, replace=False):
     fields = STATE_FIELDS[kind]
-    expressions = ["?" if field in values else STATE_DEFAULTS[kind].get(field, "null")
-                   for field in fields]
+    defaults = STATE_DEFAULTS[kind]
+    not_null = STATE_NOT_NULL[kind]
+    expressions = [
+        ("coalesce(?," + defaults[field] + ")" if replace and field in not_null
+         and field in defaults else "?") if field in values else defaults.get(field, "null")
+        for field in fields
+    ]
     parameters = tuple(values[field] for field in fields if field in values)
     row = db.execute("select " + ",".join(expressions), parameters).fetchone()
     return dict(zip(fields, row, strict=True))
@@ -743,7 +819,7 @@ def insert_state(db, kind, values, *, source_rowid=_UNSET, ignore=False, replace
                 else _native_integer_primary_key(source_rowid))
     cursor = db.execute(
         "insert " + mode + "into state(record_type,legacy_key,payload_json) values(?,?,?)",
-        (kind, str(identity), _native_payload(_completed(db, kind, values))),
+        (kind, str(identity), _native_payload(_completed(db, kind, values, replace=replace))),
     )
     return StateWriteResult(identity if cursor.rowcount else None, cursor.rowcount)
 
@@ -771,6 +847,8 @@ def update_state(db, kind, source_rowid, values, *, new_source_rowid=_UNSET,
                 _native_integer_primary_key(new_source_rowid, update=True))
     complete = dict(zip(fields, tuple(row)[1:], strict=True))
     complete.update(values)
+    if replace:
+        complete = _completed(db, kind, complete, replace=True)
     return db.execute(
         "update " + mode + "state set legacy_key=?,payload_json=? "
         "where record_type=? and legacy_key=?",
@@ -795,7 +873,7 @@ PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/tas
 /Users/derek/.cache/uv/archive-v0/1vqK0HG0A7DbkHHlOjztN/bin/ruff check --no-cache app/state_definitions.py app/state_storage.py tests/test_state_storage.py
 git diff --check
 ```
-Expected:135 State foundation cases,172 source oracle cases and17 codec cases pass (324 total); source metadata6 cases are a separate adjacent selection if run. Compile the three new files without leaving bytecode. Put pytest temporary artifacts in an owned /tmp directory and remove only that directory after verification.
+Expected:147 State foundation cases,172 source oracle cases and17 codec cases pass (336 total); the initial 135/324 counts predate the SPEC `OR REPLACE` correction. Source metadata6 cases are a separate adjacent selection if run. Compile the three new files without leaving bytecode. Put pytest temporary artifacts in an owned /tmp directory and remove only that directory after verification.
 
 - [x] **Step 4: Document the verified scope in the same commit.**
 

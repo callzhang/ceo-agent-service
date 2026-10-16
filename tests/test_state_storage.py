@@ -6,7 +6,8 @@ import json
 import pytest
 
 from app.state_definitions import (
-    STATE_FIELDS, STATE_PRIMARY_KEYS, STATE_TYPES, _quote, state_projection,
+    STATE_DEFAULTS, STATE_FIELDS, STATE_NOT_NULL, STATE_PRIMARY_KEYS,
+    STATE_TYPES, _quote, state_projection,
 )
 from app.state_storage import create_state_schema, insert_state, update_state, delete_state
 from tests.configs_source_fixtures import capture, source_db
@@ -203,6 +204,74 @@ def test_update_replace_source_rowid_and_outer_savepoint(pair):
         db.execute("rollback to outer_work")
         db.execute("release outer_work")
         assert db.in_transaction
+    assert facts(source, "service_state") == facts(target, "service_state", True)
+
+
+@pytest.mark.parametrize("bound", (None, float("nan")), ids=("null", "nan"))
+@pytest.mark.parametrize("operation", ("insert", "update"))
+def test_replace_null_uses_native_notnull_defaults(pair, bound, operation):
+    source, target, variant = pair
+    for db in (source, target):
+        db.create_function("current_timestamp", 0, lambda: "2026-10-16 12:34:56")
+    for kind, defaults in STATE_DEFAULTS.items():
+        for field in defaults:
+            if field not in STATE_NOT_NULL[kind]:
+                continue
+            source.execute("delete from " + _quote(kind))
+            target.execute("delete from state")
+            values = required(variant, kind, field)
+            if operation == "insert":
+                changed = values | {field: bound}
+                source.execute(
+                    "insert or replace into " + _quote(kind) + "(" +
+                    ",".join(map(_quote, changed)) + ") values(" +
+                    ",".join("?" for _ in changed) + ")", tuple(changed.values()))
+                assert insert_state(target, kind, changed, replace=True).rowcount == 1
+            else:
+                native_insert(source, kind, values)
+                insert_state(target, kind, values)
+                assert source.execute("update or replace " + _quote(kind) + " set " +
+                                      _quote(field) + "=? where rowid=1", (bound,)).rowcount == 1
+                assert update_state(target, kind, 1, {field: bound}, replace=True) == 1
+            assert facts(source, kind) == facts(target, kind, True), (
+                variant, operation, kind, field, bound)
+
+
+def test_replace_preserves_nullable_null_and_defaultless_notnull_abort(pair):
+    source, target, _ = pair
+    for bound in (None, float("nan")):
+        source.execute("delete from service_state")
+        target.execute("delete from state")
+        values = {"key": "key", "value": "value", "updated_at": "time"}
+        native_insert(source, "service_state", values)
+        insert_state(target, "service_state", values)
+        assert source.execute("update or replace service_state set key=? where rowid=1",
+                              (bound,)).rowcount == 1
+        assert update_state(target, "service_state", 1, {"key": bound}, replace=True) == 1
+        assert facts(source, "service_state") == facts(target, "service_state", True)
+        with pytest.raises(sqlite3.IntegrityError):
+            source.execute("update or replace service_state set value=? where rowid=1", (bound,))
+        with pytest.raises(sqlite3.IntegrityError):
+            update_state(target, "service_state", 1, {"value": bound}, replace=True)
+        assert source.in_transaction and target.in_transaction
+        assert facts(source, "service_state") == facts(target, "service_state", True)
+
+
+def test_replace_failed_cas_does_not_evaluate_default(pair):
+    source, target, _ = pair
+    values = {"key": "key", "value": "value", "updated_at": "time"}
+    native_insert(source, "service_state", values)
+    insert_state(target, "service_state", values)
+
+    def unexpected_clock():
+        raise AssertionError("no matching row should evaluate a default")
+
+    for db in (source, target):
+        db.create_function("current_timestamp", 0, unexpected_clock)
+    assert source.execute("update or replace service_state set updated_at=null "
+                          "where rowid=1 and value='wrong'").rowcount == 0
+    assert update_state(target, "service_state", 1, {"updated_at": None}, replace=True,
+                        where_sql="value=?", parameters=("wrong",)) == 0
     assert facts(source, "service_state") == facts(target, "service_state", True)
 
 
