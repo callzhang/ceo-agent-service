@@ -38,9 +38,9 @@ Application AST scope: existing _lock and insert_task12 only; new Task12InsertPa
 
 ### Task 3: sequential independent review
 
-- [ ] Fresh SPEC: original finite source declarations; old helper factor exact; native implicit transaction insert/update/delete all12 where applicable; no commit or new BEGIN; full bulk RHS/CAS/rowcount and statement ABORT rollback, prior work; source retry state/ROWID preserved by one actual UPSERT; no invented field or structural identity packing; omitted defaults final statement unchanged; no current runtime selection.
-- [ ] Fresh QUALITY: control/mutant/control in owned copies. Catch original guard, eager commit, split/per-row bulk ABORT, changed old-RHS counters, wrong five-field conflict copy/payload outer container, sourceROWID replaced, exact float arithmetic json_quote rounding; valid controls before meaningful mutation. No setup failures counted as kills.
-- [ ] Root records exact acceptance/hashes/remaining caller selection boundary; unselected application behavior does not change architecture/runtime contract docs.
+- [x] Fresh SPEC: original finite source declarations; old helper factor exact; native implicit transaction insert/update/delete all12 where applicable; no commit or new BEGIN; full bulk RHS/CAS/rowcount and statement ABORT rollback, prior work; source retry state/ROWID preserved by one actual UPSERT; no invented field or structural identity packing; omitted defaults final statement unchanged; no current runtime selection.
+- [x] Fresh QUALITY: control/mutant/control in owned copies. Catch original guard, eager commit, split/per-row bulk ABORT, changed old-RHS counters, wrong five-field conflict copy/payload outer container, sourceROWID replaced, exact float arithmetic json_quote rounding; valid controls before meaningful mutation. No setup failures counted as kills.
+- [x] Root records exact acceptance/hashes/remaining caller selection boundary; unselected application behavior does not change architecture/runtime contract docs.
 
 ## Required caller continuation
 
@@ -53,3 +53,5 @@ QUALITY regression correction: original bulk ABORT first valid row assigned its 
 Additional2-case storage diagnostic (actual classifier claim uses independent counters): generation=generation+1 and attempt_count=generation+attempt_count must read original row simultaneously. Independent native source gives(2,3), left-to-right substitution mutant gives(2,4). Persisted in canonical+installed regression, application unchanged; final46focused rerun below.
 
 Final test-only followup: root46/3.58s; fresh QUALITY46/3.55s → per-rowABORT2fail0.27s → oldRHS2fail0.29s → restored46/3.43s. Allsemanticvalue failures aftervalidfixtures. App8a7a84... unchanged, final regression17fdce18...; no repeatfull886run claimed.
+
+Final accepted unselected native-parts component: app2302361dd/evidencec9cc8df6; test-only strengthenedce3380139. See ../specs/2026-10-16-task12-native-parts-acceptance.json. Bounded Email public proof3a2d96778 parent-rerun79/79/16methods passes with explicit EMPTY target/constructor-bypass boundary; ../specs/2026-10-16-task12-email-caller-readiness.json.

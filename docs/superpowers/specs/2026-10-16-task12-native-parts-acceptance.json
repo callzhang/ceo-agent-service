@@ -1,0 +1,138 @@
+{
+  "recorded_utc": "2026-10-16T18:49:42.281984+00:00",
+  "status": "accepted_unselected_task12_native_sql_parts",
+  "application_commit": "2302361ddb89490f9ebc7e5859adc5cc7de8159e",
+  "transfer_evidence_commit": "c9cc8df6ab37d49a6d636963e960faeef58c6a80",
+  "regression_strengthening_commit": "ce3380139",
+  "sha256": {
+    "app/task12_storage.py": "8a7a84db53006065697ae44a2e39dc27a2008ca2687b6ddfc54e23ff9cc1729a",
+    "tests/test_task12_storage.py": "75010ec38557551986151ee70dd51671192accfce556f9b011ed103584eb50b7",
+    "tests/test_task12_native_parts.py": "17fdce18f29166c373b3712ce58b1f61ec82061ede7c99f7f72963d602a10c6c"
+  },
+  "source_authority": "8f64fba87 exact Email native SQL caller evidence plus frozen actual/fresh declarations",
+  "application_scope": {
+    "original_top_level_nodes": 15,
+    "changed_existing_nodes": [
+      "_lock",
+      "insert_task12"
+    ],
+    "unchanged_original_nodes": 13,
+    "added_nodes": [
+      "Task12InsertParts",
+      "Task12SetParts",
+      "task12_insert_parts",
+      "task12_set_parts"
+    ],
+    "current_caller_constructor_migration_selected": false,
+    "source_ddl_changed": false,
+    "new_business_fields": 0,
+    "new_ordinary_tables": 0,
+    "explicit_begin_commit_added": false
+  },
+  "verification": {
+    "root_candidate_full": {
+      "passed": 884,
+      "seconds": 52.71
+    },
+    "applied_full": {
+      "passed": 884,
+      "seconds": 59.41
+    },
+    "fresh_spec_full": {
+      "passed": 884,
+      "seconds": 59.17,
+      "extra_native_checks": 72
+    },
+    "original_lock_red": {
+      "failed": 28,
+      "deselected": 16,
+      "seconds": 1.84
+    },
+    "quality_final": {
+      "passed": 46,
+      "seconds": 3.55
+    },
+    "root_final": {
+      "passed": 46,
+      "seconds": 3.58
+    },
+    "quality_restored_final": {
+      "passed": 46,
+      "seconds": 3.43
+    },
+    "quality_mutants_killed": [
+      {
+        "mutation": "original explicit transaction rejection",
+        "failed": 28
+      },
+      {
+        "mutation": "eager _lock commit, existing FULL source controls",
+        "failed": 8
+      },
+      {
+        "mutation": "per-row bulk UPDATE, repaired visible-first-row witness",
+        "failed": 2,
+        "seconds": 0.27
+      },
+      {
+        "mutation": "left-to-right old RHS substitution, labeled storage diagnostic",
+        "failed": 2,
+        "seconds": 0.29
+      },
+      {
+        "mutation": "json_quote exact float rounding",
+        "failed": 2
+      },
+      {
+        "mutation": "double computed RHS evaluation",
+        "failed": 6
+      },
+      {
+        "mutation": "old instead excluded five-field UPSERT values",
+        "failed": 2
+      },
+      {
+        "mutation": "excluded outer payload container",
+        "failed": 2
+      },
+      {
+        "mutation": "replace hidden source ROWID on conflict",
+        "failed": 2
+      }
+    ],
+    "regression_gaps_resolved": [
+      "Original ABORT first valid row wrote unchanged empty-object text; now visibly different valid JSON before later failure.",
+      "Independent counters could not detect left-to-right substitution; two labeled cross-coupled storage diagnostic cases added. Actual classification claim still uses independent counters."
+    ],
+    "mutation_scope": "Per-row, excluded-reference and hidden-ROWID controls alter disposable caller statements; other controls alter disposable helper. No setup failures counted.",
+    "additional_quality_controls": {
+      "source_profile_and_full": 14,
+      "prior_work_savepoint": 16,
+      "source_vs_physical_id": 2
+    },
+    "ruff": "pass",
+    "diff_check": "pass",
+    "new_owned_temp_removed": true,
+    "full_886_final_run_claimed": false
+  },
+  "semantics": {
+    "native_implicit_transaction": "existing zero-row UPDATE opens SQLite transaction when none; caller connection context retains commit/rollback",
+    "insert_preparation": "source/physical allocator and payload preparation unchanged; final INSERT returned, then immediate execution before other Tasks writes",
+    "cursor_identity": "raw cursor.lastrowid is target physical; existing point writer returns source identity; historical caller ignores raw cursor",
+    "set": "finite payload-only SQL fragment; whole native statement keeps WHERE/CAS/rowcount/old RHS and rollback",
+    "historical_upsert": "existing source ROWID and retry coordinates preserved, exact five original fields replaced"
+  },
+  "remaining": [
+    "Complete current all20 caller and external-reader conversion, fresh/current constructors/manifests and codec connection registration.",
+    "Nonempty actual copied migration/current-fact inverse/genuine predecessor writes/reforward with source declarations/ids/waters/FK baseline.",
+    "Remaining families/retirements, real CLI fake outbound, affected UI/business result/receipt/performance/final11/CI/approved production publication."
+  ],
+  "boundaries": {
+    "latest_integrated_actual_copy_ordinary_tables": 67,
+    "final_eleven_tables": false,
+    "production_write": false,
+    "main_merge": false,
+    "push": false,
+    "deploy": false
+  }
+}
