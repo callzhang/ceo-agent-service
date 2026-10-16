@@ -1,0 +1,13 @@
+{
+  "scope": "Unselected Runs11 native/candidate foundation and synthetic current-fact roundtrip only. No current callers, coordinator, full source copy or production acceptance.",
+  "hashes": {
+    "app/runs11_definitions.py": "4e39bd7fb03c1ffb0f476c7d8b0251e430bb1d865528edba8cd67f03de570176",
+    "app/runs11_storage.py": "3a6fbd0064720236d1a90ed079b2921331305114f7601fb5373097d32a944bd5",
+    "app/runs11_schema_release.py": "71b42013c8e6ea072002cfabdef6742565392eadbccb9bd728a40d8f3a49e0e1",
+    "tests/test_runs11_definitions.py": "4bebc9286b81f0ae510459fa199d43b9a685f5171ae16b714165e97bdc395eb1",
+    "tests/test_runs11_storage.py": "608b429fd23de4b80b5a211bb693f4e8a4619c82abf1c4cba02102a62d4e066b",
+    "tests/test_runs11_schema_release.py": "4628c09bc4e5eaec462ecb4a2f95b812d494536db0eba85d9293b2b69711a4ee"
+  },
+  "pytest": "........................................................................ [ 29%]\n........................................................................ [ 58%]\n........................................................................ [ 87%]\n...............................                                          [100%]\n247 passed in 5.05s",
+  "status": "passed"
+}
