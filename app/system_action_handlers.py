@@ -443,16 +443,6 @@ class OaRevertHandler(OaDecisionHandler):
         # redirect is the sole event in that second and the bucket overlaps
         # the original dispatch/acceptance interval. All identity, target,
         # actor, remark, and exact event-boundary checks above remain required.
-        same_second_follow_up = (
-            int(next_event.timestamp()) == int(instant.timestamp())
-            or any(
-                event_time > instant
-                and int(event_time.timestamp()) == int(instant.timestamp())
-                for _, _, event_time in precise_events
-            )
-        )
-        if same_second_follow_up:
-            return unresolved
         destinations = []
         for task in source["tasks"]:
             if (not isinstance(task, dict) or task.get("taskid") is None
@@ -468,8 +458,19 @@ class OaRevertHandler(OaDecisionHandler):
             if self._second_precision_timestamp(created_value):
                 second_start = created.replace(microsecond=0)
                 second_end = second_start + timedelta(seconds=1)
+                event_second = int(instant.timestamp())
+                source_events_in_second = [
+                    value for value in event_times if int(value.timestamp()) == event_second
+                ]
+                precise_events_in_second = [
+                    value for _, _, value in precise_events if int(value.timestamp()) == event_second
+                ]
                 same_second_match = (
-                    int(created.timestamp()) == int(instant.timestamp())
+                    int(created.timestamp()) == event_second
+                    and len(source_events_in_second) == 1
+                    and source_events_in_second[0] == instant
+                    and len(precise_events_in_second) == 1
+                    and precise_events_in_second[0] == instant
                     and second_start <= accepted_at
                     and second_end > dispatch_started
                 )
