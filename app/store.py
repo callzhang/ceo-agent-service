@@ -30842,7 +30842,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             limit 1
                         )
                         when {oa_status_projection}
-                         and reply_attempts.agent_run_id is null and exists (
+                         and not exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                         ) and exists (
                             select 1
                             from ({REPLY_TASK_CURRENT_SQL}) as message_task
                             where message_task.channel=reply_attempts.channel

@@ -3178,7 +3178,7 @@ Consumer and Audit both persist a new Codex session selected by the existing run
 Attention list, summary and count readers follow a historical Attempt's original AgentRun task ID when the OA scanner has since changed the trigger message key. A current bound task in done/skipped no longer appears as an unresolved historical Attempt. Same-generation failed tasks remain visible, valid reviewed human decisions keep their independent projection, and the historical Attempt/run/receipt records are unchanged.
 
 OA Reply Attempt History rows and their status filters use the owning task's
-current-generation projection, matching Attempt detail. If no run is bound, the
+current-generation projection, matching Attempt detail. If no run resolves, the
 current task is resolved by channel, conversation and trigger message identity.
 Historical action stays in the action field. An unresolved current System
 Execution remains `uncertain` even when the task was later closed; History reads
