@@ -12,7 +12,7 @@
       "target": "skills/ceo-calendar-invite/SKILL.md",
       "old_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
       "new_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
-      "old_managed_sha256": "8419e3922762fee2134caefad659a08b596d480cee0f34553f80e1a16b8f9f00"
+      "old_managed_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f"
     },
     {
       "source": "ci/shared-skills/ceo-daily-report/SKILL.md",
@@ -40,7 +40,7 @@
       "target": "skills/ceo-message-triage/SKILL.md",
       "old_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
       "new_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
-      "old_managed_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd"
+      "old_managed_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36"
     },
     {
       "source": "ci/shared-skills/ceo-wechat/SKILL.md",
@@ -53,7 +53,7 @@
       "target": "skills/ceo-weekly-report/SKILL.md",
       "old_sha256": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09",
       "new_sha256": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09",
-      "old_managed_sha256": "8a8c03255ca9f559e73591bedf84a285d9f836ce6a3d3df34d5793c742cb9372"
+      "old_managed_sha256": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md",
@@ -64,8 +64,8 @@
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
-      "old_sha256": "0a09f928ec66a5cd7cd8db047aab0ba80148a4114ad9f681d949fd039917dcc7",
-      "new_sha256": "e163eb9a2798e780a208ec2bc58f271a65845e4307e3bc8c73be689d767d5828"
+      "old_sha256": "7e7a8c6ba4ed4d403ac8a9b743a4c128beea74f98dda9577e52ea91e2cf438f0",
+      "new_sha256": "766eb3a6a2432523e04c26182ccc0f39749f2f1f7ebb4d2958ebfa5b36686359"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
@@ -76,8 +76,8 @@
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
       "target": "skills/stardust-oa-finance-review/references/finance-rule-cards.md",
-      "old_sha256": "2dec9a9581444c211caf016d312067f83616bedb1cd9235aeaa2f632f643005d",
-      "new_sha256": "2dec9a9581444c211caf016d312067f83616bedb1cd9235aeaa2f632f643005d"
+      "old_sha256": "e9ab732503f6c35c89af8c3a9424836c8e3cf9e29752c59a4a6b20dbef5d89fb",
+      "new_sha256": "e9ab732503f6c35c89af8c3a9424836c8e3cf9e29752c59a4a6b20dbef5d89fb"
     },
     {
       "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
