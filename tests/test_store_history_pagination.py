@@ -590,7 +590,9 @@ def test_history_skipped_attempt_matches_detail_only_when_bound_run_is_latest(tm
     assert skipped_rows == []
 
 
-@pytest.mark.parametrize("legacy_status", ["completed", "commented", "failed", "recovered"])
+@pytest.mark.parametrize(
+    "legacy_status", ["blocked", "completed", "commented", "failed", "recovered"]
+)
 def test_history_projects_attempt_without_run_from_current_message_task(
     tmp_path, legacy_status
 ):
@@ -682,6 +684,53 @@ def test_history_keeps_unbound_oa_external_uncertainty_uncertain(tmp_path):
     assert uncertain_total == 1
     assert [(row.source_id, row.status) for row in uncertain_rows] == [
         (attempt.lastrowid, "uncertain")
+    ]
+    assert recovered_total == 0
+    assert recovered_rows == []
+
+
+def test_history_does_not_call_unbound_oa_failure_recovered_without_a_task(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-unbound-oa-failure.sqlite3")
+    with store._connect() as db:
+        failed_attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "history-unbound-oa-failure",
+            "conversation_title": "Failed OA task",
+            "trigger_message_id": "trigger",
+            "trigger_sender": "sender",
+            "trigger_text": "approval action",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-instance",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+        })
+        insert_action(db, "reply_attempts", {
+            "conversation_id": "history-unbound-oa-failure",
+            "conversation_title": "Failed OA task",
+            "trigger_message_id": "trigger",
+            "trigger_sender": "sender",
+            "trigger_text": "approval action",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-instance",
+            "sensitivity_kind": "general",
+            "send_status": "completed",
+        })
+
+    failed_total, failed_rows = store.list_operation_logs_with_count(
+        limit=20,
+        statuses=("failed",),
+        history_types=(history_types.APPROVAL,),
+        source_tables=("reply_attempts",),
+    )
+    recovered_total, recovered_rows = store.list_operation_logs_with_count(
+        limit=20,
+        statuses=("recovered",),
+        history_types=(history_types.APPROVAL,),
+        source_tables=("reply_attempts",),
+    )
+
+    assert failed_total == 1
+    assert [(row.source_id, row.status) for row in failed_rows] == [
+        (failed_attempt.lastrowid, "failed")
     ]
     assert recovered_total == 0
     assert recovered_rows == []

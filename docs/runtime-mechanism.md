@@ -3180,11 +3180,12 @@ Attention list, summary and count readers follow a historical Attempt's original
 OA Reply Attempt History rows and their status filters use the owning task's
 current-generation projection, matching Attempt detail. If no run resolves, the
 current task is resolved by channel, conversation and trigger message identity.
-Legacy failed Attempt labels are reconciled to the matching task's current
-terminal status. Historical action stays in the action field. An unresolved
-current System Execution remains `uncertain` even when the task was later
-closed; History reads never rewrite the Attempt or execution receipt. Other
-History types retain their own status projections.
+Legacy failed and blocked Attempt labels are reconciled to the matching task's
+current terminal status; without an owning task, the Attempt keeps its own
+failure or block status. Historical action stays in the action field. An
+unresolved current System Execution remains `uncertain` even when the task was
+later closed; History reads never rewrite the Attempt or execution receipt.
+Other History types retain their own status projections.
 
 听记管理页认证失效（2026-10-15）：组织选择或登录校验抛出 MinutesBrowserSessionExpired 时，服务使用 macOS open 在本人普通 Google Chrome 中打开听记 history 登录页。原命令仍保留失败，不把打开页面当成认证成功；后台浏览器照常关闭。本人完成登录后的既有 cookie 同步与正式重试流程不变。听记管理浏览器使用 Chrome 原生 `--restore-last-session` 恢复每日副本中的 session cookies，避免 Chrome 默认启动删除仍有效的后台 access cookie；首次使用新 profile 时先启动并关闭一次空白 Chrome，随后重新注入副本再正式启动，因为 Chrome 对新 profile 忽略该参数。启动后关闭恢复的旧标签，退出前把仍打开的页面导航到 about:blank，避免后续启动累积标签或重载旧听记 URL。该设置仅用于听记管理 profile，不改变 cookie 到期时间、权限申请规则或退订浏览器。
 
