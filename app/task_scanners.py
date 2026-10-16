@@ -763,7 +763,8 @@ def scan_pending_oa_approvals(
                 # every registered payment at needs_human (2026-09-24).
                 "判断标准由本次所选的星尘业务 Skill 提供，动作一律按通用 Skill 的完整决策表；"
                 "财务模板（processCode 在财务 Skill 登记表内）以其规则卡为判断标准，动作同样按决策表，"
-                "其他审批类型没有规则卡不是规则缺口。规则只在 Skill 里，不读参考文档。"
+                "其他审批类型没有规则卡不是规则缺口。所选 Skill 明确引用的规则卡、登记表等规范材料必须读取；"
+                "未被适用 Skill 引用的背景材料可以跳过。"
                 "在此前提下审阅完整审批材料、历史处理记录和当前节点。"
             ),
             raw_payload={

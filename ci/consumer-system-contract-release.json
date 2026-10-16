@@ -65,7 +65,7 @@
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
       "old_sha256": "0a09f928ec66a5cd7cd8db047aab0ba80148a4114ad9f681d949fd039917dcc7",
-      "new_sha256": "e163eb9a2798e780a208ec2bc58f271a65845e4307e3bc8c73be689d767d5828"
+      "new_sha256": "766eb3a6a2432523e04c26182ccc0f39749f2f1f7ebb4d2958ebfa5b36686359"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
