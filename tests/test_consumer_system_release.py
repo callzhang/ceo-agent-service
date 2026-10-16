@@ -85,6 +85,19 @@ def test_repository_consumer_release_manifest_includes_people_review_skill():
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 
+def test_repository_consumer_release_manifest_includes_current_attendance_review_skill():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    source = "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md"
+    entry = next(item for item in manifest["files"] if item["source"] == source)
+
+    assert entry["target"] == "skills/stardust-oa-attendance-travel-review/SKILL.md"
+    assert entry["old_sha256"] == "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e"
+    assert entry["new_sha256"] == _digest((root / source).read_bytes())
+
+
 def _skill(name: str, marker: bool, suffix: str) -> bytes:
     metadata = "metadata:\n  managed_by: ceo-agent-service\n" if marker else ""
     return (
@@ -104,6 +117,7 @@ def _fixture(tmp_path: Path):
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
         "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
         "ceo-wechat",
     ):
         rel = f"{name}/SKILL.md"
