@@ -171,3 +171,15 @@ document after-hashes differ from the source-copy input manifest, whose SHA is
 retained. Runtime and test hashes remain exact. Application selection and fresh
 APPLIED review follow; final11/native CLI/UI/performance/CI/publication remain
 open. This receipt has no native Agent CLI/provider/outbound/production claim.
+
+## Mechanical current51 selection
+
+After final canonical copy acceptance, commit317536b6e installs exactly the15
+manifest paths plus the owning claim row. Every installed after-hash matches;
+all nine runtime hashes equal the actual-copy receipt. Installed focused tests
+passed396 cases in18.01s; Ruff passed all13 changed Python paths, and diff checks
+passed. A separate cold Store/Email inventory measured51 ordinary tables and an
+empty fresh FK check. Production readback still44ee; no main/push/deploy occurred.
+Fresh APPLIED SPEC then QUALITY are still pending at this checkpoint. Remaining
+42 legacy families and final native CLI/fake-provider/UI/performance/CI release
+acceptance retain their full scope.
