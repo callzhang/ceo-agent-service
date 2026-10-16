@@ -69,5 +69,21 @@
       "Cold target constructor/nonempty migration/current-fact inverse/predecessor/reforward",
       "Real CLI/provider/UI/final11/production"
     ]
+  },
+  "console_readers_parent_rerun": {
+    "recorded_utc": "2026-10-16T19:56:17.178134+00:00",
+    "author_commit": "561794b74",
+    "script": "docs/superpowers/plans/2026-10-16-task20-console-readers-public-preflight.py",
+    "script_sha256": "e70a0adce844f6cbbd6f11c58d1c12906cf2c7dffd73f94fbeb8a588ace84f63",
+    "checkpoints": 47,
+    "equal_checkpoints": 47,
+    "differences": [],
+    "owned_temp_removed": true,
+    "application_files_unchanged": true,
+    "scope": "Actual console/quality/retirement methods; full fresh source and prepared EMPTY Tasks20 target with constructor bypass, twelve empty sources retired and three retained child endpoints rebound. All twenty instrumented owners entered. Two latest-time ties compare eligible sets; one retirement native-result seam explicit.",
+    "unproved": [
+      "Cold target constructor/nonempty migration/current-fact inverse/genuine predecessor/reforward",
+      "All positive approved Attention/map combinations; native provenance/real CLI/UI/final11/production"
+    ]
   }
 }

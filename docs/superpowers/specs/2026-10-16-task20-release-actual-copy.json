@@ -1,0 +1,58 @@
+{
+  "started_utc": "2026-10-16T20:06:22.934656+00:00",
+  "scope": "unselected Tasks20 component on frozen nonempty source; no constructors/coupled markers/provider/native CLI/production",
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "candidate_sha256": "90fab9be52f04e03d826587851d4ae893e1abb0a57145a6c1133c0ee140f2715",
+  "original_ordinary_tables": 116,
+  "source_foreign_key_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "source_variant": "actual",
+  "forward_source_counts": {
+    "tasks": 25826,
+    "feedback_processing_batches": 3,
+    "business_object_tasks": 7349,
+    "email_agent_classification_tasks": 1367,
+    "email_historical_candidates": 924,
+    "feedback_iteration_decisions": 0,
+    "feedback_processing_items": 48,
+    "feedback_processing_rounds": 3,
+    "oa_notification_events": 30,
+    "okr_review_items": 413,
+    "wechat_memory_import_jobs": 0,
+    "workbench_artifacts": 0,
+    "workbench_attachments": 0
+  },
+  "target_ordinary_tables": 104,
+  "inverse_counts": {
+    "tasks": 25826,
+    "business_object_tasks": 7349,
+    "email_agent_classification_tasks": 1367,
+    "email_historical_candidates": 924,
+    "feedback_iteration_decisions": 0,
+    "feedback_processing_batches": 3,
+    "feedback_processing_items": 48,
+    "feedback_processing_rounds": 3,
+    "oa_notification_events": 30,
+    "okr_review_items": 413,
+    "wechat_memory_import_jobs": 0,
+    "workbench_artifacts": 0,
+    "workbench_attachments": 0,
+    "feedback_iteration_decision_items": 0
+  },
+  "inverse_all_original_tables_typed_equal": 116,
+  "current_fact_inverse_native_sql_reforward": true,
+  "quick_check": "ok",
+  "page_size": 4096,
+  "page_count": 123687,
+  "freelist_count": 1770,
+  "copy_file_bytes": 506621952,
+  "source_unchanged": true,
+  "elapsed_seconds": 59.382,
+  "owned_temp_removed": true
+}
