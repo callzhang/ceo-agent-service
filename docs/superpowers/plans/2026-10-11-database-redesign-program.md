@@ -1,5 +1,11 @@
 # Database Redesign Program
 
+## Latest State caller prerequisites, 2026-10-16
+
+Explicit upgrade-progress source/current binding is implemented and independently accepted at e06e1e9d/9cfb7226 (28cases per review plus12 quality transaction-boundary probes), but no current publication/entrypoint selects it. Store caller review found a source-ROWID index tie defect;59b27ac6 corrects the two nonunique org indexes and updates the unselected target fingerprint to327c94f68a9354f8766dfebb9ef7c85c9d03c2a4b27f95387eb88cc32fabc1f2, with8 regressions/314 focused tests and fresh SPEC acceptance. Fresh QUALITY also passes314 cases plus4 row-order/update probes, with immutable source metadata and the other18 indexes unchanged. The complete Store27-method and dispatcher19-callable patches are unselected proposals. Dispatcher SPEC found a shared integer-subclass overflow encoding gap; fix that mechanism and remove its redundant generation SELECT before acceptance.
+
+The accepted combined copied candidate remains82 ordinary tables. State runtime/constructor/version/publication closure, the expected67-table intermediate, final10+ledger and final copied-data/genuine-predecessor/native-CLI/FTS-name acceptance are still open. Full evidence and exact proposal boundaries are in ../specs/2026-10-16-state-caller-prerequisites-acceptance.json. No production/main/push/deploy or real send occurred.
+
 ## Remaining physical closure audit, 2026-10-16
 
 Query-only frozen970a metadata confirms116 ordinary source tables. The accepted intermediate retirement set removes38 native tables and adds4 target tables, deriving82 ordinary names consistent with the accepted cold-copy count. Seven final core names exist; `state`, `emails` and `provenance` do not yet exist. Exactly74 other old-name ordinary tables and the Email migration ledger still remain. This is a derived exact name set, not a new applied-copy or production measurement; final acceptance must compare actual names and separately verify virtual/shadow FTS removal.

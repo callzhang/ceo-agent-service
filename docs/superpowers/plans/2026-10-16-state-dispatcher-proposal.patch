@@ -1,0 +1,514 @@
+--- a/app/dispatcher/adapters.py
++++ b/app/dispatcher/adapters.py
+@@ -1,5 +1,7 @@
+ from __future__ import annotations
+ from app.run_storage import SCHEDULED_RUN_SQL
++from app.state_definitions import state_projection
++from app.state_storage import state_json_field, update_state, upsert_state
+ from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, task_id_expression, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+ 
+ from app.store import REPLY_TASK_CURRENT_SQL
+@@ -18,6 +20,7 @@
+ 
+ 
+ _CLAIM_SCAN_PAGE_SIZE = 32
++_LEASE_PROJECTION = "(" + state_projection("dispatcher_claim_leases", include_rowid=True) + ")"
+ 
+ 
+ def _sqlite_time(value: datetime) -> str:
+@@ -122,7 +125,7 @@
+                 column="skip_or_error_reason",
+                 source_projection=(
+                     f"from ({SCHEDULED_RUN_SQL}) source "
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+                     "on source_claim.adapter_name=? "
+                     "and source_claim.source_id=cast(source.id as text) "
+                     "where source.dispatch_status='pending' and source.scheduled_for<=? "
+@@ -186,7 +189,7 @@
+                     "claim.generation as claim_generation, "
+                     "claim.lease_expires_at as claim_expires_at "
+                     f"from ({SCHEDULED_RUN_SQL}) run "
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+                     "on claim.adapter_name=? and claim.source_id=cast(run.id as text) "
+                     "where run.dispatch_status='pending' and run.scheduled_for<=? "
+                     + keyset
+@@ -230,21 +233,21 @@
+                 now=now_text,
+                 owner_alive=self.owner_alive,
+             ):
+-                cleared = db.execute(
+-                    "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+-                    "updated_at=? where adapter_name=? and source_id=? and owner=? "
+-                    "and owner_pid=? and generation=? and lease_expires_at=?",
+-                    (
+-                        now_text,
+-                        self.name,
+-                        str(candidate["id"]),
+-                        candidate["claim_owner"],
+-                        candidate["claim_owner_pid"],
+-                        candidate["claim_generation"],
++                cleared = update_state(
++                    db, "dispatcher_claim_leases",
++                    _lease_rowid(db, self.name, str(candidate["id"])),
++                    {"owner": "", "lease_expires_at": "", "updated_at": now_text},
++                    where_sql=(
++                        "adapter_name=? and source_id=? and owner=? and owner_pid=? "
++                        "and generation=? and lease_expires_at=?"
++                    ),
++                    parameters=(
++                        self.name, str(candidate["id"]), candidate["claim_owner"],
++                        candidate["claim_owner_pid"], candidate["claim_generation"],
+                         candidate["claim_expires_at"],
+                     ),
+                 )
+-                if cleared.rowcount != 1:
++                if cleared != 1:
+                     raise ValueError("scheduled dead-owner claim changed during takeover")
+             generation = _acquire_lease(
+                 db,
+@@ -403,7 +406,7 @@
+             ).fetchone()[0]
+             due = db.execute(
+                 f"select count(*) from ({REPLY_TASK_SQL}) task "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
+                 "where " + self._channel_clause() + " and ((task.status='pending' "
+                 "and (task.available_at='' or datetime(task.available_at)<=datetime(?)) "
+@@ -415,7 +418,7 @@
+             ).fetchone()[0]
+             claimed = db.execute(
+                 f"select count(*) from ({REPLY_TASK_SQL}) task "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
+                 "where " + self._channel_clause() + " and task.status='processing' and (claim.owner is null "
+                 "or claim.owner='' or claim.lease_expires_at>?)",
+@@ -424,7 +427,7 @@
+             oldest = db.execute(
+                 "select min(case when task.available_at='' then task.created_at "
+                 f"else task.available_at end) from ({REPLY_TASK_SQL}) task "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
+                 "where " + self._channel_clause() + " and ((task.status='pending' "
+                 "and (task.available_at='' or datetime(task.available_at)<=datetime(?)) "
+@@ -439,7 +442,7 @@
+                 column="error",
+                 source_projection=(
+                     f"from ({REPLY_TASK_SQL}) source "
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+                     "on source_claim.adapter_name=? "
+                     "and source_claim.source_id=cast(source.id as text) "
+                     "where "
+@@ -487,7 +490,7 @@
+                     "claim.generation as claim_generation, "
+                     "claim.owner_pid as claim_owner_pid, "
+                     "claim.lease_expires_at as claim_expires_at "
+-                    f"from ({REPLY_TASK_SQL}) task left join dispatcher_claim_leases claim "
++                    f"from ({REPLY_TASK_SQL}) task left join {_LEASE_PROJECTION} claim "
+                     "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
+                     "where " + self._channel_clause() + " and ((task.status='pending' "
+                     "and (task.available_at='' or datetime(task.available_at)<=datetime(?)) "
+@@ -635,7 +638,7 @@
+             ).fetchone()[0]
+             due = db.execute(
+                 f"select count(*) from ({MEETING_JOB_SQL}) job "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
+                 "where (job.status in ('waiting','pending','retry') "
+                 "and datetime(job.eligible_at)<=datetime(?) "
+@@ -648,7 +651,7 @@
+             ).fetchone()[0]
+             claimed = db.execute(
+                 f"select count(*) from ({MEETING_JOB_SQL}) job "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
+                 "where job.status='processing' and (claim.owner is null "
+                 "or claim.owner='' or claim.lease_expires_at>?)",
+@@ -659,7 +662,7 @@
+                 "when datetime(job.available_at)>datetime(job.eligible_at) "
+                 "then job.available_at else job.eligible_at end) "
+                 f"from ({MEETING_JOB_SQL}) job "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
+                 "where (job.status in ('waiting','pending','retry') "
+                 "and datetime(job.eligible_at)<=datetime(?) "
+@@ -675,7 +678,7 @@
+                 column="error",
+                 source_projection=(
+                     f"from ({MEETING_JOB_SQL}) source "
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+                     "on source_claim.adapter_name=? "
+                     "and source_claim.source_id=cast(source.id as text) "
+                     "where (source.status in ('waiting','pending','retry') "
+@@ -742,7 +745,7 @@
+                     "claim.owner_pid as claim_owner_pid, "
+                     "claim.lease_expires_at as claim_expires_at "
+                     f"from ({MEETING_JOB_SQL}) job "
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+                     "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
+                     "where ((job.status in ('waiting','pending','retry') "
+                     "and datetime(job.eligible_at)<=datetime(?) "
+@@ -858,7 +861,7 @@
+             ).fetchone()[0]
+             due = db.execute(
+                 f"select count(*) from ({OKR_REQUEST_SQL}) request "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
+                 "where (request.status='pending' and (claim.owner is null "
+                 "or claim.owner='' or claim.lease_expires_at<=?)) "
+@@ -868,7 +871,7 @@
+             ).fetchone()[0]
+             claimed = db.execute(
+                 f"select count(*) from ({OKR_REQUEST_SQL}) request "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
+                 "where request.status='processing' and (claim.owner is null "
+                 "or claim.owner='' or claim.lease_expires_at>?)",
+@@ -876,7 +879,7 @@
+             ).fetchone()[0]
+             oldest = db.execute(
+                 f"select min(request.created_at) from ({OKR_REQUEST_SQL}) request "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
+                 "where (request.status='pending' and (claim.owner is null "
+                 "or claim.owner='' or claim.lease_expires_at<=?)) "
+@@ -889,7 +892,7 @@
+                 column="error",
+                 source_projection=(
+                     f"from ({OKR_REQUEST_SQL}) source "
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+                     "on source_claim.adapter_name=? "
+                     "and source_claim.source_id=cast(source.id as text) "
+                     "where (source.status='pending' and (source_claim.owner is null "
+@@ -932,7 +935,7 @@
+                     "claim.owner_pid as claim_owner_pid, "
+                     "claim.lease_expires_at as claim_expires_at "
+                     f"from ({OKR_REQUEST_SQL}) request "
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+                     "on claim.adapter_name=? "
+                     "and claim.source_id=cast(request.id as text) "
+                     "where ((request.status='pending' and (claim.owner is null "
+@@ -1036,7 +1039,7 @@
+             ).fetchone()[0]
+             due = db.execute(
+                 f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) item "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                 "where (item.status='pending' "
+                 "and (item.available_at='' or datetime(item.available_at)<=datetime(?)) "
+@@ -1048,7 +1051,7 @@
+             ).fetchone()[0]
+             claimed = db.execute(
+                 f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) item "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                 "where item.status='processing' and (claim.owner is null "
+                 "or claim.owner='' or claim.lease_expires_at>?)",
+@@ -1057,7 +1060,7 @@
+             oldest = db.execute(
+                 "select min(case when item.available_at='' then item.created_at "
+                 f"else item.available_at end) from ({WORK_SUMMARY_INPUT_SQL}) item "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                 "where (item.status='pending' "
+                 "and (item.available_at='' or datetime(item.available_at)<=datetime(?)) "
+@@ -1072,7 +1075,7 @@
+                 column="error",
+                 source_projection=(
+                     f"from ({WORK_SUMMARY_INPUT_SQL}) source "
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+                     "on source_claim.adapter_name=? "
+                     "and source_claim.source_id=cast(source.id as text) "
+                     "where (source.status='pending' "
+@@ -1118,7 +1121,7 @@
+                     "claim.owner_pid as claim_owner_pid, "
+                     "claim.lease_expires_at as claim_expires_at "
+                     f"from ({WORK_SUMMARY_INPUT_SQL}) item "
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+                     "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                     "where ((item.status='pending' "
+                     "and (item.available_at='' or datetime(item.available_at)<=datetime(?)) "
+@@ -1230,7 +1233,7 @@
+             ).fetchone()[0]
+             due = db.execute(
+                 "select count(*) from task_todo_sync_outbox item "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                 "where (item.status='queued' or (item.status='failed' "
+                 "and item.attempt_count<3 and item.next_attempt_at<=?)) "
+@@ -1240,7 +1243,7 @@
+             ).fetchone()[0]
+             running = db.execute(
+                 "select count(*) from task_todo_sync_outbox item "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                 "where item.status='running' and claim.owner<>'' "
+                 "and claim.lease_expires_at>?",
+@@ -1249,7 +1252,7 @@
+             oldest = db.execute(
+                 "select min(case when item.status='failed' then item.next_attempt_at "
+                 "else item.created_at end) from task_todo_sync_outbox item "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                 "where (item.status='queued' or (item.status='failed' "
+                 "and item.attempt_count<3 and item.next_attempt_at<=?)) "
+@@ -1262,7 +1265,7 @@
+                 column="error",
+                 source_projection=(
+                     "from task_todo_sync_outbox source "
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+                     "on source_claim.adapter_name=? "
+                     "and source_claim.source_id=cast(source.id as text) "
+                     "where (source.status='queued' or (source.status='failed' "
+@@ -1312,7 +1315,7 @@
+                 "claim.owner_pid as claim_owner_pid, "
+                 "claim.lease_expires_at as claim_expires_at "
+                 "from task_todo_sync_outbox item "
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                 "where item.status='running' and item.lease_expires_at<=?",
+                 (self.name, now_text),
+@@ -1343,7 +1346,7 @@
+                     "claim.owner_pid as claim_owner_pid, "
+                     "claim.lease_expires_at as claim_expires_at "
+                     "from task_todo_sync_outbox item "
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+                     "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                     "where (item.status='queued' or (item.status='failed' "
+                     "and item.attempt_count<3 and item.next_attempt_at<=?)) "
+@@ -1783,6 +1786,15 @@
+     return value
+ 
+ 
++
++def _lease_rowid(db: sqlite3.Connection, adapter_name: str, source_id: str) -> int | None:
++    row = db.execute(
++        f"select rowid from {_LEASE_PROJECTION} where adapter_name=? and source_id=?",
++        (adapter_name, source_id),
++    ).fetchone()
++    return None if row is None else int(row["rowid"])
++
++
+ def _acquire_lease(
+     db: sqlite3.Connection,
+     *,
+@@ -1795,21 +1807,21 @@
+ ) -> int:
+     row = db.execute(
+         "select owner, generation, lease_expires_at "
+-        "from dispatcher_claim_leases where adapter_name=? and source_id=?",
++        f"from {_LEASE_PROJECTION} where adapter_name=? and source_id=?",
+         (adapter_name, source_id),
+     ).fetchone()
+     if row is not None and str(row["owner"]) and str(row["lease_expires_at"]) > now:
+         raise ValueError("dispatcher source lease is still active")
+     generation = 1 if row is None else int(row["generation"]) + 1
+-    db.execute(
+-        "insert into dispatcher_claim_leases "
+-        "(adapter_name, source_id, owner, owner_pid, generation, lease_expires_at, updated_at) "
+-        "values (?, ?, ?, ?, ?, ?, ?) "
+-        "on conflict(adapter_name, source_id) do update set "
+-        "owner=excluded.owner, owner_pid=excluded.owner_pid, generation=excluded.generation, "
+-        "lease_expires_at=excluded.lease_expires_at, terminal_at='', last_error='', "
+-        "updated_at=excluded.updated_at",
+-        (adapter_name, source_id, owner, owner_pid, generation, lease_expires_at, now),
++    db.execute("select ?", (generation,))  # Preserve native integer binding overflow.
++    upsert_state(
++        db, "dispatcher_claim_leases",
++        {"adapter_name": adapter_name, "source_id": source_id,
++         "owner": owner, "owner_pid": owner_pid, "generation": generation,
++         "lease_expires_at": lease_expires_at, "updated_at": now},
++        {field: state_json_field(field) for field in (
++            "owner", "owner_pid", "generation", "lease_expires_at", "updated_at"
++        )} | {"terminal_at": "json_quote('')", "last_error": "json_quote('')"},
+     )
+     return generation
+ 
+@@ -1888,18 +1900,14 @@
+     owner: str,
+     now: str,
+ ) -> None:
+-    cursor = db.execute(
+-        "update dispatcher_claim_leases set owner='', lease_expires_at='', updated_at=? "
+-        "where adapter_name=? and source_id=? and owner=? and generation=?",
+-        (
+-            now,
+-            envelope.adapter_name,
+-            envelope.source_id,
+-            owner,
+-            envelope.generation,
+-        ),
++    changed = update_state(
++        db, "dispatcher_claim_leases",
++        _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++        {"owner": "", "lease_expires_at": "", "updated_at": now},
++        where_sql="adapter_name=? and source_id=? and owner=? and generation=?",
++        parameters=(envelope.adapter_name, envelope.source_id, owner, envelope.generation),
+     )
+-    if cursor.rowcount != 1:
++    if changed != 1:
+         raise ValueError("dispatcher source claim is no longer owned")
+ 
+ 
+@@ -1931,21 +1939,18 @@
+     now: str,
+     lease_expires_at: str,
+ ) -> None:
+-    cursor = db.execute(
+-        "update dispatcher_claim_leases set lease_expires_at=?, last_error='', "
+-        "updated_at=? where adapter_name=? and source_id=? and owner=? "
+-        "and generation=? and lease_expires_at>? and terminal_at=''",
+-        (
+-            lease_expires_at,
+-            now,
+-            envelope.adapter_name,
+-            envelope.source_id,
+-            owner,
+-            envelope.generation,
+-            now,
++    changed = update_state(
++        db, "dispatcher_claim_leases",
++        _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++        {"lease_expires_at": lease_expires_at, "last_error": "", "updated_at": now},
++        where_sql=(
++            "adapter_name=? and source_id=? and owner=? and generation=? "
++            "and lease_expires_at>? and terminal_at=''"
+         ),
++        parameters=(envelope.adapter_name, envelope.source_id, owner,
++                    envelope.generation, now),
+     )
+-    if cursor.rowcount != 1:
++    if changed != 1:
+         raise ValueError("dispatcher source claim is no longer owned")
+ 
+ 
+@@ -1973,16 +1978,11 @@
+     now: str,
+ ) -> None:
+     row = db.execute(
+-        "select 1 from dispatcher_claim_leases where adapter_name=? "
++        f"select 1 from {_LEASE_PROJECTION} where adapter_name=? "
+         "and source_id=? and owner=? and generation=? "
+         "and lease_expires_at>? and terminal_at=''",
+-        (
+-            envelope.adapter_name,
+-            envelope.source_id,
+-            owner,
+-            envelope.generation,
+-            now,
+-        ),
++        (envelope.adapter_name, envelope.source_id, owner,
++         envelope.generation, now),
+     ).fetchone()
+     if row is None:
+         raise ValueError("dispatcher source claim is no longer owned")
+@@ -2012,26 +2012,23 @@
+     owner: str,
+     now: str,
+ ) -> None:
+-    cursor = db.execute(
+-        "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+-        "terminal_at=?, last_error='', updated_at=? where adapter_name=? "
+-        "and source_id=? and owner=? and generation=?",
+-        (
+-            now,
+-            now,
+-            envelope.adapter_name,
+-            envelope.source_id,
+-            owner,
+-            envelope.generation,
+-        ),
++    changed = update_state(
++        db, "dispatcher_claim_leases",
++        _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++        {"owner": "", "lease_expires_at": "", "terminal_at": now,
++         "last_error": "", "updated_at": now},
++        where_sql="adapter_name=? and source_id=? and owner=? and generation=?",
++        parameters=(envelope.adapter_name, envelope.source_id, owner, envelope.generation),
+     )
+-    if cursor.rowcount != 1:
++    if changed != 1:
+         raise ValueError("dispatcher source claim is no longer owned")
+     db.execute(
+-        "delete from dispatcher_claim_leases where terminal_at<>'' "
+-        "and (terminal_at,rowid)<("
+-        "select terminal_at,rowid from dispatcher_claim_leases where terminal_at<>'' "
+-        "order by terminal_at desc,rowid desc limit 1 offset 9999)"
++        "delete from state where record_type='dispatcher_claim_leases' "
++        "and terminal_at<>'' and (terminal_at,cast(legacy_key as integer))<("
++        "select terminal_at,cast(legacy_key as integer) from state "
++        "where record_type='dispatcher_claim_leases' and terminal_at<>'' "
++        "order by terminal_at desc,cast(legacy_key as integer) desc "
++        "limit 1 offset 9999)"
+     )
+ 
+ 
+@@ -2051,15 +2048,13 @@
+     claim someone else has since taken is untouched.
+     """
+     with store._immediate_write_transaction() as db:
+-        db.execute(
+-            "update dispatcher_claim_leases set owner_pid=0, lease_expires_at='' "
+-            "where adapter_name=? and source_id=? and owner=? and generation=?",
+-            (
+-                envelope.adapter_name,
+-                envelope.source_id,
+-                owner,
+-                envelope.generation,
+-            ),
++        update_state(
++            db, "dispatcher_claim_leases",
++            _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++            {"owner_pid": 0, "lease_expires_at": ""},
++            where_sql="adapter_name=? and source_id=? and owner=? and generation=?",
++            parameters=(envelope.adapter_name, envelope.source_id,
++                        owner, envelope.generation),
+         )
+ 
+ 
+@@ -2072,15 +2067,10 @@
+     now: datetime,
+ ) -> None:
+     with store._immediate_write_transaction() as db:
+-        db.execute(
+-            "update dispatcher_claim_leases set last_error=?, updated_at=? "
+-            "where adapter_name=? and source_id=?",
+-            (
+-                error,
+-                _sqlite_time(now),
+-                envelope.adapter_name,
+-                envelope.source_id,
+-            ),
++        update_state(
++            db, "dispatcher_claim_leases",
++            _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++            {"last_error": error, "updated_at": _sqlite_time(now)},
+         )
+ 
+ 

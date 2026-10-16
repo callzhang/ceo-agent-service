@@ -1,0 +1,137 @@
+{
+  "kind": "unselected-state-caller-prerequisites-and-proposal-review",
+  "date": "2026-10-16",
+  "progress": {
+    "candidate": "e06e1e9d",
+    "whitespace": "9cfb7226",
+    "spec": {
+      "passed": 28,
+      "seconds": 4.41,
+      "scope": "19new+9existing, AST outside class unchanged, no current entrypoint",
+      "temp_removed": true
+    },
+    "quality": {
+      "passed": 28,
+      "seconds": 4.99,
+      "transaction_probes": 12,
+      "probes": "native writer-lock BEGIN and reader-lock COMMIT failure/retry, injected non-lock post-DML error rollback; both variants/roles; requested timeout30 recorded, bounded test actual1ms",
+      "ruff": true,
+      "temp_removed": true
+    },
+    "verdict": "PASS_unselected_prerequisite"
+  },
+  "organization_index": {
+    "candidate": "59b27ac6",
+    "root_proposal": {
+      "red": 8,
+      "green": 314,
+      "seconds": 17.47,
+      "ruff": true,
+      "owned_temp_removed": true
+    },
+    "implementation": {
+      "red": 8,
+      "green": 314,
+      "seconds": 27.16,
+      "ruff_compile_diff": true,
+      "owned_temp_removed": true
+    },
+    "spec": {
+      "verdict": "PASS",
+      "matrix_passed": 314,
+      "seconds": 24.4,
+      "extra_raw_native_plan_cases": 8,
+      "exact_proposal_org_dao_cases": 8,
+      "native_source_hashes_recomputed_unchanged": true,
+      "target_fingerprint_recomputed": true,
+      "owned_temp_removed": true
+    },
+    "quality": {
+      "verdict": "PASS",
+      "matrix_passed": 314,
+      "seconds": 29.11,
+      "additional_order_and_rowid_update_probes": 4,
+      "ruff": true,
+      "target_fingerprint_recomputed": true,
+      "source_metadata_identical": true,
+      "table_maps_and_other_18_indices_identical": true,
+      "owned_temp_removed": true
+    },
+    "target_fingerprint": "327c94f68a9354f8766dfebb9ef7c85c9d03c2a4b27f95387eb88cc32fabc1f2",
+    "previous_target_fingerprint": "ae25aecef5d8e9a0615ca3c180bb018eb6412a36bb25e850692d7f050eb8e5ab",
+    "source_capture_sha256": "604496766a335d63fe334a263bde8028cd53c6bc5311acb97a5ef48876ae2aff",
+    "scope": "Only two nonunique org indices append source ROWID expression, target fingerprint, new eight cases and scoped behavior docs. No source facts/declarations or table fields added.",
+    "old_target_copy_receipt": "Historical pre-amendment only; current complete combined-copy acceptance still required.",
+    "verdict": "PASS_unselected_amendment"
+  },
+  "proposals": {
+    "store": {
+      "path": "docs/superpowers/plans/2026-10-16-state-store-dao-proposal.patch",
+      "sha256": "114c71fbfe08e8b0c1875d0bbc53a347e88c5426c07c41875943dccfbb598dd4",
+      "changed_methods": 27,
+      "signatures_unchanged": true,
+      "author": {
+        "ordinary_calls_before_final_edge_correction": 42,
+        "final_focused_checks": 12
+      },
+      "spec": {
+        "prior_verdict": "BLOCKED",
+        "reason": "Org source secondary-index ties followed source ROWID; State followed physical state.id. MAX-rowid random branch changes first result/open ID and nullable-user-ID equal-key name order.",
+        "recheck_after_index_amendment": "SPEC validates all eight exact org DAO counterexamples now match native; full27method acceptance and runtime selection still pending."
+      },
+      "selected": false
+    },
+    "dispatcher": {
+      "path": "docs/superpowers/plans/2026-10-16-state-dispatcher-proposal.patch",
+      "sha256": "f598158d8d412cc7765f5d051347fd2b295bc1c8ac420c268437bff371371988",
+      "changed_existing_callables": 19,
+      "class_methods": 12,
+      "shared_functions": 7,
+      "new_rowid_helper": 1,
+      "native_table_references": 39,
+      "joins": 28,
+      "author_checks": {
+        "lifecycle": 16,
+        "error_letgo_prune_overflow": 8,
+        "guard_refusals": 16
+      },
+      "spec": {
+        "status": "BLOCKED",
+        "confirmed_blocker": "Shared encoder checks type(value) is int; out-of-range int subclass owner_pid is rejected by native SQLite binding but can become target REAL. Per-generation SELECT does not fix all parameters and is redundant for built-in int.",
+        "required": "Correct shared native binding encoder with source regression; remove per-generation SELECT; re-review exact proposal.",
+        "independent_matched_helper_checkpoints": 30,
+        "source_variants": [
+          "actual",
+          "fresh"
+        ],
+        "outer_transaction_and_sentinel_preserved": true,
+        "all_test_databases_in_memory": true
+      },
+      "selected": false
+    }
+  },
+  "integration": {
+    "current_store_state_callers": false,
+    "dispatcher_state_callers": false,
+    "email_cursor_callers": false,
+    "current_constructor_and_version_reader_closure": false,
+    "paired_publication_role_binding": false,
+    "postcommit_child_failure_actual_sql_progress": false,
+    "latest_combined_ordinary_table_count": 82,
+    "expected_after_future_integrated_state": 67,
+    "final_destination": "10 core tables plus migration ledger",
+    "final_combined_copy_genuine_old_cold_native_cli_and_final_name_set": false,
+    "production_changed": false,
+    "push": false,
+    "main_merge": false,
+    "deploy": false,
+    "real_external_send": false
+  },
+  "cleanup": {
+    "path": "/private/tmp/state-upsert-impl.694bXO",
+    "status": "pending_user_authorization",
+    "reason": "Automatic approval review rejected rm -rf because deletion required approval while AskForApproval was Never.",
+    "retried_or_bypassed": false,
+    "question_already_pending": true
+  }
+}

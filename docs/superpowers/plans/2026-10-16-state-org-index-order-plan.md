@@ -83,5 +83,5 @@ Coverage crosses actual/fresh, open-ID/name, reverse explicit/MAX-auto allocatio
 - [x] Root all8 RED, corrected314 GREEN, Ruff and own temporary cleanup.
 - [x] Implement exact2 strings/hash/new8 cases; add scoped paragraphs in docs/architecture.md and docs/runtime-mechanism.md marking unselected foundation amendment.
 - [x] Run narrow focused matrix; compile, Ruff, confirm native source metadata SHA604496... unchanged and only2 of20 index declarations changed.
-- [ ] Fresh SPEC review then QUALITY; re-review previously blocked Store DAO proposal against amended foundation.
+- [x] Fresh SPEC314/24.40s then QUALITY314/29.11s; SPEC8 exact proposed org DAO counterexamples now match native. Full27-method DAO acceptance remains pending.
 - [ ] Re-establish target-copy acceptance with this fingerprint during State atomic caller/publication integration. Existing pure source-row fact proof remains historical; do not claim current full-candidate acceptance.

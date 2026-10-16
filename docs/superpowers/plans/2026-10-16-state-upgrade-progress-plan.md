@@ -226,7 +226,7 @@ The complete proposed class was executed in an owned temporary namespace, replac
 - [x] Write complete class and tests before application mutation.
 - [x] Root extract/compile/Ruff/19-case preflight and owned temporary cleanup.
 - [x] Implement exact class and regression module, run existing updater publication tests.
-- [ ] Fresh independent SPEC review, then fresh QUALITY review.
+- [x] Fresh independent SPEC review, then fresh QUALITY review (28 cases each; QUALITY12 additional transaction-boundary probes).
 - [ ] As part of the later single atomic current-State cutover, bind initial source/current role before the first progress read/write in deploy.py, repository_updater.main and cli.py; pass the same real progress-store instance to prepare_database_schema_release and the paired release. Keep generic fake stores/protocol unchanged.
 - [ ] Preserve the stable Email migration ledger as the release authority. Validate an explicit source/current version pair; never choose another storage path after a missing-table exception.
 - [ ] At publish success bind current before loaded verification. A child can commit apply() and then fail its Store/Email constructor. On publish failure, rollback must bind the ledger-proven committed role BEFORE target/source validation. If inverse validation or execution fails, keep current binding so needs_manual persists. Bind source only AFTER successful inverse commit. Never unconditionally bind source in finally.
