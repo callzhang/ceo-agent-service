@@ -1,0 +1,2002 @@
+{
+  "harness_sha256": "a80bbd70007d467186b4909066668bbf009d5d78d965631be2ce6335c82019c4",
+  "source_files": {
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "app/task12_storage.py": "127311aa2ed303066fc3dd325a5642c0e61725a2d8db3b5bedfc218e804e013f",
+    "app/reviewed_candidate_store.py": "e1e9df1b6c9c247cbc1f8d19f96c1c25f93a02030b4798b26841a4fc39f2f15f",
+    "app/dispatcher/adapters.py": "7b7ab7d8b5225b66d666b8d744fca14bf77c6724ab4c2b739e5c31c149ae49ad",
+    "app/scheduled_task_recovery.py": "fc521a22d9d90b2d438c7044479fded6ed15b69f375dca4720fa80c02072451f",
+    "app/reply_task_deferral.py": "a7ff5a4a8b9077c98a8d51fdfd2abd221e8caade9886b20e09dd93486e79a64d",
+    "app/dingtalk_delivery_repair.py": "7adf012e42f87b343ca0955ec016e27a540b7da0f34a61f8c2eaf7dcb1bb4c1f",
+    "app/error_code_migration.py": "047548f29f5a11aa64b86efe92658f6559a1062d77b83887072d34ede56029f1",
+    "app/storage_maintenance.py": "d1021d40b06d5e78c680625a200fff3bb92eaa6d95338e72ad966c06acf522f6",
+    "app/work_summary_payload.py": "dd4011560f7c7293b756a46a82e171ee98ad7b1e202fdd45f4f19cdd9c66c5c6"
+  },
+  "patches": {
+    "2026-10-16-task8-store-caller-proposal.patch": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+    "2026-10-16-task12-store-misc-caller-proposal.patch": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4",
+    "2026-10-16-task12-feedback-caller-proposal.patch": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d",
+    "2026-10-16-task20-external-writers-caller-proposal.patch": "c52007327727e670dd55f434375b8aba3416112f369732717eba998102423415"
+  },
+  "scope": "five real Tasks8 queue adapters plus real work_summary_payload migration, synthetic fresh source and prepared EMPTY Tasks20 target only",
+  "constructor_boundary": "Original full fresh source constructor; target only _ensure_initialized bypass after explicit empty Tasks replacement; original constructor attributes, _open_connection, _connect and immediate transaction bodies retained",
+  "external_action_guard_boundary": "Python audit hook rejects socket connections/subprocesses/os.system during constructors and public calls. Dependencies import first because croniter platform.architecture may invoke local file metadata utility; no Agent/provider CLI is invoked.",
+  "fixture_connection_instrumentation": "Native sqlite3.Connection subclass records actual execute.rowcount and trace; existing connect args/PRAGMAs remain. Same-connection stale-leaf seam injects only an explicit fixture write immediately before original CAS SQL; separate actual competing-writer lock control. No application method body or SQL is reimplemented.",
+  "normalization": [
+    "Deterministic SQLite current_timestamp only.",
+    "No new Task12 rows seeded: published-eight row identities, physical pointers, values/types and State lease facts compare exactly without ID normalization.",
+    "Payload bodies represented by exact stored-byte SHA256/type/length and decoded SHA256; no semantic-only equality."
+  ],
+  "limitations": [
+    "No nonempty migration, actual production profile, copied preserved rows, inverse/current-fact/predecessor/reforward/cold target constructor/native/UI/final11 proof.",
+    "Other six external-writer modules and native scheduled-definition queue are not public-tested; this covers five adapter classes over four relevant Tasks kinds and their input children.",
+    "Explicit fixture triggers force native UPDATE IGNORE and lease-write ABORT. Readonly/provider/native/worker behavior is outside scope; no worker, provider or CLI is started.",
+    "BEGIN IMMEDIATE prevents a concurrent committed change during a batch. Stale-leaf CAS uses a disclosed same-transaction injection, not a claimed successful concurrent writer."
+  ],
+  "no_app_tests_live_db_network_provider_worker_native_cli_main_push_deploy": true,
+  "bootstrap": {
+    "normal_complete_fresh_constructor": true,
+    "empty_tasks": 0,
+    "tasks_ddl_sha256": "ee4330cb187a80d4699db16e56b61e47f992165ed44a840f4ecbe8059888374c",
+    "tables": 65,
+    "foreign_keys": 1,
+    "external_calls": []
+  },
+  "prepared_target": {
+    "empty_tasks_replaced": true,
+    "all_other_table_ddl_exact": true,
+    "source_families_not_retired": true,
+    "task8_source_water_initialized": 0,
+    "migration_and_cold_constructor": "not tested"
+  },
+  "negative_control": {
+    "mutation": "Only original summary CAS RHS column becomes outer structural payload_json instead of generated business leaf; SET and actual routine unchanged",
+    "successful_source": {
+      "return": {
+        "scanned": 1,
+        "compressed": 1,
+        "bytes_before": 15511,
+        "bytes_after": 114
+      }
+    },
+    "successful_target": {
+      "return": {
+        "scanned": 1,
+        "compressed": 1,
+        "bytes_before": 15511,
+        "bytes_after": 114
+      }
+    },
+    "mutant": {
+      "return": {
+        "scanned": 1,
+        "compressed": 0,
+        "bytes_before": 0,
+        "bytes_after": 0
+      }
+    },
+    "mutant_native_rowcounts": [
+      {
+        "table": "tasks",
+        "rowcount": 0
+      }
+    ],
+    "caught_by_counter_and_stored_leaf_readback": true
+  },
+  "cases": {
+    "reply": {
+      "equal_checkpoints": 26,
+      "labels": [
+        "metrics_initial",
+        "invalid_owner",
+        "claim_first",
+        "wrong_owner_assert",
+        "wrong_owner_release",
+        "renew",
+        "claim_before_expiry",
+        "renew_at_expiry",
+        "expired_live_owner",
+        "expired_dead_owner_reclaim",
+        "stale_generation_release",
+        "forged_generation_release",
+        "status_zero_release_rolls_back_lease",
+        "release",
+        "claim_after_release",
+        "release_zero_attempt_floor",
+        "native_ignore_zero_claim",
+        "lease_abort_rolls_back_task_update",
+        "claim_after_abort",
+        "final_assert_current",
+        "handler_retry",
+        "handler_backoff",
+        "handler_second_attempt",
+        "handler_retry_twice",
+        "handler_third_attempt",
+        "handler_terminal"
+      ],
+      "entered_actual_owners": {
+        "ReplyQueueAdapter.__init__": 1,
+        "ReplyQueueAdapter.metrics": 1,
+        "_sqlite_time": 43,
+        "ReplyQueueAdapter._channel_clause": 32,
+        "_latest_actionable_error": 1,
+        "_latest_actionable_error.<locals>.<genexpr>": 1,
+        "_source_time": 7,
+        "ReplyQueueAdapter.claim": 12,
+        "_validate_claim": 12,
+        "_lease_seconds": 24,
+        "_lease_expiry": 13,
+        "_ceil_to_whole_second": 13,
+        "_scan_claimable_candidate": 19,
+        "ReplyQueueAdapter.claim.<locals>.fetch_page": 19,
+        "_live_expired_owner": 17,
+        "_acquire_lease": 7,
+        "_LedgerClaimLifecycle.assert_current": 2,
+        "_assert_ledger_current": 2,
+        "_assert_ledger_current_in_db": 2,
+        "ReplyQueueAdapter.release": 6,
+        "_validate_release": 11,
+        "_release_lease": 9,
+        "_lease_rowid": 11,
+        "ReplyQueueAdapter.renew": 2,
+        "_renew_lease": 2,
+        "_renew_lease_in_db": 2,
+        "ReplyQueueAdapter.handle_handler_error": 3
+      },
+      "expected_errors": {
+        "invalid_owner": {
+          "type": "ValueError",
+          "message": "dispatcher owner must not be empty"
+        },
+        "wrong_owner_assert": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "wrong_owner_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "renew_at_expiry": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "stale_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "forged_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "type": "ValueError",
+          "message": "reply dispatch claim is no longer owned"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "type": "IntegrityError",
+          "message": "fixture lease abort"
+        }
+      },
+      "decisive": {
+        "claim_first": {
+          "outcome": {
+            "return": {
+              "adapter_name": "reply",
+              "source_id": "7",
+              "available_at": "2040-01-01T00:00:00+00:00",
+              "priority": 0,
+              "attempt": 4,
+              "generation": 1
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "684e5ba619b1e47c9c9f8f4954f234347bd6db96b4a98d47d711b26fac7cdfd3",
+          "committed_after_sha256": "8db98d77c99d07e98dfa9cf110def0790e157c1ae78b7b29ddc66007393f2b72"
+        },
+        "expired_dead_owner_reclaim": {
+          "outcome": {
+            "return": {
+              "adapter_name": "reply",
+              "source_id": "7",
+              "available_at": "2040-01-01T00:00:00+00:00",
+              "priority": 0,
+              "attempt": 5,
+              "generation": 2
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "0b27f082ea7691a449f16c03d70f0fb4b24a43631883d2d51ade78f622a1ca38",
+          "committed_after_sha256": "c2fea9a7f761f968d9560494d8d62079134a6014d71d061df2fc94e5261c8754"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "outcome": {
+            "error": {
+              "type": "ValueError",
+              "message": "reply dispatch claim is no longer owned"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "8e0197789c94eea0b02cc2044239ee534be84c35045c0c13cb50cff48ed0fb93",
+          "committed_after_sha256": "8e0197789c94eea0b02cc2044239ee534be84c35045c0c13cb50cff48ed0fb93"
+        },
+        "native_ignore_zero_claim": {
+          "outcome": {
+            "return": null
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84",
+          "committed_after_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "outcome": {
+            "error": {
+              "type": "IntegrityError",
+              "message": "fixture lease abort"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84",
+          "committed_after_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84"
+        },
+        "handler_terminal": {
+          "outcome": {
+            "return": null
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [],
+          "committed_before_sha256": "7ae9874ca518ecd63e5fe74fd70f575ffdd538e9c7ea3c471c8498760492e32d",
+          "committed_after_sha256": "8a17e6a1ed32561d0aa3134e427d656ebfb23d02408db302187fde41ac69bf57"
+        }
+      },
+      "injections": [],
+      "raw_target_wrapper_witnesses": [],
+      "transition_readback_witnesses": [
+        {
+          "label": "metrics_initial",
+          "headers_sha256": "8eba875942973ee56db903bdcded09f227cbae9185f2b79cc4a1336e19e21fe2",
+          "physical_pointer_rows_sha256": "d0723aa3f345328e58190e45afc8297da0e921ddcb9321a2a05cd783744fb668",
+          "leases_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "committed_before_sha256": "684e5ba619b1e47c9c9f8f4954f234347bd6db96b4a98d47d711b26fac7cdfd3",
+          "committed_after_sha256": "684e5ba619b1e47c9c9f8f4954f234347bd6db96b4a98d47d711b26fac7cdfd3"
+        },
+        {
+          "label": "claim_first",
+          "headers_sha256": "17f57ef4931cbbe641600fbfcabef72415bac79790b4964617ff54c51497fbbe",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "6e71908d37d79997180e0b1b5bfcb022b54a7f89dc3e32d2c83ceff0c0e32500",
+          "committed_before_sha256": "684e5ba619b1e47c9c9f8f4954f234347bd6db96b4a98d47d711b26fac7cdfd3",
+          "committed_after_sha256": "8db98d77c99d07e98dfa9cf110def0790e157c1ae78b7b29ddc66007393f2b72"
+        },
+        {
+          "label": "claim_before_expiry",
+          "headers_sha256": "17f57ef4931cbbe641600fbfcabef72415bac79790b4964617ff54c51497fbbe",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "83187129a82fbfab99777eedf7e34a69bd70fe3ebcd64c734e411d1076003190",
+          "committed_before_sha256": "0b27f082ea7691a449f16c03d70f0fb4b24a43631883d2d51ade78f622a1ca38",
+          "committed_after_sha256": "0b27f082ea7691a449f16c03d70f0fb4b24a43631883d2d51ade78f622a1ca38"
+        },
+        {
+          "label": "renew_at_expiry",
+          "headers_sha256": "17f57ef4931cbbe641600fbfcabef72415bac79790b4964617ff54c51497fbbe",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "83187129a82fbfab99777eedf7e34a69bd70fe3ebcd64c734e411d1076003190",
+          "committed_before_sha256": "0b27f082ea7691a449f16c03d70f0fb4b24a43631883d2d51ade78f622a1ca38",
+          "committed_after_sha256": "0b27f082ea7691a449f16c03d70f0fb4b24a43631883d2d51ade78f622a1ca38"
+        },
+        {
+          "label": "expired_live_owner",
+          "headers_sha256": "17f57ef4931cbbe641600fbfcabef72415bac79790b4964617ff54c51497fbbe",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "83187129a82fbfab99777eedf7e34a69bd70fe3ebcd64c734e411d1076003190",
+          "committed_before_sha256": "0b27f082ea7691a449f16c03d70f0fb4b24a43631883d2d51ade78f622a1ca38",
+          "committed_after_sha256": "0b27f082ea7691a449f16c03d70f0fb4b24a43631883d2d51ade78f622a1ca38"
+        },
+        {
+          "label": "expired_dead_owner_reclaim",
+          "headers_sha256": "f370ca5cd9e122b36424e2cbd3738cf1fa9071ed63e811b1528de82c8d51f9a5",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "56ea7967f739ac24fea9e3880959698ee649ad40721464bf48d75fe7b9b04075",
+          "committed_before_sha256": "0b27f082ea7691a449f16c03d70f0fb4b24a43631883d2d51ade78f622a1ca38",
+          "committed_after_sha256": "c2fea9a7f761f968d9560494d8d62079134a6014d71d061df2fc94e5261c8754"
+        },
+        {
+          "label": "status_zero_release_rolls_back_lease",
+          "headers_sha256": "963f149bd632fa21171bd001c8757c126568f9416cc5822ae2f61bb048a85471",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "56ea7967f739ac24fea9e3880959698ee649ad40721464bf48d75fe7b9b04075",
+          "committed_before_sha256": "8e0197789c94eea0b02cc2044239ee534be84c35045c0c13cb50cff48ed0fb93",
+          "committed_after_sha256": "8e0197789c94eea0b02cc2044239ee534be84c35045c0c13cb50cff48ed0fb93"
+        },
+        {
+          "label": "release",
+          "headers_sha256": "d6e43c85600804413bf09360fbd5e9b8753f73fccc7c3f266280687e5a0b5170",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "5d576ea1599617b2467bf3de8f840c410e6f946e19cee64cca1c6b3a3612fcfe",
+          "committed_before_sha256": "c2fea9a7f761f968d9560494d8d62079134a6014d71d061df2fc94e5261c8754",
+          "committed_after_sha256": "73b6487fe7243170879d828ce6c9a0cb85f7b8a0f32342144c3b437807fa72c8"
+        },
+        {
+          "label": "release_zero_attempt_floor",
+          "headers_sha256": "67cd2f1300381398df17e6ae9e8bb72fc7122f2f47de86956155c5c76cda5049",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "34c1c3079e888c1da61fc911ffabf367228a2273395e27189372347f999175d1",
+          "committed_before_sha256": "4896b8a862ef82b8bc4ffac41ce653d5a9f2b658b392803fd7dca11b2fb53c03",
+          "committed_after_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84"
+        },
+        {
+          "label": "native_ignore_zero_claim",
+          "headers_sha256": "67cd2f1300381398df17e6ae9e8bb72fc7122f2f47de86956155c5c76cda5049",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "34c1c3079e888c1da61fc911ffabf367228a2273395e27189372347f999175d1",
+          "committed_before_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84",
+          "committed_after_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84"
+        },
+        {
+          "label": "lease_abort_rolls_back_task_update",
+          "headers_sha256": "67cd2f1300381398df17e6ae9e8bb72fc7122f2f47de86956155c5c76cda5049",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "34c1c3079e888c1da61fc911ffabf367228a2273395e27189372347f999175d1",
+          "committed_before_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84",
+          "committed_after_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84"
+        },
+        {
+          "label": "claim_after_abort",
+          "headers_sha256": "11979c4585883ee4f6e4108231da3bdce12830c0eb85f0a62d9dda07c4055a72",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "d1cd889c2623d6c4d916cc4690e971c5308d39904600a22ed5441ff5b48ae3a9",
+          "committed_before_sha256": "20152bb515285d699de4d674a64e7b5b3a858572676cd0116268596a7498ce84",
+          "committed_after_sha256": "1c0da05bc634c1a782547f8c561140364dd9e7bac77dd205ca78f4409327ef3d"
+        },
+        {
+          "label": "handler_terminal",
+          "headers_sha256": "7acffd36cd5f00c8c7b508211e7b3cbbb5d0944fa40388f7ed12b821de9f3087",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "48c32a096f5ace5642cee61ba96d4d2b3a6054b2f25fc59bc2c771255a75ec9e",
+          "committed_before_sha256": "7ae9874ca518ecd63e5fe74fd70f575ffdd538e9c7ea3c471c8498760492e32d",
+          "committed_after_sha256": "8a17e6a1ed32561d0aa3134e427d656ebfb23d02408db302187fde41ac69bf57"
+        }
+      ]
+    },
+    "scheduled": {
+      "equal_checkpoints": 26,
+      "labels": [
+        "metrics_initial",
+        "invalid_owner",
+        "claim_first",
+        "wrong_owner_assert",
+        "wrong_owner_release",
+        "renew",
+        "claim_before_expiry",
+        "renew_at_expiry",
+        "expired_live_owner",
+        "expired_dead_owner_reclaim",
+        "stale_generation_release",
+        "forged_generation_release",
+        "status_zero_release_rolls_back_lease",
+        "release",
+        "claim_after_release",
+        "release_zero_attempt_floor",
+        "native_ignore_zero_claim",
+        "lease_abort_rolls_back_task_update",
+        "claim_after_abort",
+        "final_assert_current",
+        "handler_retry",
+        "handler_backoff",
+        "handler_second_attempt",
+        "handler_retry_twice",
+        "handler_third_attempt",
+        "handler_terminal"
+      ],
+      "entered_actual_owners": {
+        "ReplyQueueAdapter.__init__": 1,
+        "ReplyQueueAdapter.metrics": 1,
+        "_sqlite_time": 43,
+        "ScheduledExecutionQueueAdapter._channel_clause": 32,
+        "_latest_actionable_error": 1,
+        "_latest_actionable_error.<locals>.<genexpr>": 1,
+        "_source_time": 7,
+        "ReplyQueueAdapter.claim": 12,
+        "_validate_claim": 12,
+        "_lease_seconds": 24,
+        "_lease_expiry": 13,
+        "_ceil_to_whole_second": 13,
+        "_scan_claimable_candidate": 19,
+        "ReplyQueueAdapter.claim.<locals>.fetch_page": 19,
+        "_live_expired_owner": 17,
+        "_acquire_lease": 7,
+        "_LedgerClaimLifecycle.assert_current": 2,
+        "_assert_ledger_current": 2,
+        "_assert_ledger_current_in_db": 2,
+        "ReplyQueueAdapter.release": 6,
+        "_validate_release": 11,
+        "_release_lease": 9,
+        "_lease_rowid": 11,
+        "ReplyQueueAdapter.renew": 2,
+        "_renew_lease": 2,
+        "_renew_lease_in_db": 2,
+        "ReplyQueueAdapter.handle_handler_error": 3
+      },
+      "expected_errors": {
+        "invalid_owner": {
+          "type": "ValueError",
+          "message": "dispatcher owner must not be empty"
+        },
+        "wrong_owner_assert": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "wrong_owner_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "renew_at_expiry": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "stale_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "forged_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "type": "ValueError",
+          "message": "reply dispatch claim is no longer owned"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "type": "IntegrityError",
+          "message": "fixture lease abort"
+        }
+      },
+      "decisive": {
+        "claim_first": {
+          "outcome": {
+            "return": {
+              "adapter_name": "scheduled_execution",
+              "source_id": "7",
+              "available_at": "2040-01-01T00:00:00+00:00",
+              "priority": 0,
+              "attempt": 4,
+              "generation": 1
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "190ed77c4e1521b60dbe3f16ed1fa256361f0c44d55bb5342ebeb027bb587ad8",
+          "committed_after_sha256": "e65a4808ba8038b365e5ed5fe7d9ec55ef99a22399ab4f88905796472b143aa3"
+        },
+        "expired_dead_owner_reclaim": {
+          "outcome": {
+            "return": {
+              "adapter_name": "scheduled_execution",
+              "source_id": "7",
+              "available_at": "2040-01-01T00:00:00+00:00",
+              "priority": 0,
+              "attempt": 5,
+              "generation": 2
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "19069ed2fd73287b88275600baf56941fc0ff9bc689780f8cbea6db4ffd28c03",
+          "committed_after_sha256": "7245c7b8aecd1f10822e13d24b2ef77570122eeba00aac53dd05256c86be1fef"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "outcome": {
+            "error": {
+              "type": "ValueError",
+              "message": "reply dispatch claim is no longer owned"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "bb2f6ae85461311ec849bf9a8a4c10f8ac8b7e98e744f37c7075dfdb5ee90882",
+          "committed_after_sha256": "bb2f6ae85461311ec849bf9a8a4c10f8ac8b7e98e744f37c7075dfdb5ee90882"
+        },
+        "native_ignore_zero_claim": {
+          "outcome": {
+            "return": null
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44",
+          "committed_after_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "outcome": {
+            "error": {
+              "type": "IntegrityError",
+              "message": "fixture lease abort"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44",
+          "committed_after_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44"
+        },
+        "handler_terminal": {
+          "outcome": {
+            "return": null
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [],
+          "committed_before_sha256": "b6e7fc6c0146d096f551a2d9223b1ac6035b57ec0b875b3182ce49c5d1d71c88",
+          "committed_after_sha256": "7adc521323698001f0db814c20b4888762f54248cb82221da326e262158cae37"
+        }
+      },
+      "injections": [],
+      "raw_target_wrapper_witnesses": [],
+      "transition_readback_witnesses": [
+        {
+          "label": "metrics_initial",
+          "headers_sha256": "081b8ce7ee3f7bd714ee1bc04082631d6ec33798f22276afbf349bd2b8e8f100",
+          "physical_pointer_rows_sha256": "d0723aa3f345328e58190e45afc8297da0e921ddcb9321a2a05cd783744fb668",
+          "leases_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "committed_before_sha256": "190ed77c4e1521b60dbe3f16ed1fa256361f0c44d55bb5342ebeb027bb587ad8",
+          "committed_after_sha256": "190ed77c4e1521b60dbe3f16ed1fa256361f0c44d55bb5342ebeb027bb587ad8"
+        },
+        {
+          "label": "claim_first",
+          "headers_sha256": "596a0a22233ce9bf2e99e11aafc99e927143e2b67d4c30c8ce28a4675c259045",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "a1ab0ecea833349dbec60f45ea93a8c9025bbd971a5c222292fd3faa0406b7f7",
+          "committed_before_sha256": "190ed77c4e1521b60dbe3f16ed1fa256361f0c44d55bb5342ebeb027bb587ad8",
+          "committed_after_sha256": "e65a4808ba8038b365e5ed5fe7d9ec55ef99a22399ab4f88905796472b143aa3"
+        },
+        {
+          "label": "claim_before_expiry",
+          "headers_sha256": "596a0a22233ce9bf2e99e11aafc99e927143e2b67d4c30c8ce28a4675c259045",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "4df506a106270f10f80452041e864fcd8c0ac6699e036e0a24c40ced3c9ba25a",
+          "committed_before_sha256": "19069ed2fd73287b88275600baf56941fc0ff9bc689780f8cbea6db4ffd28c03",
+          "committed_after_sha256": "19069ed2fd73287b88275600baf56941fc0ff9bc689780f8cbea6db4ffd28c03"
+        },
+        {
+          "label": "renew_at_expiry",
+          "headers_sha256": "596a0a22233ce9bf2e99e11aafc99e927143e2b67d4c30c8ce28a4675c259045",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "4df506a106270f10f80452041e864fcd8c0ac6699e036e0a24c40ced3c9ba25a",
+          "committed_before_sha256": "19069ed2fd73287b88275600baf56941fc0ff9bc689780f8cbea6db4ffd28c03",
+          "committed_after_sha256": "19069ed2fd73287b88275600baf56941fc0ff9bc689780f8cbea6db4ffd28c03"
+        },
+        {
+          "label": "expired_live_owner",
+          "headers_sha256": "596a0a22233ce9bf2e99e11aafc99e927143e2b67d4c30c8ce28a4675c259045",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "4df506a106270f10f80452041e864fcd8c0ac6699e036e0a24c40ced3c9ba25a",
+          "committed_before_sha256": "19069ed2fd73287b88275600baf56941fc0ff9bc689780f8cbea6db4ffd28c03",
+          "committed_after_sha256": "19069ed2fd73287b88275600baf56941fc0ff9bc689780f8cbea6db4ffd28c03"
+        },
+        {
+          "label": "expired_dead_owner_reclaim",
+          "headers_sha256": "35119ce00489c02413c87bc17521a4a3a140ecbea6e20ff8cacdce28db18731b",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "e967f78730545e6dcfa816e1522ae6ccd53aecab4e2b7b9970ad00281c8f978f",
+          "committed_before_sha256": "19069ed2fd73287b88275600baf56941fc0ff9bc689780f8cbea6db4ffd28c03",
+          "committed_after_sha256": "7245c7b8aecd1f10822e13d24b2ef77570122eeba00aac53dd05256c86be1fef"
+        },
+        {
+          "label": "status_zero_release_rolls_back_lease",
+          "headers_sha256": "daa35d9f85caa2c2caa87165d4c4a3f00906c94cf3ee96dd6c619817b9156416",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "e967f78730545e6dcfa816e1522ae6ccd53aecab4e2b7b9970ad00281c8f978f",
+          "committed_before_sha256": "bb2f6ae85461311ec849bf9a8a4c10f8ac8b7e98e744f37c7075dfdb5ee90882",
+          "committed_after_sha256": "bb2f6ae85461311ec849bf9a8a4c10f8ac8b7e98e744f37c7075dfdb5ee90882"
+        },
+        {
+          "label": "release",
+          "headers_sha256": "14de8a4aca7fb10f7927147ec6c11ae74fbef09ac7a7e3a6e269432d7256f693",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "6229afd2f8aaf7245fbfff9bc7ddb9261b344fad915aec8907fb6bfc99983389",
+          "committed_before_sha256": "7245c7b8aecd1f10822e13d24b2ef77570122eeba00aac53dd05256c86be1fef",
+          "committed_after_sha256": "e9af8799b4e7fe1e233aa79b5295fc804e78a45d2be5c11270fb574ba2f3ccf6"
+        },
+        {
+          "label": "release_zero_attempt_floor",
+          "headers_sha256": "5635b86f8b9bbc3daccc9cd9e4b3c1efee2746d0b33f9bdbc2766b29fa1efdd0",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "ff0c84f9d89b1e3373f627559aa027b74125aa8245cba27e058fd2bd14cc752e",
+          "committed_before_sha256": "e7c43f9a3994023fc5a3ec99778773fcef3514735c306875c43c9381576b0649",
+          "committed_after_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44"
+        },
+        {
+          "label": "native_ignore_zero_claim",
+          "headers_sha256": "5635b86f8b9bbc3daccc9cd9e4b3c1efee2746d0b33f9bdbc2766b29fa1efdd0",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "ff0c84f9d89b1e3373f627559aa027b74125aa8245cba27e058fd2bd14cc752e",
+          "committed_before_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44",
+          "committed_after_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44"
+        },
+        {
+          "label": "lease_abort_rolls_back_task_update",
+          "headers_sha256": "5635b86f8b9bbc3daccc9cd9e4b3c1efee2746d0b33f9bdbc2766b29fa1efdd0",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "ff0c84f9d89b1e3373f627559aa027b74125aa8245cba27e058fd2bd14cc752e",
+          "committed_before_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44",
+          "committed_after_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44"
+        },
+        {
+          "label": "claim_after_abort",
+          "headers_sha256": "49dc5dae61b7e8601e62c24247a554612452bfad0bce7fedae1b1d632ec439ab",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "343f897b21d806bf11551aa7842ff4332fb9aa1d2453fed35919036b83f47c5d",
+          "committed_before_sha256": "40c93821418cc28f4db406dc9c96ed3d6933509317677974589ea85b90ec0d44",
+          "committed_after_sha256": "3c8cd6a50e4ae44d9f9dc82d0d851188b97243ff30915952465d66aa3bbec7ce"
+        },
+        {
+          "label": "handler_terminal",
+          "headers_sha256": "91dd042bc569abc78f3055d981e908e55e8c5fc91686c5a39c28c3dd68cd6c11",
+          "physical_pointer_rows_sha256": "e7762db5802d38831b32860b6b01797db8e2a226ff698121e7971fe51028a253",
+          "leases_sha256": "fd61e08dae0c10881de89e8966de8bd3657c5428c52592b7f1b78b7d755f02b3",
+          "committed_before_sha256": "b6e7fc6c0146d096f551a2d9223b1ac6035b57ec0b875b3182ce49c5d1d71c88",
+          "committed_after_sha256": "7adc521323698001f0db814c20b4888762f54248cb82221da326e262158cae37"
+        }
+      ]
+    },
+    "meeting": {
+      "equal_checkpoints": 20,
+      "labels": [
+        "metrics_initial",
+        "invalid_owner",
+        "claim_first",
+        "wrong_owner_assert",
+        "wrong_owner_release",
+        "renew",
+        "claim_before_expiry",
+        "renew_at_expiry",
+        "expired_live_owner",
+        "expired_dead_owner_reclaim",
+        "stale_generation_release",
+        "forged_generation_release",
+        "status_zero_release_rolls_back_lease",
+        "release",
+        "claim_after_release",
+        "release_zero_attempt_floor",
+        "native_ignore_zero_claim",
+        "lease_abort_rolls_back_task_update",
+        "claim_after_abort",
+        "final_assert_current"
+      ],
+      "entered_actual_owners": {
+        "MeetingQueueAdapter.__init__": 1,
+        "MeetingQueueAdapter.metrics": 1,
+        "_sqlite_time": 29,
+        "_latest_actionable_error": 1,
+        "_latest_actionable_error.<locals>.<genexpr>": 1,
+        "_source_time": 5,
+        "MeetingQueueAdapter.claim": 9,
+        "_validate_claim": 9,
+        "_lease_seconds": 15,
+        "_scan_claimable_candidate": 14,
+        "MeetingQueueAdapter.claim.<locals>.fetch_page": 14,
+        "_live_expired_owner": 13,
+        "_lease_expiry": 7,
+        "_ceil_to_whole_second": 7,
+        "_acquire_lease": 5,
+        "_LedgerClaimLifecycle.assert_current": 2,
+        "_assert_ledger_current": 2,
+        "_assert_ledger_current_in_db": 2,
+        "MeetingQueueAdapter.release": 6,
+        "_validate_release": 8,
+        "_release_lease": 6,
+        "_lease_rowid": 8,
+        "MeetingQueueAdapter.renew": 2,
+        "_renew_lease": 2,
+        "_renew_lease_in_db": 2
+      },
+      "expected_errors": {
+        "invalid_owner": {
+          "type": "ValueError",
+          "message": "dispatcher owner must not be empty"
+        },
+        "wrong_owner_assert": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "wrong_owner_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "renew_at_expiry": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "stale_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "forged_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "type": "ValueError",
+          "message": "meeting dispatch claim is no longer owned"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "type": "IntegrityError",
+          "message": "fixture lease abort"
+        }
+      },
+      "decisive": {
+        "claim_first": {
+          "outcome": {
+            "return": {
+              "adapter_name": "meeting",
+              "source_id": "1",
+              "available_at": "2039-12-31T23:30:00+00:00",
+              "priority": 0,
+              "attempt": 4,
+              "generation": 1
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "ae78d2b7c62b50a4350e0ceb92e856dceb78f2331ad46eb2ed77c271fe55cc0c",
+          "committed_after_sha256": "9e03f77c5ebfbd1b946ad4b7fcc1427cdd33d297d0453a9b2e064acbd0c2b210"
+        },
+        "expired_dead_owner_reclaim": {
+          "outcome": {
+            "return": {
+              "adapter_name": "meeting",
+              "source_id": "1",
+              "available_at": "2039-12-31T23:30:00+00:00",
+              "priority": 0,
+              "attempt": 5,
+              "generation": 2
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "bddba0f855f9d0093e62f5eef680ed4fafe4626e42fa32f24291b077a915c671",
+          "committed_after_sha256": "997d530d2bef29a51efa7dc8c6f6b38d68867626b14d2de828a118aa0d1c2268"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "outcome": {
+            "error": {
+              "type": "ValueError",
+              "message": "meeting dispatch claim is no longer owned"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "f97c3d90bf52998679d75275a3b66de0305354c60da8fab43feb2b525d650630",
+          "committed_after_sha256": "f97c3d90bf52998679d75275a3b66de0305354c60da8fab43feb2b525d650630"
+        },
+        "native_ignore_zero_claim": {
+          "outcome": {
+            "return": null
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5",
+          "committed_after_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "outcome": {
+            "error": {
+              "type": "IntegrityError",
+              "message": "fixture lease abort"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5",
+          "committed_after_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5"
+        }
+      },
+      "injections": [],
+      "raw_target_wrapper_witnesses": [],
+      "transition_readback_witnesses": [
+        {
+          "label": "metrics_initial",
+          "headers_sha256": "857dc409910f225c1f467f69ec4793010d1f6c68d6685789edd0e9981f09fc27",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "committed_before_sha256": "ae78d2b7c62b50a4350e0ceb92e856dceb78f2331ad46eb2ed77c271fe55cc0c",
+          "committed_after_sha256": "ae78d2b7c62b50a4350e0ceb92e856dceb78f2331ad46eb2ed77c271fe55cc0c"
+        },
+        {
+          "label": "claim_first",
+          "headers_sha256": "c7ece901c49671cb2c69d87b7b370cae54c755e2c709efa7f6fe9920629c7fd1",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "305414f235aba7241d9e3fd7397ddf2238c377637efdc0cbc85ed3492013d4bb",
+          "committed_before_sha256": "ae78d2b7c62b50a4350e0ceb92e856dceb78f2331ad46eb2ed77c271fe55cc0c",
+          "committed_after_sha256": "9e03f77c5ebfbd1b946ad4b7fcc1427cdd33d297d0453a9b2e064acbd0c2b210"
+        },
+        {
+          "label": "claim_before_expiry",
+          "headers_sha256": "c7ece901c49671cb2c69d87b7b370cae54c755e2c709efa7f6fe9920629c7fd1",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "d2226806b1e03fd2e037f57ae2683f21354fcfacd6f4ba485cf29f8a51ff1d78",
+          "committed_before_sha256": "bddba0f855f9d0093e62f5eef680ed4fafe4626e42fa32f24291b077a915c671",
+          "committed_after_sha256": "bddba0f855f9d0093e62f5eef680ed4fafe4626e42fa32f24291b077a915c671"
+        },
+        {
+          "label": "renew_at_expiry",
+          "headers_sha256": "c7ece901c49671cb2c69d87b7b370cae54c755e2c709efa7f6fe9920629c7fd1",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "d2226806b1e03fd2e037f57ae2683f21354fcfacd6f4ba485cf29f8a51ff1d78",
+          "committed_before_sha256": "bddba0f855f9d0093e62f5eef680ed4fafe4626e42fa32f24291b077a915c671",
+          "committed_after_sha256": "bddba0f855f9d0093e62f5eef680ed4fafe4626e42fa32f24291b077a915c671"
+        },
+        {
+          "label": "expired_live_owner",
+          "headers_sha256": "c7ece901c49671cb2c69d87b7b370cae54c755e2c709efa7f6fe9920629c7fd1",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "d2226806b1e03fd2e037f57ae2683f21354fcfacd6f4ba485cf29f8a51ff1d78",
+          "committed_before_sha256": "bddba0f855f9d0093e62f5eef680ed4fafe4626e42fa32f24291b077a915c671",
+          "committed_after_sha256": "bddba0f855f9d0093e62f5eef680ed4fafe4626e42fa32f24291b077a915c671"
+        },
+        {
+          "label": "expired_dead_owner_reclaim",
+          "headers_sha256": "d1aa3b36f36b0ed7dc6b1e0ea60b4b48a040eddb0ae94c40325c6ed8d2194fbd",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "21437549fae632283f1037703767158369fe25af5ad36edff2402c9cae18c8d3",
+          "committed_before_sha256": "bddba0f855f9d0093e62f5eef680ed4fafe4626e42fa32f24291b077a915c671",
+          "committed_after_sha256": "997d530d2bef29a51efa7dc8c6f6b38d68867626b14d2de828a118aa0d1c2268"
+        },
+        {
+          "label": "status_zero_release_rolls_back_lease",
+          "headers_sha256": "9f6235d8343a1bcaf0dc45097784b58c9ed62a5c719d8d55bd77841eeaf481e6",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "21437549fae632283f1037703767158369fe25af5ad36edff2402c9cae18c8d3",
+          "committed_before_sha256": "f97c3d90bf52998679d75275a3b66de0305354c60da8fab43feb2b525d650630",
+          "committed_after_sha256": "f97c3d90bf52998679d75275a3b66de0305354c60da8fab43feb2b525d650630"
+        },
+        {
+          "label": "release",
+          "headers_sha256": "bb617d8011971abfd21beea35dcd00273469270c31747043838931d60bb30c39",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "006709ec3cb1cf4b5c913060cc7258502040bea248396e72578f337d2e4e5eca",
+          "committed_before_sha256": "997d530d2bef29a51efa7dc8c6f6b38d68867626b14d2de828a118aa0d1c2268",
+          "committed_after_sha256": "3ebb80432417e1ca082040a33280a0edab863f89901f721c589a7c0108d21354"
+        },
+        {
+          "label": "release_zero_attempt_floor",
+          "headers_sha256": "a3869b09ed8e63c4afcc85b3302ad3179d85c07bccf989f329d6bc9a8ae92842",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "5777128111435859a660894aebea4eed5c87094a22cfccf683abbf3f3207bdae",
+          "committed_before_sha256": "4e24e71f258fd98cac81adbedd53044c0b43366da5dd4f7010a8d53875f0304f",
+          "committed_after_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5"
+        },
+        {
+          "label": "native_ignore_zero_claim",
+          "headers_sha256": "a3869b09ed8e63c4afcc85b3302ad3179d85c07bccf989f329d6bc9a8ae92842",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "5777128111435859a660894aebea4eed5c87094a22cfccf683abbf3f3207bdae",
+          "committed_before_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5",
+          "committed_after_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5"
+        },
+        {
+          "label": "lease_abort_rolls_back_task_update",
+          "headers_sha256": "a3869b09ed8e63c4afcc85b3302ad3179d85c07bccf989f329d6bc9a8ae92842",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "5777128111435859a660894aebea4eed5c87094a22cfccf683abbf3f3207bdae",
+          "committed_before_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5",
+          "committed_after_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5"
+        },
+        {
+          "label": "claim_after_abort",
+          "headers_sha256": "9009784e635161673931fe0bb3343726cd1fd84eda3f2059515d88fa45452dae",
+          "physical_pointer_rows_sha256": "82d16b1c04cf9432a85726ae4599f523e51aea6e9a8b6d105ee0a17832029938",
+          "leases_sha256": "058827189bbd34e7e36358ebd1fd4030f6d33c99beee0e74e63d90f547807554",
+          "committed_before_sha256": "91f8f7edebb346774d5ef48d0cdfa7193b6f6669d9b97a848dee2903728a48e5",
+          "committed_after_sha256": "5c00822b9799548e007b2b957c3b9511e3413d3474c16337cf7c609ee05c0b10"
+        }
+      ]
+    },
+    "okr": {
+      "equal_checkpoints": 20,
+      "labels": [
+        "metrics_initial",
+        "invalid_owner",
+        "claim_first",
+        "wrong_owner_assert",
+        "wrong_owner_release",
+        "renew",
+        "claim_before_expiry",
+        "renew_at_expiry",
+        "expired_live_owner",
+        "expired_dead_owner_reclaim",
+        "stale_generation_release",
+        "forged_generation_release",
+        "status_zero_release_rolls_back_lease",
+        "release",
+        "claim_after_release",
+        "release_zero_attempt_floor",
+        "native_ignore_zero_claim",
+        "lease_abort_rolls_back_task_update",
+        "claim_after_abort",
+        "final_assert_current"
+      ],
+      "entered_actual_owners": {
+        "OkrReviewQueueAdapter.__init__": 1,
+        "OkrReviewQueueAdapter.metrics": 1,
+        "_sqlite_time": 29,
+        "_latest_actionable_error": 1,
+        "_latest_actionable_error.<locals>.<genexpr>": 1,
+        "_source_time": 5,
+        "OkrReviewQueueAdapter.claim": 9,
+        "_validate_claim": 9,
+        "_lease_seconds": 15,
+        "_scan_claimable_candidate": 14,
+        "OkrReviewQueueAdapter.claim.<locals>.fetch_page": 14,
+        "_live_expired_owner": 13,
+        "_lease_expiry": 7,
+        "_ceil_to_whole_second": 7,
+        "_acquire_lease": 5,
+        "_LedgerClaimLifecycle.assert_current": 2,
+        "_assert_ledger_current": 2,
+        "_assert_ledger_current_in_db": 2,
+        "OkrReviewQueueAdapter.release": 6,
+        "_validate_release": 8,
+        "_release_lease": 6,
+        "_lease_rowid": 8,
+        "OkrReviewQueueAdapter.renew": 2,
+        "_renew_lease": 2,
+        "_renew_lease_in_db": 2
+      },
+      "expected_errors": {
+        "invalid_owner": {
+          "type": "ValueError",
+          "message": "dispatcher owner must not be empty"
+        },
+        "wrong_owner_assert": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "wrong_owner_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "renew_at_expiry": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "stale_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "forged_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "type": "ValueError",
+          "message": "OKR review dispatch claim is no longer owned"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "type": "IntegrityError",
+          "message": "fixture lease abort"
+        }
+      },
+      "decisive": {
+        "claim_first": {
+          "outcome": {
+            "return": {
+              "adapter_name": "okr_review",
+              "source_id": "1",
+              "available_at": "2040-01-01T00:00:00+00:00",
+              "priority": 0,
+              "attempt": 1,
+              "generation": 1
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "690e5eb32397c5403250998e6fe0525714dc72e1058df36e79470a60b9bf07cc",
+          "committed_after_sha256": "22fab9251a6e8046636699a7b0b74f1d2afa9ba366b343ee2adc82a3adb8e2ed"
+        },
+        "expired_dead_owner_reclaim": {
+          "outcome": {
+            "return": {
+              "adapter_name": "okr_review",
+              "source_id": "1",
+              "available_at": "2040-01-01T00:00:00+00:00",
+              "priority": 0,
+              "attempt": 2,
+              "generation": 2
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "f361264ba82c9486cac89b81d2bd43b8da9ddd5c52dd1b4d0940b2cf9556a441",
+          "committed_after_sha256": "fbc2c09c6bf40be9cd6ea3e10c42c6148b59bfa34f7838434f11d8cd923dc950"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "outcome": {
+            "error": {
+              "type": "ValueError",
+              "message": "OKR review dispatch claim is no longer owned"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "bc09b2554d746b9a2e53688023be18515d600997c5862fa2747578f698b7a7fb",
+          "committed_after_sha256": "bc09b2554d746b9a2e53688023be18515d600997c5862fa2747578f698b7a7fb"
+        },
+        "native_ignore_zero_claim": {
+          "outcome": {
+            "return": null
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d",
+          "committed_after_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "outcome": {
+            "error": {
+              "type": "IntegrityError",
+              "message": "fixture lease abort"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d",
+          "committed_after_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d"
+        }
+      },
+      "injections": [],
+      "raw_target_wrapper_witnesses": [],
+      "transition_readback_witnesses": [
+        {
+          "label": "metrics_initial",
+          "headers_sha256": "8b0a477b1adf0738c14c38ba9d4a69023d1f561d03163bd4f9dcf7b9ad43854a",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "committed_before_sha256": "690e5eb32397c5403250998e6fe0525714dc72e1058df36e79470a60b9bf07cc",
+          "committed_after_sha256": "690e5eb32397c5403250998e6fe0525714dc72e1058df36e79470a60b9bf07cc"
+        },
+        {
+          "label": "claim_first",
+          "headers_sha256": "35a82cbf4e76595a11c9b57e5a24f6951ad1c5f23db6908a1a8265d31c41367d",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "cee31f4d3e221e9354ff29ce02a64f27070a146dffdf2e938f39b5a8f8282cc3",
+          "committed_before_sha256": "690e5eb32397c5403250998e6fe0525714dc72e1058df36e79470a60b9bf07cc",
+          "committed_after_sha256": "22fab9251a6e8046636699a7b0b74f1d2afa9ba366b343ee2adc82a3adb8e2ed"
+        },
+        {
+          "label": "claim_before_expiry",
+          "headers_sha256": "35a82cbf4e76595a11c9b57e5a24f6951ad1c5f23db6908a1a8265d31c41367d",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "b2520a11aa2ce3623c4645c4a98bcf292daff4ab17da9fda90f65fb6bb8a3530",
+          "committed_before_sha256": "f361264ba82c9486cac89b81d2bd43b8da9ddd5c52dd1b4d0940b2cf9556a441",
+          "committed_after_sha256": "f361264ba82c9486cac89b81d2bd43b8da9ddd5c52dd1b4d0940b2cf9556a441"
+        },
+        {
+          "label": "renew_at_expiry",
+          "headers_sha256": "35a82cbf4e76595a11c9b57e5a24f6951ad1c5f23db6908a1a8265d31c41367d",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "b2520a11aa2ce3623c4645c4a98bcf292daff4ab17da9fda90f65fb6bb8a3530",
+          "committed_before_sha256": "f361264ba82c9486cac89b81d2bd43b8da9ddd5c52dd1b4d0940b2cf9556a441",
+          "committed_after_sha256": "f361264ba82c9486cac89b81d2bd43b8da9ddd5c52dd1b4d0940b2cf9556a441"
+        },
+        {
+          "label": "expired_live_owner",
+          "headers_sha256": "35a82cbf4e76595a11c9b57e5a24f6951ad1c5f23db6908a1a8265d31c41367d",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "b2520a11aa2ce3623c4645c4a98bcf292daff4ab17da9fda90f65fb6bb8a3530",
+          "committed_before_sha256": "f361264ba82c9486cac89b81d2bd43b8da9ddd5c52dd1b4d0940b2cf9556a441",
+          "committed_after_sha256": "f361264ba82c9486cac89b81d2bd43b8da9ddd5c52dd1b4d0940b2cf9556a441"
+        },
+        {
+          "label": "expired_dead_owner_reclaim",
+          "headers_sha256": "35a82cbf4e76595a11c9b57e5a24f6951ad1c5f23db6908a1a8265d31c41367d",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "7e33a38881619a27a561e6bbde92823265257fb7bbd1d288995e9a55b4775275",
+          "committed_before_sha256": "f361264ba82c9486cac89b81d2bd43b8da9ddd5c52dd1b4d0940b2cf9556a441",
+          "committed_after_sha256": "fbc2c09c6bf40be9cd6ea3e10c42c6148b59bfa34f7838434f11d8cd923dc950"
+        },
+        {
+          "label": "status_zero_release_rolls_back_lease",
+          "headers_sha256": "8b0a477b1adf0738c14c38ba9d4a69023d1f561d03163bd4f9dcf7b9ad43854a",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "7e33a38881619a27a561e6bbde92823265257fb7bbd1d288995e9a55b4775275",
+          "committed_before_sha256": "bc09b2554d746b9a2e53688023be18515d600997c5862fa2747578f698b7a7fb",
+          "committed_after_sha256": "bc09b2554d746b9a2e53688023be18515d600997c5862fa2747578f698b7a7fb"
+        },
+        {
+          "label": "release",
+          "headers_sha256": "8b0a477b1adf0738c14c38ba9d4a69023d1f561d03163bd4f9dcf7b9ad43854a",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "b276ff29402960666d7f703ce8a2791c8b17c3e03be22ab8e3089c51678c7961",
+          "committed_before_sha256": "fbc2c09c6bf40be9cd6ea3e10c42c6148b59bfa34f7838434f11d8cd923dc950",
+          "committed_after_sha256": "68c4b34d414bbb471b5f2eb11491d024ed41f2930b402a8e888873a74fb9de2d"
+        },
+        {
+          "label": "release_zero_attempt_floor",
+          "headers_sha256": "8b0a477b1adf0738c14c38ba9d4a69023d1f561d03163bd4f9dcf7b9ad43854a",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "63ed7e0c7a17dd3e6b0546eaa1fcefc0026d97d4237fc03808a9bff14c7ef4d0",
+          "committed_before_sha256": "c327ed636aa438f5888ba07080ed399af7b01dcf7191d8ab273653deef0964cc",
+          "committed_after_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d"
+        },
+        {
+          "label": "native_ignore_zero_claim",
+          "headers_sha256": "8b0a477b1adf0738c14c38ba9d4a69023d1f561d03163bd4f9dcf7b9ad43854a",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "63ed7e0c7a17dd3e6b0546eaa1fcefc0026d97d4237fc03808a9bff14c7ef4d0",
+          "committed_before_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d",
+          "committed_after_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d"
+        },
+        {
+          "label": "lease_abort_rolls_back_task_update",
+          "headers_sha256": "8b0a477b1adf0738c14c38ba9d4a69023d1f561d03163bd4f9dcf7b9ad43854a",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "63ed7e0c7a17dd3e6b0546eaa1fcefc0026d97d4237fc03808a9bff14c7ef4d0",
+          "committed_before_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d",
+          "committed_after_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d"
+        },
+        {
+          "label": "claim_after_abort",
+          "headers_sha256": "35a82cbf4e76595a11c9b57e5a24f6951ad1c5f23db6908a1a8265d31c41367d",
+          "physical_pointer_rows_sha256": "d0395e66a643449635dfa234588767635dbe838cbcc60b67b60e8947976c951d",
+          "leases_sha256": "4f46a2c971c724b8f4aa70a2d3386398167f94590559bac4ffb5f88d03110a66",
+          "committed_before_sha256": "91dd4612cf807cfc583405937e127a28f02efbd80f11d66438c9bea38993610d",
+          "committed_after_sha256": "1b8919f9e0b9369d85463c8dae1901871bb9072c436d0e1fed7cd68bf271c377"
+        }
+      ]
+    },
+    "summary-adapter": {
+      "equal_checkpoints": 20,
+      "labels": [
+        "metrics_initial",
+        "invalid_owner",
+        "claim_first",
+        "wrong_owner_assert",
+        "wrong_owner_release",
+        "renew",
+        "claim_before_expiry",
+        "renew_at_expiry",
+        "expired_live_owner",
+        "expired_dead_owner_reclaim",
+        "stale_generation_release",
+        "forged_generation_release",
+        "status_zero_release_rolls_back_lease",
+        "release",
+        "claim_after_release",
+        "release_zero_attempt_floor",
+        "native_ignore_zero_claim",
+        "lease_abort_rolls_back_task_update",
+        "claim_after_abort",
+        "final_assert_current"
+      ],
+      "entered_actual_owners": {
+        "WorkSummaryQueueAdapter.__init__": 1,
+        "decode_work_summary_payload": 40,
+        "WorkSummaryQueueAdapter.metrics": 1,
+        "_sqlite_time": 29,
+        "_latest_actionable_error": 1,
+        "_latest_actionable_error.<locals>.<genexpr>": 1,
+        "_source_time": 5,
+        "WorkSummaryQueueAdapter.claim": 9,
+        "_validate_claim": 9,
+        "_lease_seconds": 15,
+        "_scan_claimable_candidate": 14,
+        "WorkSummaryQueueAdapter.claim.<locals>.fetch_page": 14,
+        "_live_expired_owner": 13,
+        "_lease_expiry": 7,
+        "_ceil_to_whole_second": 7,
+        "_acquire_lease": 5,
+        "_LedgerClaimLifecycle.assert_current": 2,
+        "_assert_ledger_current": 2,
+        "_assert_ledger_current_in_db": 2,
+        "WorkSummaryQueueAdapter.release": 6,
+        "_validate_release": 8,
+        "_release_lease": 6,
+        "_lease_rowid": 8,
+        "WorkSummaryQueueAdapter.renew": 2,
+        "_renew_lease": 2,
+        "_renew_lease_in_db": 2
+      },
+      "expected_errors": {
+        "invalid_owner": {
+          "type": "ValueError",
+          "message": "dispatcher owner must not be empty"
+        },
+        "wrong_owner_assert": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "wrong_owner_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "renew_at_expiry": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "stale_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "forged_generation_release": {
+          "type": "ValueError",
+          "message": "dispatcher source claim is no longer owned"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "type": "ValueError",
+          "message": "work-summary dispatch claim is no longer owned"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "type": "IntegrityError",
+          "message": "fixture lease abort"
+        }
+      },
+      "decisive": {
+        "claim_first": {
+          "outcome": {
+            "return": {
+              "adapter_name": "work_summary",
+              "source_id": "1",
+              "available_at": "2040-01-01T00:00:00+00:00",
+              "priority": 0,
+              "attempt": 4,
+              "generation": 1
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "65fab7b8731afc49dc1bf71bb22d0bc16480f1cce6932ca81fde0be230fcfe1d",
+          "committed_after_sha256": "94dd44e5dc5ecacd5f052985b712d4ab1f9e153b0c76d321ca714cfa34cf9fd1"
+        },
+        "expired_dead_owner_reclaim": {
+          "outcome": {
+            "return": {
+              "adapter_name": "work_summary",
+              "source_id": "1",
+              "available_at": "2040-01-01T00:00:00+00:00",
+              "priority": 0,
+              "attempt": 5,
+              "generation": 2
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "ec62c2eab24c9fdd176144ff8f0aa80791bf2f1af3995971c81609ba720334d6",
+          "committed_after_sha256": "f9dec853f202ca43474dfce72e407490cc9cdfc179077888695df31becf52e2d"
+        },
+        "status_zero_release_rolls_back_lease": {
+          "outcome": {
+            "error": {
+              "type": "ValueError",
+              "message": "work-summary dispatch claim is no longer owned"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "d38f07d8d194c03d6c296a2950c448733e813ffe0b1d71ad45ae489ef1db8eac",
+          "committed_after_sha256": "d38f07d8d194c03d6c296a2950c448733e813ffe0b1d71ad45ae489ef1db8eac"
+        },
+        "native_ignore_zero_claim": {
+          "outcome": {
+            "return": null
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7",
+          "committed_after_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7"
+        },
+        "lease_abort_rolls_back_task_update": {
+          "outcome": {
+            "error": {
+              "type": "IntegrityError",
+              "message": "fixture lease abort"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7",
+          "committed_after_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7"
+        }
+      },
+      "injections": [],
+      "raw_target_wrapper_witnesses": [],
+      "transition_readback_witnesses": [
+        {
+          "label": "metrics_initial",
+          "headers_sha256": "d14f8237f6e573c187d6016de1aae0aef5e816d2a2a8225eb3c7568f467f818a",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "committed_before_sha256": "65fab7b8731afc49dc1bf71bb22d0bc16480f1cce6932ca81fde0be230fcfe1d",
+          "committed_after_sha256": "65fab7b8731afc49dc1bf71bb22d0bc16480f1cce6932ca81fde0be230fcfe1d"
+        },
+        {
+          "label": "claim_first",
+          "headers_sha256": "b11b61fd7690f15f59a14d15894cb17983b5fe23563677e7023fd149f9179df7",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "7f174c0b2497c2dd0977d6a42990d70ed2e699494d0a5a63b728ffbe576648f9",
+          "committed_before_sha256": "65fab7b8731afc49dc1bf71bb22d0bc16480f1cce6932ca81fde0be230fcfe1d",
+          "committed_after_sha256": "94dd44e5dc5ecacd5f052985b712d4ab1f9e153b0c76d321ca714cfa34cf9fd1"
+        },
+        {
+          "label": "claim_before_expiry",
+          "headers_sha256": "b11b61fd7690f15f59a14d15894cb17983b5fe23563677e7023fd149f9179df7",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "7da9dd6eadf543bea948d06cf2daf505fb7084adede143246167c2db4987fa80",
+          "committed_before_sha256": "ec62c2eab24c9fdd176144ff8f0aa80791bf2f1af3995971c81609ba720334d6",
+          "committed_after_sha256": "ec62c2eab24c9fdd176144ff8f0aa80791bf2f1af3995971c81609ba720334d6"
+        },
+        {
+          "label": "renew_at_expiry",
+          "headers_sha256": "b11b61fd7690f15f59a14d15894cb17983b5fe23563677e7023fd149f9179df7",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "7da9dd6eadf543bea948d06cf2daf505fb7084adede143246167c2db4987fa80",
+          "committed_before_sha256": "ec62c2eab24c9fdd176144ff8f0aa80791bf2f1af3995971c81609ba720334d6",
+          "committed_after_sha256": "ec62c2eab24c9fdd176144ff8f0aa80791bf2f1af3995971c81609ba720334d6"
+        },
+        {
+          "label": "expired_live_owner",
+          "headers_sha256": "b11b61fd7690f15f59a14d15894cb17983b5fe23563677e7023fd149f9179df7",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "7da9dd6eadf543bea948d06cf2daf505fb7084adede143246167c2db4987fa80",
+          "committed_before_sha256": "ec62c2eab24c9fdd176144ff8f0aa80791bf2f1af3995971c81609ba720334d6",
+          "committed_after_sha256": "ec62c2eab24c9fdd176144ff8f0aa80791bf2f1af3995971c81609ba720334d6"
+        },
+        {
+          "label": "expired_dead_owner_reclaim",
+          "headers_sha256": "b844dd2b26d7e0cc749b5a3cf480b803954bdfeac23ab4d5b7c44de1ca8203da",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "9f8094d8673545f64096b1d06dc2c796121c30e1187470ceffc4b9657facd2d8",
+          "committed_before_sha256": "ec62c2eab24c9fdd176144ff8f0aa80791bf2f1af3995971c81609ba720334d6",
+          "committed_after_sha256": "f9dec853f202ca43474dfce72e407490cc9cdfc179077888695df31becf52e2d"
+        },
+        {
+          "label": "status_zero_release_rolls_back_lease",
+          "headers_sha256": "4e1bf4a89ccef38a691f46840b6686e3b2acc5eca1239dc9122578186f04623a",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "9f8094d8673545f64096b1d06dc2c796121c30e1187470ceffc4b9657facd2d8",
+          "committed_before_sha256": "d38f07d8d194c03d6c296a2950c448733e813ffe0b1d71ad45ae489ef1db8eac",
+          "committed_after_sha256": "d38f07d8d194c03d6c296a2950c448733e813ffe0b1d71ad45ae489ef1db8eac"
+        },
+        {
+          "label": "release",
+          "headers_sha256": "f4fbfd50d4d33d7c433c4f64a3d3cf9dc85275d831477e608ee5671496c0f592",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "aab36b95be528cb7b1a0a0aa29c81c07bbd2b73eb771c0de094c653ac3d2cea9",
+          "committed_before_sha256": "f9dec853f202ca43474dfce72e407490cc9cdfc179077888695df31becf52e2d",
+          "committed_after_sha256": "c1a50f68704b0e55e2c712dba830a5e8c4f87bc81d883c13659fed6c96d29515"
+        },
+        {
+          "label": "release_zero_attempt_floor",
+          "headers_sha256": "02867cbae87d5c12bb45bd8e21f116def9cd73bacf1d5b45d192df8fff956481",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "8e0db7405d897a83ae4ee9e22b8e98e3392ae8fd38f3dbcca4e8d72196b4497a",
+          "committed_before_sha256": "11e60626be5cb563d15017e1c3984551fbe0840ef145e7ff228c408f63308aec",
+          "committed_after_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7"
+        },
+        {
+          "label": "native_ignore_zero_claim",
+          "headers_sha256": "02867cbae87d5c12bb45bd8e21f116def9cd73bacf1d5b45d192df8fff956481",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "8e0db7405d897a83ae4ee9e22b8e98e3392ae8fd38f3dbcca4e8d72196b4497a",
+          "committed_before_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7",
+          "committed_after_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7"
+        },
+        {
+          "label": "lease_abort_rolls_back_task_update",
+          "headers_sha256": "02867cbae87d5c12bb45bd8e21f116def9cd73bacf1d5b45d192df8fff956481",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "8e0db7405d897a83ae4ee9e22b8e98e3392ae8fd38f3dbcca4e8d72196b4497a",
+          "committed_before_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7",
+          "committed_after_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7"
+        },
+        {
+          "label": "claim_after_abort",
+          "headers_sha256": "41e688691ddf110d4cea5907d0cfa3e41eee670e4b68991877b05159a2f44e21",
+          "physical_pointer_rows_sha256": "fe83499a355b4ddeec8622652c0d653ea109b2db2b75a0aaaf66e78b697007aa",
+          "leases_sha256": "6de7f0ade365e1633a7e75775247675e597d987b5b63fa453cee9dcf5c6330e6",
+          "committed_before_sha256": "b51c408d05247fc12ae0424c18decb96065b06b4df571c05dc28229d002769d7",
+          "committed_after_sha256": "d7bcb757243132d088511b8f32c79ccee6cd23122d542cccf8a743ec8e5205a6"
+        }
+      ]
+    },
+    "channels": {
+      "equal_checkpoints": 4,
+      "labels": [
+        "channel_dingtalk",
+        "channel_wechat",
+        "channel_scheduled_override",
+        "channel_email_excluded"
+      ],
+      "entered_actual_owners": {
+        "ReplyQueueAdapter.__init__": 2,
+        "ReplyQueueAdapter.claim": 4,
+        "_validate_claim": 4,
+        "_lease_seconds": 8,
+        "_sqlite_time": 8,
+        "_lease_expiry": 4,
+        "_ceil_to_whole_second": 4,
+        "_scan_claimable_candidate": 7,
+        "ReplyQueueAdapter.claim.<locals>.fetch_page": 7,
+        "ReplyQueueAdapter._channel_clause": 7,
+        "_live_expired_owner": 6,
+        "_acquire_lease": 3,
+        "_source_time": 3,
+        "ScheduledExecutionQueueAdapter._channel_clause": 3
+      },
+      "expected_errors": {},
+      "decisive": {},
+      "injections": [],
+      "raw_target_wrapper_witnesses": [],
+      "transition_readback_witnesses": []
+    },
+    "compression": {
+      "equal_checkpoints": 3,
+      "labels": [
+        "compression_first",
+        "compression_idempotent",
+        "compression_invalid_batch"
+      ],
+      "entered_actual_owners": {
+        "encode_work_summary_payload": 9,
+        "decode_work_summary_payload": 44,
+        "migrate_work_summary_payloads": 3
+      },
+      "expected_errors": {
+        "compression_invalid_batch": {
+          "type": "ValueError",
+          "message": "batch_size must be positive"
+        }
+      },
+      "decisive": {
+        "compression_first": {
+          "outcome": {
+            "return": {
+              "scanned": 4,
+              "compressed": 2,
+              "bytes_before": 31022,
+              "bytes_after": 228
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT",
+            "BEGIN IMMEDIATE",
+            "COMMIT",
+            "BEGIN IMMEDIATE",
+            "COMMIT",
+            "BEGIN IMMEDIATE",
+            "COMMIT",
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            },
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "83af18d7f9699ea0c7720c9d3a8481f060d052613a583ef49100dfeb32ac45ed",
+          "committed_after_sha256": "14de92937eaeba40051935be06e0766106a33d35817aae97c260a9dc5cde8199"
+        }
+      },
+      "injections": [],
+      "raw_target_wrapper_witnesses": [
+        {
+          "id": 1,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "994d9ca16180b7101f051e99033b643f01eab622029930010c6f0c2541b075a1",
+          "business_leaf_json_type": "str",
+          "business_leaf_json_sha256": "848e0fa7d76976b4c83f393e87378012614b38be53b0e0907600ee7c34df275d"
+        },
+        {
+          "id": 2,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "caf28aa9e7fcd76e85dfd0109d76ba50074fb2095a5a64fe5ad8620dda6a0fdd",
+          "business_leaf_json_type": "str",
+          "business_leaf_json_sha256": "c89a148be40e6752261e3038609a4b68de22fa3bfdaf32f884edffb8480b9bbe"
+        },
+        {
+          "id": 3,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "d0932ae2c546889dd381196a90629d91c960963a0bb88d9c39eed7fe33fb71bd",
+          "business_leaf_json_type": "str",
+          "business_leaf_json_sha256": "848e0fa7d76976b4c83f393e87378012614b38be53b0e0907600ee7c34df275d"
+        },
+        {
+          "id": 4,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "1688fcb01d1b30329c697a861a48e786ffba0720d77afe79326a4aabd23a46c5",
+          "business_leaf_json_type": "dict",
+          "business_leaf_json_sha256": "32fc1e8a6f08f9cfda7b93b47605c9b455d1bfd02b313bf5b2e47365369b71f6"
+        },
+        {
+          "id": 5,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "55f258829d207a30f4375c3147be587d333df4f704590dece3d6b5376253ae49",
+          "business_leaf_json_type": "str",
+          "business_leaf_json_sha256": "848e0fa7d76976b4c83f393e87378012614b38be53b0e0907600ee7c34df275d"
+        },
+        {
+          "id": 1,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "994d9ca16180b7101f051e99033b643f01eab622029930010c6f0c2541b075a1",
+          "business_leaf_json_type": "dict",
+          "business_leaf_json_sha256": "32fc1e8a6f08f9cfda7b93b47605c9b455d1bfd02b313bf5b2e47365369b71f6"
+        },
+        {
+          "id": 5,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "55f258829d207a30f4375c3147be587d333df4f704590dece3d6b5376253ae49",
+          "business_leaf_json_type": "dict",
+          "business_leaf_json_sha256": "32fc1e8a6f08f9cfda7b93b47605c9b455d1bfd02b313bf5b2e47365369b71f6"
+        }
+      ],
+      "transition_readback_witnesses": []
+    },
+    "stale-leaf": {
+      "equal_checkpoints": 1,
+      "labels": [
+        "stale-leaf"
+      ],
+      "entered_actual_owners": {
+        "decode_work_summary_payload": 4,
+        "migrate_work_summary_payloads": 1,
+        "encode_work_summary_payload": 1
+      },
+      "expected_errors": {},
+      "decisive": {
+        "stale-leaf": {
+          "outcome": {
+            "return": {
+              "scanned": 1,
+              "compressed": 0,
+              "bytes_before": 0,
+              "bytes_after": 0
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT",
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 0
+            }
+          ],
+          "committed_before_sha256": "0a34e573ad3c83bcb0dce33fe4274693cbdff76af5bb172d6b0277e94181df36",
+          "committed_after_sha256": "24ccdaa14203cb17f414fa313f6eb86bbfb402c776733afd56e97a024f47b5a9"
+        }
+      },
+      "injections": [
+        {
+          "mode": "same-transaction stale-leaf seam before original CAS",
+          "row_id": 1,
+          "changed_leaf_sha256": "aa7f0d3abe77429a0e08b5316776e8d450e3c505e6017f08b7f46635fef41878"
+        }
+      ],
+      "raw_target_wrapper_witnesses": [
+        {
+          "id": 1,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "994d9ca16180b7101f051e99033b643f01eab622029930010c6f0c2541b075a1",
+          "business_leaf_json_type": "str",
+          "business_leaf_json_sha256": "848e0fa7d76976b4c83f393e87378012614b38be53b0e0907600ee7c34df275d"
+        },
+        {
+          "id": 1,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "994d9ca16180b7101f051e99033b643f01eab622029930010c6f0c2541b075a1",
+          "business_leaf_json_type": "str",
+          "business_leaf_json_sha256": "52a943478e9d5da0c9a65c1634e736378b0c20254b79d13ecc2855fd74f1c3dc"
+        }
+      ],
+      "transition_readback_witnesses": []
+    },
+    "competing-writer": {
+      "equal_checkpoints": 1,
+      "labels": [
+        "competing-writer"
+      ],
+      "entered_actual_owners": {
+        "decode_work_summary_payload": 4,
+        "migrate_work_summary_payloads": 1,
+        "encode_work_summary_payload": 1
+      },
+      "expected_errors": {},
+      "decisive": {
+        "competing-writer": {
+          "outcome": {
+            "return": {
+              "scanned": 1,
+              "compressed": 1,
+              "bytes_before": 15511,
+              "bytes_after": 114
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT",
+            "BEGIN IMMEDIATE",
+            "COMMIT"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "0a34e573ad3c83bcb0dce33fe4274693cbdff76af5bb172d6b0277e94181df36",
+          "committed_after_sha256": "dfa12af23d899723dec0bf3e19b3a075fd3ce0c72262bedba97dad6716b5b81b"
+        }
+      },
+      "injections": [
+        {
+          "mode": "actual second writer inside BEGIN IMMEDIATE",
+          "error": "OperationalError",
+          "message": "database is locked"
+        }
+      ],
+      "raw_target_wrapper_witnesses": [
+        {
+          "id": 1,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "994d9ca16180b7101f051e99033b643f01eab622029930010c6f0c2541b075a1",
+          "business_leaf_json_type": "str",
+          "business_leaf_json_sha256": "848e0fa7d76976b4c83f393e87378012614b38be53b0e0907600ee7c34df275d"
+        },
+        {
+          "id": 1,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "994d9ca16180b7101f051e99033b643f01eab622029930010c6f0c2541b075a1",
+          "business_leaf_json_type": "dict",
+          "business_leaf_json_sha256": "32fc1e8a6f08f9cfda7b93b47605c9b455d1bfd02b313bf5b2e47365369b71f6"
+        }
+      ],
+      "transition_readback_witnesses": []
+    },
+    "batch-abort": {
+      "equal_checkpoints": 1,
+      "labels": [
+        "batch-abort"
+      ],
+      "entered_actual_owners": {
+        "decode_work_summary_payload": 8,
+        "migrate_work_summary_payloads": 1,
+        "encode_work_summary_payload": 2
+      },
+      "expected_errors": {
+        "batch-abort": {
+          "type": "IntegrityError",
+          "message": "fixture second batch abort"
+        }
+      },
+      "decisive": {
+        "batch-abort": {
+          "outcome": {
+            "error": {
+              "type": "IntegrityError",
+              "message": "fixture second batch abort"
+            }
+          },
+          "transactions": [
+            "BEGIN IMMEDIATE",
+            "COMMIT",
+            "BEGIN IMMEDIATE",
+            "ROLLBACK"
+          ],
+          "native_task_rowcounts": [
+            {
+              "table": "tasks",
+              "rowcount": 1
+            }
+          ],
+          "committed_before_sha256": "29e6577aa2ceff611d6ea1ba04bcd3f0a03ebae1956f20dc1b5fce5e273b469e",
+          "committed_after_sha256": "4918c0327956090e8e0263f93d3a40bb77dcf3d146cea3fb39313ab8b06076e3"
+        }
+      },
+      "injections": [],
+      "raw_target_wrapper_witnesses": [
+        {
+          "id": 1,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "994d9ca16180b7101f051e99033b643f01eab622029930010c6f0c2541b075a1",
+          "business_leaf_json_type": "str",
+          "business_leaf_json_sha256": "848e0fa7d76976b4c83f393e87378012614b38be53b0e0907600ee7c34df275d"
+        },
+        {
+          "id": 2,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "caf28aa9e7fcd76e85dfd0109d76ba50074fb2095a5a64fe5ad8620dda6a0fdd",
+          "business_leaf_json_type": "str",
+          "business_leaf_json_sha256": "848e0fa7d76976b4c83f393e87378012614b38be53b0e0907600ee7c34df275d"
+        },
+        {
+          "id": 1,
+          "outer_type": "str",
+          "outer_json_valid": true,
+          "siblings_sha256": "994d9ca16180b7101f051e99033b643f01eab622029930010c6f0c2541b075a1",
+          "business_leaf_json_type": "dict",
+          "business_leaf_json_sha256": "32fc1e8a6f08f9cfda7b93b47605c9b455d1bfd02b313bf5b2e47365369b71f6"
+        }
+      ],
+      "transition_readback_witnesses": []
+    }
+  },
+  "equal_checkpoints": 122,
+  "public_methods": [
+    "MeetingQueueAdapter.assert_current",
+    "MeetingQueueAdapter.claim",
+    "MeetingQueueAdapter.metrics",
+    "MeetingQueueAdapter.release",
+    "MeetingQueueAdapter.renew",
+    "OkrReviewQueueAdapter.assert_current",
+    "OkrReviewQueueAdapter.claim",
+    "OkrReviewQueueAdapter.metrics",
+    "OkrReviewQueueAdapter.release",
+    "OkrReviewQueueAdapter.renew",
+    "ReplyQueueAdapter.assert_current",
+    "ReplyQueueAdapter.claim",
+    "ReplyQueueAdapter.handle_handler_error",
+    "ReplyQueueAdapter.metrics",
+    "ReplyQueueAdapter.release",
+    "ReplyQueueAdapter.renew",
+    "ScheduledExecutionQueueAdapter.assert_current",
+    "ScheduledExecutionQueueAdapter.claim",
+    "ScheduledExecutionQueueAdapter.handle_handler_error",
+    "ScheduledExecutionQueueAdapter.metrics",
+    "ScheduledExecutionQueueAdapter.release",
+    "ScheduledExecutionQueueAdapter.renew",
+    "WorkSummaryQueueAdapter.assert_current",
+    "WorkSummaryQueueAdapter.claim",
+    "WorkSummaryQueueAdapter.metrics",
+    "WorkSummaryQueueAdapter.release",
+    "WorkSummaryQueueAdapter.renew",
+    "app.work_summary_payload.migrate_work_summary_payloads"
+  ],
+  "record_sha256": {
+    "source": "5ab8706ba88a3213b3d2d350b0cdd68d6e2c89aeb63f2d97d57cb205d9a09c17",
+    "target": "5ab8706ba88a3213b3d2d350b0cdd68d6e2c89aeb63f2d97d57cb205d9a09c17"
+  },
+  "coverage_assertions": {
+    "fixed_equal_checkpoints": 122,
+    "fixed_public_methods": 28,
+    "five_adapter_classes": true,
+    "source_and_target_native_compression_controls": true,
+    "single_wrong_outer_CAS_mutant_killed": true,
+    "no_equal_errors_as_success": true,
+    "all_error_committed_facts_exact_except_explicit_prior_batch_commit": true
+  },
+  "differences": [],
+  "unexpected_external_calls": [],
+  "owned_temp_removed": true
+}
