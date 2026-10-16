@@ -1,6 +1,9 @@
 from contextlib import closing
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import pytest
 
 from app.email_classification_schema import create_current_email_classifications
@@ -14,6 +17,58 @@ from app.configs_definitions import CONFIG_FIELDS, config_projection
 from app.schedules_storage import create_schedules_schema, insert_schedule, delete_schedule
 from app.schedules_definitions import schedule_projection, SCHEDULE_FIELDS
 from tests.configs_source_fixtures import ROOT, source_db, insert as source_insert
+
+
+_COLD_SCHEMA_PROBE = """
+import hashlib
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+from app.email_store import EmailStore
+from app.store import AutoReplyStore
+
+path = Path(sys.argv[1])
+if sys.argv[2] == 'repair':
+    with sqlite3.connect(path) as db:
+        db.execute('drop index idx_configs_revision_number')
+        db.execute('drop index idx_schedules_enabled')
+store = AutoReplyStore(path)
+if sys.argv[2] != 'store':
+    EmailStore(path)
+assert store._schema_is_current()
+with sqlite3.connect(path) as db:
+    objects = db.execute(
+        'select type,name,tbl_name,sql from sqlite_master '
+        'where sql is not null order by type,name'
+    ).fetchall()
+    names = {row[1] for row in objects}
+    assert {'idx_configs_revision_number', 'idx_schedules_enabled'} <= names
+print(hashlib.sha256(json.dumps(objects, separators=(',', ':')).encode()).hexdigest())
+"""
+
+
+def test_current_schema_is_stable_across_cold_process_hash_seeds(tmp_path):
+    def probe(path, seed, mode='open'):
+        result = subprocess.run(
+            [sys.executable, '-c', _COLD_SCHEMA_PROBE, str(path), mode],
+            cwd=ROOT, env={**os.environ, 'PYTHONHASHSEED': str(seed)},
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    hashes = {
+        seed: probe(tmp_path / f'fresh-{seed}.sqlite3', seed)
+        for seed in (0, 1, 42)
+    }
+    assert len(set(hashes.values())) == 1
+    path = tmp_path / 'fresh-0.sqlite3'
+    assert probe(path, 1) == hashes[0]
+    repair_path = tmp_path / 'repair.sqlite3'
+    probe(repair_path, 0, 'store')
+    assert probe(repair_path, 42, 'repair') == hashes[0]
 
 @pytest.fixture
 def target():

@@ -383,7 +383,7 @@ def _definitions():
         conditions.append(f"json_remove(payload_json,{paths})='{{}}'")
         conditions += [
             f"{config_column(kind, field)} is not null"
-            for field in REQUIRED[kind]
+            for field in CONFIG_FIELDS[kind] if field in REQUIRED[kind]
         ]
         conditions += [f"({rule})" for rule in RULES[kind]]
         checks.append(f"check(record_type<>'{kind}' or "
