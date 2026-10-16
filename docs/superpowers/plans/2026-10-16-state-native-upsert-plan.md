@@ -32,7 +32,7 @@ Root extracted the complete proposal into an owned temporary package:107 passed 
 
 **File:** Create tests/test_state_upsert.py. Read-only fixtures/source metadata remain unchanged.
 
-- [ ] **Step 1: Write this complete test file.**
+- [x] **Step 1: Write this complete test file.**
 
 ```python
 """Native State UPSERTs validate INSERT candidates and retain encoded JSON facts."""
@@ -283,7 +283,7 @@ def test_wechat_blank_preserves_but_nonblank_older_replaces(pair, value):
     assert facts(source, kind) == facts(target, kind, True)
 ```
 
-- [ ] **Step 2: Verify missing-API RED.**
+- [x] **Step 2: Verify missing-API RED.**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_state_upsert.py
@@ -294,7 +294,7 @@ Expected collection failure importing state_json_field/upsert_state from the unc
 
 **File:** app/state_storage.py. Preserve all existing function bodies; the only existing-line change is importing STATE_PRIMARY_KEYS/STATE_TYPES, followed by the three new functions below in this complete file.
 
-- [ ] **Step 1: Write the complete canonical module.**
+- [x] **Step 1: Write the complete canonical module.**
 
 ```python
 """Caller-transactional storage for the unselected fifteen-kind State table."""
@@ -485,7 +485,7 @@ def upsert_state(db, kind, values, updates, *, insert_json=None,
                             *update_parameters, *where_parameters)).rowcount
 ```
 
-- [ ] **Step 2: Run focused acceptance and static checks.**
+- [x] **Step 2: Run focused acceptance and static checks.**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_state_upsert.py tests/test_state_schema_release.py tests/test_state_storage.py tests/test_state_source_contract.py tests/test_native_scalar_codec.py
@@ -494,12 +494,14 @@ git diff --check
 ```
 Expected107 new +365 adjacent =472 passing cases. Compile both files without bytecode; compare the two Python blocks exactly. Check State declaration, source capture, pure release, and all old storage function bodies unchanged. Remove owned /tmp artifacts and verify absence.
 
+Implementation verification passed, but cleanup of the owned `/tmp/state-upsert-impl.694bXO` test directory was rejected by automatic approval review; its absence is unverified and cleanup remains with the root agent.
+
 ## Task 3: Document and commit the bounded addition
 
 **Files:** Own append docs/database-redesign-config-state-source-preparation.md, own scoped State paragraph in architecture.md/runtime-mechanism.md, own claim and Task1/2/3 checkboxes in this plan.
 
-- [ ] **Step 1:** Record actual RED/GREEN, native INSERT-candidate regression, source identity/NULL keys, exact encoded leaf and one-statement clock evidence. Documents must say no current caller/constructor/version/updater/coordinator activation has happened. Do not rewrite unrelated accepted evidence or modify historical source/foundation plans.
-- [ ] **Step 2:** Self-review and commit owned app/test/docs hunks after staged diff check.
+- [x] **Step 1:** Record actual RED/GREEN, native INSERT-candidate regression, source identity/NULL keys, exact encoded leaf and one-statement clock evidence. Documents must say no current caller/constructor/version/updater/coordinator activation has happened. Do not rewrite unrelated accepted evidence or modify historical source/foundation plans.
+- [x] **Step 2:** Self-review and commit owned app/test/docs hunks after staged diff check.
 
 ```bash
 git add app/state_storage.py tests/test_state_upsert.py

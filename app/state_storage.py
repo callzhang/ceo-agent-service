@@ -8,7 +8,8 @@ from app.action_storage import (
     _native_payload, _source_bound_null,
 )
 from app.state_definitions import (
-    STATE_DEFAULTS, STATE_FIELDS, STATE_INDEX_DDL, STATE_NOT_NULL, STATE_TABLE_DDL,
+    STATE_DEFAULTS, STATE_FIELDS, STATE_INDEX_DDL, STATE_NOT_NULL, STATE_PRIMARY_KEYS, STATE_TABLE_DDL,
+    STATE_TYPES,
     _quote,
 )
 
@@ -130,3 +131,56 @@ def delete_state(db, kind, source_rowid, *, where_sql="", parameters=()):
         "delete from state where record_type=? and cast(legacy_key as integer)=?" + guard,
         (kind, source_rowid, *parameters),
     ).rowcount
+
+
+def state_json_field(field, source="excluded"):
+    """SQL JSON leaf for a declared original field; retains the exact codec tag."""
+    if field not in STATE_TYPES:
+        raise ValueError("unsupported State source field")
+    return _quote(source) + ".payload_json->'$.{}'".format(field)
+
+
+def _json_assignments(base, expressions):
+    if not expressions:
+        return base
+    return "json_set(" + base + "," + ",".join(
+        "'$.{}',json({})".format(field, expression)
+        for field, expression in expressions.items()
+    ) + ")"
+
+
+def upsert_state(db, kind, values, updates, *, insert_json=None,
+                 insert_parameters=(), update_parameters=(), where_sql="",
+                 where_parameters=()):
+    """Native source-PK UPSERT; expression values are trusted encoded-JSON SQL.
+
+    Defaults and caller expressions run in this one INSERT statement. Existing
+    source identity stays unchanged on conflict; only payload fields are set.
+    """
+    insert_json = {} if insert_json is None else insert_json
+    _check(kind, values)
+    _check(kind, insert_json)
+    _check(kind, updates)
+    if not updates:
+        raise ValueError("State UPSERT requires conflict update fields")
+    if set(values) & set(insert_json):
+        raise ValueError("State INSERT field supplied twice")
+    defaults = {
+        field: "json_quote(" + STATE_DEFAULTS[kind].get(field, "null") + ")"
+        for field in STATE_FIELDS[kind] if field not in values and field not in insert_json
+    }
+    # Original defaults are only NULL, INTEGER literals and TEXT/SQLite clocks;
+    # supplied REAL/BLOB facts are already exactly encoded by _native_payload.
+    candidate = _json_assignments("?", defaults | insert_json)
+    payload = _native_payload(values)
+    _lock(db)
+    identity = _next_rowid(db, kind)
+    conflict = ",".join(map(_quote, STATE_PRIMARY_KEYS[kind]))
+    sql = ("insert into state(record_type,legacy_key,payload_json) values(" +
+           repr(kind) + ",?," + candidate + ") on conflict(" + conflict +
+           ") where record_type=" + repr(kind))
+    sql += " do update set payload_json=" + _json_assignments("state.payload_json", updates)
+    if where_sql:
+        sql += " where " + where_sql
+    return db.execute(sql, (str(identity), payload, *insert_parameters,
+                            *update_parameters, *where_parameters)).rowcount
