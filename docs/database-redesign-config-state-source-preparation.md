@@ -795,3 +795,32 @@ current facts after conversion, including newer writes. Focused synthetic
 actual/fresh tests pass;
 native parent retirement, caller selection and copied actual-data proof remain
 separate work.
+
+### Retained-runs actual-copy correctness and measured cost
+
+Independent SPEC and subsequent fresh QUALITY reviews accepted the bounded
+`5fec73f3` translator; each independently passed its twelve tests. A new owned
+copy of the unchanged frozen 970a source then underwent the existing Email,
+Business and Provider conversions. Its 231,340 runs and all 41 run declaration
+objects matched the current source. Fifteen schedules and sixty-nine schedule
+snapshot facts were installed in unselected target parents; native parents
+remained available for the inverse. This was a retained-child proof, not a
+complete config release or source-table retirement.
+
+Forward preserved the exact row values/types digest and sequence watermark.
+One raw local `insert_run` appended a scheduled run with FK enforcement on;
+inverse retained all 231,341 current rows, their values/types digest, physical
+IDs and updated sequence. The original unrelated runs/tasks orphan remained
+the only runs FK finding in all three states. Full quick check returned `ok`.
+The owned copy was removed and absence checked; original source SHA unchanged.
+See `superpowers/specs/2026-10-15-configs-retained-runs-actual.json`.
+
+Correctness passed, but elapsed time was 736.176 seconds. A process-memory
+observation showed 2.3 GiB peak physical footprint and about 1.2 GiB swapped;
+a one-second sample showed Python dictionary/tuple comparisons dominating its
+samples. This is not a controlled benchmark, but the full Python row/type
+snapshots are a concrete cost that must be corrected before adoption. A
+SQLite TEMP-staging prototype is under review; no new runtime path is selected.
+The attempt to interrupt only the owned test process was rejected by automatic
+approval (approval required, AskForApproval Never); it was not retried through
+another tool, and the test subsequently completed naturally and cleaned up.
