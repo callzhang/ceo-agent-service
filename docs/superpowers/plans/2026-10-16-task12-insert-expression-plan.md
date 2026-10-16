@@ -40,5 +40,5 @@ Initial applied ef26ceadf passed1053/65.92s and fresh SPEC42/2.94s, but SPEC rep
 The 8 added actual/fresh cases reproduce original application RED through --before-default-repair -k replace:4failed/4passed/42deselected1.17s, native accepted controls then target constraint errors. Corrected candidate50/4.08s PASS. No app edit occurred before complete canonical code/regression/preflight correction. Full corrected preflight and mechanical correction pending.
 
 - [x] Corrected full scoped preflight1061/66.10s PASS; owned temporary copies removed.
-- [ ] Mechanical correction copies exact current candidate/regression, applied50focused rerun, hashes/Ruff/scope/commit.
+- [x] Mechanical correction copies exact current candidate/regression, applied50focused rerun, hashes/Ruff/scope/commit.
 - [ ] SPEC rereview resolves P2; fresh QUALITY follows.

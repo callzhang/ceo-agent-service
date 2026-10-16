@@ -231,3 +231,82 @@ def test_no_expression_path_keeps_point_writer_identity_and_payload(db, target):
     actual = insert_task12(target, kind, supplied(kind))
     assert actual.lastrowid == native.lastrowid
     snapshot(db, target, kind)
+
+
+def test_replace_null_expression_uses_native_default_and_new_source_rowid(db, target):
+    for connection in (db, target):
+        prepare(connection)
+    values = supplied(KIND)
+    insert(db, KIND, values)
+    insert_task12(target, KIND, values)
+    proposed = task12_insert_parts(
+        target,
+        KIND,
+        {"feedback_key": values["feedback_key"]},
+        replace=True,
+        insert_sql={"status": "null"},
+    )
+    native = db.execute(
+        "insert or replace into feedback_processing_items(feedback_key,status) values(?,null)",
+        (values["feedback_key"],),
+    )
+    actual = target.execute(proposed.sql, proposed.parameters)
+    assert actual.rowcount == native.rowcount == 1
+    assert proposed.source_rowid == native.lastrowid == 2
+    rows = snapshot(db, target, KIND)
+    assert rows[0]["status"] == "pending"
+
+
+@pytest.mark.parametrize("value", (None, "expression-clock"))
+def test_replace_expression_and_default_evaluate_once_and_lazily(db, target, value):
+    calls = [0, 0]
+    defaults = [0, 0]
+    for n, connection in enumerate((db, target)):
+        register_task8_functions(connection)
+
+        def rhs(n=n):
+            calls[n] += 1
+            return value
+
+        def default_clock(n=n):
+            defaults[n] += 1
+            return "native-default-clock"
+
+        connection.create_function("rhs", 0, rhs)
+        connection.create_function("current_timestamp", 0, default_clock)
+    values = {"feedback_key": "feedback-a", "updated_at": "bound-clock"}
+    proposed = task12_insert_parts(
+        target, KIND, values, replace=True, insert_sql={"created_at": "rhs()"}
+    )
+    assert calls == defaults == [0, 0]
+    db.execute(
+        "insert or replace into feedback_processing_items(feedback_key,updated_at,created_at) values(?,?,rhs())",
+        tuple(values.values()),
+    )
+    target.execute(proposed.sql, proposed.parameters)
+    assert calls == [1, 1]
+    assert defaults == ([1, 1] if value is None else [0, 0])
+    snapshot(db, target, KIND)
+
+
+def test_replace_null_required_expression_without_default_still_rejects(db, target):
+    kind = "okr_review_items"
+    for connection in (db, target):
+        prepare(connection)
+    values = supplied(kind)
+    values.pop("request_id")
+    proposed = task12_insert_parts(
+        target, kind, values, replace=True, insert_sql={"request_id": "null"}
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "insert or replace into okr_review_items("
+            + ",".join(values)
+            + ",request_id) values("
+            + ",".join("?" for _ in values)
+            + ",null)",
+            tuple(values.values()),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        target.execute(proposed.sql, proposed.parameters)
+    snapshot(db, target, kind)
