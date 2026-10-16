@@ -16,7 +16,7 @@ SOURCE_HASHES = {
     "actual": "b7e149e432369018ba105f9e1ac12b052f38bfe245ee7e6d7b7b7b8b3ab9caa6",
     "fresh": "48e1608e66d2a35fdb467708e24fd6bef1f2f4ecd58e8a6e45c4af9fb6449a70",
 }
-TARGET_HASH = "327c94f68a9354f8766dfebb9ef7c85c9d03c2a4b27f95387eb88cc32fabc1f2"
+TARGET_HASH = "f867c00d08bbf1cc66d479b25e471644944329485065e21cd30c18f571772c88"
 TARGET_INDEXES = tuple(sql.split(" on state(", 1)[0].split()[-1].strip('"')
                        for sql in STATE_INDEX_DDL)
 
@@ -79,7 +79,15 @@ def _target_shape(db):
     _no_temp(db, (*SOURCE_TABLES, "state", *TARGET_INDEXES))
     if any(_present(db, "main", name) for name in SOURCE_TABLES):
         raise ValueError("native State source name remains")
-    if _fingerprint(_source_declaration(db, "state")) != TARGET_HASH:
+    declaration = _source_declaration(db, "state")
+    # PRAGMA index_list sequence/order reflects creation history, not index shape.
+    # Preserve each ordered index column, SQL, uniqueness, origin and predicate.
+    declaration["indexes"] = sorted(
+        ({key: value for key, value in index.items() if key != "seq"}
+         for index in declaration["indexes"]),
+        key=lambda index: index["name"],
+    )
+    if _fingerprint(declaration) != TARGET_HASH:
         raise ValueError("unsupported State target declaration")
 
 

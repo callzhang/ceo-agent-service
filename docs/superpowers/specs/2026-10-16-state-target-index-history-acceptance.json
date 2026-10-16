@@ -1,0 +1,37 @@
+{
+  "scope": "Unselected State target declaration recognition prerequisite only; no current constructor/caller/release selection",
+  "date": "2026-10-16",
+  "module_sha256": "39f211440dfe2b571972bacc6fc85508b9b0faa59f4c598cf3263db8c6f2bbaf",
+  "test_sha256": "8f56ddde50ec6e741f807dc58b3e494b7e7d21f9b3dff629bf0657cb1b3ee763",
+  "raw_physical_declaration_hash": "327c94f68a9354f8766dfebb9ef7c85c9d03c2a4b27f95387eb88cc32fabc1f2",
+  "normalized_target_hash": "f867c00d08bbf1cc66d479b25e471644944329485065e21cd30c18f571772c88",
+  "root_preflight": {
+    "red": 21,
+    "baseline_pass": 11,
+    "green": 88,
+    "seconds": 2.26,
+    "fixture_correction": "Malformed-index example corrected from nonexistent source_kind to native adapter_name before accepting evidence."
+  },
+  "author": {
+    "tests": 88,
+    "seconds": 2.25
+  },
+  "independent_spec": {
+    "status": "PASS",
+    "tests": 88,
+    "seconds": 2.46,
+    "proof": "AST unchanged outside TARGET_HASH/_target_shape; physical DDL/shared source capture exact; all20 indices reconstructed; actual/fresh current-fact inverse/forward."
+  },
+  "independent_quality": {
+    "status": "PASS",
+    "tests": 44,
+    "seconds": 0.71,
+    "new_adversarial": 12,
+    "proof": "Shuffled all-index rebuilds; ordered source-ROWID/composite keys/predicates remain strict; read-only recognition preserves transaction and facts; actual/fresh BLOB/current insert/delete inverse and reforward."
+  },
+  "normalization": "Target only: sort index records by name and omit top-level index_list enumeration seq. Preserve nested index column seqno, SQL/unique/origin/partial, table/FK/trigger metadata.",
+  "native_source_fingerprints_changed": false,
+  "state_ddl_changed": false,
+  "production_changed": false,
+  "current_state_selected": false
+}
