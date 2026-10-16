@@ -75,6 +75,8 @@ from app.task20_definitions import TASK20_NEW_KINDS
 from app.task20_current_schema import task20_schema_is_current
 from app.task8_storage import register_task8_functions
 from app.state_definitions import STATE_FIELDS, state_projection
+from app.runs11_definitions import run11_projection
+from app.runs11_storage import insert_run11_fact
 from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
 from app.state_schema_release import state_schema_is_current
 from app.provider_state_definitions import FRESH_OBSERVATION_FIELDS
@@ -88,7 +90,7 @@ from app.email_current_schema import (
 )
 from app.configs_definitions import CONFIG_FIELDS, config_projection
 from app.configs_storage import insert_config, update_config, delete_config
-from app.configs_schema_release import configs_schema_is_current
+from app.runs11_current_schema import current_configs_schema_is_current
 from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
@@ -7000,7 +7002,7 @@ class EmailStore:
             # Historical maps remain the source contract. Current validation
             # retains the original nonaction coverage and validates actions
             # against the exact accepted finite manifest separately.
-            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, "email_training_snapshot_observations"}
+            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, "email_training_snapshot_observations", "email_classifier_runtime_samples"}
             required_tables = {
                 table: columns
                 for table, columns in _REQUIRED_TABLE_COLUMNS.items()
@@ -7027,7 +7029,7 @@ class EmailStore:
                 )
 
             if not any(
-                configs_schema_is_current(db, action_variant=variant)
+                current_configs_schema_is_current(db, action_variant=variant)
                 for variant in REPLY_VARIANTS
             ):
                 raise EmailPersistenceCorruption(
@@ -14685,30 +14687,31 @@ class EmailStore:
         ):
             raise ValueError("runtime timings must be finite and non-negative")
         with self._connect() as db:
-            db.execute(
-                """
-                insert into email_classifier_runtime_samples (
-                    model_id, outcome, fallback_code, cache_hit, runtime_warm,
-                    queue_ms, http_ms, embedding_ms, head_ms, total_ms, recorded_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    model_id.strip(),
-                    outcome,
-                    fallback_code,
-                    int(cache_hit),
-                    int(runtime_warm),
-                    *(float(value) for value in values),
-                    self._now(),
-                ),
+            insert_run11_fact(
+                db, "email_classifier_runtime_samples",
+                {
+                    "model_id": model_id.strip(),
+                    "outcome": outcome,
+                    "fallback_code": fallback_code,
+                    "cache_hit": int(cache_hit),
+                    "runtime_warm": int(runtime_warm),
+                    "queue_ms": float(queue_ms),
+                    "http_ms": float(http_ms),
+                    "embedding_ms": float(embedding_ms),
+                    "head_ms": float(head_ms),
+                    "total_ms": float(total_ms),
+                    "recorded_at": self._now(),
+                },
             )
             db.execute(
                 """
-                delete from email_classifier_runtime_samples
-                where id not in (
-                    select id from email_classifier_runtime_samples
-                    order by id desc limit ?
-                )
+                delete from runs
+                where record_type='email_classifier_runtime_samples'
+                  and id not in (
+                    select id from runs indexed by idx_runs11_sample_id
+                    where record_type='email_classifier_runtime_samples'
+                    order by cast(legacy_key as integer) desc limit ?
+                  )
                 """,
                 (MAX_CLASSIFIER_RUNTIME_SAMPLES,),
             )
@@ -14785,10 +14788,8 @@ class EmailStore:
         ).isoformat()
         with self._connect() as db:
             rows = db.execute(
-                """
-                select total_ms, recorded_at from email_classifier_runtime_samples
-                where recorded_at >= ?
-                """,
+                "select total_ms, recorded_at from (" + run11_projection("email_classifier_runtime_samples")
+                + ") where recorded_at >= ?",
                 (cutoff,),
             ).fetchall()
         times = sorted(float(row["total_ms"]) for row in rows)
@@ -14799,10 +14800,8 @@ class EmailStore:
             # changed for that, so report the last batch it did judge and say so.
             with self._connect() as db:
                 last = db.execute(
-                    """
-                    select total_ms, recorded_at from email_classifier_runtime_samples
-                    order by id desc limit ?
-                    """,
+                    "select total_ms, recorded_at from (" + run11_projection("email_classifier_runtime_samples")
+                    + ") order by id desc limit ?",
                     (_RUNTIME_LATENCY_FALLBACK_SAMPLES,),
                 ).fetchall()
             times = sorted(float(row["total_ms"]) for row in last)
@@ -14840,12 +14839,10 @@ class EmailStore:
             raise ValueError("model_id must be non-empty")
         with self._connect() as db:
             rows = db.execute(
-                """
-                select outcome, fallback_code, cache_hit, runtime_warm,
-                       queue_ms, http_ms, embedding_ms, head_ms, total_ms
-                from email_classifier_runtime_samples
-                where model_id=? order by id desc limit ?
-                """,
+                "select outcome, fallback_code, cache_hit, runtime_warm, "
+                "queue_ms, http_ms, embedding_ms, head_ms, total_ms from ("
+                + run11_projection("email_classifier_runtime_samples")
+                + ") where model_id=? order by id desc limit ?",
                 (model_id.strip(), MAX_CLASSIFIER_RUNTIME_SAMPLES),
             ).fetchall()
 

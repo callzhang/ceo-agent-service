@@ -57,14 +57,15 @@ from app.configs_run_schema import _declarations as _config_run_declarations, _o
 from app.configs_schema_release import (
     _OBSERVATION_HASHES, _OBSERVATIONS, _config_metadata, _foreign_key_children,
     _no_temp_names, _state as _validate_config_metadata,
-    capture_config_source, configs_schema_is_current, migrate_config_schema,
+    capture_config_source, migrate_config_schema,
     restore_config_schema,
 )
 from app.configs_schema_transfer import (
     SOURCE_TABLES as CONFIG_SOURCE_TABLES, capture_config_declarations,
     _target_declarations as _config_target_declarations,
 )
-from app.run_storage import create_run_schema
+from app.runs11_current_schema import create_current_run11_schema, current_configs_schema_is_current, current_run11_objects, current_run11_schema_is_current
+from app.runs11_schema_release import capture_run11_source, migrate_run11_schema, restore_run11_schema
 from app.state_storage import create_state_schema
 from app.state_schema_release import (
     SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES,
@@ -114,7 +115,7 @@ def _repair_names_available(db: sqlite3.Connection, missing) -> bool:
 @lru_cache(maxsize=1)
 def _canonical_run_object_types() -> dict[str, str]:
     with closing(sqlite3.connect(":memory:")) as reference:
-        create_run_schema(reference, include_task_runs=True, include_workbench=True)
+        create_current_run11_schema(reference)
         return dict(reference.execute(
             "select name,type from sqlite_schema where tbl_name='runs' and sql is not null"
         ))
@@ -185,7 +186,7 @@ def state_current_or_known_dispatcher_index_repair(db: sqlite3.Connection) -> bo
 
 def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, action_variant: str) -> bool:
     """Exact target, allowing only Store's known missing Skill guard repair."""
-    if configs_schema_is_current(db, action_variant=action_variant):
+    if current_configs_schema_is_current(db, action_variant=action_variant):
         return True
     target = _config_target_declarations()
     if not _current_table_with_known_missing_objects(
@@ -199,7 +200,7 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
         triggers=CURRENT_CONFIG_REPAIRABLE_TRIGGERS,
     ):
         return False
-    expected_runs = _config_run_declarations(mapped=True)
+    expected_runs = current_run11_objects()
     actual_runs = _config_run_objects(db)
     run_types = _canonical_run_object_types()
     return (action_schema_is_current(db, allow_missing_objects=True,
@@ -207,6 +208,7 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
                                      include_email=True, include_skill_config_receipts=True)
             and action_storage.email_action_auxiliary_objects_are_current(
                 db, reply_variant=action_variant)
+            and current_run11_schema_is_current(db, allow_missing_objects=True)
             and actual_runs.get("runs") == expected_runs["runs"]
             and set(actual_runs) <= set(expected_runs)
             and set(expected_runs) == set(run_types)
@@ -288,6 +290,7 @@ def _inverse_metadata(source):
         "configs": source["configs"],
         "state": source["state"],
         "tasks": source["tasks"],
+        "runs11": source["runs11"],
         "confirmation": source["confirmation"],
     }
 
@@ -380,6 +383,7 @@ class ActionEmailSchemaRelease:
         current["state"] = capture_state_source(db)
         current["confirmation"] = capture_confirmation_source(db)
         current["tasks"] = capture_task20_source(db)
+        current["runs11"] = capture_run11_source(db)
         current_declarations = _inverse_metadata(current)
         source_declarations = _inverse_metadata(self.source_schema)
         # Counter presence is mutable state; retain it for inverse transport,
@@ -415,7 +419,9 @@ class ActionEmailSchemaRelease:
             raise ValueError("paired Business target declaration mismatch")
         if not provider_state_schema_is_current(db):
             raise ValueError("paired Provider target declaration mismatch")
-        if not configs_schema_is_current(db, action_variant=self.source_schema["action_variant"]):
+        if not current_run11_schema_is_current(db):
+            raise ValueError("paired Runs11 target declaration mismatch")
+        if not current_configs_schema_is_current(db, action_variant=self.source_schema["action_variant"]):
             raise ValueError("paired Configs target declaration mismatch")
         account_names = {item['name'] for item in self.source_schema['configs']
                          ['configs']['tables']['email_accounts']['triggers']}
@@ -458,6 +464,7 @@ class ActionEmailSchemaRelease:
                 migrate_state_schema(db, self.source_schema["state"])
                 migrate_task20_schema(db, self.source_schema["tasks"])
                 retire_confirmation_schema(db, self.source_schema["confirmation"])
+                migrate_run11_schema(db, self.source_schema["runs11"])
                 now = datetime.now(timezone.utc).isoformat()
                 update_state_rows(db, "service_state",
                     {"value": self.target_store_version, "updated_at": now},
@@ -494,6 +501,7 @@ class ActionEmailSchemaRelease:
                 restore_confirmation_schema(db, self.source_schema["confirmation"])
                 restore_task20_schema(db, self.source_schema["tasks"])
                 restore_state_schema(db, self.source_schema["state"])
+                restore_run11_schema(db, self.source_schema["runs11"])
                 restore_config_schema(db, self.source_schema["configs"])
                 restore_business_schema(db, self.source_schema["business"])
                 restore_email_action_schema(db, email_inverse_metadata(self.source_schema))
@@ -564,6 +572,7 @@ def prepare_action_email_schema_release(
         source["state"] = capture_state_source(db)
         source["confirmation"] = capture_confirmation_source(db)
         source["tasks"] = capture_task20_source(db)
+        source["runs11"] = capture_run11_source(db)
         release = ActionEmailSchemaRelease(
             root, path, version, versions, source, _foreign_keys(db),
             target_store_version, target_email_version,

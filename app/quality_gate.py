@@ -9,6 +9,7 @@ table as a failed check rather than silently dropping a queue from coverage.
 
 from __future__ import annotations
 from app.state_definitions import state_projection
+from app.runs11_definitions import run11_projection
 from app.task20_definitions import task20_projection
 from app.task12_storage import task12_projection
 
@@ -142,7 +143,7 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks"}
+        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks", "email_classifier_runtime_samples": "runs"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
@@ -181,7 +182,7 @@ def scan_hourly_quality(
         _check_work_items(db, checked_now, violations, attention)
         if physical_source["email_agent_classification_tasks"] in existing:
             _check_email_classification_tasks(db, checked_now, violations)
-        if "email_classifier_runtime_samples" in existing:
+        if physical_source["email_classifier_runtime_samples"] in existing:
             _check_email_model_runtime(db, checked_now, violations, attention)
         _check_email_model_left_active(Path(db_path), violations)
         # Legacy follow_up_drafts are history only (Derek 2026-09-25: a
@@ -753,10 +754,9 @@ def _check_email_model_runtime(
     counts = {
         str(row["outcome"]): int(row["total"])
         for row in db.execute(
-            """select outcome, count(*) as total
-               from email_classifier_runtime_samples
-               where recorded_at >= ?
-               group by outcome""",
+            "select outcome, count(*) as total from ("
+            + run11_projection("email_classifier_runtime_samples")
+            + ") where recorded_at >= ? group by outcome",
             (cutoff,),
         )
     }
@@ -766,10 +766,9 @@ def _check_email_model_runtime(
     recent_outcomes = [
         str(row["outcome"] or "")
         for row in db.execute(
-            """select outcome
-               from email_classifier_runtime_samples
-               where recorded_at >= ?
-               order by recorded_at desc, id desc""",
+            "select outcome from ("
+            + run11_projection("email_classifier_runtime_samples")
+            + ") where recorded_at >= ? order by recorded_at desc, id desc",
             (cutoff,),
         )
     ]

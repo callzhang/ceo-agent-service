@@ -33,12 +33,11 @@ from app.reviewed_candidate_store import (
 )
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.email_classification_schema import create_current_email_classifications
-from app.configs_schema_release import configs_schema_is_current
-from app.configs_run_schema import (
-    _declarations as _config_run_declarations,
-    _objects as _config_run_objects,
-    map_runs_to_configs,
+from app.runs11_current_schema import (
+    create_current_run11_schema, current_run11_schema_is_current,
+    current_configs_schema_is_current,
 )
+
 from app.configs_definitions import config_projection
 from app.configs_storage import create_configs_schema, insert_config, update_config, delete_config
 from app.action_skill_config_storage import (
@@ -66,8 +65,10 @@ from app.action_email_schema_release import (
 from app.email_publication_sources import current_email_actions_available
 from app.run_storage import (
     SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
-    create_run_schema, install_run_child_guards, insert_run,
+    install_run_child_guards, insert_run,
 )
+from app.runs11_definitions import run11_projection
+from app.runs11_storage import insert_run11_fact
 
 from app.task_storage import (
     task_id_expression, RETIRED_TASK_TABLES,
@@ -89,7 +90,7 @@ from app.task8_storage import (
 from app.task12_storage import insert_task12, task12_insert_parts, task12_projection, task12_set_parts
 
 from app.workbench_storage import (
-    RETIRED_WORKBENCH_TABLES, SEARCH_RETIRED_COLUMNS,
+    RETIRED_WORKBENCH_TABLES,
 )
 
 from app.agent_cron.models import (
@@ -503,13 +504,13 @@ STORE_SCHEMA_REMOVED_TABLES = (
     *RECEIPT_ACTION_TYPES,
     *RETIRED_WORKBENCH_TABLES,
     *RETIRED_TASK_TABLES,
+    "setup_wizard_events", "email_classifier_runtime_samples", "codex_session_search_fts",
     "agent_runs", "agent_runtime_attempts", "agent_run_state_events", "agent_run_events",
     "universal_plan_executions",
     "universal_action_executions",
 )
 STORE_SCHEMA_REMOVED_COLUMNS = {
     "tasks": ("final_text",),
-    "codex_session_search_index": SEARCH_RETIRED_COLUMNS,
     "runs": ("final_result_json", "result_envelope_json", "tool_events_json",
              "decision_json", "envelope_json", "audit_tool_events_json", "audit_summary"),
     "business_task_signals": ("evidence_text",),
@@ -1821,7 +1822,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         try:
             with self._connect() as db:
                 healthy = state_schema_is_current(db) and self._feedback_processing_round_guard_state_is_valid(db) and business_schema_is_current(db) and any(
-                    configs_schema_is_current(db, action_variant=variant)
+                    current_configs_schema_is_current(db, action_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
         except BaseException:
@@ -2107,13 +2108,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and required_trigger_definitions_present
             and feedback_processing_round_storage_valid
             and required_columns_present
-            and _config_run_objects(db) == _config_run_declarations(mapped=True)
+            and current_run11_schema_is_current(db)
             and task20_schema_is_current(db)
             and task20_feedback_child_is_current(db)
             and task20_workbench_schema_is_current(db)
             and business_schema_is_current(db)
             and state_schema_is_current(db)
-            and any(configs_schema_is_current(db, action_variant=variant)
+            and any(current_configs_schema_is_current(db, action_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
             and not removed_columns_present
@@ -2366,7 +2367,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             create_current_task20_schema(db)
             create_current_feedback_child_schema(db)
-            create_run_schema(db, include_task_runs=True, include_workbench=True)
+            create_current_run11_schema(db)
             create_current_workbench_auxiliary_schema(db)
             self._migrate_business_task_source_documents(db)
             if db.execute("select 1 from sqlite_schema where type='table' "
@@ -2522,20 +2523,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 
                 
                 
-                create table if not exists setup_wizard_events (
-                    id integer primary key autoincrement,
-                    step_id text not null,
-                    action_id text not null,
-                    status text not null,
-                    summary text not null default '',
-                    evidence_json text not null default '{}',
-                    stdout_excerpt text not null default '',
-                    stderr_excerpt text not null default '',
-                    started_at text not null default current_timestamp,
-                    finished_at text not null default ''
-                );
-                create index if not exists idx_setup_wizard_events_step
-                    on setup_wizard_events(step_id, id);
                 
                 """
                 f"""
@@ -3557,8 +3544,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 db, include_reply=True, reply_variant=reply_variant,
                 include_email=True, include_skill_config_receipts=True,
             )
-            if fresh:
-                map_runs_to_configs(db)
             
             
             
@@ -7840,16 +7825,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)),
                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True)),
                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES, *TASK20_NEW_KINDS,
+                            "setup_wizard_events", "email_classifier_runtime_samples", "codex_session_search_fts",
                             *(sql.split(" on tasks(", 1)[0].split()[-1].strip('"') for sql in TASK20_INDEX_DDL),
                             *(sql.split()[2] for sql in TASK20_TRIGGER_DDL)}
-            expected_runs = _config_run_declarations(mapped=True)
-            actual_runs = _config_run_objects(db)
             current_core_with_known_repairs = (
                 marker is not None
                 and marker[0] == STORE_SCHEMA_VERSION
-                and actual_runs.get("runs") == expected_runs["runs"]
-                and set(actual_runs) <= set(expected_runs)
-                and all(actual_runs.get(name, sql) == sql for name, sql in expected_runs.items())
+                and current_run11_schema_is_current(db, allow_missing_objects=True)
                 and any(configs_current_or_known_skill_guard_repair(
                     db, action_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
@@ -24313,28 +24295,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         source_type: str,
         source_id: str,
         title: str,
-        summary_text: str = "",
-        fts_text: str = "",
-        embedding: list[float] | None = None,
-        embedding_model: str = "",
     ) -> None:
         if not session_id.strip():
             return
+        projection = "(" + run11_projection("codex_session_search_index") + ")"
         with self._connect() as db:
-            row = db.execute("select id,title from codex_session_search_index where session_id=?", (session_id,)).fetchone()
+            row = db.execute(
+                f"select id from {projection} where session_id=?", (session_id,)
+            ).fetchone()
             if row is None:
-                row_id = db.execute(
-                    "insert into codex_session_search_index(session_id,source_type,source_id,title) values (?,?,?,?)",
-                    (session_id,source_type,source_id,title),
-                ).lastrowid
-            else:
-                row_id = row["id"]
-                db.execute("insert into codex_session_search_fts(codex_session_search_fts,rowid,title) values('delete',?,?)", (row_id,row["title"]))
-                db.execute(
-                    "update codex_session_search_index set source_type=?,source_id=?,title=?,updated_at=current_timestamp where id=?",
-                    (source_type,source_id,title,row_id),
+                insert_run11_fact(
+                    db, "codex_session_search_index",
+                    {"session_id": session_id, "source_type": source_type,
+                     "source_id": source_id, "title": title},
                 )
-            db.execute("insert into codex_session_search_fts(rowid,title) values(?,?)", (row_id,title))
+            else:
+                db.execute(
+                    "update runs set source_type=?,source_id=?,title=?,updated_at=current_timestamp "
+                    "where record_type='codex_session_search_index' "
+                    "and cast(legacy_key as integer)=?",
+                    (source_type, source_id, title, int(row["id"])),
+                )
             # Native-derived corpus is assembled only for an in-memory search.
 
     def search_codex_sessions(
@@ -24347,12 +24328,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> list[CodexSessionSearchResult]:
         from app.native_standalone import latest_standalone_ref
 
+        projection = "(" + run11_projection("codex_session_search_index") + ")"
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from codex_session_search_index
-                order by updated_at desc
+                from {projection}
+                order by updated_at desc,id asc
                 """
             ).fetchall()
             source_ids = [str(row["source_id"]) for row in rows
@@ -29580,32 +29562,23 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         stderr_excerpt: str = "",
     ) -> int:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                insert into setup_wizard_events (
-                    step_id,
-                    action_id,
-                    status,
-                    summary,
-                    evidence_json,
-                    stdout_excerpt,
-                    stderr_excerpt,
-                    finished_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, case when ? = 'running' then '' else current_timestamp end)
-                """,
-                (
-                    step_id,
-                    action_id,
-                    status,
-                    summary,
-                    evidence_json,
-                    stdout_excerpt,
-                    stderr_excerpt,
-                    status,
-                ),
+            result = insert_run11_fact(
+                db, "setup_wizard_events",
+                {
+                    "step_id": step_id,
+                    "action_id": action_id,
+                    "status": status,
+                    "summary": summary,
+                    "evidence_json": evidence_json,
+                    "stdout_excerpt": stdout_excerpt,
+                    "stderr_excerpt": stderr_excerpt,
+                },
+                insert_sql={
+                    "finished_at": "case when ? = 'running' then '' else current_timestamp end"
+                },
+                insert_parameters=(status,),
             )
-            return int(cursor.lastrowid)
+            return int(result.lastrowid)
 
     def list_setup_wizard_events(
         self,
@@ -29614,6 +29587,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         action_id: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, str | int]]:
+        projection = "(" + run11_projection("setup_wizard_events") + ")"
         with self._connect() as db:
             args: list[str | int] = []
             conditions: list[str] = []
@@ -29629,7 +29603,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select id, step_id, action_id, status, summary, evidence_json,
                        stdout_excerpt, stderr_excerpt, started_at, finished_at
-                from setup_wizard_events
+                from {projection}
                 {where}
                 order by id desc
                 limit ?

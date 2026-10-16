@@ -13,10 +13,9 @@ from app.task20_definitions import (
 from app.task_storage import RETIRED_TASK_TABLES
 from app.workbench_storage import (
     RETIRED_WORKBENCH_TABLES,
-    SEARCH_TABLE_DDL, SEARCH_INDEX_DDL, SEARCH_FTS_DDL,
 )
 from app.run_storage import _schema_objects
-from app.configs_run_schema import _declarations as _run_declarations, _objects as _run_objects
+from app.runs11_current_schema import current_run11_schema_is_current
 
 RETIRED_TASK_NAMES = tuple(dict.fromkeys((*RETIRED_TASK_TABLES, *RETIRED_WORKBENCH_TABLES, *TASK20_NEW_KINDS, "workbench_confirmations")))
 
@@ -70,10 +69,7 @@ def install_current_task_child_guards(db):
 
 
 def create_current_workbench_auxiliary_schema(db):
-    """Retain search auxiliaries; no folded children or legacy confirmations."""
-    db.execute(SEARCH_TABLE_DDL.replace("create table ", "create table if not exists ", 1))
-    db.execute(SEARCH_INDEX_DDL.replace("create index ", "create index if not exists ", 1))
-    db.execute(SEARCH_FTS_DDL.replace("create virtual table ", "create virtual table if not exists ", 1))
+    """Retain child guards after folding persistent search metadata into Runs."""
     install_current_task_child_guards(db)
 
 
@@ -85,7 +81,6 @@ def _current_objects():
         create_current_workbench_auxiliary_schema(reference)
         return {table: _schema_objects(reference,table) for table in (
             "tasks","feedback_iteration_decision_items",
-            "codex_session_search_index","codex_session_search_fts",
         )}
 
 
@@ -119,20 +114,6 @@ def task20_feedback_child_is_current(db, *, allow_missing_objects=False):
 
 def task20_workbench_schema_is_current(db, *, allow_missing_objects=False):
     """Keep mapped runs and retained Workbench auxiliary recognition together."""
-    expected_runs = _run_declarations(mapped=True)
-    actual_runs = _run_objects(db)
-    if (actual_runs.get("runs") != expected_runs["runs"] or not set(actual_runs) <= set(expected_runs)
-            or any(actual_runs.get(name,sql) != sql if allow_missing_objects else actual_runs.get(name) != sql
-                   for name,sql in expected_runs.items())
-            or not task20_schema_is_current(db,allow_missing_objects=allow_missing_objects)):
-        return False
-    for table, expected in _current_objects().items():
-        if table in ("tasks","feedback_iteration_decision_items"):
-            continue
-        actual = {obj["name"]:obj for obj in _schema_objects(db,table)}
-        for obj in expected:
-            if obj["name"] not in actual and allow_missing_objects and obj["type"] != "table":
-                continue
-            if actual.get(obj["name"]) != obj:
-                return False
-    return True
+    return (current_run11_schema_is_current(db, allow_missing_objects=allow_missing_objects)
+            and task20_schema_is_current(db, allow_missing_objects=allow_missing_objects)
+            and task20_feedback_child_is_current(db, allow_missing_objects=allow_missing_objects))

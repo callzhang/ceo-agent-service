@@ -215,8 +215,8 @@ def _create_native(db: sqlite3.Connection, metadata: dict) -> None:
         raise ValueError('native declaration reconstruction differs')
 
 
-def configs_schema_is_current(db: sqlite3.Connection, *, action_variant: str) -> bool:
-    """Read-only predicate for the exact unselected final config declaration."""
+def configs_content_schema_is_current(db: sqlite3.Connection, *, action_variant: str) -> bool:
+    """Read-only config/action predicate, independent of the Runs source profile."""
     if action_variant not in _ACTION_VARIANTS:
         raise ValueError('unsupported action declaration variant')
     return (all(target_declaration_matches(db, kind, declaration)
@@ -225,9 +225,14 @@ def configs_schema_is_current(db: sqlite3.Connection, *, action_variant: str) ->
             and action_storage.action_schema_is_current(
                 db, include_reply=True, reply_variant=action_variant,
                 include_email=True, include_skill_config_receipts=True)
-            and _run_objects(db) == _run_declarations(mapped=True)
             and all(_source_declaration(db, kind)['sql'] is None
                     for kind in (*SOURCE_TABLES, _OBSERVATIONS)))
+
+
+def configs_schema_is_current(db: sqlite3.Connection, *, action_variant: str) -> bool:
+    """Original mapped Runs8 contract for the historical Config release."""
+    return (configs_content_schema_is_current(db, action_variant=action_variant)
+            and _run_objects(db) == _run_declarations(mapped=True))
 
 
 def migrate_config_schema(db: sqlite3.Connection, metadata: dict) -> dict[str, int]:

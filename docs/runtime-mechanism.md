@@ -1,27 +1,38 @@
 # Current Runtime Mechanism
 
-The unselected Runs11 foundation is installed in `runs11_definitions`,
-`runs11_storage` and `runs11_schema_release`. It preserves all62 original Runs
-columns and adds only19 actual fields from search metadata, classifier runtime
-samples and setup events. Public source IDs retain independent current counters;
-original-eight physical IDs and attempted-allocation reservations survive inverse.
-The pure release folds those three native tables and retires derived title FTS;
-inverse reads current facts and rebuilds title FTS without a body/shadow snapshot.
-Installed focused tests pass275 cases, and a frozen-source copy proves
-116→54→51→54→51 with current writes, declarations/types/counters and the original
-FK findings preserved. Current callers, constructors and the paired coordinator
-still select54 tables; this foundation does not activate51 or change production.
-The final goal remains ten core tables plus the Email migration ledger.
+Current Store/Email/Workbench constructors and the paired Store20/Email52 release
+select Runs11 in this development branch. The three remaining native families
+(search session metadata, classifier runtime samples and setup events) now share
+`runs` with the original eight kinds. The schema preserves all62 original stored
+columns and adds only19 genuine source fields. Public source IDs use independent
+current counters; original-eight physical IDs and attempted-allocation reservations
+survive inverse. Historical Runs8/Workbench/Config factories retain their exact
+source roles; current creation and recognition require one Runs11 layout.
 
-Current Store/Email/Workbench constructors, typed task callers and the paired Store20/Email52 release select Tasks20 in this development branch. The twenty existing task families share one Tasks container with seven writable structural columns; generated source fields retain existing query and constraint semantics. Fresh creation and explicit missing-object repair preserve native behavior, current MAIN counters, retained feedback public-key FKs and Workbench search/FTS auxiliaries. All twelve folded native tables remain absent. Historical task_storage/workbench_storage factories and earlier publication branches retain their original source roles.
+The paired release captures finite source declarations without a row snapshot,
+folds Runs11 after Config/State/Tasks and confirmation retirement, and restores
+mapped Runs8 before Config inverse. Both directions read current facts and
+counters in the existing caller-owned transaction. Current startup stops creating
+the three native tables and persistent title FTS/shadows. Inverse recreates the
+original source declarations and rebuilds derived title FTS from restored metadata.
+Search still reads native trajectory files with the existing transient corpus,
+RAM FTS and vector behavior. Classifier sample retention remains global at2,048;
+its retention query uses the existing sample-only partial index so unrelated Runs
+kinds do not increase its scan work. Setup status/timestamps and public APIs retain
+their original contracts. Explicit missing-object repair preserves current waters.
+
+The selected development candidate has51 ordinary tables. This remains an
+intermediate step toward ten core tables plus the Email migration ledger. Native
+CLI/fake-provider/UI acceptance, final consolidation and production publication
+remain separate program gates; development selection does not change production.
+
+Current Store/Email/Workbench constructors, typed task callers and the paired Store20/Email52 release select Tasks20 in this development branch. The twenty existing task families share one Tasks container with seven writable structural columns; generated source fields retain existing query and constraint semantics. Fresh creation and explicit missing-object repair preserve native behavior, current MAIN counters, retained feedback public-key FKs and physical child guards. All twelve folded native tables remain absent. Historical task_storage/workbench_storage factories and earlier publication branches retain their original source roles.
 
 The paired release converts Tasks20 after State in the existing FK-off transaction and restores Tasks20 before State on inverse. Preparation binds exact source declarations; allocator presence is mutable state, so source rechecks compare variant/table declarations while carrying original presence bits for inverse. Conversion and inverse read current rows and counters, including native writes after preparation and target writes after conversion. No business-row snapshot is stored. Existing physical Tasks IDs, source public keys/ROWIDs, input pointers and scalar types are retained; inverse reconstructs all82 original columns with unrelated source padding as SQL NULL. Non-trigger allocator access uses main.sqlite_sequence; MAIN trigger SQL is unchanged.
 
 Current startup no longer invokes the obsolete direct feedback resolver or recurring round backfill, old receipt/item seeding or the two obsolete native guard-replacement methods. Normal batch creation, claim, association, evidence, batch resolution and reopen remain supported; the existing direct-resolution HTTP routes still return409 feedback_batch_required. No new policy gate, transaction owner or schema version is introduced.
 
 The canceled Workbench confirmation feature is removed from current storage, turn states, runtime events, recovery, API and UI. Native Agent CLI approval remains unchanged. The paired release checks the genuine source feature is empty before conversion and again before dropping its table; a nonempty legacy feature requires explicit disposition. Inverse carries only original table/index/trigger declarations and recreates the empty native table before restoring Tasks20. Removed POST routes are absent from OpenAPI; ordinary framework rejection is404 on the standalone router and405 behind the integrated app's existing SPA catch-all. Timeline fields, cursors and statistics no longer include confirmations.
-
-The selected development candidate has54 ordinary tables. This is intermediate: the final ten core tables plus Email migration ledger, full native CLI/fake-provider/UI acceptance and production approval remain open. Production has not been switched by this development selection.
 
 The paired State release captures exact actual/fresh declarations for sixteen
 native State families and migrates fifteen retained kinds into one state table
@@ -41,8 +52,11 @@ training-observation table. Its forward and inverse require a caller-owned
 FK-off transaction, never commit and never persist a row snapshot. Existing
 action facts use SQLite TEMP staging and preserve physical IDs, values, storage
 classes and sequence waters; inverse restores current facts written after
-forward conversion. The final predicate requires exact configs, schedules,
-Skill-extended actions, mapped runs and absence of nineteen native names.
+forward conversion. The historical Config-component predicate
+`configs_schema_is_current` requires exact configs, schedules, Skill-extended
+actions, mapped Runs8 and absence of nineteen native names for that component's
+forward/inverse. The current selector `current_configs_schema_is_current`
+combines the unchanged Config/action content predicate with exact Runs11.
 Store20/Email52 selects this conversion in the paired release after Email, Business and Provider and before State.
 Both directions preflight external FK and SQL dependencies plus case-insensitive
 TEMP shadows of changed table names before DDL. Complete forward sources are
@@ -50,19 +64,17 @@ post-Email13 `actual_email52` or `fresh_email52` with independently matched
 Email29 reply declarations; an original config profile combined with Email29
 still has legacy account blocker SQL dependencies and is refused.
 
-Unselected retained-runs FK rebuilding uses SQLite TEMP staging and SQL value/
+Retained-runs Config FK rebuilding uses SQLite TEMP staging and SQL value/
 storage-class comparisons rather than loading the whole runs table into Python.
 The stage exists only inside the caller's FK-off migration transaction: it is
-dropped on success, and the caller must roll back on any exception. No runtime
-constructor, source-table retirement or schema marker is activated by this change.
+dropped on success, and the caller must roll back on any exception. The paired release invokes this translation before extending Runs8 to current Runs11.
 
-An unselected retained-runs helper translates exactly the two scheduled-run
+The retained-runs Config helper translates exactly the two scheduled-run
 FK targets after the mapped parents exist. It requires an active caller FK-off
 transaction and exact current full Workbench `runs` declarations, including
 indexes and triggers. The inverse rebuilds from current runs facts rather than
 a stored row snapshot. It preserves existing public integer references,
-physical IDs, storage classes and `runs` sequence waters. The default
-`create_run_schema` remains native; no runtime constructor selects this helper.
+physical IDs, storage classes and `runs` sequence waters. The historical `create_run_schema` remains native; the paired release uses this helper before Runs11 and restores Runs8 before Config inverse.
 
 Fifteen-kind configs, schedules and two typed Skill receipt kinds now have
 unselected storage implementations. No current constructor or schema marker
@@ -3353,16 +3365,20 @@ Existing current-Project citation validation reports both the expected immutable
 The selected candidate coordinator in app/action_email_schema_release.py
 prepares the exact Store19/Email51 source and publishes Store20/Email52.
 Preparation records the original Store marker and complete Email ledger,
-native declarations/allocators and existing FK findings in one read snapshot.
-It carries Email, Business, Provider, Configs/Skill/mapped-runs, State and Tasks20
-schema metadata without a business-row snapshot.
+native declarations, required allocator-presence bits and existing FK findings
+in one read snapshot.
+It carries Email, Business, Provider, Configs/Skill/mapped-Runs8, State, Tasks20,
+retired empty Workbench confirmation declarations and Runs11 source-profile
+metadata without a business-row snapshot.
 
-Forward converts those components in one FK-off transaction, with State after
-Configs, then Tasks20 before the shared Store/Email marker timestamp. Readback validates
+Forward converts Email, Business, Provider, Configs, State and Tasks20 in the
+existing FK-off transaction, retires the empty confirmation table, then folds
+Runs11 before writing the shared Store/Email marker timestamp. Readback validates
 the complete current declarations, translated dependencies, retired names,
-markers and unchanged FK findings. Inverse restores Tasks20 first, then State and the
-existing Configs/Business/Email/Provider sequence, original Store timestamp and
-complete Email ledger from current facts and allocator waters. A failed
+markers and unchanged FK findings. Inverse recreates the empty confirmation
+schema, restores Tasks20 and State, restores mapped Runs8 from current Runs11
+facts, then restores Configs/Business/Email/Provider, the original Store timestamp
+and complete Email ledger from current facts and allocator waters. A failed
 transaction rolls back its DDL, markers and data together. The genuine cold
 initializer and constructors are selected; actual-copy, latest predecessor,
 native CLI and deployment acceptance remain separate from code selection.

@@ -6,6 +6,7 @@ import pytest
 
 from app import task20_schema_release as release
 from app import task20_current_schema as current
+from app.runs11_current_schema import create_current_run11_schema
 from app.task_storage import create_task_schema, install_task_child_guards
 from app.workbench_storage import create_workbench_auxiliary_schema
 from app.task8_storage import register_task8_functions
@@ -20,6 +21,7 @@ from app.task12_storage import insert_task12
 def db():
     with closing(sqlite3.connect(':memory:')) as connection:
         register_task8_functions(connection)
+        create_current_run11_schema(connection)
         current.create_current_task20_schema(connection)
         current.create_current_feedback_child_schema(connection)
         current.create_current_workbench_auxiliary_schema(connection)
@@ -34,10 +36,8 @@ def test_fresh_factories_converge_with_exact_migration_target(db,variant):
         native.execute('begin')
         metadata=release.capture_task20_source(native)
         release.migrate_task20_schema(native,metadata)
-        release._target_shape(db,metadata)
-        for table in ('tasks','feedback_iteration_decision_items','codex_session_search_index','codex_session_search_fts'):
-            if table in ('tasks','feedback_iteration_decision_items'):
-                assert release._declaration(db,table)==release._declaration(native,table)
+        for table in ('tasks','feedback_iteration_decision_items'):
+            assert release._declaration(db,table)==release._declaration(native,table)
     assert current.task20_schema_is_current(db)
     assert current.task20_feedback_child_is_current(db)
     assert not db.execute('select 1 from main.sqlite_schema where name in ('+','.join('?' for _ in current.RETIRED_TASK_NAMES)+')',current.RETIRED_TASK_NAMES).fetchone()
@@ -143,18 +143,13 @@ def test_feedback_child_missing_table_and_auxiliary_repair_modes(db):
     assert current.task20_feedback_child_is_current(db,allow_missing_objects=True)
 
 
-def test_workbench_retained_auxiliaries_and_mapped_runs_remain_required(db):
-    expected=current._run_declarations(mapped=True)
-    db.execute(expected['runs'])
-    for name,sql in expected.items():
-        if name!='runs':
-            db.execute(sql)
+def test_workbench_current_runs11_and_missing_index_repair(db):
     assert current.task20_workbench_schema_is_current(db)
-    db.execute('drop index idx_codex_session_search_source')
+    db.execute('drop index idx_runs11_metadata_source')
     assert not current.task20_workbench_schema_is_current(db)
     assert current.task20_workbench_schema_is_current(db,allow_missing_objects=True)
-    current.create_current_workbench_auxiliary_schema(db)
+    create_current_run11_schema(db)
     assert current.task20_workbench_schema_is_current(db)
-    assert not db.execute("select 1 from sqlite_schema where name='workbench_confirmations'").fetchone()
-    db.execute('create table workbench_confirmations(id text)')
+    assert not db.execute("select 1 from sqlite_schema where name='codex_session_search_index'").fetchone()
+    db.execute('create table codex_session_search_index(id integer)')
     assert not current.task20_workbench_schema_is_current(db,allow_missing_objects=True)
