@@ -3,7 +3,23 @@
 import hashlib
 import json
 
-from app.agent_contracts import ConsumerAgentResult, ConsumerProposal, ProposedAction
+from pydantic import BaseModel, ConfigDict
+
+from app.agent_contracts import (
+    ConsumerAgentResult,
+    ConsumerProposal,
+    DecisionOption,
+    ProposedAction,
+)
+
+
+class _RejectedCandidateContent(BaseModel):
+    """Only the effect-bearing fields needed to compare a rejected parent."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    proposal: ConsumerProposal | None = None
+    decision_options: tuple[DecisionOption, ...] = ()
 
 
 def _digest(value: object) -> str:
@@ -26,7 +42,9 @@ def _action_content(action: ProposedAction) -> dict[str, object]:
     }
 
 
-def action_content_digest(candidate: ConsumerAgentResult | ConsumerProposal) -> str:
+def action_content_digest(
+    candidate: ConsumerAgentResult | ConsumerProposal | _RejectedCandidateContent,
+) -> str:
     """Compare proposed effects without rationale or presentation metadata."""
     if isinstance(candidate, ConsumerProposal):
         content = [[_action_content(action) for action in candidate.actions]]
@@ -42,6 +60,11 @@ def action_content_digest(candidate: ConsumerAgentResult | ConsumerProposal) -> 
     return _digest(content)
 
 
-def rejected_content_changed(before: ConsumerAgentResult, after: ConsumerAgentResult) -> bool:
+def rejected_content_changed(
+    before: ConsumerAgentResult | str | bytes,
+    after: ConsumerAgentResult,
+) -> bool:
     """A rejection requires changed executable or terminal branch content."""
+    if isinstance(before, (str, bytes)):
+        before = _RejectedCandidateContent.model_validate_json(before)
     return action_content_digest(before) != action_content_digest(after)

@@ -14,6 +14,7 @@ from app.agent_contracts import (
     ConsumerOutcome,
     ConsumerProposal,
     SystemExecutionResult,
+    parse_persisted_consumer_result,
 )
 from app.agent_result import AgentError, ResultParseError
 from app.agent_turn_runner import AgentTurnRunResult
@@ -345,7 +346,7 @@ class AgentOrchestrator:
         candidate = self.store.adopted_candidate_for_consumer_run(run.id)
         if candidate is None:
             raise ValueError("completed Consumer candidate unavailable")
-        return ConsumerAgentResult.model_validate_json(candidate["candidate_json"])
+        return parse_persisted_consumer_result(candidate["candidate_json"])
 
     def _audit_result(self, run: AgentRun) -> AuditAgentResult:
         review = self.store.get_candidate_review_for_audit_run(run.id)
@@ -436,10 +437,12 @@ class AgentOrchestrator:
                     result,
                 )
             if previous.outcome is AuditOutcome.REJECT:
-                original = self._consumer_result(
-                    self.store.get_agent_run(parent.parent_agent_run_id, load_events=False)
+                original = self.store.adopted_candidate_for_consumer_run(
+                    parent.parent_agent_run_id
                 )
-                if not rejected_content_changed(original, result):
+                if original is None or not rejected_content_changed(
+                    original["candidate_json"], result
+                ):
                     return self._run_terminal(
                         consumer,
                         "failed_terminal",

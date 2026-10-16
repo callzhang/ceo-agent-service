@@ -7,6 +7,7 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     AuditAgentResult,
     SystemExecutionResult,
+    RiskLevel,
 )
 from app.agent_orchestrator import AgentOrchestrator, _NextAudit
 from app.agent_result import AgentError
@@ -41,7 +42,7 @@ def candidate(
         proposal=None if human else plan,
         risk="low",
         confidence=1.0,
-        rule_coverage=1.0,
+        rule_coverage=0.4 if human else 1.0,
         information_completeness=1.0,
         error=AgentError(code="", retryable=False),
         stage_index=stage,
@@ -285,6 +286,27 @@ def test_return_can_keep_exact_action_but_reject_cannot(tmp_path):
     assert result.status == "failed_terminal"
     assert result.error.code == "rejected_candidate_unchanged"
     assert not executor2.calls
+
+
+def test_rejected_pre_gate_human_parent_allows_changed_revision(tmp_path):
+    store, task, context = setup(tmp_path)
+    historical = candidate(human=True).model_copy(update={
+        "risk": RiskLevel.LOW, "confidence": 1.0, "rule_coverage": 1.0,
+    })
+    consumer = Consumer(store, historical, candidate("corrected"))
+    handler = Executor(store)
+    driver = AgentOrchestrator(
+        store=store,
+        consumer=consumer,
+        audit=Audit(store, "reject", "approve"),
+        system_executor=handler,
+    )
+
+    result = driver.process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "executed"
+    assert result.consumer_result.proposal.actions[0].payload == {"text": "corrected"}
+    assert handler.calls and len(handler.calls) == 1
 
 
 def test_four_business_returns_fail_without_human_question(tmp_path):

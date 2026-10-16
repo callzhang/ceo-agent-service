@@ -3,7 +3,8 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from app.run_storage import AGENT_RUN_SQL
-from app.agent_contracts import ConsumerAgentResult
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, RiskLevel
+from app.agent_orchestrator import AgentOrchestrator
 from app.audit_web import handle_needs_human_decision_post, _is_valid_rerun_trigger_json
 from app.audit_web import _human_decision_attention_rows
 from app.quality_gate import scan_hourly_quality
@@ -31,7 +32,7 @@ def _question():
              "consequence": "No message", "terminal_outcome": "skipped", "reason": "Already resolved"},
         ],
         "error": {"code": "", "retryable": False, "authorization_required": False},
-        "risk": "medium", "confidence": 0.8, "rule_coverage": 0.5,
+        "risk": "medium", "confidence": 0.8, "rule_coverage": 0.4,
         "information_completeness": 1.0,
         "needs_human_reason": "Only Derek can choose this instance's reply",
         "decision_basis": {"verified_facts": [fact], "rule_evidence": [fact],
@@ -42,7 +43,7 @@ def _question():
     })
 
 
-def _approved_question(path: Path):
+def _approved_question(path: Path, *, historical_scores=False):
     store = AutoReplyStore(path)
     store.enqueue_reply_task(
         conversation_id="cid-choice", conversation_title="Applicant", single_chat=True,
@@ -57,6 +58,10 @@ def _approved_question(path: Path):
     )
     task = store.claim_reply_tasks(1)[0]
     question = _question()
+    if historical_scores:
+        question = question.model_copy(update={
+            "risk": RiskLevel.LOW, "confidence": 1.0, "rule_coverage": 1.0,
+        })
     consumer = store.claim_agent_run(
         task.id, task.execution_generation, role=AgentRole.CONSUMER,
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
@@ -69,7 +74,12 @@ def _approved_question(path: Path):
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
         operation_id="audit-choice", owner="audit",
     ).run
-    audit_result = {"outcome": "approve", "candidate_digest": candidate_digest(question)}
+    audit_result = AuditAgentResult(
+        outcome="approve", summary="Candidate reviewed", proposal_revision=0,
+        candidate_digest=candidate_digest(question), evidence_refs=(), feedback=None,
+        error={"code": "", "retryable": False}, risk="low", confidence=1.0,
+        rule_coverage=1.0, information_completeness=1.0,
+    ).model_dump(mode="json")
     store.complete_agent_run(audit.id, audit_result, owner="audit")
     review = store.record_candidate_review(candidate["id"], audit.id, audit_result)
     attempt_id = store.record_reply_attempt(
@@ -192,6 +202,57 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
     with reopened._connect() as db:
         assert db.execute(f"select count(*) from ({CANDIDATE_SELECTION_SQL})").fetchone()[0] == 0
         assert db.execute(f"select count(*) from ({CANDIDATE_EXECUTION_SQL})").fetchone()[0] == 0
+
+
+def test_pre_gate_selected_execution_remains_readable_after_success(tmp_path):
+    from app.system_executor import ActionOutcome, SystemExecutor
+
+    store, task, candidate, review, _attempt_id = _approved_question(
+        tmp_path / "historical.sqlite3", historical_scores=True
+    )
+    store.select_candidate_option(candidate["id"], review["id"], "send")
+    store.wake_selected_candidate_execution(candidate["id"], review["id"])
+
+    class Handler:
+        calls = 0
+
+        def dispatch(self, action, *, action_key, candidate):
+            self.calls += 1
+            return ActionOutcome("verified", {"provider_receipt_id": action_key})
+
+        def reconcile(self, action, *, action_key, candidate):
+            return None
+
+    handler = Handler()
+    executor = SystemExecutor(
+        store,
+        {("dingtalk-chat", "send_direct_message"): handler},
+        owner="historical-result-test",
+    )
+    execution = executor.execute(task, candidate["id"], review["id"])
+    assert execution.outcome == "executed"
+    assert handler.calls == 1
+
+    replay = AgentOrchestrator(store=store, consumer=None, audit=None)
+    terminal = replay.persisted_terminal_result(store.get_reply_task(task.id))
+    assert terminal is not None and terminal.status == "executed"
+    assert handler.calls == 1
+
+
+def test_pre_gate_unqualified_current_human_result_is_not_actionable(tmp_path):
+    store, _task, _candidate, _review, attempt_id = _approved_question(
+        tmp_path / "historical-needs-human.sqlite3", historical_scores=True
+    )
+
+    status, detail = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert detail["status"]["raw"] != "needs_human"
+    assert detail["status"]["requires_decision"] is False
+    assert detail["decision_options"] == []
+    # Keep the previously stored candidate available as historical evidence;
+    # it simply cannot re-enter the current human-action projection.
+    assert detail["human_decision"]["reason"] == "Only Derek can choose this instance's reply"
 
 
 def test_supplement_missing_execution_source_does_not_change_choice(tmp_path):

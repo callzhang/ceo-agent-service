@@ -16,12 +16,12 @@ from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandSkillMaterial,
 )
-from app.agent_contracts import AuditOutcome, ConsumerAgentResult
+from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult
 from app.agent_result import ResultParseError
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
-from app.audit_agent import AuditAgentRunner
+from app.audit_agent import AuditAgentRunner, validate_audit_candidate_fields
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult
 from app.reviewed_candidates import candidate_digest
@@ -46,6 +46,49 @@ def _candidate() -> ConsumerAgentResult:
         "predecessor_review_id": None, "continue_after_execution": False,
         "durable_memories": [],
     })
+
+
+def test_audit_rechecks_needs_human_candidate_against_quality_scores():
+    candidate = ConsumerAgentResult.model_validate({
+        "outcome": "needs_human", "summary": "Choose a policy",
+        "proposal": None, "decision_options": [],
+        "requested_input": "Which policy should apply?",
+        "needs_human_reason": "The rule coverage is incomplete",
+        "decision_basis": {
+            "verified_facts": [{
+                "assertion": "The current decision depends on a specific unresolved policy.",
+                "references": ["source:1"],
+            }],
+            "rule_evidence": [{
+                "assertion": "No applicable rule covers this decision.",
+                "references": ["skill:current"],
+            }],
+            "quality_explanation": "Information is complete but the applicable rule is missing.",
+            "no_external_action_evidence": [{
+                "assertion": "No external action has been taken.",
+                "references": ["audit:no-action"],
+            }],
+            "conclusion": "A rule decision is required.",
+        },
+        "risk": "low", "confidence": 1.0, "rule_coverage": 0.49,
+        "information_completeness": 1.0,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    }).model_copy(update={
+        "rule_coverage": 1.0,
+        "risk": "low",
+        "confidence": 0.99,
+    })
+    audit_result = AuditAgentResult.model_validate({
+        "outcome": "approve", "summary": "Reviewed candidate",
+        "proposal_revision": 0, "candidate_digest": "a" * 64,
+        "evidence_refs": ["source:1"], "feedback": None,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low", "confidence": 0.9, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+
+    with pytest.raises(ResultParseError, match="does not satisfy decision quality gate"):
+        validate_audit_candidate_fields(audit_result, candidate)
 
 
 def _wire(*, outcome: str = "approve") -> str:
@@ -223,6 +266,8 @@ def test_human_question_renders_every_bound_branch_and_open_fact_request(setup):
         "outcome": "needs_human", "proposal": None,
         "needs_human_reason": "Choose the current applicant response",
         "decision_basis": basis,
+        "risk": "high", "confidence": 0.49, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
         "decision_options": [
             {"key": "send", "label": "Send", "instruction": "Send notice",
              "consequence": "Applicant gets the notice", "plan": action_plan},

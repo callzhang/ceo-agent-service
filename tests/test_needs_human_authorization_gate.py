@@ -35,7 +35,7 @@ def _business_choice():
                 "terminal_outcome": "skipped", "reason": "Derek chose to leave the task unchanged.",
             },
         ],
-        "risk": "high", "confidence": 0.8, "rule_coverage": 1.0,
+        "risk": "high", "confidence": 0.8, "rule_coverage": 0.4,
         "information_completeness": 1.0,
         "error": {"code": "", "retryable": False, "authorization_required": False},
         "needs_human_reason": "Only Derek can choose the treatment of this instance.",

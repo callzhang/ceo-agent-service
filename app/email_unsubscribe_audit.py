@@ -12,7 +12,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent_contracts import ConsumerAgentResult, ConsumerOutcome, ProposedAction
+from app.agent_contracts import (
+    ConsumerOutcome,
+    ProposedAction,
+    parse_persisted_consumer_result,
+)
 from app.agent_result import AgentError
 from app.email_classifier_contracts import (
     EmailAction,
@@ -648,9 +652,7 @@ def _bound_parent_consumer_action(
     one action) cannot change what runs.
     """
     try:
-        parent_result = ConsumerAgentResult.model_validate_json(
-            candidate_json
-        )
+        parent_result = parse_persisted_consumer_result(candidate_json)
     except (TypeError, ValueError) as exc:
         raise ValueError("unsubscribe Consumer proposal is invalid") from exc
     if (
