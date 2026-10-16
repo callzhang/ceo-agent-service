@@ -1,0 +1,1507 @@
+{
+  "status": "complete unselected three-file console reader proposal; static copied verification only",
+  "patch_sha256": "a823ff570d1d8b6045f1289853831f7893531f78badc1281134bb80389f717df",
+  "patch": "docs/superpowers/plans/2026-10-16-task20-console-readers-caller-proposal.patch",
+  "files": {
+    "app/audit_web.py": {
+      "source_sha256": "036f4f46259485c5e341cab8171071b732377d2cee685d90f41eceb8d4dc77e7",
+      "candidate_sha256": "d10a0995be2abaf7cd6163e0337f474933d724081353a9d806050ad65b2b9559",
+      "signature_count": 510,
+      "changed_bodies": [
+        "_work_summary_input_queue_snapshot",
+        "_meeting_job_queue_snapshot",
+        "_okr_review_queue_snapshot",
+        "_reply_task_queue_snapshot",
+        "_reply_attempt_queue_snapshot",
+        "_queue_attention_rows",
+        "_human_decision_attention_rows",
+        "_sqlite_table_exists",
+        "_queue_status_counts",
+        "_queue_latest_value",
+        "_queue_latest_error",
+        "_sqlite_table_columns"
+      ],
+      "unchanged_bodies": 498,
+      "transaction_connection_context_pragma_ast_exact": true,
+      "all_execute_parameters_exact": true,
+      "all_count_parameters_exact": true,
+      "unrelated_module_statements_exact": true,
+      "execute_parameter_site_count": 37,
+      "source_map_join_count": 5,
+      "sql_call_inventory": [
+        {
+          "owner": "_work_summary_input_queue_snapshot",
+          "owner_line": 2653,
+          "line": 2655,
+          "callee": "db.execute",
+          "sql_expression": "\"select lower(coalesce(status,'')) as status, count(*) as count \"\n        \"from tasks where record_type='work_summary_inputs' \"\n        \"group by lower(coalesce(status,''))\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_work_summary_input_queue_snapshot",
+          "owner_line": 2653,
+          "line": 2659,
+          "callee": "db.execute",
+          "sql_expression": "\"select updated_at from tasks where record_type='work_summary_inputs' \"\n        \"order by updated_at desc limit 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_work_summary_input_queue_snapshot",
+          "owner_line": 2653,
+          "line": 2661,
+          "callee": "db.execute",
+          "sql_expression": "\"select error from tasks where record_type='work_summary_inputs' \"\n        \"and lower(status)='failed' and trim(coalesce(error,''))<>'' \"\n        \"order by updated_at desc, cast(legacy_key as integer) desc limit 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_meeting_job_queue_snapshot",
+          "owner_line": 2677,
+          "line": 2678,
+          "callee": "db.execute",
+          "sql_expression": "\"select lower(coalesce(status,'')) as status, count(*) as count \"\n        \"from tasks where record_type='meeting_alignment_jobs' \"\n        \"group by lower(coalesce(status,''))\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_meeting_job_queue_snapshot",
+          "owner_line": 2677,
+          "line": 2682,
+          "callee": "db.execute",
+          "sql_expression": "\"select updated_at from tasks where record_type='meeting_alignment_jobs' \"\n        \"order by updated_at desc limit 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_meeting_job_queue_snapshot",
+          "owner_line": 2677,
+          "line": 2684,
+          "callee": "db.execute",
+          "sql_expression": "\"select error from tasks where record_type='meeting_alignment_jobs' \"\n        \"and lower(status)='failed' and trim(coalesce(error,''))<>'' \"\n        \"order by updated_at desc, cast(legacy_key as integer) desc limit 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_okr_review_queue_snapshot",
+          "owner_line": 2697,
+          "line": 2698,
+          "callee": "db.execute",
+          "sql_expression": "\"select lower(coalesce(status,'')) as status, count(*) as count \"\n        \"from tasks where record_type='okr_review_requests' \"\n        \"group by lower(coalesce(status,''))\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_okr_review_queue_snapshot",
+          "owner_line": 2697,
+          "line": 2702,
+          "callee": "db.execute",
+          "sql_expression": "\"select updated_at from tasks where record_type='okr_review_requests' \"\n        \"order by updated_at desc limit 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_okr_review_queue_snapshot",
+          "owner_line": 2697,
+          "line": 2704,
+          "callee": "db.execute",
+          "sql_expression": "\"select error from tasks where record_type='okr_review_requests' \"\n        \"and lower(status)='failed' and trim(coalesce(error,''))<>'' \"\n        \"order by updated_at desc, cast(legacy_key as integer) desc limit 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_reply_task_queue_snapshot",
+          "owner_line": 2760,
+          "line": 2773,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n        with current as materialized (\n            select tasks.id, lower(coalesce(tasks.status, '')) as status,\n                   tasks.updated_at, tasks.error\n            {current_projection}\n        ), counts as (\n            select status, count(*) as count from current group by status\n        ), latest as (\n            select updated_at from current order by updated_at desc, id desc limit 1\n        ), latest_error as (\n            select error from current where status in ('failed', 'error')\n            order by updated_at desc, id desc limit 1\n        )\n        select counts.status, counts.count, latest.updated_at, latest_error.error\n        from counts cross join latest left join latest_error on 1=1\n        order by counts.status\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_email_action_queue_snapshot",
+          "owner_line": 2813,
+          "line": 2822,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n        with current as materialized (\n            select lower(coalesce(a.status, '')) as status, a.attempt_count,\n                   a.next_attempt_at, a.updated_at, a.error, a.action_id\n            {current_plan}\n        ), counts as (\n            select status, count(*) as count,\n                   sum(case when status='failed' and attempt_count < ?\n                        and trim(next_attempt_at) != ''\n                        and datetime(next_attempt_at) is not null\n                       then 1 else 0 end) as retryable\n            from current group by status\n        ), latest as (\n            select updated_at, error from current\n            order by updated_at desc, action_id desc limit 1\n        )\n        select counts.status, counts.count, counts.retryable, latest.updated_at, latest.error\n        from counts cross join latest order by counts.status\n        \"\"\"",
+          "parameters_expressions": [
+            "(DIRECT_ACTION_MAX_ATTEMPTS,)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_email_unsubscribe_task_queue_snapshot",
+          "owner_line": 2861,
+          "line": 2872,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n        select lower(coalesce(status, '')) as status, count(*) as count\n        from ({REPLY_TASK_CURRENT_SQL})\n        where {predicate}\n        group by lower(coalesce(status, ''))\n        order by status\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_email_unsubscribe_task_queue_snapshot",
+          "owner_line": 2861,
+          "line": 2884,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n        select updated_at\n        from ({REPLY_TASK_CURRENT_SQL})\n        where {predicate}\n        order by updated_at desc, id desc\n        limit 1\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_email_unsubscribe_task_queue_snapshot",
+          "owner_line": 2861,
+          "line": 2893,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n        select error\n        from ({REPLY_TASK_CURRENT_SQL})\n        where {predicate}\n          and lower(status)='failed'\n          and trim(coalesce(error, ''))<>''\n        order by updated_at desc, id desc\n        limit 1\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_email_worker_health_snapshot",
+          "owner_line": 2920,
+          "line": 2932,
+          "callee": "db.execute",
+          "sql_expression": "'\\n            select key, value, updated_at\\n            from (' + state_projection('service_state') + \")\\n            where key like 'email_worker_health:%'\\n            order by key\\n            \"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_reply_attempt_queue_snapshot",
+          "owner_line": 3076,
+          "line": 3190,
+          "callee": "db.execute",
+          "sql_expression": "current_attempts\n        + f\"\"\"\n            select\n                live_status as status,\n                count(*) as count,\n                max(updated_at) as latest_updated_at,\n                max(case\n                    when live_status='failed' then (\n                        select case\n                            when trim(coalesce(failure.send_error, ''))<>''\n                            then current.updated_at || char(31) || failure.send_error\n                            else ''\n                        end\n                        from ({REPLY_ATTEMPT_COMMON_SQL}) as failure\n                        where failure.id=current.id\n                    )\n                    else ''\n                end) as latest_error\n            from current\n            group by live_status\n            order by live_status\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_memory_write_queue_snapshot",
+          "owner_line": 3240,
+          "line": 3242,
+          "callee": "db.execute",
+          "sql_expression": "f\"select lower(coalesce(status,'')) as status,count(*) as count \"\n        f\"from ({source}) group by lower(coalesce(status,'')) order by status\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_memory_write_queue_snapshot",
+          "owner_line": 3240,
+          "line": 3247,
+          "callee": "db.execute",
+          "sql_expression": "f\"select updated_at from ({source}) order by updated_at desc limit 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_memory_write_queue_snapshot",
+          "owner_line": 3240,
+          "line": 3250,
+          "callee": "db.execute",
+          "sql_expression": "f\"select last_error from ({source}) where lower(status)='failed' \"\n        \"and trim(coalesce(last_error,''))<>'' order by updated_at desc,id desc limit 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_wechat_delivery_queue_snapshot",
+          "owner_line": 3265,
+          "line": 3267,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n        select\n            case\n                when lower(wechat_deliveries.status)='failed'\n                     and wechat_deliveries.error='user_rejected'\n                    then 'skipped'\n                when lower(wechat_deliveries.status)='send_unknown' then 'failed'\n                else lower(coalesce(wechat_deliveries.status, ''))\n            end as status,\n            count(*) as count,\n            max(case\n                when lower(wechat_deliveries.status)='send_unknown'\n                    then wechat_deliveries.updated_at || char(31)\n                         || wechat_deliveries.error\n                when lower(wechat_deliveries.status)='failed'\n                     and wechat_deliveries.error!='user_rejected'\n                    then wechat_deliveries.updated_at || char(31)\n                         || wechat_deliveries.error\n                else ''\n            end) as latest_error\n        from wechat_deliveries\n        join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id\n        where wechat_deliveries.execution_generation=\n              reply_tasks.execution_generation\n        group by 1\n        order by 1\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_wechat_delivery_queue_snapshot",
+          "owner_line": 3265,
+          "line": 3306,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"select max(wechat_deliveries.updated_at) as value\n           from wechat_deliveries\n           join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id\n           where wechat_deliveries.execution_generation=\n                 reply_tasks.execution_generation\"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_attention_rows",
+          "owner_line": 3372,
+          "line": 3436,
+          "callee": "db.execute",
+          "sql_expression": "'select cursor_json,last_success_at,last_error from (' + state_projection('daily_scan_state') + \") where scanner_name='oa_pending'\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_attention_rows",
+          "owner_line": 3372,
+          "line": 3443,
+          "callee": "db.execute",
+          "sql_expression": "f\"select id,conversation_title,trigger_text,updated_at,error,status \"\n                f\"from ({REPLY_TASK_CURRENT_SQL}) where business_object_key=? \"\n                \"order by id desc limit 1\"",
+          "parameters_expressions": [
+            "(key,)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_attention_rows",
+          "owner_line": 3372,
+          "line": 3525,
+          "callee": "db.execute",
+          "sql_expression": "reply_task_sql",
+          "parameters_expressions": [
+            "reply_task_params"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_attention_rows",
+          "owner_line": 3372,
+          "line": 3596,
+          "callee": "db.execute",
+          "sql_expression": "sql",
+          "parameters_expressions": [
+            "params"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_attention_rows",
+          "owner_line": 3372,
+          "line": 3635,
+          "callee": "db.execute",
+          "sql_expression": "email_task_sql",
+          "parameters_expressions": [
+            "email_task_params"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_attention_rows",
+          "owner_line": 3372,
+          "line": 3682,
+          "callee": "db.execute",
+          "sql_expression": "email_action_sql",
+          "parameters_expressions": [
+            "email_action_params"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_attention_rows",
+          "owner_line": 3372,
+          "line": 3713,
+          "callee": "db.execute",
+          "sql_expression": "meeting_memory_sql",
+          "parameters_expressions": [
+            "meeting_memory_params"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_attention_rows",
+          "owner_line": 3372,
+          "line": 3746,
+          "callee": "db.execute",
+          "sql_expression": "task_memory_sql",
+          "parameters_expressions": [
+            "task_memory_params"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_attention_rows",
+          "owner_line": 3372,
+          "line": 3767,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n                select error_event.id, error_event.conversation_id,\n                       error_event.message_id, error_event.kind,\n                       error_event.detail, error_event.created_at\n                from errors error_event\n                where coalesce(error_event.resolved_at, '') = ''\n                  and error_event.kind <> 'codex_capacity_pause'\n                  and not exists (\n                    select 1\n                    from errors newer_error\n                    where newer_error.conversation_id=error_event.conversation_id\n                      and coalesce(newer_error.message_id, '')=\n                          coalesce(error_event.message_id, '')\n                      and newer_error.kind=error_event.kind\n                      and newer_error.id>error_event.id\n                      and coalesce(newer_error.resolved_at, '')=''\n                  )\n                  and not (\n                    error_event.conversation_id='work_summary_input'\n                    and exists (\n                      select 1\n                      from ({WORK_SUMMARY_INPUT_SQL}) as completed_input\n                      where cast(completed_input.id as text)=error_event.message_id\n                        and lower(completed_input.status) in ('done', 'skipped')\n                    )\n                  )\n                  and not exists (\n                    select 1\n                    from ({REPLY_ATTEMPT_COMMON_SQL}) recovery\n                    where recovery.conversation_id=error_event.conversation_id\n                      and recovery.trigger_message_id=error_event.message_id\n                      and datetime(recovery.updated_at) >= datetime(error_event.created_at)\n                      and lower(recovery.send_status) in ({recovered_placeholders})\n                  )\n                  and not exists (\n                    select 1\n                    from (\n                        select event_run.id, event_run.scheduled_task_id\n                        from ({SCHEDULED_RUN_SQL}) as event_run\n                        where event_run.event_id=error_event.message_id\n                        union all\n                        select identity_run.id, identity_run.scheduled_task_id\n                        from ({SCHEDULED_RUN_SQL}) as identity_run\n                        where identity_run.id=cast(substr(\n                            error_event.conversation_id,\n                            length('scheduled-task-run:') + 1\n                        ) as integer)\n                          and error_event.conversation_id=\n                              'scheduled-task-run:' || cast(identity_run.id as text)\n                    ) as stale_run\n                    where exists (\n                         select 1\n                         from ({SCHEDULED_RUN_SQL}) as later_run\n                         join ({REPLY_TASK_SQL}) as later_task\n                           on later_run.execution_kind='reply_task'\n                          and cast(later_run.execution_id as integer)=later_task.id\n                          and lower(later_task.status) in ('done', 'skipped')\n                         where later_run.scheduled_task_id=stale_run.scheduled_task_id\n                           and later_run.id>stale_run.id\n                           and later_run.dispatch_status='dispatched'\n                     )\n                  )\n                order by error_event.created_at desc, error_event.id desc\n                \"\"\"",
+          "parameters_expressions": [
+            "recovered_statuses"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_human_decision_attention_rows",
+          "owner_line": 3887,
+          "line": 3923,
+          "callee": "db.execute",
+          "sql_expression": "sql",
+          "parameters_expressions": [
+            "(limit,) if limit is not None else ()"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_sqlite_table_exists",
+          "owner_line": 3941,
+          "line": 3942,
+          "callee": "db.execute",
+          "sql_expression": "\"select 1 from sqlite_master where type='table' and name=?\"",
+          "parameters_expressions": [
+            "(table,)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_status_counts",
+          "owner_line": 3949,
+          "line": 3954,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n        select lower(coalesce({status_column}, '')) as status, count(*) as count\n        from {table}\n        group by lower(coalesce({status_column}, ''))\n        order by status\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_retryable_count",
+          "owner_line": 3969,
+          "line": 3982,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n            select count(*) as count\n            from {table}\n            where lower({status_column})='failed'\n              and ({code_predicate})\n            \"\"\"",
+          "parameters_expressions": [
+            "[f\"%{code}%\" for code in retryable_codes]"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_latest_value",
+          "owner_line": 3995,
+          "line": 3996,
+          "callee": "db.execute",
+          "sql_expression": "f\"select {column} as value from {table} order by {column} desc limit 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_queue_latest_error",
+          "owner_line": 4002,
+          "line": 4012,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n        select {error_column} as value\n        from {table}\n        where rowid in (\n            select rowid from {table} where lower({status_column})='failed'\n        ) and trim(coalesce({error_column}, ''))<>''\n        order by {order_sql}\n        limit 1\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_sqlite_table_columns",
+          "owner_line": 4026,
+          "line": 4027,
+          "callee": "db.execute",
+          "sql_expression": "f\"pragma table_info({table})\"",
+          "parameters_expressions": [],
+          "keywords": []
+        }
+      ],
+      "source_module_ast_sha256": "f80b3c8a38fb94114e9cc7b58610264e7689af257cf599df9d38f8b9dab808e0",
+      "candidate_module_ast_sha256": "4414a89584ced1f2d415e876cb163ddf74e05ef5d074028118ad1c89f9c0c559",
+      "changed_owner_ast_hashes": {
+        "_work_summary_input_queue_snapshot": {
+          "source": "09260fc600078f4430239eb8cbdb8fb73c20d16d7f16d7577be74ef2fcc072aa",
+          "candidate": "1c4bd83190e0849d4ebeddbed3a4a5187e4a861b41c6f2498f6eefa20015bd96"
+        },
+        "_meeting_job_queue_snapshot": {
+          "source": "6e6c97e9c6d731b9c0251f6bb8d9b7d6674c9beba46c659a572221ff4bd08eba",
+          "candidate": "6e372164c5128d9c821694cd6ee43e878890bcb5e3a3c7b37a6d0fb514784bf9"
+        },
+        "_okr_review_queue_snapshot": {
+          "source": "3456e5fa144b53521c41e2411712f4b0ff0972fad0705a56371ad74a51daf997",
+          "candidate": "9af21e00e6aa6116d313735ea83e3f6635a3e18f8e1cdec24bb7793126b427a0"
+        },
+        "_reply_task_queue_snapshot": {
+          "source": "1f50037fa194412755d5d24ed1beb71df3750ff10990c8f6921e9027beca9a66",
+          "candidate": "361be17cf052a0ca629cd220a9d7f806a2fd55f87cdc60081c7e0279b643286b"
+        },
+        "_reply_attempt_queue_snapshot": {
+          "source": "2c2bc066b9af6ed2d9545da6e3af483e0174ae460aa0e4d9395a83a95af99e9c",
+          "candidate": "46788358270b0e7f707a33cfba177ad6f1010d5ea4f0374390a4b1ec3603a910"
+        },
+        "_queue_attention_rows": {
+          "source": "a205d533e27bd4dfee0e4184ba90a4ff7ba299f0fc55f1daba7c4e852b869c46",
+          "candidate": "27adeee1b08d74ce0f2bd5d2eb63909160c485399e12670e1a308ea13cc4a73d"
+        },
+        "_human_decision_attention_rows": {
+          "source": "c3e9daf2e44fde8f098173991c26f2411f1fb7477473c132972a2a7d5dd65dcf",
+          "candidate": "2d6fcd5116492a4a7b394b607f69128702d1b1d4ab0cac9d5b6a9c796b100370"
+        },
+        "_sqlite_table_exists": {
+          "source": "77df615f06d7750ab996d27f48bfcd0a62199c1fe343504acf324b24a764bafd",
+          "candidate": "bdc27d757771fb9407d575bc8bf44c745491fe8d8e544185cd4bf75d27cdf212"
+        },
+        "_queue_status_counts": {
+          "source": "b9b2870996a960e07d609a4108a252d7d490912af69bf8ccd679d63c2041f6bd",
+          "candidate": "f248361a378e402ed2fe4792480823cd23a5f2133752ef6d816ebf54c76b8df5"
+        },
+        "_queue_latest_value": {
+          "source": "f3bac2f2e677a3d362564e23411aaabe083bc1e453fee431d756e728bdfd3b83",
+          "candidate": "9daf51a677020dcf39f2c6a467524c7da3fbae521eefd7941bede67a95d8659e"
+        },
+        "_queue_latest_error": {
+          "source": "a892c831b9e6527b8711b777b14365f5727488a01ff33eb62ca9222f0e887144",
+          "candidate": "ab0eb0f1ab86bc49fec35b1bfd74274423442170c60a25a9e2212f233d64c2e6"
+        },
+        "_sqlite_table_columns": {
+          "source": "828c96e56d33a03511ea83a2d02da6878ffafc34ed9e0ab48b4f51f1e61fd3e8",
+          "candidate": "9b58780d6d700742fb9d3314467bf33189bfbee595440c57e06c671c4f24c1b6"
+        }
+      },
+      "projection_calls": {
+        "task20_projection": 4,
+        "task12_projection": 10,
+        "task20_column": 35
+      }
+    },
+    "app/quality_gate.py": {
+      "source_sha256": "c9888b13f4b4965a62793150d030cdbe3e85fe7ed8d45178ff9604eb9475da3f",
+      "candidate_sha256": "0a198fff93ce894bf721c3a888b963bb15d694387fd4e538ff1ac85d6793340a",
+      "signature_count": 32,
+      "changed_bodies": [
+        "scan_hourly_quality",
+        "_check_structured_needs_human",
+        "_check_email_classification_tasks"
+      ],
+      "unchanged_bodies": 29,
+      "transaction_connection_context_pragma_ast_exact": true,
+      "all_execute_parameters_exact": true,
+      "all_count_parameters_exact": true,
+      "unrelated_module_statements_exact": true,
+      "execute_parameter_site_count": 10,
+      "source_map_join_count": 1,
+      "sql_call_inventory": [
+        {
+          "owner": "scan_hourly_quality",
+          "owner_line": 118,
+          "line": 136,
+          "callee": "db.execute",
+          "sql_expression": "\"select name from sqlite_master where type='table'\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "required_live_channels",
+          "owner_line": 203,
+          "line": 213,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"select channel, oa_url, trigger_message_json\n               from ({REPLY_TASK_CURRENT_SQL})\n               where lower(status) in ('pending', 'processing', 'failed')\"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_count",
+          "owner_line": 287,
+          "line": 288,
+          "callee": "db.execute",
+          "sql_expression": "sql",
+          "parameters_expressions": [
+            "params"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_reply_tasks",
+          "owner_line": 309,
+          "line": 321,
+          "callee": "_count",
+          "sql_expression": "f\"\"\"select count(*) from ({REPLY_TASK_SQL})\n           where {reply_channels}\n             and lower(status)='failed' and trim(coalesce(error, ''))=''\"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_reply_tasks",
+          "owner_line": 309,
+          "line": 327,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({REPLY_TASK_SQL}) where {reply_channels} and lower(status)='processing' and datetime(updated_at) < datetime(?)\"",
+          "parameters_expressions": [
+            "(_cutoff(now, REPLY_PROCESSING_STALE_SECONDS),)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_reply_tasks",
+          "owner_line": 309,
+          "line": 332,
+          "callee": "_count",
+          "sql_expression": "f\"\"\"select count(*) from ({REPLY_TASK_SQL})\n           where {reply_channels}\n             and lower(status)='pending'\n             and (available_at='' or datetime(available_at) <= datetime(?))\n             and datetime(updated_at) < datetime(?)\"\"\"",
+          "parameters_expressions": [
+            "(now.strftime(\"%Y-%m-%d %H:%M:%S\"), _cutoff(now, PENDING_STALE_SECONDS))"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_reply_tasks",
+          "owner_line": 309,
+          "line": 353,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({REPLY_TASK_SQL}) where lower(status) in ('pending','processing')\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_reply_attempts",
+          "owner_line": 358,
+          "line": 389,
+          "callee": "_count",
+          "sql_expression": "latest + f\"\"\"\n            select count(*) from latest a\n            where ordinal=1\n              and lower(action) in ('send_reply','ask_clarifying_question')\n              and lower(send_status) in ('failed','blocked')\n              and not exists (\n                select 1 from ({SENT_REPLY_SQL}) sr\n                where sr.conversation_id=a.conversation_id\n                  and sr.trigger_message_id=a.trigger_message_id\n              )\n              and not exists (\n                select 1 from ({REPLY_TASK_SQL}) t\n                where t.channel=a.channel\n                  and t.conversation_id=a.conversation_id\n                  and t.trigger_message_id=a.trigger_message_id\n                  and lower(t.status) in ('pending','processing')\n              )\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_reply_attempts",
+          "owner_line": 358,
+          "line": 413,
+          "callee": "_count",
+          "sql_expression": "f\"\"\"\n            with oa_latest as (\n                select a.id, a.channel, a.conversation_id, a.trigger_message_id,\n                       a.oa_process_instance_id, a.send_status, row_number() over (\n                    partition by case\n                        when trim(coalesce(a.oa_process_instance_id, '')) != ''\n                            then a.oa_process_instance_id\n                        else 'attempt:' || a.id\n                    end\n                    order by datetime(a.updated_at) desc, a.id desc\n                ) as ordinal\n                from ({REPLY_ATTEMPT_COMMON_SQL}) a\n                where lower(a.action)='oa_approval'\n            )\n            select count(*) from oa_latest a\n            where ordinal=1\n              and lower(a.send_status) in ('failed','blocked')\n              and not exists (\n                select 1 from ({REPLY_ATTEMPT_COMMON_SQL}) resolved\n                where resolved.oa_process_instance_id=a.oa_process_instance_id\n                  and json_valid(resolved.oa_action_result_json)\n                  and coalesce(\n                    json_extract(resolved.oa_action_result_json, '$.success'),\n                    json_extract(resolved.oa_action_result_json, '$.result.success'),\n                    json_extract(resolved.oa_action_result_json, '$.dws_action_result.success')\n                  )=1\n                  and upper(coalesce(\n                    json_extract(resolved.oa_action_result_json, '$.taskStatus'),\n                    json_extract(resolved.oa_action_result_json, '$.result.taskStatus'),\n                    ''\n                  ))='COMPLETED'\n              )\n              and not exists (\n                select 1 from ({REPLY_TASK_SQL}) t\n                where t.channel=a.channel\n                  and t.conversation_id=a.conversation_id\n                  and t.trigger_message_id=a.trigger_message_id\n                  and lower(t.status) in ('pending','processing')\n              )\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_reply_attempts",
+          "owner_line": 358,
+          "line": 459,
+          "callee": "_count",
+          "sql_expression": "latest + f\"\"\"\n            select count(*) from latest a\n            where ordinal=1 and lower(send_status)='dry_run'\n              and datetime(updated_at) >= datetime(?)\n              and not exists (\n                select 1 from ({REPLY_TASK_SQL}) t\n                where t.channel=a.channel\n                  and t.conversation_id=a.conversation_id\n                  and t.trigger_message_id=a.trigger_message_id\n                  and lower(t.status)='done'\n              )\n        \"\"\"",
+          "parameters_expressions": [
+            "(_cutoff(now, 24 * 60 * 60),)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_reply_attempts",
+          "owner_line": 358,
+          "line": 477,
+          "callee": "_count",
+          "sql_expression": "latest + f\"\"\"\n            select count(*) from latest a\n            where ordinal=1 and lower(send_status) in ('failed','blocked')\n              and exists (\n                select 1 from ({REPLY_TASK_SQL}) t\n                where t.channel=a.channel\n                  and t.conversation_id=a.conversation_id\n                  and t.trigger_message_id=a.trigger_message_id\n                  and lower(t.status) in ('pending','processing')\n              )\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_structured_needs_human",
+          "owner_line": 496,
+          "line": 508,
+          "callee": "db.execute",
+          "sql_expression": "latest\n        + f\"\"\"\n            select c.candidate_json as reviewed_candidate_json,\n                   choice.id as selection_id\n            from latest a\n            left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=a.agent_run_id\n              and review.decision='approve'\n            left join ({REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id\n              and c.invalidated_at='' and c.candidate_digest=review.candidate_digest\n              and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest\n                  where newest.task_id=c.task_id and newest.execution_generation=c.execution_generation)\n              and exists(select 1 from ({REPLY_TASK_SQL}) task where task.id=c.task_id\n                  and task.execution_generation=c.execution_generation\n                  and task.status='needs_human')\n            left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id\n            where a.ordinal=1 and lower(a.send_status)='needs_human'\n              and a.reviewed_at is null\n              and trim(coalesce(a.resolved_at, ''))=''\n              and not exists (\n                  select 1\n                  from ({REPLY_TASK_SQL}) as historical_task\n                  join business_object_tasks as current_business_object\n                    on current_business_object.business_object_key=\n                       historical_task.business_object_key\n                  where historical_task.channel=a.channel\n                    and historical_task.conversation_id=a.conversation_id\n                    and historical_task.trigger_message_id=a.trigger_message_id\n                    and current_business_object.reply_task_id<>historical_task.id\n              )\n              and not exists (\n                  select 1 from ({REPLY_TASK_SQL}) t\n                  where t.channel=a.channel\n                    and t.conversation_id=a.conversation_id\n                    and t.trigger_message_id=a.trigger_message_id\n                    and lower(t.status) in ('pending', 'processing')\n              )\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_agent_runs",
+          "owner_line": 579,
+          "line": 585,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({AGENT_RUN_SQL}) as agent_runs where lower(status) in ('pending','running') and datetime(updated_at) < datetime(?)\"",
+          "parameters_expressions": [
+            "(_cutoff(now, REPLY_PROCESSING_STALE_SECONDS),)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_agent_runs",
+          "owner_line": 579,
+          "line": 590,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({AGENT_RUN_SQL}) as agent_runs where lower(status) in ('pending','running')\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_runtime_attempt_invariants",
+          "owner_line": 596,
+          "line": 603,
+          "callee": "_count",
+          "sql_expression": "sql",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_runtime_attempt_invariants",
+          "owner_line": 596,
+          "line": 617,
+          "callee": "db.execute",
+          "sql_expression": "f'select route_name, runtime_kind, credential_mode, model, session_id, failure_code, transcript_reference from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts'",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_work_items",
+          "owner_line": 622,
+          "line": 628,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where lower(status)='failed'\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_work_items",
+          "owner_line": 622,
+          "line": 631,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where lower(status)='processing' and datetime(updated_at) < datetime(?)\"",
+          "parameters_expressions": [
+            "(_cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_work_items",
+          "owner_line": 622,
+          "line": 635,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where lower(status) in ('pending','processing')\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_email_classification_tasks",
+          "owner_line": 640,
+          "line": 649,
+          "callee": "_count",
+          "sql_expression": "\"select count(*) from email_agent_classification_tasks where lower(status)='failed'\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_email_classification_tasks",
+          "owner_line": 640,
+          "line": 660,
+          "callee": "_count",
+          "sql_expression": "\"\"\"select count(*) from email_agent_classification_tasks\n               where lower(status)='running'\n                 and datetime(updated_at) < datetime(?)\"\"\"",
+          "parameters_expressions": [
+            "(_cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_email_classification_tasks",
+          "owner_line": 640,
+          "line": 674,
+          "callee": "_count",
+          "sql_expression": "\"\"\"select count(*) from email_agent_classification_tasks\n               where lower(status)='pending'\n                 and (available_at='' or datetime(available_at) <= datetime(?))\n                 and datetime(updated_at) < datetime(?)\"\"\"",
+          "parameters_expressions": [
+            "(\n                now.isoformat(),\n                _cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),\n            )"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_email_model_runtime",
+          "owner_line": 732,
+          "line": 748,
+          "callee": "db.execute",
+          "sql_expression": "\"\"\"select outcome, count(*) as total\n               from email_classifier_runtime_samples\n               where recorded_at >= ?\n               group by outcome\"\"\"",
+          "parameters_expressions": [
+            "(cutoff,)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_email_model_runtime",
+          "owner_line": 732,
+          "line": 761,
+          "callee": "db.execute",
+          "sql_expression": "\"\"\"select outcome\n               from email_classifier_runtime_samples\n               where recorded_at >= ?\n               order by recorded_at desc, id desc\"\"\"",
+          "parameters_expressions": [
+            "(cutoff,)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_meetings",
+          "owner_line": 796,
+          "line": 802,
+          "callee": "_count",
+          "sql_expression": "f\"\"\"select count(*) from ({MEETING_JOB_SQL})\n           where lower(status)='failed' and trim(coalesce(error, ''))=''\"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_meetings",
+          "owner_line": 796,
+          "line": 807,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({MEETING_JOB_SQL}) where lower(status) in ('pending','processing','ready_to_send','retry') and datetime(updated_at) < datetime(?)\"",
+          "parameters_expressions": [
+            "(_cutoff(now, MEETING_PROCESSING_STALE_SECONDS),)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_meetings",
+          "owner_line": 796,
+          "line": 812,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({MEETING_JOB_SQL}) where lower(status) in ('waiting','pending','processing','ready_to_send','retry')\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_meetings",
+          "owner_line": 796,
+          "line": 815,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({MEETING_JOB_SQL}) where lower(status)='quarantined'\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_okr_reviews",
+          "owner_line": 820,
+          "line": 826,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({OKR_REQUEST_SQL}) where lower(status)='failed'\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_okr_reviews",
+          "owner_line": 820,
+          "line": 829,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({OKR_REQUEST_SQL}) where lower(status)='processing' and datetime(updated_at) < datetime(?)\"",
+          "parameters_expressions": [
+            "(_cutoff(now, OKR_PROCESSING_STALE_SECONDS),)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_okr_reviews",
+          "owner_line": 820,
+          "line": 833,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({OKR_REQUEST_SQL}) where lower(status) in ('pending','processing')\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_external_delivery_queues",
+          "owner_line": 838,
+          "line": 874,
+          "callee": "_count",
+          "sql_expression": "\"\"\"select count(*)\n                   from work_todo_dingtalk_links failed_link\n                   where lower(failed_link.status)='failed'\n                     and not exists (\n                        select 1\n                        from work_todo_dingtalk_links recovered_link\n                        where recovered_link.work_todo_id=failed_link.work_todo_id\n                          and recovered_link.id > failed_link.id\n                          and lower(recovered_link.status) in ('creating','active','done')\n                     )\"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_external_delivery_queues",
+          "owner_line": 838,
+          "line": 888,
+          "callee": "_count",
+          "sql_expression": "f\"\"\"select count(*) from {source_sql}\n                    where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})\n                    {resolved_filter}\"\"\"",
+          "parameters_expressions": [
+            "failed_statuses"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_external_delivery_queues",
+          "owner_line": 838,
+          "line": 897,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from {source_sql} where lower({status_column}) in ({','.join('?' for _ in active_statuses)})\"",
+          "parameters_expressions": [
+            "active_statuses"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_delivery_records",
+          "owner_line": 906,
+          "line": 920,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"select audit.* from ({AGENT_RUN_SQL}) audit\n        join ({REPLY_TASK_SQL}) task on task.id=audit.reply_task_id\n        where audit.role='audit' and audit.status='completed'\n          and task.channel='dingtalk'\n          and audit.completed_at >= datetime('now', '-7 days')\n          and not exists(select 1 from ({SENT_REPLY_OBSERVER_SQL}) observer where observer.agent_run_id=audit.id)\n        \"\"\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_feedback",
+          "owner_line": 952,
+          "line": 956,
+          "callee": "_count",
+          "sql_expression": "\"select count(*) from feedback_events where resolved_at='' or resolved_at is null\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_scan_health",
+          "owner_line": 961,
+          "line": 966,
+          "callee": "_count",
+          "sql_expression": "'select count(*) from (' + state_projection('daily_scan_state') + \") where trim(last_error) != ''\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_scan_health",
+          "owner_line": 961,
+          "line": 969,
+          "callee": "_count",
+          "sql_expression": "'select count(*) from (' + state_projection('daily_scan_state') + \")\\n           where scanner_name='ai_minutes'\\n             and coalesce(json_extract(cursor_json, '$.pagination_deferred'), 0) = 1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_scan_health",
+          "owner_line": 961,
+          "line": 973,
+          "callee": "_count",
+          "sql_expression": "'select count(*) from (' + state_projection('daily_scan_state') + \")\\n           where scanner_name='oa_pending'\\n             and json_array_length(\\n                 coalesce(json_extract(cursor_json, '$.read_failure_process_instance_ids'), '[]')\\n             ) > 0\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_scan_health",
+          "owner_line": 961,
+          "line": 979,
+          "callee": "_count",
+          "sql_expression": "'select count(*) from (' + state_projection('wechat_read_state') + \") where lower(capability_status) not in ('ready','')\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_scan_health",
+          "owner_line": 961,
+          "line": 983,
+          "callee": "_count",
+          "sql_expression": "f\"select count(*) from ({REPLY_TASK_SQL}) where lower(channel)='wechat' and lower(status) in ('pending','processing')\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "_check_recent_errors",
+          "owner_line": 994,
+          "line": 1005,
+          "callee": "_count",
+          "sql_expression": "f\"\"\"select count(*) from errors error_event\n            where datetime(error_event.created_at) >= datetime(?)\n              and coalesce(error_event.resolved_at, '') = ''\n              and {scheduled_predicate}\"\"\"",
+          "parameters_expressions": [
+            "(_cutoff(now, RECENT_ERROR_WINDOW_SECONDS), *scheduled_kinds)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_recent_errors",
+          "owner_line": 994,
+          "line": 1017,
+          "callee": "_count",
+          "sql_expression": "\"\"\"select count(*)\n           from errors error_event\n           where datetime(error_event.created_at) >= datetime(?)\n             and coalesce(error_event.resolved_at, '') = ''\n             and error_event.kind <> 'codex_capacity_pause'\n             and not ({})\n             and not exists (\n                select 1\n                from ({REPLY_ATTEMPT_COMMON_SQL}) recovery\n                where recovery.conversation_id=error_event.conversation_id\n                  and recovery.trigger_message_id=error_event.message_id\n                  and datetime(recovery.updated_at) >= datetime(error_event.created_at)\n                  and lower(recovery.send_status) in ({})\n             )\"\"\".format(\n            scheduled_predicate,\n            \",\".join(\"?\" for _ in RECOVERED_REPLY_ATTEMPT_STATUSES),\n            REPLY_ATTEMPT_COMMON_SQL=REPLY_ATTEMPT_COMMON_SQL,\n        )",
+          "parameters_expressions": [
+            "(\n            _cutoff(now, RECENT_ERROR_WINDOW_SECONDS),\n            *scheduled_kinds,\n            *RECOVERED_REPLY_ATTEMPT_STATUSES,\n        )"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_scheduler_health",
+          "owner_line": 1045,
+          "line": 1050,
+          "callee": "db.execute",
+          "sql_expression": "'select value from (' + state_projection('service_state') + ') where key=?'",
+          "parameters_expressions": [
+            "(f\"{SERVICE_HEALTH_STATE_PREFIX}agent-cron-scheduler\",)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_check_runtime_route_pauses",
+          "owner_line": 1093,
+          "line": 1098,
+          "callee": "_count",
+          "sql_expression": "f\"\"\"select count(*)\n           from ({state_projection('runtime_route_pauses')}) paused\n           where datetime(paused.retry_at) > datetime(?)\n             and exists (\n                select 1\n                from ({RUNTIME_ATTEMPT_SQL}) alternative\n                where alternative.route_name <> paused.route_name\n                  and alternative.status='completed'\n                  and datetime(alternative.finished_at) >= datetime(paused.opened_at)\n             )\"\"\"",
+          "parameters_expressions": [
+            "(now.strftime(\"%Y-%m-%d %H:%M:%S\"),)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_has_active_codex_capacity_pause",
+          "owner_line": 1122,
+          "line": 1126,
+          "callee": "db.execute",
+          "sql_expression": "'select value from (' + state_projection('service_state') + \") where key='codex_capacity_pause'\"",
+          "parameters_expressions": [],
+          "keywords": []
+        }
+      ],
+      "source_module_ast_sha256": "e4a0585cc7a64a3e966da3276cae09d989cbbd7efbaa1d5414b5951b8ca06138",
+      "candidate_module_ast_sha256": "bcf09b6f271f50e554e43a60acc7023236b5fe7106a1e0827ec58e1dff46e8ab",
+      "changed_owner_ast_hashes": {
+        "scan_hourly_quality": {
+          "source": "f913dc870e4a3a725738efbeacc452fd7cadc3a87819cf1b1920695895cecf06",
+          "candidate": "b7383dafb8238c48910e9fb0c111d28d1d748a960b8af6107576c304f4608e67"
+        },
+        "_check_structured_needs_human": {
+          "source": "4a6db8758ec2a476291b9a4d7b115fb855a6786eef09b4d3d0f4a8256c7d0a4f",
+          "candidate": "221b180f99c62a8295bf429f8ea5ffd0807ee8943713598893a5f0c989d28608"
+        },
+        "_check_email_classification_tasks": {
+          "source": "938f6ab45f7ff29d623e67f05f99ed4be4602be5853f0930ea19b7d314cf39a7",
+          "candidate": "fae81714c2e18ecd0ec6ed44ad39261a7f0a40c3bca03f56d947e44ae714dec9"
+        }
+      },
+      "projection_calls": {
+        "task20_projection": 4,
+        "task12_projection": 4
+      }
+    },
+    "app/rule_question_retirement.py": {
+      "source_sha256": "e2bf5b4fd78dd40fd557480b3c6c6211f56eb6d40cebb209b582fdc58f3cac8e",
+      "candidate_sha256": "73d78b8e5c638ab7b5183d7f1a10146e2d5a371eb475cc23f6b3c037063b6561",
+      "signature_count": 3,
+      "changed_bodies": [
+        "_retire_in_connection"
+      ],
+      "unchanged_bodies": 2,
+      "transaction_connection_context_pragma_ast_exact": true,
+      "all_execute_parameters_exact": true,
+      "all_count_parameters_exact": true,
+      "unrelated_module_statements_exact": true,
+      "execute_parameter_site_count": 5,
+      "source_map_join_count": 1,
+      "sql_call_inventory": [
+        {
+          "owner": "_retire_in_connection",
+          "owner_line": 61,
+          "line": 62,
+          "callee": "db.execute",
+          "sql_expression": "f\"\"\"\n        select a.*, r.reply_task_id, r.execution_generation as run_generation,\n               r.role, r.status as run_status,\n               t.status as task_status, t.execution_generation as task_generation\n        from ({REPLY_ATTEMPT_COMMON_SQL}) a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id\n        join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id\n        join business_object_tasks current_object\n          on current_object.business_object_key=t.business_object_key\n         and current_object.reply_task_id=t.id\n        where a.id=? and a.channel=t.channel\n          and a.conversation_id=t.conversation_id and a.trigger_message_id=t.trigger_message_id\n          and not exists(select 1 from ({REPLY_ATTEMPT_COMMON_SQL}) newer\n            where newer.channel=a.channel and newer.conversation_id=a.conversation_id\n              and newer.trigger_message_id=a.trigger_message_id and newer.id>a.id)\n          and not exists(select 1 from ({REVIEW_CANDIDATE_SQL}) c where c.task_id=t.id)\n    \"\"\"",
+          "parameters_expressions": [
+            "(attempt_id,)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_retire_in_connection",
+          "owner_line": 61,
+          "line": 86,
+          "callee": "db.execute",
+          "sql_expression": "f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?'",
+          "parameters_expressions": [
+            "(row[\"agent_run_id\"],)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_retire_in_connection",
+          "owner_line": 61,
+          "line": 96,
+          "callee": "db.execute",
+          "sql_expression": "'select value from (' + state_projection('service_state') + ') where key=?'",
+          "parameters_expressions": [
+            "(key,)"
+          ],
+          "keywords": []
+        },
+        {
+          "owner": "_retire_in_connection",
+          "owner_line": 61,
+          "line": 111,
+          "callee": "db.execute",
+          "sql_expression": "\"select current_timestamp\"",
+          "parameters_expressions": [],
+          "keywords": []
+        },
+        {
+          "owner": "main",
+          "owner_line": 123,
+          "line": 141,
+          "callee": "db.execute",
+          "sql_expression": "\"begin immediate\" if args.apply else \"pragma query_only=1\"",
+          "parameters_expressions": [],
+          "keywords": []
+        }
+      ],
+      "source_module_ast_sha256": "37f3dfc9580e014016d87a358f8ba11ed781b8107167a03f0b6b3b9a89121953",
+      "candidate_module_ast_sha256": "ad90e0541b04e4b06dd9de296cc67e25f0f6a214343dd6720aed1f28fed577f6",
+      "changed_owner_ast_hashes": {
+        "_retire_in_connection": {
+          "source": "be87dc0e668befe39f8f4732a06c154124316f8146a162900ee3879c8dd979db",
+          "candidate": "47c270bbbce0b36ab558971272a6268fc9309b2c2ed4966ed451f847b361864b"
+        }
+      },
+      "projection_calls": {
+        "task20_projection": 1,
+        "task12_projection": 1
+      }
+    }
+  },
+  "source_expression_inventory": {
+    "app/audit_web.py": [
+      {
+        "owner": "_queue_status_snapshots",
+        "line": 2581,
+        "expressions": [
+          {
+            "line": 2586,
+            "expression": "\"email_agent_classification_tasks\""
+          }
+        ]
+      },
+      {
+        "owner": "_work_summary_input_queue_snapshot",
+        "line": 2653,
+        "expressions": [
+          {
+            "line": 2655,
+            "expression": "\"select lower(coalesce(status,'')) as status, count(*) as count \"\n        \"from tasks where record_type='work_summary_inputs' \"\n        \"group by lower(coalesce(status,''))\""
+          },
+          {
+            "line": 2659,
+            "expression": "\"select updated_at from tasks where record_type='work_summary_inputs' \"\n        \"order by updated_at desc limit 1\""
+          },
+          {
+            "line": 2661,
+            "expression": "\"select error from tasks where record_type='work_summary_inputs' \"\n        \"and lower(status)='failed' and trim(coalesce(error,''))<>'' \"\n        \"order by updated_at desc, cast(legacy_key as integer) desc limit 1\""
+          }
+        ]
+      },
+      {
+        "owner": "_meeting_job_queue_snapshot",
+        "line": 2677,
+        "expressions": [
+          {
+            "line": 2678,
+            "expression": "\"select lower(coalesce(status,'')) as status, count(*) as count \"\n        \"from tasks where record_type='meeting_alignment_jobs' \"\n        \"group by lower(coalesce(status,''))\""
+          },
+          {
+            "line": 2682,
+            "expression": "\"select updated_at from tasks where record_type='meeting_alignment_jobs' \"\n        \"order by updated_at desc limit 1\""
+          },
+          {
+            "line": 2684,
+            "expression": "\"select error from tasks where record_type='meeting_alignment_jobs' \"\n        \"and lower(status)='failed' and trim(coalesce(error,''))<>'' \"\n        \"order by updated_at desc, cast(legacy_key as integer) desc limit 1\""
+          }
+        ]
+      },
+      {
+        "owner": "_okr_review_queue_snapshot",
+        "line": 2697,
+        "expressions": [
+          {
+            "line": 2698,
+            "expression": "\"select lower(coalesce(status,'')) as status, count(*) as count \"\n        \"from tasks where record_type='okr_review_requests' \"\n        \"group by lower(coalesce(status,''))\""
+          },
+          {
+            "line": 2702,
+            "expression": "\"select updated_at from tasks where record_type='okr_review_requests' \"\n        \"order by updated_at desc limit 1\""
+          },
+          {
+            "line": 2704,
+            "expression": "\"select error from tasks where record_type='okr_review_requests' \"\n        \"and lower(status)='failed' and trim(coalesce(error,''))<>'' \"\n        \"order by updated_at desc, cast(legacy_key as integer) desc limit 1\""
+          }
+        ]
+      },
+      {
+        "owner": "_reply_task_queue_snapshot",
+        "line": 2760,
+        "expressions": [
+          {
+            "line": 2763,
+            "expression": "\"\"\"\n        from tasks as tasks\n        left join business_object_tasks as current_business_object\n          on current_business_object.business_object_key=tasks.business_object_key\n        where tasks.record_type='reply_tasks' and (\n            trim(tasks.business_object_key)=''\n            or current_business_object.reply_task_id is null\n            or current_business_object.reply_task_id=tasks.id\n        )\n    \"\"\""
+          }
+        ]
+      },
+      {
+        "owner": "_email_unsubscribe_task_queue_snapshot",
+        "line": 2861,
+        "expressions": [
+          {
+            "line": 2873,
+            "expression": "f\"\"\"\n        select lower(coalesce(status, '')) as status, count(*) as count\n        from ({REPLY_TASK_CURRENT_SQL})\n        where {predicate}\n        group by lower(coalesce(status, ''))\n        order by status\n        \"\"\""
+          },
+          {
+            "line": 2885,
+            "expression": "f\"\"\"\n        select updated_at\n        from ({REPLY_TASK_CURRENT_SQL})\n        where {predicate}\n        order by updated_at desc, id desc\n        limit 1\n        \"\"\""
+          },
+          {
+            "line": 2894,
+            "expression": "f\"\"\"\n        select error\n        from ({REPLY_TASK_CURRENT_SQL})\n        where {predicate}\n          and lower(status)='failed'\n          and trim(coalesce(error, ''))<>''\n        order by updated_at desc, id desc\n        limit 1\n        \"\"\""
+          }
+        ]
+      },
+      {
+        "owner": "_reply_attempt_queue_snapshot",
+        "line": 3076,
+        "expressions": [
+          {
+            "line": 3078,
+            "expression": "f\"\"\"\n        with trigger_keys as (\n            select channel, conversation_id, trigger_message_id\n            from ({REPLY_ATTEMPT_COMMON_SQL})\n            group by channel, conversation_id, trigger_message_id\n        ), current as materialized (\n            select\n                a.id,\n                a.channel,\n                a.send_status,\n                a.resolved_at,\n                a.conversation_id,\n                a.trigger_message_id,\n                a.agent_run_id,\n                a.updated_at,\n                case\n                    when lower(a.send_status)='needs_human'\n                     and trim(coalesce(a.resolved_at, ''))<>'' then 'skipped'\n                    when a.channel='wechat' and lower(a.send_status)='failed'\n                     and exists (\n                        select 1 from wechat_deliveries d\n                        join ({REPLY_TASK_SQL}) t on t.id=d.reply_task_id\n                        where t.channel=a.channel and t.conversation_id=a.conversation_id\n                          and d.conversation_id=a.conversation_id\n                          and t.trigger_message_id=a.trigger_message_id\n                          and d.execution_generation=t.execution_generation\n                          and d.status in ('failed', 'send_unknown')\n                          and d.id=(select max(current_delivery.id) from wechat_deliveries current_delivery\n                                    where current_delivery.reply_task_id=t.id\n                                      and current_delivery.execution_generation=t.execution_generation)\n                     ) then 'failed'\n                    when lower(a.send_status)='failed'\n                     and trim(coalesce(a.resolved_at, ''))<>'' then 'recovered'\n                    when lower(a.send_status) in ('failed', 'blocked')\n                     and exists (\n                        select 1 from ({REPLY_TASK_SQL}) t\n                        where t.channel=a.channel\n                          and t.conversation_id=a.conversation_id\n                          and t.trigger_message_id=a.trigger_message_id\n                          and lower(t.status)='needs_human'\n                    ) then 'needs_human'\n                    when lower(a.send_status) in ('failed', 'blocked')\n                     and exists (\n                        select 1 from ({REPLY_TASK_SQL}) t\n                        where t.channel=a.channel\n                          and t.conversation_id=a.conversation_id\n                          and t.trigger_message_id=a.trigger_message_id\n                          and lower(t.status) in ('pending', 'processing')\n                    ) then 'retryable'\n                    when lower(a.send_status)='failed'\n                     and (\n                        exists (\n                            select 1 from ({REPLY_TASK_SQL}) t\n                            where t.channel=a.channel\n                              and t.conversation_id=a.conversation_id\n                              and t.trigger_message_id=a.trigger_message_id\n                          and lower(t.status) in ('done', 'skipped')\n                        )\n                        or exists (\n                            select 1 from ({SENT_REPLY_SQL}) sr\n                            where sr.conversation_id=a.conversation_id\n                              and sr.trigger_message_id=a.trigger_message_id\n                        )\n                        or exists (\n                            select 1\n                            from business_object_tasks current_business_object\n                            join ({REPLY_TASK_SQL}) current_task\n                              on current_task.id=current_business_object.reply_task_id\n                            where current_business_object.business_object_key=(\n                                'message:' || a.channel || ':' ||\n                                a.conversation_id || ':' ||\n                                a.trigger_message_id\n                            )\n                              and lower(current_task.status) in (\n                                  'done', 'skipped', 'needs_human'\n                              )\n                        )\n                    ) then 'recovered'\n                    else lower(coalesce(a.send_status, ''))\n                end as live_status\n            from trigger_keys\n            join ({REPLY_ATTEMPT_COMMON_SQL}) a on a.id=(\n                select newest.id\n                from ({REPLY_ATTEMPT_COMMON_SQL}) newest\n                where newest.channel=trigger_keys.channel\n                  and newest.conversation_id=trigger_keys.conversation_id\n                  and newest.trigger_message_id=trigger_keys.trigger_message_id\n                order by newest.updated_at desc, newest.id desc\n                limit 1\n            )\n            where not exists (\n                  select 1\n                  from ({AGENT_RUN_SQL}) as source_run\n                  join ({REPLY_TASK_SQL}) as source_task\n                    on source_task.id=source_run.reply_task_id\n                  where source_run.id=a.agent_run_id\n                    and source_run.execution_generation<>\n                        source_task.execution_generation\n              )\n              and not exists (\n                  select 1\n                  from ({REPLY_TASK_SQL}) as historical_task\n                  join business_object_tasks as current_business_object\n                    on current_business_object.business_object_key=\n                       historical_task.business_object_key\n                  where historical_task.channel=a.channel\n                    and historical_task.conversation_id=a.conversation_id\n                    and historical_task.trigger_message_id=a.trigger_message_id\n                    and current_business_object.reply_task_id<>historical_task.id\n              )\n        )\n    \"\"\""
+          },
+          {
+            "line": 3137,
+            "expression": ") sr\n                            where sr.conversation_id=a.conversation_id\n                              and sr.trigger_message_id=a.trigger_message_id\n                        )\n                        or exists (\n                            select 1\n                            from business_object_tasks current_business_object\n                            join ("
+          },
+          {
+            "line": 3179,
+            "expression": ") as historical_task\n                  join business_object_tasks as current_business_object\n                    on current_business_object.business_object_key=\n                       historical_task.business_object_key\n                  where historical_task.channel=a.channel\n                    and historical_task.conversation_id=a.conversation_id\n                    and historical_task.trigger_message_id=a.trigger_message_id\n                    and current_business_object.reply_task_id<>historical_task.id\n              )\n        )\n    "
+          }
+        ]
+      },
+      {
+        "owner": "_wechat_delivery_queue_snapshot",
+        "line": 3265,
+        "expressions": [
+          {
+            "line": 3268,
+            "expression": "f\"\"\"\n        select\n            case\n                when lower(wechat_deliveries.status)='failed'\n                     and wechat_deliveries.error='user_rejected'\n                    then 'skipped'\n                when lower(wechat_deliveries.status)='send_unknown' then 'failed'\n                else lower(coalesce(wechat_deliveries.status, ''))\n            end as status,\n            count(*) as count,\n            max(case\n                when lower(wechat_deliveries.status)='send_unknown'\n                    then wechat_deliveries.updated_at || char(31)\n                         || wechat_deliveries.error\n                when lower(wechat_deliveries.status)='failed'\n                     and wechat_deliveries.error!='user_rejected'\n                    then wechat_deliveries.updated_at || char(31)\n                         || wechat_deliveries.error\n                else ''\n            end) as latest_error\n        from wechat_deliveries\n        join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id\n        where wechat_deliveries.execution_generation=\n              reply_tasks.execution_generation\n        group by 1\n        order by 1\n        \"\"\""
+          },
+          {
+            "line": 3307,
+            "expression": "f\"\"\"select max(wechat_deliveries.updated_at) as value\n           from wechat_deliveries\n           join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id\n           where wechat_deliveries.execution_generation=\n                 reply_tasks.execution_generation\"\"\""
+          }
+        ]
+      },
+      {
+        "owner": "_queue_attention_rows",
+        "line": 3372,
+        "expressions": [
+          {
+            "line": 3611,
+            "expression": "\"email_agent_classification_tasks\""
+          },
+          {
+            "line": 3612,
+            "expression": "\"\"\"\n                select task_id as id, status,\n                       coalesce(\n                           nullif(json_extract(input_json, '$.message.sender.email'), ''),\n                           nullif(json_extract(input_json, '$.message.sender.name'), ''),\n                           'Email classification'\n                       ) as context,\n                       coalesce(\n                           nullif(json_extract(input_json, '$.message.subject'), ''),\n                           stable_message_identity\n                       ) as summary,\n                       updated_at, error\n                from email_agent_classification_tasks\n                where rowid in (\n                    select rowid from email_agent_classification_tasks\n                    where lower(status)='failed'\n                )\n                order by updated_at desc, task_id desc\n            \"\"\""
+          },
+          {
+            "line": 3698,
+            "expression": "\"\"\"\n                select events.id, events.status,\n                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as context,\n                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as summary,\n                       events.updated_at, events.error\n                from meeting_memory_write_events as events\n                join tasks as jobs on jobs.id=events.meeting_job_id\n                    and jobs.record_type='meeting_alignment_jobs'\n                where lower(events.status)='failed'\n                order by events.updated_at desc, events.id desc\n            \"\"\""
+          },
+          {
+            "line": 3733,
+            "expression": "f\"\"\"\n                select events.id, events.status, events.reply_task_id,\n                       tasks.channel, tasks.conversation_title,\n                       events.updated_at, events.error\n                from task_memory_write_events as events\n                join ({REPLY_TASK_SQL}) as tasks on tasks.id=events.reply_task_id\n                where lower(events.status)='failed'\n                order by events.updated_at desc, events.id desc\n            \"\"\""
+          },
+          {
+            "line": 3497,
+            "expression": "f\"\"\"\n                  -- A later successful run of the same scheduled task is the\n                  -- authoritative recovery for an older scheduled reply task.\n                  and not exists (\n                      select 1\n                      from ({SCHEDULED_RUN_SQL}) as stale_run\n                     where stale_run.execution_kind='reply_task'\n                       and cast(stale_run.execution_id as integer)=reply_tasks.id\n                       and exists (\n                           select 1\n                           from ({SCHEDULED_RUN_SQL}) as later_run\n                           join ({REPLY_TASK_SQL}) as later_task\n                             on later_run.execution_kind='reply_task'\n                            and cast(later_run.execution_id as integer)=later_task.id\n                            and lower(later_task.status) in ('done', 'skipped')\n                           where later_run.scheduled_task_id=stale_run.scheduled_task_id\n                             and later_run.id>stale_run.id\n                             and later_run.dispatch_status='dispatched'\n                       )\n                  )\n                order by\n                    reply_tasks.updated_at desc,\n                    reply_tasks.id desc\n            \"\"\""
+          },
+          {
+            "line": 3549,
+            "expression": "f\"({WORK_SUMMARY_INPUT_SQL})\""
+          },
+          {
+            "line": 3554,
+            "expression": "f\"and exists (select 1 from ({REPLY_TASK_SQL}) as reply_tasks \"\n                \"where reply_tasks.id=wechat_deliveries.reply_task_id \"\n                \"and reply_tasks.execution_generation=\"\n                \"wechat_deliveries.execution_generation)\""
+          },
+          {
+            "line": 3567,
+            "expression": "f\"select cast(legacy_key as integer) from tasks \"\n                f\"where record_type='work_summary_inputs' \"\n                f\"and lower({status_column}) in ({status_placeholders})\""
+          },
+          {
+            "line": 3472,
+            "expression": "f\"\"\"\n                select reply_tasks.id, reply_tasks.channel,\n                       reply_tasks.conversation_id, reply_tasks.trigger_message_id,\n                       reply_tasks.status,\n                       coalesce(nullif(reply_tasks.conversation_title, ''), reply_tasks.conversation_id) as context,\n                       coalesce(nullif(reply_tasks.trigger_text, ''), nullif(reply_tasks.conversation_title, ''), reply_tasks.trigger_message_id) as summary,\n                       reply_tasks.updated_at, reply_tasks.error,\n                       (select current_run.structured_error_json from ({AGENT_RUN_SQL}) current_run\n                        where current_run.reply_task_id=reply_tasks.id\n                          and current_run.execution_generation=reply_tasks.execution_generation\n                        order by current_run.id desc limit 1) as current_run_error\n                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks\n                left join business_object_tasks current_business_object\n                  on current_business_object.business_object_key=reply_tasks.business_object_key\n                -- Select IDs through the compact status index before reading\n                -- message payloads; lower(status) alone scans the whole table.\n                where reply_tasks.id in (\n                    select cast(legacy_key as integer) from tasks indexed by idx_reply_tasks_status where record_type='reply_tasks' and lower(status) = 'failed'\n                )\n                  and (\n                    current_business_object.reply_task_id is null\n                    or current_business_object.reply_task_id=reply_tasks.id\n                  )\n                  -- Failed for a reason outside this service: History keeps it,\n                  -- Attention does not (Derek 2026-09-25).\n                  and not \"\"\""
+          },
+          {
+            "line": 3550,
+            "expression": "f\"({MEETING_JOB_SQL})\""
+          },
+          {
+            "line": 3567,
+            "expression": "select cast(legacy_key as integer) from tasks \"\n                f\"where record_type='work_summary_inputs' \"\n                f\"and lower("
+          },
+          {
+            "line": 3444,
+            "expression": "f\"select id,conversation_title,trigger_text,updated_at,error,status \"\n                f\"from ({REPLY_TASK_CURRENT_SQL}) where business_object_key=? \"\n                \"order by id desc limit 1\""
+          },
+          {
+            "line": 3483,
+            "expression": ") as reply_tasks\n                left join business_object_tasks current_business_object\n                  on current_business_object.business_object_key=reply_tasks.business_object_key\n                -- Select IDs through the compact status index before reading\n                -- message payloads; lower(status) alone scans the whole table.\n                where reply_tasks.id in (\n                    select cast(legacy_key as integer) from tasks indexed by idx_reply_tasks_status where record_type='reply_tasks' and lower(status) = 'failed'\n                )\n                  and (\n                    current_business_object.reply_task_id is null\n                    or current_business_object.reply_task_id=reply_tasks.id\n                  )\n                  -- Failed for a reason outside this service: History keeps it,\n                  -- Attention does not (Derek 2026-09-25).\n                  and not "
+          },
+          {
+            "line": 3551,
+            "expression": "f\"({OKR_REQUEST_SQL})\""
+          },
+          {
+            "line": 3768,
+            "expression": "f\"\"\"\n                select error_event.id, error_event.conversation_id,\n                       error_event.message_id, error_event.kind,\n                       error_event.detail, error_event.created_at\n                from errors error_event\n                where coalesce(error_event.resolved_at, '') = ''\n                  and error_event.kind <> 'codex_capacity_pause'\n                  and not exists (\n                    select 1\n                    from errors newer_error\n                    where newer_error.conversation_id=error_event.conversation_id\n                      and coalesce(newer_error.message_id, '')=\n                          coalesce(error_event.message_id, '')\n                      and newer_error.kind=error_event.kind\n                      and newer_error.id>error_event.id\n                      and coalesce(newer_error.resolved_at, '')=''\n                  )\n                  and not (\n                    error_event.conversation_id='work_summary_input'\n                    and exists (\n                      select 1\n                      from ({WORK_SUMMARY_INPUT_SQL}) as completed_input\n                      where cast(completed_input.id as text)=error_event.message_id\n                        and lower(completed_input.status) in ('done', 'skipped')\n                    )\n                  )\n                  and not exists (\n                    select 1\n                    from ({REPLY_ATTEMPT_COMMON_SQL}) recovery\n                    where recovery.conversation_id=error_event.conversation_id\n                      and recovery.trigger_message_id=error_event.message_id\n                      and datetime(recovery.updated_at) >= datetime(error_event.created_at)\n                      and lower(recovery.send_status) in ({recovered_placeholders})\n                  )\n                  and not exists (\n                    select 1\n                    from (\n                        select event_run.id, event_run.scheduled_task_id\n                        from ({SCHEDULED_RUN_SQL}) as event_run\n                        where event_run.event_id=error_event.message_id\n                        union all\n                        select identity_run.id, identity_run.scheduled_task_id\n                        from ({SCHEDULED_RUN_SQL}) as identity_run\n                        where identity_run.id=cast(substr(\n                            error_event.conversation_id,\n                            length('scheduled-task-run:') + 1\n                        ) as integer)\n                          and error_event.conversation_id=\n                              'scheduled-task-run:' || cast(identity_run.id as text)\n                    ) as stale_run\n                    where exists (\n                         select 1\n                         from ({SCHEDULED_RUN_SQL}) as later_run\n                         join ({REPLY_TASK_SQL}) as later_task\n                           on later_run.execution_kind='reply_task'\n                          and cast(later_run.execution_id as integer)=later_task.id\n                          and lower(later_task.status) in ('done', 'skipped')\n                         where later_run.scheduled_task_id=stale_run.scheduled_task_id\n                           and later_run.id>stale_run.id\n                           and later_run.dispatch_status='dispatched'\n                     )\n                  )\n                order by error_event.created_at desc, error_event.id desc\n                \"\"\""
+          }
+        ]
+      },
+      {
+        "owner": "_human_decision_attention_rows",
+        "line": 3887,
+        "expressions": [
+          {
+            "line": 3891,
+            "expression": "f\"\"\"\n        select attempts.id, attempts.conversation_title, attempts.updated_at,\n               c.candidate_json\n        from ({REPLY_ATTEMPT_COMMON_SQL}) attempts\n        join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=attempts.agent_run_id\n          and review.decision='approve'\n        join ({REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id\n          and c.candidate_digest=review.candidate_digest and c.invalidated_at=''\n        join ({REPLY_TASK_SQL}) task on task.id=c.task_id\n          and task.execution_generation=c.execution_generation\n          and task.status='needs_human'\n        join business_object_tasks current_object\n          on current_object.business_object_key=task.business_object_key\n          and current_object.reply_task_id=task.id\n        left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id\n        where attempts.send_status='needs_human'\n          and attempts.reviewed_at is null\n          and trim(coalesce(attempts.resolved_at,''))=''\n          and choice.id is null\n          and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest\n              where newest.task_id=task.id\n                and newest.execution_generation=task.execution_generation)\n          and attempts.id=(select max(latest.id) from ({REPLY_ATTEMPT_COMMON_SQL}) latest\n              where latest.channel=attempts.channel\n                and latest.conversation_id=attempts.conversation_id\n                and latest.trigger_message_id=attempts.trigger_message_id)\n          and json_extract(c.candidate_json,'$.outcome')='needs_human'\n        order by attempts.updated_at desc, attempts.id desc\n    \"\"\""
+          },
+          {
+            "line": 3899,
+            "expression": ") task on task.id=c.task_id\n          and task.execution_generation=c.execution_generation\n          and task.status='needs_human'\n        join business_object_tasks current_object\n          on current_object.business_object_key=task.business_object_key\n          and current_object.reply_task_id=task.id\n        left join ("
+          }
+        ]
+      },
+      {
+        "owner": "_sqlite_table_columns",
+        "line": 4026,
+        "expressions": [
+          {
+            "line": 4027,
+            "expression": "f\"pragma table_info({table})\""
+          },
+          {
+            "line": 4027,
+            "expression": "pragma table_info("
+          }
+        ]
+      }
+    ],
+    "app/quality_gate.py": [
+      {
+        "owner": "scan_hourly_quality",
+        "line": 118,
+        "expressions": [
+          {
+            "line": 175,
+            "expression": "\"email_agent_classification_tasks\""
+          }
+        ]
+      },
+      {
+        "owner": "required_live_channels",
+        "line": 203,
+        "expressions": [
+          {
+            "line": 214,
+            "expression": "f\"\"\"select channel, oa_url, trigger_message_json\n               from ({REPLY_TASK_CURRENT_SQL})\n               where lower(status) in ('pending', 'processing', 'failed')\"\"\""
+          }
+        ]
+      },
+      {
+        "owner": "_check_reply_tasks",
+        "line": 309,
+        "expressions": [
+          {
+            "line": 334,
+            "expression": "f\"\"\"select count(*) from ({REPLY_TASK_SQL})\n           where {reply_channels}\n             and lower(status)='pending'\n             and (available_at='' or datetime(available_at) <= datetime(?))\n             and datetime(updated_at) < datetime(?)\"\"\""
+          },
+          {
+            "line": 323,
+            "expression": "f\"\"\"select count(*) from ({REPLY_TASK_SQL})\n           where {reply_channels}\n             and lower(status)='failed' and trim(coalesce(error, ''))=''\"\"\""
+          },
+          {
+            "line": 329,
+            "expression": "f\"select count(*) from ({REPLY_TASK_SQL}) where {reply_channels} and lower(status)='processing' and datetime(updated_at) < datetime(?)\""
+          },
+          {
+            "line": 354,
+            "expression": "f\"select count(*) from ({REPLY_TASK_SQL}) where lower(status) in ('pending','processing')\""
+          }
+        ]
+      },
+      {
+        "owner": "_check_reply_attempts",
+        "line": 358,
+        "expressions": [
+          {
+            "line": 415,
+            "expression": "f\"\"\"\n            with oa_latest as (\n                select a.id, a.channel, a.conversation_id, a.trigger_message_id,\n                       a.oa_process_instance_id, a.send_status, row_number() over (\n                    partition by case\n                        when trim(coalesce(a.oa_process_instance_id, '')) != ''\n                            then a.oa_process_instance_id\n                        else 'attempt:' || a.id\n                    end\n                    order by datetime(a.updated_at) desc, a.id desc\n                ) as ordinal\n                from ({REPLY_ATTEMPT_COMMON_SQL}) a\n                where lower(a.action)='oa_approval'\n            )\n            select count(*) from oa_latest a\n            where ordinal=1\n              and lower(a.send_status) in ('failed','blocked')\n              and not exists (\n                select 1 from ({REPLY_ATTEMPT_COMMON_SQL}) resolved\n                where resolved.oa_process_instance_id=a.oa_process_instance_id\n                  and json_valid(resolved.oa_action_result_json)\n                  and coalesce(\n                    json_extract(resolved.oa_action_result_json, '$.success'),\n                    json_extract(resolved.oa_action_result_json, '$.result.success'),\n                    json_extract(resolved.oa_action_result_json, '$.dws_action_result.success')\n                  )=1\n                  and upper(coalesce(\n                    json_extract(resolved.oa_action_result_json, '$.taskStatus'),\n                    json_extract(resolved.oa_action_result_json, '$.result.taskStatus'),\n                    ''\n                  ))='COMPLETED'\n              )\n              and not exists (\n                select 1 from ({REPLY_TASK_SQL}) t\n                where t.channel=a.channel\n                  and t.conversation_id=a.conversation_id\n                  and t.trigger_message_id=a.trigger_message_id\n                  and lower(t.status) in ('pending','processing')\n              )\n        \"\"\""
+          },
+          {
+            "line": 391,
+            "expression": "f\"\"\"\n            select count(*) from latest a\n            where ordinal=1\n              and lower(action) in ('send_reply','ask_clarifying_question')\n              and lower(send_status) in ('failed','blocked')\n              and not exists (\n                select 1 from ({SENT_REPLY_SQL}) sr\n                where sr.conversation_id=a.conversation_id\n                  and sr.trigger_message_id=a.trigger_message_id\n              )\n              and not exists (\n                select 1 from ({REPLY_TASK_SQL}) t\n                where t.channel=a.channel\n                  and t.conversation_id=a.conversation_id\n                  and t.trigger_message_id=a.trigger_message_id\n                  and lower(t.status) in ('pending','processing')\n              )\n        \"\"\""
+          },
+          {
+            "line": 461,
+            "expression": "f\"\"\"\n            select count(*) from latest a\n            where ordinal=1 and lower(send_status)='dry_run'\n              and datetime(updated_at) >= datetime(?)\n              and not exists (\n                select 1 from ({REPLY_TASK_SQL}) t\n                where t.channel=a.channel\n                  and t.conversation_id=a.conversation_id\n                  and t.trigger_message_id=a.trigger_message_id\n                  and lower(t.status)='done'\n              )\n        \"\"\""
+          },
+          {
+            "line": 479,
+            "expression": "f\"\"\"\n            select count(*) from latest a\n            where ordinal=1 and lower(send_status) in ('failed','blocked')\n              and exists (\n                select 1 from ({REPLY_TASK_SQL}) t\n                where t.channel=a.channel\n                  and t.conversation_id=a.conversation_id\n                  and t.trigger_message_id=a.trigger_message_id\n                  and lower(t.status) in ('pending','processing')\n              )\n        \"\"\""
+          }
+        ]
+      },
+      {
+        "owner": "_check_structured_needs_human",
+        "line": 496,
+        "expressions": [
+          {
+            "line": 510,
+            "expression": "f\"\"\"\n            select c.candidate_json as reviewed_candidate_json,\n                   choice.id as selection_id\n            from latest a\n            left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=a.agent_run_id\n              and review.decision='approve'\n            left join ({REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id\n              and c.invalidated_at='' and c.candidate_digest=review.candidate_digest\n              and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest\n                  where newest.task_id=c.task_id and newest.execution_generation=c.execution_generation)\n              and exists(select 1 from ({REPLY_TASK_SQL}) task where task.id=c.task_id\n                  and task.execution_generation=c.execution_generation\n                  and task.status='needs_human')\n            left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id\n            where a.ordinal=1 and lower(a.send_status)='needs_human'\n              and a.reviewed_at is null\n              and trim(coalesce(a.resolved_at, ''))=''\n              and not exists (\n                  select 1\n                  from ({REPLY_TASK_SQL}) as historical_task\n                  join business_object_tasks as current_business_object\n                    on current_business_object.business_object_key=\n                       historical_task.business_object_key\n                  where historical_task.channel=a.channel\n                    and historical_task.conversation_id=a.conversation_id\n                    and historical_task.trigger_message_id=a.trigger_message_id\n                    and current_business_object.reply_task_id<>historical_task.id\n              )\n              and not exists (\n                  select 1 from ({REPLY_TASK_SQL}) t\n                  where t.channel=a.channel\n                    and t.conversation_id=a.conversation_id\n                    and t.trigger_message_id=a.trigger_message_id\n                    and lower(t.status) in ('pending', 'processing')\n              )\n        \"\"\""
+          },
+          {
+            "line": 529,
+            "expression": ") as historical_task\n                  join business_object_tasks as current_business_object\n                    on current_business_object.business_object_key=\n                       historical_task.business_object_key\n                  where historical_task.channel=a.channel\n                    and historical_task.conversation_id=a.conversation_id\n                    and historical_task.trigger_message_id=a.trigger_message_id\n                    and current_business_object.reply_task_id<>historical_task.id\n              )\n              and not exists (\n                  select 1 from ("
+          }
+        ]
+      },
+      {
+        "owner": "_check_work_items",
+        "line": 622,
+        "expressions": [
+          {
+            "line": 629,
+            "expression": "f\"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where lower(status)='failed'\""
+          },
+          {
+            "line": 632,
+            "expression": "f\"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where lower(status)='processing' and datetime(updated_at) < datetime(?)\""
+          },
+          {
+            "line": 636,
+            "expression": "f\"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where lower(status) in ('pending','processing')\""
+          }
+        ]
+      },
+      {
+        "owner": "_check_email_classification_tasks",
+        "line": 640,
+        "expressions": [
+          {
+            "line": 647,
+            "expression": "\"email_agent_classification_tasks\""
+          },
+          {
+            "line": 658,
+            "expression": "\"email_agent_classification_tasks\""
+          },
+          {
+            "line": 672,
+            "expression": "\"email_agent_classification_tasks\""
+          },
+          {
+            "line": 651,
+            "expression": "\"select count(*) from email_agent_classification_tasks where lower(status)='failed'\""
+          },
+          {
+            "line": 662,
+            "expression": "\"\"\"select count(*) from email_agent_classification_tasks\n               where lower(status)='running'\n                 and datetime(updated_at) < datetime(?)\"\"\""
+          },
+          {
+            "line": 676,
+            "expression": "\"\"\"select count(*) from email_agent_classification_tasks\n               where lower(status)='pending'\n                 and (available_at='' or datetime(available_at) <= datetime(?))\n                 and datetime(updated_at) < datetime(?)\"\"\""
+          }
+        ]
+      },
+      {
+        "owner": "_check_meetings",
+        "line": 796,
+        "expressions": [
+          {
+            "line": 804,
+            "expression": "f\"\"\"select count(*) from ({MEETING_JOB_SQL})\n           where lower(status)='failed' and trim(coalesce(error, ''))=''\"\"\""
+          },
+          {
+            "line": 809,
+            "expression": "f\"select count(*) from ({MEETING_JOB_SQL}) where lower(status) in ('pending','processing','ready_to_send','retry') and datetime(updated_at) < datetime(?)\""
+          },
+          {
+            "line": 813,
+            "expression": "f\"select count(*) from ({MEETING_JOB_SQL}) where lower(status) in ('waiting','pending','processing','ready_to_send','retry')\""
+          },
+          {
+            "line": 816,
+            "expression": "f\"select count(*) from ({MEETING_JOB_SQL}) where lower(status)='quarantined'\""
+          }
+        ]
+      },
+      {
+        "owner": "_check_okr_reviews",
+        "line": 820,
+        "expressions": [
+          {
+            "line": 827,
+            "expression": "f\"select count(*) from ({OKR_REQUEST_SQL}) where lower(status)='failed'\""
+          },
+          {
+            "line": 830,
+            "expression": "f\"select count(*) from ({OKR_REQUEST_SQL}) where lower(status)='processing' and datetime(updated_at) < datetime(?)\""
+          },
+          {
+            "line": 834,
+            "expression": "f\"select count(*) from ({OKR_REQUEST_SQL}) where lower(status) in ('pending','processing')\""
+          }
+        ]
+      },
+      {
+        "owner": "_check_delivery_records",
+        "line": 906,
+        "expressions": [
+          {
+            "line": 920,
+            "expression": "f\"\"\"select audit.* from ({AGENT_RUN_SQL}) audit\n        join ({REPLY_TASK_SQL}) task on task.id=audit.reply_task_id\n        where audit.role='audit' and audit.status='completed'\n          and task.channel='dingtalk'\n          and audit.completed_at >= datetime('now', '-7 days')\n          and not exists(select 1 from ({SENT_REPLY_OBSERVER_SQL}) observer where observer.agent_run_id=audit.id)\n        \"\"\""
+          }
+        ]
+      },
+      {
+        "owner": "_check_scan_health",
+        "line": 961,
+        "expressions": [
+          {
+            "line": 984,
+            "expression": "f\"select count(*) from ({REPLY_TASK_SQL}) where lower(channel)='wechat' and lower(status) in ('pending','processing')\""
+          }
+        ]
+      }
+    ],
+    "app/rule_question_retirement.py": [
+      {
+        "owner": "_retire_in_connection",
+        "line": 61,
+        "expressions": [
+          {
+            "line": 62,
+            "expression": "f\"\"\"\n        select a.*, r.reply_task_id, r.execution_generation as run_generation,\n               r.role, r.status as run_status,\n               t.status as task_status, t.execution_generation as task_generation\n        from ({REPLY_ATTEMPT_COMMON_SQL}) a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id\n        join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id\n        join business_object_tasks current_object\n          on current_object.business_object_key=t.business_object_key\n         and current_object.reply_task_id=t.id\n        where a.id=? and a.channel=t.channel\n          and a.conversation_id=t.conversation_id and a.trigger_message_id=t.trigger_message_id\n          and not exists(select 1 from ({REPLY_ATTEMPT_COMMON_SQL}) newer\n            where newer.channel=a.channel and newer.conversation_id=a.conversation_id\n              and newer.trigger_message_id=a.trigger_message_id and newer.id>a.id)\n          and not exists(select 1 from ({REVIEW_CANDIDATE_SQL}) c where c.task_id=t.id)\n    \"\"\""
+          },
+          {
+            "line": 67,
+            "expression": ") t on t.id=r.reply_task_id\n        join business_object_tasks current_object\n          on current_object.business_object_key=t.business_object_key\n         and current_object.reply_task_id=t.id\n        where a.id=? and a.channel=t.channel\n          and a.conversation_id=t.conversation_id and a.trigger_message_id=t.trigger_message_id\n          and not exists(select 1 from ("
+          }
+        ]
+      }
+    ]
+  },
+  "changed_functions": [
+    "app/audit_web.py:_work_summary_input_queue_snapshot",
+    "app/audit_web.py:_meeting_job_queue_snapshot",
+    "app/audit_web.py:_okr_review_queue_snapshot",
+    "app/audit_web.py:_reply_task_queue_snapshot",
+    "app/audit_web.py:_reply_attempt_queue_snapshot",
+    "app/audit_web.py:_queue_attention_rows",
+    "app/audit_web.py:_human_decision_attention_rows",
+    "app/audit_web.py:_sqlite_table_exists",
+    "app/audit_web.py:_queue_status_counts",
+    "app/audit_web.py:_queue_latest_value",
+    "app/audit_web.py:_queue_latest_error",
+    "app/audit_web.py:_sqlite_table_columns",
+    "app/quality_gate.py:scan_hourly_quality",
+    "app/quality_gate.py:_check_structured_needs_human",
+    "app/quality_gate.py:_check_email_classification_tasks",
+    "app/rule_question_retirement.py:_retire_in_connection"
+  ],
+  "verification": {
+    "apply_bytes_exact": true,
+    "reverse_original_bytes_exact": true,
+    "pinned_compile": true,
+    "ruff": "All checks passed!",
+    "constructor_free_import_database_forbidden": "IMPORT_NO_CONSTRUCTORS_DATABASE_FORBIDDEN_PASS 14 create index idx_task20_published_1 on tasks(\"reply_tasks__status\",\"reply_tasks__id\") where record_type='reply_tasks'",
+    "owned_temp_removed": true,
+    "application_sources_unchanged": true,
+    "python": "/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python",
+    "alias_repair_apply_reverse_compile_ruff_import_rerun": true,
+    "final_owned_temp_removed": true,
+    "alias_contract": "physical reply snapshot materialized CTE explicitly retains updated_at/error output names after generated-field selection",
+    "final_exact_hash_signatures_other_bodies_parameters_rerun": true,
+    "final_ast_owned_temp_removed": true
+  },
+  "dependencies": {
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "app/task12_storage.py": "127311aa2ed303066fc3dd325a5642c0e61725a2d8db3b5bedfc218e804e013f",
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f"
+  },
+  "bounds": [
+    "No DB/public/schema selection/constructor/migration/provider/nativeCLI/network/main/push/deploy execution",
+    "Exact prior Store8 proposal must provide typed REPLY_TASK_CURRENT_SQL through existing imported constant",
+    "No new policy/audit/auth/effect/safety checks; original schema predicates adapted to selected physical schema only"
+  ],
+  "generic_queue_contract": {
+    "seven_helpers": {
+      "_sqlite_table_exists": "classification logical presence resolves to physical tasks presence, including empty tasks; all other tables exact",
+      "_queue_status_counts": "classification selects source-shaped projection with hidden source ROWID; other sources exact",
+      "_queue_count_for": "body exact, counts and status memberships unchanged",
+      "_queue_retryable_count": "body exact; only native todo token branch queries; classification still returns zero",
+      "_queue_latest_value": "classification source-shaped relation, original column/order/limit; others exact",
+      "_queue_latest_error": "source-shaped classification relation includes hidden ROWID in both query levels; exact error/status/order filters",
+      "_sqlite_table_columns": "classification finite source TASK20_FIELDS when physical source exists, empty otherwise; other native PRAGMA exact"
+    },
+    "classification_has_source_id_column": false,
+    "rowid_semantics": "hidden source ROWID stored in legacy_key; never shared physical tasks.id",
+    "source_metadata_is_not_physical_tasks_columns": true
+  },
+  "index_contract": {
+    "source": "idx_reply_tasks_status",
+    "target": "idx_task20_published_1",
+    "definition_source": "app/task20_definitions.py:_PUBLISHED_INDEXES ordinal1, reply_tasks status/id; exact accepted TASK20_INDEX_DDL verified without DB",
+    "forced_index_retained": true
+  }
+}
