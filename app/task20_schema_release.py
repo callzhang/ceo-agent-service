@@ -184,8 +184,12 @@ def migrate_task20_schema(db, metadata):
     """Transfer current source facts and retain every original-eight physical ID."""
     _transaction(db)
     _metadata(metadata)
-    if capture_task20_source(db) != metadata:
-        raise ValueError("Tasks20 source declarations or allocator presence changed")
+    current = capture_task20_source(db)
+    # Presence is allocator state, not a declaration. Supported native writes
+    # may consume an initially absent stream after preparation. Transfer reads
+    # current waters; a now-positive published water supersedes its absence bit.
+    if any(current[key] != metadata[key] for key in ("variant", "tables")):
+        raise ValueError("Tasks20 source declarations changed")
     waters = {name: _sequence(db, name) for name in SOURCE_COUNTERS}
     fields = {name: _fields(definition) for name, definition in metadata["tables"].items()}
     staged = {}
