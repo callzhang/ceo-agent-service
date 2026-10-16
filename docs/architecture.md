@@ -1,5 +1,7 @@
 # CEO Agent Service Architecture
 
+The unselected Tasks20 schema component converts the original eight-kind Tasks container and twelve native task tables under a caller-owned FK-off transaction. It preserves existing physical Tasks IDs, source public keys/ROWIDs, input pointers, scalar storage classes and independent source counters. Its current-fact inverse rebuilds all82 original columns, reconstructing unrelated padding as SQL NULL, plus exact native declarations and the retained feedback child's three endpoints. Inverse metadata contains declarations and counter-presence bits only. Non-trigger allocator accesses explicitly use main.sqlite_sequence, so unrelated TEMP allocators cannot redirect them; MAIN trigger SQL remains unchanged. Current Store/Email/Workbench constructors and the paired release do not yet select this component. The ten-core-plus-ledger target remains incomplete and production is unchanged.
+
 The paired State release captures exact actual/fresh declarations for sixteen
 native State families and migrates fifteen retained kinds into one state table
 inside the caller-owned FK-off transaction. Source eligibility checks precede

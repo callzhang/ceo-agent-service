@@ -944,9 +944,9 @@ def initialize_task8_sequence(db, source_water):
     """
     if not db.in_transaction:
         raise ValueError("Tasks allocator initialization requires a caller transaction")
-    db.execute("delete from sqlite_sequence where name='tasks:published'")
+    db.execute("delete from main.sqlite_sequence where name='tasks:published'")
     db.execute(
-        "insert into sqlite_sequence(name,seq) values('tasks:published',?)",
+        "insert into main.sqlite_sequence(name,seq) values('tasks:published',?)",
         (source_water,),
     )
 

@@ -133,7 +133,7 @@ def _rowid_next(db, kind):
 
 
 def _physical_next(db):
-    seq = db.execute("select seq from sqlite_sequence where name='tasks'").fetchone()
+    seq = db.execute("select seq from main.sqlite_sequence where name='tasks'").fetchone()
     maximum = db.execute("select max(id) from tasks").fetchone()[0]
     high = max(seq[0] if seq else 0, maximum or 0, 0)
     if high < 2**63 - 1:
@@ -164,7 +164,7 @@ def _round_before_full(value):
 
 def _auto_next(db, kind, values):
     seq = db.execute(
-        "select seq from sqlite_sequence where name=?", ("tasks:" + kind,)
+        "select seq from main.sqlite_sequence where name=?", ("tasks:" + kind,)
     ).fetchone()
     maximum = db.execute(
         "select max(cast(legacy_key as integer)) from tasks where " + _KIND_PREDICATE,
