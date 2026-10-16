@@ -16,7 +16,7 @@
 
 - [x] Root genuine predecessor fresh capture: archive production-adf0ee88 app/static config into owned temporary directory, run its actual Store19 and Email51 fresh constructors, capture twelve-family metadata, remove code/database. Fresh metadata SHA c02ce18e532fbf36abc60ea08c51ed8969be67d005621d67b5a7e320b86c6a38. Actual/fresh differ only feedback item and round layout/index creation history; all134 source field semantics match, including two already-published Workbench INTEGER parent changes from the oldCSV.
 - [x] Root complete canonical regression candidate and disposable source-only execution. First374pass/2fail was an overbroad SQLITE_FULL transaction assumption, not an application defect. Independent direct native probes confirm round-only statement scope versus other4 whole-transaction rollback. Corrected434cases pass1.23s, Ruff clean, owned temp removed.
-- [ ] Claim the test/doc files before editing. Copy the complete adjacent canonical module exactly:
+- [x] Claim the test/doc files before editing. Copy the complete adjacent canonical module exactly:
 
 ```python
 from pathlib import Path
@@ -32,7 +32,7 @@ The adjacent module contains the complete implementation, fixtures and434 regres
 
 ### Task 2: verify the applied source and exact transfer
 
-- [ ] Execute the durable preflight against the selected test module:
+- [x] Execute the durable preflight against the selected test module:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python docs/superpowers/plans/2026-10-16-tasks12-native-oracle-preflight.py --applied
@@ -40,7 +40,7 @@ PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/tas
 
 Expected434pass and OWNED_TEMP_REMOVED True. It copies app/test code into one owned /tmp tree, includes original conftest/two static config files, checks module import ownership and removes the tree. It creates only synthetic in-memory source rows, never constructors on production or provider/native CLI calls.
 
-- [ ] Run Ruff and exact-byte checks:
+- [x] Run Ruff and exact-byte checks:
 
 ```sh
 /Users/derek/.cache/uv/archive-v0/1vqK0HG0A7DbkHHlOjztN/bin/ruff check --no-cache tests/test_tasks12_native_source.py
@@ -54,13 +54,13 @@ assert (root/'tests/test_tasks12_native_source.py').read_bytes()==(root/'docs/su
 
 ### Task 3: bounded documentation and commit
 
-- [ ] Append the exact following paragraph to both named owned documents:
+- [x] Append the exact following paragraph to both named owned documents:
 
 ```text
 Tasks12 native storage oracle: tests/test_tasks12_native_source.py freezes actual and genuine production-adf0ee88 fresh SQLite behavior,434cases. All134fields keep original constraints/defaults/storage classes, source identities, five independent allocator streams and the native four-whole-transaction versus round-only-statement SQLITE_FULL distinction. This test-only step does not activate a target, prove public DAO/CAS/feedback/attachment/end-to-end behavior, or retire any source table/body. Existing8Tasks identities/historical factories and final10core+Emailledger remain required inputs to the next complete target/caller/migration plan.
 ```
 
-- [ ] Commit only test, exact paragraphs, own claim row and implementation checkboxes. Root owns the other simultaneously uncommitted artifacts. No main merge/push/provider/production/deploy.
+- [x] Commit only test, exact paragraphs, own claim row and implementation checkboxes. Root owns the other simultaneously uncommitted artifacts. No main merge/push/provider/production/deploy.
 - [ ] Fresh independent SPEC for exact bytes/scope/source oracle, then fresh QUALITY for negative controls/native identity/transaction coverage; resolve findings before root accepts.
 
 ### Completion boundary
