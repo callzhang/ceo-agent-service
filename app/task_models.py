@@ -1041,7 +1041,7 @@ class TaskAgentDecision(StrictTaskModel):
 
         covered: set[tuple[str, int | str]] = set()
         covered_titles: set[str] = set()
-        for assessment in self.project_assessments:
+        for assessment_index, assessment in enumerate(self.project_assessments):
             if assessment.project_title in covered_titles:
                 raise ValueError(
                     "each exact current Project title requires exactly one assessment"
@@ -1088,7 +1088,11 @@ class TaskAgentDecision(StrictTaskModel):
                     != key
                 ):
                     raise ValueError(
-                        "supporting Task selector must match the assessment Project"
+                        "supporting Task selector must match the assessment Project: "
+                        f"project_assessments[{assessment_index}].decision_indexes "
+                        f"references task_decisions[{index}].project="
+                        f"{project_key(task.project.anchor_id, task.project.project_decision_index)!r}, "
+                        f"but this assessment selects {key!r}"
                     )
             if assessment.attention_proposal is not None:
                 if (
