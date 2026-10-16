@@ -1,0 +1,407 @@
+{
+  "runtime_owner_inventory": [
+    {
+      "method": "save_attachment",
+      "source_line": 339,
+      "sql_sites": [
+        {
+          "line": 367,
+          "sql_expression": "f\"\"\"select * from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments\n                       where task_id=? and client_request_id=?\"\"\"",
+          "parameters_expression": "(task_id, client_request_id)"
+        },
+        {
+          "line": 396,
+          "sql_expression": "\"\"\"\n                        insert into workbench_attachments (\n                            id, task_id, client_request_id, filename, media_type,\n                            size_bytes, content_sha256, storage_path\n                        ) values (?, ?, ?, ?, ?, ?, ?, ?)\n                        \"\"\"",
+          "parameters_expression": "(\n                            attachment_id,\n                            task_physical_id(db, \"workbench_tasks\", task_id),\n                            client_request_id,\n                            filename,\n                            media_type,\n                            len(content),\n                            content_sha256,\n                            str(storage_path),\n                        )"
+        },
+        {
+          "line": 414,
+          "sql_expression": "f\"select * from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments where id=?\"",
+          "parameters_expression": "(attachment_id,)"
+        }
+      ]
+    },
+    {
+      "method": "list_attachments",
+      "source_line": 437,
+      "sql_sites": [
+        {
+          "line": 440,
+          "sql_expression": "f\"\"\"\n                select * from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments\n                where task_id=?\n                order by created_at, id\n                \"\"\"",
+          "parameters_expression": "(task_id,)"
+        }
+      ]
+    },
+    {
+      "method": "append_artifact_event",
+      "source_line": 881,
+      "sql_sites": [
+        {
+          "line": 913,
+          "sql_expression": "\"\"\"insert into workbench_artifacts(id,turn_id,label,path,media_type)\n                   values(?,?,?,?,?)\"\"\"",
+          "parameters_expression": "(artifact_id, task_physical_id(db, \"workbench_turns\", turn_id), label, path, media_type)"
+        },
+        {
+          "line": 923,
+          "sql_expression": "f\"select * from ({WORKBENCH_ARTIFACT_SQL}) as workbench_artifacts where id=?\"",
+          "parameters_expression": "(artifact_id,)"
+        }
+      ]
+    },
+    {
+      "method": "list_artifacts",
+      "source_line": 931,
+      "sql_sites": [
+        {
+          "line": 934,
+          "sql_expression": "f\"\"\"\n                select artifacts.*\n                from ({WORKBENCH_ARTIFACT_SQL}) as artifacts\n                join ({WORKBENCH_TURN_SQL}) as turns on turns.id=artifacts.turn_id\n                where turns.task_id=? order by artifacts.created_at, artifacts.id\n                \"\"\"",
+          "parameters_expression": "(task_id,)"
+        }
+      ]
+    },
+    {
+      "method": "timeline_snapshot",
+      "source_line": 945,
+      "sql_sites": [
+        {
+          "line": 1017,
+          "sql_expression": "f\"\"\"select * from ({WORKBENCH_ARTIFACT_SQL}) as workbench_artifacts where turn_id in ({placeholders})\n                        {artifact_cursor_sql} order by created_at,id limit 101\"\"\"",
+          "parameters_expression": "tuple(artifact_parameters)"
+        },
+        {
+          "line": 1052,
+          "sql_expression": "f\"\"\"select * from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments where task_id=?\n                   {attachment_cursor_sql} order by created_at,id limit 101\"\"\"",
+          "parameters_expression": "tuple(attachment_parameters)"
+        }
+      ]
+    },
+    {
+      "method": "get_artifact",
+      "source_line": 1109,
+      "sql_sites": [
+        {
+          "line": 1111,
+          "sql_expression": "f\"select * from ({WORKBENCH_ARTIFACT_SQL}) as workbench_artifacts where id=?\"",
+          "parameters_expression": "(artifact_id,)"
+        }
+      ]
+    },
+    {
+      "method": "workbench_stats",
+      "source_line": 1116,
+      "sql_sites": [
+        {
+          "line": 1176,
+          "sql_expression": "f\"select count(*) from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments\"",
+          "parameters_expression": null
+        },
+        {
+          "line": 1179,
+          "sql_expression": "f\"select count(*) from ({WORKBENCH_ARTIFACT_SQL}) as workbench_artifacts\"",
+          "parameters_expression": null
+        }
+      ]
+    },
+    {
+      "method": "attachment_paths_for_executor",
+      "source_line": 1226,
+      "sql_sites": [
+        {
+          "line": 1240,
+          "sql_expression": "f\"\"\"\n                select storage_path, media_type from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments\n                where task_id=? order by created_at, id\n                \"\"\"",
+          "parameters_expression": "(turn[\"task_id\"],)"
+        }
+      ]
+    },
+    {
+      "method": "_reconcile_attachments",
+      "source_line": 2286,
+      "sql_sites": [
+        {
+          "line": 2297,
+          "sql_expression": "f\"select id, task_id, storage_path from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments\"",
+          "parameters_expression": null
+        },
+        {
+          "line": 2305,
+          "sql_expression": "\"delete from workbench_attachments where id=?\"",
+          "parameters_expression": "(row[\"id\"],)"
+        },
+        {
+          "line": 2311,
+          "sql_expression": "\"delete from workbench_attachments where id=?\"",
+          "parameters_expression": "(row[\"id\"],)"
+        },
+        {
+          "line": 2325,
+          "sql_expression": "\"delete from workbench_attachments where id=?\"",
+          "parameters_expression": "(row[\"id\"],)"
+        }
+      ]
+    }
+  ],
+  "projection_inventory": [
+    {
+      "line": 89,
+      "name": "WORKBENCH_ATTACHMENT_SQL",
+      "source": "WORKBENCH_ATTACHMENT_SQL = \"\"\"select c.id,t.legacy_key as task_id,\n    c.client_request_id,c.filename,c.media_type,c.size_bytes,c.content_sha256,\n    c.storage_path,c.created_at\n    from workbench_attachments c join tasks t on t.id=c.task_id\n    where t.record_type='workbench_tasks'\"\"\"",
+      "candidate": "WORKBENCH_ATTACHMENT_SQL = f\"\"\"select c.id,t.legacy_key as task_id,\n    c.client_request_id,c.filename,c.media_type,c.size_bytes,c.content_sha256,\n    c.storage_path,c.created_at\n    from ({task12_projection(\"workbench_attachments\")}) c join tasks t on t.id=c.task_id\n    where t.record_type='workbench_tasks'\"\"\""
+    },
+    {
+      "line": 94,
+      "name": "WORKBENCH_ARTIFACT_SQL",
+      "source": "WORKBENCH_ARTIFACT_SQL = \"\"\"select c.id,t.legacy_key as turn_id,\n    c.label,c.path,c.media_type,c.created_at\n    from workbench_artifacts c join tasks t on t.id=c.turn_id\n    where t.record_type='workbench_turns'\"\"\"",
+      "candidate": "WORKBENCH_ARTIFACT_SQL = f\"\"\"select c.id,t.legacy_key as turn_id,\n    c.label,c.path,c.media_type,c.created_at\n    from ({task12_projection(\"workbench_artifacts\")}) c join tasks t on t.id=c.turn_id\n    where t.record_type='workbench_turns'\"\"\""
+    }
+  ],
+  "temporary_path": "/tmp/task12-workbench-children.7zp3oh46",
+  "sha256": {
+    "source": "4a3bb9287dfea1f2e13e31be5ff2a9ac536a458ac079f30ccb1519848870e18e",
+    "prerequisite_patch": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26",
+    "after_prerequisite": "59e56e58f9c071631b47e60827a931681ba14b2657115f1e14aee8cfae0d012a",
+    "candidate": "b9027194eb4f9f277630935bf2d00a36792047f626e6b0242667d22a7de070db",
+    "incremental_patch": "d27b3a097f8ade8d4485647c9e07bc0d65848afd392067899ed16ab11db7aed6",
+    "task12_storage": "8a7a84db53006065697ae44a2e39dc27a2008ca2687b6ddfc54e23ff9cc1729a",
+    "task20_definitions": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0"
+  },
+  "status": "complete unselected static proposal; independent review/public methods/filesystem execution not performed",
+  "source_path": "app/workbench/store.py",
+  "python": "/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python",
+  "prerequisite_path": "docs/superpowers/plans/2026-10-16-task8-workbench-caller-proposal.patch",
+  "patch_path": "docs/superpowers/plans/2026-10-16-task12-workbench-children-caller-proposal.patch",
+  "checks": {
+    "sequential_apply_bytes": true,
+    "incremental_reverse_bytes": true,
+    "full_reverse_original_bytes": true,
+    "function_signature_count": 79,
+    "unchanged_function_body_count": 76,
+    "changed_functions": [
+      "save_attachment",
+      "append_artifact_event",
+      "_reconcile_attachments"
+    ],
+    "prior_task8_changed_bodies_exact": 16,
+    "changed_body_non_sql_ast_exact": true,
+    "insert_bound_value_order_exact": true,
+    "transaction_and_close_call_count": 30,
+    "filesystem_dto_constructor_methods_exact": [
+      "_canonical_uuid",
+      "_commit_attachment_metadata",
+      "_managed_directory",
+      "_attachment_lock",
+      "_attachment_task_directory",
+      "_write_attachment_temp",
+      "_after_attachment_temp_created",
+      "_fsync_directory",
+      "_fsync_attachment_file",
+      "_safe_attachment_unlink",
+      "_attachment_from_row",
+      "_artifact_from_row",
+      "__init__",
+      "_connect"
+    ],
+    "native_runtime_relation_references_remaining": 0,
+    "unrelated_module_statements_exact": true,
+    "pinned_compile": true,
+    "ruff_output": "All checks passed!",
+    "import_output": "IMPORT_NO_CONSTRUCTORS WorkbenchStore",
+    "python_version": "Python 3.13.12",
+    "owned_temp_removed": true,
+    "real_application_source_unchanged": true,
+    "qualified_changed_functions": [
+      "WorkbenchStore.save_attachment",
+      "WorkbenchStore.append_artifact_event",
+      "WorkbenchStore._reconcile_attachments"
+    ],
+    "qualified_definition_keys": [
+      "WorkbenchConflictError.__init__",
+      "_begin_immediate_with_retry",
+      "_json_object_text",
+      "_reject_json_constant",
+      "_derive_task_title",
+      "WorkbenchStore.__init__",
+      "WorkbenchStore._connect",
+      "WorkbenchStore.create_task",
+      "WorkbenchStore.get_task",
+      "WorkbenchStore.get_task_summary",
+      "WorkbenchStore.list_tasks",
+      "WorkbenchStore.list_tasks_with_state",
+      "WorkbenchStore.rename_task",
+      "WorkbenchStore.archive_task",
+      "WorkbenchStore.save_attachment",
+      "WorkbenchStore.list_attachments",
+      "WorkbenchStore.create_turn",
+      "WorkbenchStore.get_turn",
+      "WorkbenchStore.list_turns",
+      "WorkbenchStore.resume_context_for_executor",
+      "WorkbenchStore.execution_run_id_for_executor",
+      "WorkbenchStore.recover_expired_turns",
+      "WorkbenchStore.claim_next_turn",
+      "WorkbenchStore.renew_turn_lease",
+      "WorkbenchStore.request_stop",
+      "WorkbenchStore.append_event",
+      "WorkbenchStore.events_after",
+      "WorkbenchStore.event_stream_snapshot",
+      "WorkbenchStore.append_artifact_event",
+      "WorkbenchStore.list_artifacts",
+      "WorkbenchStore.timeline_snapshot",
+      "WorkbenchStore.get_artifact",
+      "WorkbenchStore.workbench_stats",
+      "WorkbenchStore.set_provider_session",
+      "WorkbenchStore.attachment_paths_for_executor",
+      "WorkbenchStore.create_confirmation",
+      "WorkbenchStore.consume_confirmation_authorization",
+      "WorkbenchStore.renew_confirmation_proposer",
+      "WorkbenchStore.mark_confirmation_proposer_quiesced",
+      "WorkbenchStore.reconcile_unquiesced_proposers",
+      "WorkbenchStore.reconcile_unquiesced_proposer_batch",
+      "WorkbenchStore.list_confirmations",
+      "WorkbenchStore.get_confirmation",
+      "WorkbenchStore.confirmation_is_quiesced",
+      "WorkbenchStore.confirmation_quiescence",
+      "WorkbenchStore.requested_quiesced_confirmation_ids",
+      "WorkbenchStore.claim_confirmation_execution",
+      "WorkbenchStore.renew_confirmation_execution_lease",
+      "WorkbenchStore.finish_confirmation_execution",
+      "WorkbenchStore.cancel_confirmation_execution",
+      "WorkbenchStore.reconcile_confirmed_without_result",
+      "WorkbenchStore.reconcile_confirmed_without_result_batch",
+      "WorkbenchStore.complete_turn",
+      "WorkbenchStore._recover_expired_turns_in_transaction",
+      "WorkbenchStore._resolve_pending_confirmations",
+      "WorkbenchStore._canonical_uuid",
+      "WorkbenchStore._commit_attachment_metadata",
+      "WorkbenchStore._managed_directory",
+      "WorkbenchStore._attachment_lock",
+      "WorkbenchStore._attachment_task_directory",
+      "WorkbenchStore._write_attachment_temp",
+      "WorkbenchStore._after_attachment_temp_created",
+      "WorkbenchStore._fsync_directory",
+      "WorkbenchStore._fsync_attachment_file",
+      "WorkbenchStore._safe_attachment_unlink",
+      "WorkbenchStore._reconcile_attachments",
+      "WorkbenchStore._append_control_event",
+      "WorkbenchStore._require_task",
+      "WorkbenchStore._require_turn",
+      "WorkbenchStore._require_confirmation",
+      "WorkbenchStore._require_lease",
+      "WorkbenchStore._require_executor_lease",
+      "WorkbenchStore._transition_turn",
+      "WorkbenchStore._task_from_row",
+      "WorkbenchStore._turn_from_row",
+      "WorkbenchStore._event_from_row",
+      "WorkbenchStore._attachment_from_row",
+      "WorkbenchStore._artifact_from_row",
+      "WorkbenchStore._confirmation_from_row"
+    ],
+    "qualified_ast_rerun": true,
+    "qualified_ast_owned_temp_removed": true
+  },
+  "changed_functions": [
+    "save_attachment",
+    "append_artifact_event",
+    "_reconcile_attachments"
+  ],
+  "runtime_owner_count": 9,
+  "runtime_sql_site_count": 17,
+  "scope": {
+    "plain_inserts": 2,
+    "direct_native_deletes": 3,
+    "projection_constants": 2,
+    "updates": 0,
+    "fs_or_public_method_execution": false,
+    "database_execution": false,
+    "constructor_execution": false
+  },
+  "external_dependency_inventory": [
+    {
+      "path": "app/store.py",
+      "anchors": [
+        393,
+        394,
+        443,
+        448,
+        449,
+        2489,
+        2744,
+        8527
+      ],
+      "role": "current required-table/index manifests, current declaration predicates and auxiliary constructor; root-owned final selection obligation, unchanged"
+    },
+    {
+      "path": "app/task_storage.py",
+      "anchors": [
+        818,
+        834,
+        847,
+        848
+      ],
+      "role": "generic _rebuild and install_task_child_guards introspection/loop select these table names; historical/release helper, preserve original source profiles; root-owned final coordinator obligation, unchanged"
+    },
+    {
+      "path": "app/workbench_storage.py",
+      "anchors": [
+        48,
+        263,
+        293,
+        496,
+        563,
+        630,
+        711,
+        923
+      ],
+      "role": "historical source declarations, WORKBENCH_CHILDREN dynamic capture/forward/inverse/auxiliary factory/current declaration predicate; preserve original factories, separately adapt final coordinator/current predicate; unchanged"
+    },
+    {
+      "path": "app/task12_storage.py",
+      "anchors": [
+        36,
+        37,
+        254,
+        306,
+        319
+      ],
+      "role": "accepted physical parent map/native insertion/source projection helpers selected by proposal"
+    },
+    {
+      "path": "app/task20_definitions.py",
+      "anchors": [
+        299,
+        307,
+        463,
+        481,
+        543,
+        544,
+        909,
+        910
+      ],
+      "role": "accepted exact typed field/index/parent declarations; unchanged"
+    },
+    {
+      "path": "app/workbench/native_events.py",
+      "anchors": [
+        30,
+        99,
+        173
+      ],
+      "role": "existing-eight typed turn projection companion, root-known dependency with prior81 checkpoint negative control; no new child SQL reader and unchanged in this incremental patch"
+    }
+  ],
+  "inventory_method": "AST walk of every execute SQL first argument, including JoinedStr names and indirect WORKBENCH_*_SQL consumers; source-tree rg family/constant/import names plus manual review of dynamic source table tuples/introspection loops; historical/current-constructor obligations classified separately.",
+  "fs_semantics_preserved": [
+    "bytes validation and content SHA256/idempotency",
+    "canonical UUID validation",
+    "attachment lock and O_NOFOLLOW/path directory checks",
+    "temp body write/flush/fsync/hook",
+    "native BEGIN IMMEDIATE, metadata readback, os.replace, file fsync, directory fsync, commit",
+    "rollback/close/failure unlink order",
+    "startup metadata deletion conditions and orphan/temp cleanup",
+    "artifact executor lease, event sequence and coupled runs insert"
+  ],
+  "proof_limits": [
+    "No database, public method or filesystem behavior executed",
+    "Only candidate import with no constructors; scalar registration unselected",
+    "No constructor, schema manifest, historical factory, migration/copy/inverse, native source/body, provider/UI/final11 or production acceptance",
+    "No helper gap found for these two plain INSERT and native DELETE shapes; no helper extension or workaround"
+  ]
+}
