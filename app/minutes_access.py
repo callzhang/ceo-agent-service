@@ -12,8 +12,9 @@ So this pass reads the console for candidates, asks the provider which of them
 we may not read, and sends a request on the page, counting it only when the
 page reads the request back.  Every step is a fixed rule, and the browser it
 drives is the service's shared headless Chrome, which carries the daily copy
-of Derek's own Chrome cookies -- so this pass no longer keeps a console session
-of its own, and there is nothing here that expires or has to be renewed.
+of Derek's own Chrome cookies. The minutes browser restores the copied session
+cookies through Chrome's native startup mode; a genuinely expired source login
+still requires Derek to sign in through the ordinary Chrome handoff.
 """
 
 from __future__ import annotations
