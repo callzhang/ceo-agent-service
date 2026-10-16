@@ -886,7 +886,18 @@ def _encoded_sqlite_value(value):
 
 
 def _encoded_native_sqlite_value(value):
-    """Preserve finite REAL bits for the unpublished native-source kinds."""
+    """Encode the underlying scalar that sqlite3 binds for native-source kinds."""
+    if isinstance(value, float):
+        value = float.__float__(value)
+    elif isinstance(value, str):
+        value = str.__str__(value)
+    elif isinstance(value, (bytes, bytearray, memoryview)):
+        view = memoryview(value)
+        if not view.c_contiguous:
+            raise BufferError("memoryview: underlying buffer is not C-contiguous")
+        return {"t": "blob", "v": view.tobytes().hex()}
+    elif value is not None and not isinstance(value, int):
+        raise sqlite3.ProgrammingError("unsupported SQLite source value")
     if isinstance(value, float) and math.isfinite(value):
         numerator, denominator = value.as_integer_ratio()
         shift = max(0, abs(numerator).bit_length() - 53)
