@@ -1,0 +1,1031 @@
+{
+  "recorded_utc": "2026-10-16T20:24:06.914147+00:00",
+  "scope": "Read-only source/AST/history; frozen970a/current production aggregate mode=ro/query_only snapshots; original public methods on in-memory actual/fresh native declarations. No constructor, app/test/runtime selection, provider/native CLI or database file write.",
+  "source": "/private/tmp/ceo-business-combined-actual-u6i3ldg0/source.sqlite3",
+  "source_sha256_before": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "source_sha256_after": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "marker_store": "2026-10-13.5",
+  "marker_email": 51,
+  "store_py_sha256": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+  "counts": {
+    "item_count": 48,
+    "round_count": 3,
+    "needed_eligible_count": 0,
+    "insert_no_history_eligible_count": 0,
+    "bulk_update_where_eligible_count": 0,
+    "item_status_counts": {
+      "resolved": 48
+    },
+    "round_status_counts": {
+      "resolved": 3
+    }
+  },
+  "queries": {
+    "exact_needed_owner_sql": "\n                select 1\n                  from feedback_processing_items item\n                 where item.status in ('processing', 'resolved')\n                   and (\n                       trim(item.batch_id) <> ''\n                       or trim(item.workbench_task_id) <> ''\n                       or trim(item.workbench_turn_id) <> ''\n                       or cast(item.attempt_id as integer) > 0\n                       or cast(item.agent_run_id as integer) > 0\n                       or trim(item.commit_sha) <> ''\n                       or trim(item.test_evidence_json) not in ('', '{}')\n                       or trim(item.restart_evidence_json) not in ('', '{}')\n                       or trim(item.health_evidence_json) not in ('', '{}')\n                       or trim(item.note) <> ''\n                   )\n                   and (\n                       (\n                           item.current_round_id <> 0\n                           and (\n                               not exists (\n                                   select 1\n                                     from feedback_processing_rounds current_round\n                                    where current_round.id=item.current_round_id\n                                      and current_round.feedback_key=\n                                          item.feedback_key\n                                      and current_round.batch_id=item.batch_id\n                                      and current_round.status=item.status\n                                      and current_round.round_number=(\n                                          select max(latest_round.round_number)\n                                            from feedback_processing_rounds latest_round\n                                           where latest_round.feedback_key=item.feedback_key\n                                      )\n                               )\n                               or (\n                                   select count(*)\n                                     from feedback_processing_rounds matching_round\n                                    where matching_round.feedback_key=\n                                          item.feedback_key\n                                      and matching_round.batch_id=item.batch_id\n                                      and matching_round.status=item.status\n                               ) <> 1\n                           )\n                       )\n                       or (\n                           item.current_round_id=0\n                           and (\n                               not exists (\n                                   select 1\n                                     from feedback_processing_rounds history_round\n                                    where history_round.feedback_key=\n                                          item.feedback_key\n                               )\n                               or (\n                                   select count(*)\n                                     from feedback_processing_rounds matching_round\n                                    where matching_round.feedback_key=\n                                          item.feedback_key\n                                      and matching_round.batch_id=item.batch_id\n                                      and matching_round.status=item.status\n                               ) = 1\n                               and (\n                                   select max(matching_round.round_number)\n                                     from feedback_processing_rounds matching_round\n                                    where matching_round.feedback_key=item.feedback_key\n                                      and matching_round.batch_id=item.batch_id\n                                      and matching_round.status=item.status\n                               ) = (\n                                   select max(latest_round.round_number)\n                                     from feedback_processing_rounds latest_round\n                                    where latest_round.feedback_key=item.feedback_key\n                               )\n                           )\n                       )\n                   )\n                 limit 1\n                ",
+    "needed_count_same_predicate": "\n                select count(*)\n                  from feedback_processing_items item\n                 where item.status in ('processing', 'resolved')\n                   and (\n                       trim(item.batch_id) <> ''\n                       or trim(item.workbench_task_id) <> ''\n                       or trim(item.workbench_turn_id) <> ''\n                       or cast(item.attempt_id as integer) > 0\n                       or cast(item.agent_run_id as integer) > 0\n                       or trim(item.commit_sha) <> ''\n                       or trim(item.test_evidence_json) not in ('', '{}')\n                       or trim(item.restart_evidence_json) not in ('', '{}')\n                       or trim(item.health_evidence_json) not in ('', '{}')\n                       or trim(item.note) <> ''\n                   )\n                   and (\n                       (\n                           item.current_round_id <> 0\n                           and (\n                               not exists (\n                                   select 1\n                                     from feedback_processing_rounds current_round\n                                    where current_round.id=item.current_round_id\n                                      and current_round.feedback_key=\n                                          item.feedback_key\n                                      and current_round.batch_id=item.batch_id\n                                      and current_round.status=item.status\n                                      and current_round.round_number=(\n                                          select max(latest_round.round_number)\n                                            from feedback_processing_rounds latest_round\n                                           where latest_round.feedback_key=item.feedback_key\n                                      )\n                               )\n                               or (\n                                   select count(*)\n                                     from feedback_processing_rounds matching_round\n                                    where matching_round.feedback_key=\n                                          item.feedback_key\n                                      and matching_round.batch_id=item.batch_id\n                                      and matching_round.status=item.status\n                               ) <> 1\n                           )\n                       )\n                       or (\n                           item.current_round_id=0\n                           and (\n                               not exists (\n                                   select 1\n                                     from feedback_processing_rounds history_round\n                                    where history_round.feedback_key=\n                                          item.feedback_key\n                               )\n                               or (\n                                   select count(*)\n                                     from feedback_processing_rounds matching_round\n                                    where matching_round.feedback_key=\n                                          item.feedback_key\n                                      and matching_round.batch_id=item.batch_id\n                                      and matching_round.status=item.status\n                               ) = 1\n                               and (\n                                   select max(matching_round.round_number)\n                                     from feedback_processing_rounds matching_round\n                                    where matching_round.feedback_key=item.feedback_key\n                                      and matching_round.batch_id=item.batch_id\n                                      and matching_round.status=item.status\n                               ) = (\n                                   select max(latest_round.round_number)\n                                     from feedback_processing_rounds latest_round\n                                    where latest_round.feedback_key=item.feedback_key\n                               )\n                           )\n                       )\n                   )\n                 ",
+    "exact_bulk_insert_sql": "\n            insert or ignore into feedback_processing_rounds (\n                feedback_key, round_number, batch_id, status,\n                workbench_task_id, workbench_turn_id, attempt_id,\n                agent_run_id, commit_sha, test_evidence_json,\n                restart_evidence_json, health_evidence_json, note,\n                started_at, resolved_at, receipt_version, created_at, updated_at\n            )\n            select item.feedback_key, 1, item.batch_id, item.status,\n                   item.workbench_task_id, item.workbench_turn_id,\n                   item.attempt_id, item.agent_run_id, item.commit_sha,\n                   item.test_evidence_json, item.restart_evidence_json,\n                   item.health_evidence_json, item.note,\n                   item.created_at, item.resolved_at, 1,\n                   item.created_at, item.updated_at\n              from feedback_processing_items item\n             where item.status in ('processing', 'resolved')\n               and (\n                   trim(item.batch_id) <> ''\n                   or trim(item.workbench_task_id) <> ''\n                   or trim(item.workbench_turn_id) <> ''\n                   or cast(item.attempt_id as integer) > 0\n                   or cast(item.agent_run_id as integer) > 0\n                   or trim(item.commit_sha) <> ''\n                   or trim(item.test_evidence_json) not in ('', '{}')\n                   or trim(item.restart_evidence_json) not in ('', '{}')\n                   or trim(item.health_evidence_json) not in ('', '{}')\n                   or trim(item.note) <> ''\n               )\n               and not exists (\n                   select 1\n                     from feedback_processing_rounds history_round\n                    where history_round.feedback_key=item.feedback_key\n               )\n            ",
+    "no_history_count_same_predicate": "select count(*) from feedback_processing_items item\n             where item.status in ('processing', 'resolved')\n               and (\n                   trim(item.batch_id) <> ''\n                   or trim(item.workbench_task_id) <> ''\n                   or trim(item.workbench_turn_id) <> ''\n                   or cast(item.attempt_id as integer) > 0\n                   or cast(item.agent_run_id as integer) > 0\n                   or trim(item.commit_sha) <> ''\n                   or trim(item.test_evidence_json) not in ('', '{}')\n                   or trim(item.restart_evidence_json) not in ('', '{}')\n                   or trim(item.health_evidence_json) not in ('', '{}')\n                   or trim(item.note) <> ''\n               )\n               and not exists (\n                   select 1\n                     from feedback_processing_rounds history_round\n                    where history_round.feedback_key=item.feedback_key\n               )\n            ",
+    "exact_bulk_update_sql": "\n            update feedback_processing_items\n               set current_round_id=case\n                   when (\n                       select count(*)\n                         from feedback_processing_rounds matching_round\n                        where matching_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and matching_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and matching_round.status=\n                              feedback_processing_items.status\n                   ) = 1\n                   and (\n                       select max(matching_round.round_number)\n                         from feedback_processing_rounds matching_round\n                        where matching_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and matching_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and matching_round.status=\n                              feedback_processing_items.status\n                   ) = (\n                       select max(latest_round.round_number)\n                         from feedback_processing_rounds latest_round\n                        where latest_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                   )\n                   then (\n                       select min(matching_round.id)\n                         from feedback_processing_rounds matching_round\n                        where matching_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and matching_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and matching_round.status=\n                              feedback_processing_items.status\n                   )\n                   else 0\n               end\n             where status in ('processing', 'resolved')\n               and (\n                   trim(batch_id) <> ''\n                   or trim(workbench_task_id) <> ''\n                   or trim(workbench_turn_id) <> ''\n                   or cast(attempt_id as integer) > 0\n                   or cast(agent_run_id as integer) > 0\n                   or trim(commit_sha) <> ''\n                   or trim(test_evidence_json) not in ('', '{}')\n                   or trim(restart_evidence_json) not in ('', '{}')\n                   or trim(health_evidence_json) not in ('', '{}')\n                   or trim(note) <> ''\n               )\n               and (\n                   not exists (\n                       select 1\n                         from feedback_processing_rounds current_round\n                        where current_round.id=\n                              feedback_processing_items.current_round_id\n                          and current_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and current_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and current_round.status=\n                              feedback_processing_items.status\n                          and current_round.round_number=(\n                              select max(latest_round.round_number)\n                                from feedback_processing_rounds latest_round\n                               where latest_round.feedback_key=\n                                     feedback_processing_items.feedback_key\n                          )\n                   )\n                   or (\n                       select count(*)\n                         from feedback_processing_rounds matching_round\n                        where matching_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and matching_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and matching_round.status=\n                              feedback_processing_items.status\n                   ) <> 1\n               )\n               and (\n                   current_round_id <> 0\n                   or (\n                       select count(*)\n                         from feedback_processing_rounds matching_round\n                        where matching_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and matching_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and matching_round.status=\n                              feedback_processing_items.status\n                   ) = 1\n                   and (\n                       select max(matching_round.round_number)\n                         from feedback_processing_rounds matching_round\n                        where matching_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and matching_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and matching_round.status=\n                              feedback_processing_items.status\n                   ) = (\n                       select max(latest_round.round_number)\n                         from feedback_processing_rounds latest_round\n                        where latest_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                   )\n               )\n            ",
+    "update_count_same_predicate": "select count(*) from feedback_processing_items where status in ('processing', 'resolved')\n               and (\n                   trim(batch_id) <> ''\n                   or trim(workbench_task_id) <> ''\n                   or trim(workbench_turn_id) <> ''\n                   or cast(attempt_id as integer) > 0\n                   or cast(agent_run_id as integer) > 0\n                   or trim(commit_sha) <> ''\n                   or trim(test_evidence_json) not in ('', '{}')\n                   or trim(restart_evidence_json) not in ('', '{}')\n                   or trim(health_evidence_json) not in ('', '{}')\n                   or trim(note) <> ''\n               )\n               and (\n                   not exists (\n                       select 1\n                         from feedback_processing_rounds current_round\n                        where current_round.id=\n                              feedback_processing_items.current_round_id\n                          and current_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and current_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and current_round.status=\n                              feedback_processing_items.status\n                          and current_round.round_number=(\n                              select max(latest_round.round_number)\n                                from feedback_processing_rounds latest_round\n                               where latest_round.feedback_key=\n                                     feedback_processing_items.feedback_key\n                          )\n                   )\n                   or (\n                       select count(*)\n                         from feedback_processing_rounds matching_round\n                        where matching_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and matching_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and matching_round.status=\n                              feedback_processing_items.status\n                   ) <> 1\n               )\n               and (\n                   current_round_id <> 0\n                   or (\n                       select count(*)\n                         from feedback_processing_rounds matching_round\n                        where matching_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and matching_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and matching_round.status=\n                              feedback_processing_items.status\n                   ) = 1\n                   and (\n                       select max(matching_round.round_number)\n                         from feedback_processing_rounds matching_round\n                        where matching_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                          and matching_round.batch_id=\n                              feedback_processing_items.batch_id\n                          and matching_round.status=\n                              feedback_processing_items.status\n                   ) = (\n                       select max(latest_round.round_number)\n                         from feedback_processing_rounds latest_round\n                        where latest_round.feedback_key=\n                              feedback_processing_items.feedback_key\n                   )\n               )\n            "
+  },
+  "synthetic_memory_public_traces": {
+    "actual": {
+      "checkpoints": [
+        {
+          "checkpoint": "upsert_pending",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "create_pending_batch",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "claim_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "claim_processing",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "claim_retry",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "association_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "associate_processing",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "evidence_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "patch_processing_evidence",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "resolution_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "batch_resolve",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "batch_resolve_retry",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "reopen_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "reopen_pending",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "reclaim_next_round",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "upsert_processing_replay",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "manual_api_before",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "manual_resolve_public_api_counterexample",
+          "backfill_needed": true
+        },
+        {
+          "checkpoint": "native_backfill_clears_manual_stale_pointer",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "manual_seeded_before",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "manual_seeded_resolve_public_api_counterexample",
+          "backfill_needed": true
+        },
+        {
+          "checkpoint": "native_backfill_creates_v1_for_manual_seeded_item",
+          "backfill_needed": false
+        }
+      ],
+      "original_connect_and_immediate_contexts": true,
+      "original_public_method_bodies": true,
+      "constructor_bypassed": true,
+      "only_connection_factory_replaced": true,
+      "manual_api_counterexample": {
+        "positive_pointer_before": true,
+        "zero_pointer_after": true,
+        "round_count_delta": 0,
+        "batch_still_processing": true
+      },
+      "manual_seeded_counterexample": {
+        "round_count_delta": 1,
+        "receipt_version": 1,
+        "batch_still_pending": true
+      },
+      "faults_proven": [
+        "claim",
+        "association",
+        "evidence",
+        "resolution",
+        "reopen"
+      ]
+    },
+    "fresh": {
+      "checkpoints": [
+        {
+          "checkpoint": "upsert_pending",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "create_pending_batch",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "claim_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "claim_processing",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "claim_retry",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "association_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "associate_processing",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "evidence_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "patch_processing_evidence",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "resolution_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "batch_resolve",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "batch_resolve_retry",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "reopen_whole_transaction_rollback",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "reopen_pending",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "reclaim_next_round",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "upsert_processing_replay",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "manual_api_before",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "manual_resolve_public_api_counterexample",
+          "backfill_needed": true
+        },
+        {
+          "checkpoint": "native_backfill_clears_manual_stale_pointer",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "manual_seeded_before",
+          "backfill_needed": false
+        },
+        {
+          "checkpoint": "manual_seeded_resolve_public_api_counterexample",
+          "backfill_needed": true
+        },
+        {
+          "checkpoint": "native_backfill_creates_v1_for_manual_seeded_item",
+          "backfill_needed": false
+        }
+      ],
+      "original_connect_and_immediate_contexts": true,
+      "original_public_method_bodies": true,
+      "constructor_bypassed": true,
+      "only_connection_factory_replaced": true,
+      "manual_api_counterexample": {
+        "positive_pointer_before": true,
+        "zero_pointer_after": true,
+        "round_count_delta": 0,
+        "batch_still_processing": true
+      },
+      "manual_seeded_counterexample": {
+        "round_count_delta": 1,
+        "receipt_version": 1,
+        "batch_still_pending": true
+      },
+      "faults_proven": [
+        "claim",
+        "association",
+        "evidence",
+        "resolution",
+        "reopen"
+      ]
+    }
+  },
+  "synthetic_memory_boundary": "Exact actual captured native table declarations or current fresh constructor table literals, with captured scoped indexes/triggers and empty real Config declaration for capability query. AutoReplyStore.__new__; original _connect/_immediate_write_transaction and public methods. Only _open_connection points to shared in-memory SQLite. No constructor, real DB, provider or endpoint invocation. Internal synthetic snapshots compared but no rows stored in report. Statement-abort rollback is not a process-kill proof.",
+  "synthetic_probe_sha256": "b5849fabc998ea5006a96a0aef5ff803f551e3726d8735e481c4ff96c76ec9c7",
+  "source_hashes": {
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/feedback_processing.py": "1162fb605bed001fc60392cba0fa5a2c04bb7292abcbeab58a0e58226241fcef",
+    "app/web_api/registration.py": "947cde14a28dd1d3ae768400160d7d0e0f1c991191ea97c4d7fe9708624cfd4e",
+    "app/feedback_events.py": "60e7dcc32f98cf8b1e32480b0f465b0ce52ce9462dd56e3a6c77116b81a601c8",
+    "app/audit_web.py": "036f4f46259485c5e341cab8171071b732377d2cee685d90f41eceb8d4dc77e7",
+    "app/task12_storage.py": "592da58189962bee520ae87b3504742495f5132fc481902bc72c11aa4766cf0d",
+    "app/task20_definitions.py": "d3e84f6d3ce871bf01b85fb160b1cf13162ca73b2644e39e593edc0b0c258773",
+    "app/task20_schema_release.py": "90fab9be52f04e03d826587851d4ae893e1abb0a57145a6c1133c0ee140f2715",
+    "app/configs_storage.py": "86bfe7085766f3b8ffe67c2e92884309284af1775e0469b4e101b972080de349",
+    "tests/test_feedback_processing.py": "d6c27781e0f4df585d656a6a42f004c56012145fa3a8311b440b6e4e45ab91f3",
+    "tests/test_task12_insert_expression.py": "0835a92ed79aa51e581e3f31753018f21cd9b258569ae86966d5d8a33b13dbd4",
+    "tests/test_audit_web.py": "066a19b6bf9e47728e5e2e1de77303a9c740ecb88bc252334a765634f95feaba",
+    "tests/test_console_web_api.py": "0ef0f967fe8e859f4ae6598184b2e06aeaf0504c5fda7fa67890fee9e54ecb1d",
+    "docs/superpowers/specs/2026-10-16-tasks12-native-source.json": "ce785f845f9425a78e5313d9552da60cf4a6ed41a543cbaf13d81a6be80709a7",
+    "docs/superpowers/specs/2026-10-16-task12-feedback-caller-readiness.json": "5d1f5c571a511d1b8db7aba79dc49cf140b8582c3d8e912376bb4e69743bba98",
+    "docs/superpowers/plans/2026-10-16-task12-feedback-caller-proposal.patch": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d"
+  },
+  "worktree_head": "a35d97a43eba5f9892b0536d8f18f20e336024e6",
+  "status": "bounded_research_complete_scoped_disposition_approved_by_root_not_implemented_here",
+  "source_owners": [
+    {
+      "file": "app/store.py",
+      "name": "_ensure_initialized",
+      "line": 1867,
+      "end_line": 1891,
+      "source_sha256": "cd9eca4fe7914cb744670fcb599ee3b7fe4dd228422dde3a6a140d7b8eb34238",
+      "ast_sha256": "9b0700fd64484af798883f68f09e3bff84189bae1c74f1eb58739436d905f112"
+    },
+    {
+      "file": "app/store.py",
+      "name": "_cached_initialized_path_is_healthy",
+      "line": 1893,
+      "end_line": 1908,
+      "source_sha256": "c2ca2fb92bcf67fc265c64021ace935a78a502492d6798b1e91d9c7a6f7a6826",
+      "ast_sha256": "d8f27540560f977703d353858236b11b2a7a0b6d4d2c514c54db5bd0cf1977c0"
+    },
+    {
+      "file": "app/store.py",
+      "name": "_feedback_processing_round_backfill_needed",
+      "line": 1911,
+      "end_line": 1995,
+      "source_sha256": "2bec804dd783a488019e6f4dcca95c05748ea309f9b2f2d3eadd915f7b69eb95",
+      "ast_sha256": "672fdd09e558bb19dff10ddfcd85de9a8807416398c1cce8c5399aee70b3fed4"
+    },
+    {
+      "file": "app/store.py",
+      "name": "_backfill_feedback_processing_rounds",
+      "line": 1998,
+      "end_line": 2149,
+      "source_sha256": "3f1b25799e7af4419f8ff283533880be08e803edd527dedbb4c7f9788b15c2e2",
+      "ast_sha256": "6c2efc57dfff9469dc4d33fb101d70b14cfd685660110a6bd63f9f90a4791ec6"
+    },
+    {
+      "file": "app/store.py",
+      "name": "_reconcile_feedback_processing_round_backfill",
+      "line": 2151,
+      "end_line": 2157,
+      "source_sha256": "223eae9abd605ba1a17d3f2e61711c96debef89956fd6527d4dc767fc4c75804",
+      "ast_sha256": "c38839bc45f296f7ebafb2af39379110c91243c7b111e78049698541463d8a11"
+    },
+    {
+      "file": "app/store.py",
+      "name": "_immediate_write_transaction",
+      "line": 2624,
+      "end_line": 2676,
+      "source_sha256": "c05f05b67197b3fbfe3f34672b1fe74f9c047deaea0dba45d3cef33658b7b8d7",
+      "ast_sha256": "7dc1b2359490f6594ace0f6cc180ff79db165f2db01169e95abac300f06ddb12"
+    },
+    {
+      "file": "app/store.py",
+      "name": "_initialize",
+      "line": 2723,
+      "end_line": 4206,
+      "source_sha256": "2345eaf7c7faf03eb75bd3df24c65ae0295171bd8a581e987a7bed2dd5db146d",
+      "ast_sha256": "1bcbbc197cd9a365d8f3e68339f9676e0798d6f2041ff347d48c2201da377d18"
+    },
+    {
+      "file": "app/store.py",
+      "name": "upsert_feedback_event",
+      "line": 19876,
+      "end_line": 19948,
+      "source_sha256": "57e01a27bb041ea929e72dce22fcf93a6a42dc459f2f0b22e459db7c42edba94",
+      "ast_sha256": "322131ddc55210ec517fef1b4553682e7a0a968d89348a949eb937547c2ffcda"
+    },
+    {
+      "file": "app/store.py",
+      "name": "create_feedback_processing_batch",
+      "line": 20251,
+      "end_line": 20352,
+      "source_sha256": "8838340d2ad3605be8a1a6feff31b79d6ed8b0490de6aad890d010d242ecb1ac",
+      "ast_sha256": "43ffa463cfdbfd2364feacc03134bf3338307ecdf82b7da1b95e64cda8fd463f"
+    },
+    {
+      "file": "app/store.py",
+      "name": "claim_feedback_processing_items",
+      "line": 20354,
+      "end_line": 20557,
+      "source_sha256": "5210e95b7f700639a773284b3da6e2f524caa9313cfe1bfa0e249fe399c6c59c",
+      "ast_sha256": "022949fe0b86f091e3574f4815c66125e35d5820e3c8bdf68d94aa94e7d6073f"
+    },
+    {
+      "file": "app/store.py",
+      "name": "reopen_feedback_processing_item",
+      "line": 20559,
+      "end_line": 20732,
+      "source_sha256": "b8b4d73ed6848ab10122598d939695dbc98a4303f54be53db2c6679026d114a5",
+      "ast_sha256": "c2f1926e95b4ff9dd49d2ba8df11bade368f965230c856d33fbb507d8070fc7e"
+    },
+    {
+      "file": "app/store.py",
+      "name": "associate_feedback_processing_turn",
+      "line": 20787,
+      "end_line": 20873,
+      "source_sha256": "7bb6951c2f1c0532bf19320f0189ce52f6e5fed5e6d1c3186c4fdf778fe111d5",
+      "ast_sha256": "4ff247f1fa2a11ab38d54f434555b0d2acbda710f0397af5b707cc1f3bb3b982"
+    },
+    {
+      "file": "app/store.py",
+      "name": "patch_feedback_processing_item_evidence",
+      "line": 20895,
+      "end_line": 21000,
+      "source_sha256": "deeb41b7c1a0fb5ba2213c1f13b077b40ddf707e0b2f8bd1df839fb717383750",
+      "ast_sha256": "c43c7de1859a18f5f4584385a42c03a770d2d4f4cfe64f3a67a764973320c35e"
+    },
+    {
+      "file": "app/store.py",
+      "name": "resolve_feedback_processing_batch",
+      "line": 21819,
+      "end_line": 22144,
+      "source_sha256": "27b7772d948367405505645a6d04960058c3e56f05177385e089a8d02f66dd08",
+      "ast_sha256": "dc131b6853757f5a47e19d625dfab6d2ee237f1bc4fcb25ebb45e1601e74ad7b"
+    },
+    {
+      "file": "app/store.py",
+      "name": "resolve_feedback_event",
+      "line": 22523,
+      "end_line": 22550,
+      "source_sha256": "7268577d440a5d05340519574b34714edf5c4ded44d25a834d476d032ff4daa8",
+      "ast_sha256": "eb45515856f3bef0b0e13d35134ba28fc0e40eb2519434821611a4ad4818c04c"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_feedback_round_backfill_preserves_legacy_receipts_and_source",
+      "line": 1065,
+      "end_line": 1261,
+      "source_sha256": "abb6c1098c5e82edc6c3b24d97e468927a929a94114d6eb9cc554f631e106332",
+      "ast_sha256": "7fff7da2e58c38ba4499c769825a5b540386d724b04b3a43ec5cab2056d4f2ac"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_feedback_round_backfill_self_heals_current_schema_and_interruption",
+      "line": 1264,
+      "end_line": 1438,
+      "source_sha256": "ef58cfa0d17d0e4d2587aa10c7885ffe6309baa9499a8292d285b0238280d51a",
+      "ast_sha256": "b8f98f814ea5c3d4196a590bc4c85f1411c7a6e345dde6780a7c4f22c8b8e5e2"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_feedback_round_reconciliation_requires_pointer_ownership_and_batch",
+      "line": 1441,
+      "end_line": 1627,
+      "source_sha256": "dcf6e4a42d9874198ac24e6f35e53e49961bec643cca7decded74530b4416dce",
+      "ast_sha256": "fb1d6b9c052f00759a18d157613ba1fe55c96abb3cfcfcc0df5da6d6fe88597b"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_feedback_round_reconciliation_clears_ambiguous_matching_history",
+      "line": 1630,
+      "end_line": 1744,
+      "source_sha256": "d4b737370b6bae50bddd546cd222d2850b3462f70c654dbfed79174852fbfeeb",
+      "ast_sha256": "8041065ed8b4580d2a215781560bf173e3dcdc0ca2132021f44963378dec2d4c"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_claim_associate_patch_and_resolve_feedback_batch",
+      "line": 1747,
+      "end_line": 1791,
+      "source_sha256": "be16843cf0118efa9ef7526f0697fc95c45e7d6dd54c2bebe4a29d7302ecb458",
+      "ast_sha256": "5dc887c35828cf00cbd8da2604edda3ef15249140144f51c34d791845cb2f0d7"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_reopen_existing_batch_is_idempotent_after_source_resolution",
+      "line": 1875,
+      "end_line": 1882,
+      "source_sha256": "a9d6f7743276e61fc59ce5b9ce83adf4595b0e1b02669fd4106268cf626706ab",
+      "ast_sha256": "b5109e07c76fd9ad65c88d2ea4af4b1fe9e714f2a3ed377ce71c7097421ef893"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_resolved_event_projection_and_status_transition_are_consistent",
+      "line": 1900,
+      "end_line": 1919,
+      "source_sha256": "410bf7c4f5573ba78bbde652db6ac8c60e70a4f4ba745fefd1bbf9fec8f6410e",
+      "ast_sha256": "9e37a022141099a371dd436a594308fa5f91720ed6357132a05a1167c4410129"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_claim_retry_is_idempotent_without_duplicate_items",
+      "line": 1927,
+      "end_line": 1936,
+      "source_sha256": "22f1f745aacc9e36df1c4e67155c7aed55d34ea854e01e8b55ca68a5a348c7d1",
+      "ast_sha256": "7e3dd0c6483f8a46d2a73344beb42a85488474b5f60de421b45a8e7f45f25a84"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_reopen_resolved_item_preserves_history_and_clears_projection_atomically",
+      "line": 2193,
+      "end_line": 2258,
+      "source_sha256": "8912d52bbdca01f0853ddd100da9f0d397f8ed356fe54bcafeca80f270a5112e",
+      "ast_sha256": "d28681e28af0dd8254d69f7627855174aa6ab04ac329a30d4edf72a25416c020"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_reopen_incomplete_history_rolls_back_atomically",
+      "line": 2294,
+      "end_line": 2333,
+      "source_sha256": "dc7d83257baf982bcf40f1f1ffd38cb2f27e6c2553c2395bdf1ba2ea37c4640f",
+      "ast_sha256": "5a33b4c0b30d4f06b2a8aeb9f93cd5a55260fcd8b2d9ce12c2a42f30faa69424"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_batch_claim_rolls_back_when_one_pending_item_has_inconsistent_history",
+      "line": 2373,
+      "end_line": 2395,
+      "source_sha256": "6308443b17ad61b0cfc399316645857a6ae43cd30c2a00b2b2a2c5ba1a13c0b7",
+      "ast_sha256": "ad35ce39c8e52f0327148ec7186219e29145e3493b3b2c3eec2026c29233608c"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_association_and_evidence_patch_update_only_exact_current_round",
+      "line": 2398,
+      "end_line": 2441,
+      "source_sha256": "4e5b6e72fcc7827397a7e1a053970f1a4cd3d844a040bff5695612daab8ff6a9",
+      "ast_sha256": "922657190a00a7132827c305b80c6185d639e77eb01cf73e7ad1eee6abc05088"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_resolve_rolls_back_entire_batch_on_one_invalid_current_round",
+      "line": 2602,
+      "end_line": 2640,
+      "source_sha256": "7bffa63eb9a7d96b380043eab9b2ceb190dad0bb47eba55a430ce496ed3c42d2",
+      "ast_sha256": "08c2c2cdaf0b7101400906e3fe40a66f76634fd9380cba5239baf0d481817476"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_round_reconciliation_clears_stale_non_latest_matching_pointer",
+      "line": 3218,
+      "end_line": 3234,
+      "source_sha256": "de8b177425e7f15dc11296b6384f2f656494457729478854152704d527e70490",
+      "ast_sha256": "8652f574ee9c3da99c58435b4b121a036f4dc778273e5cdd854a17f426fe31b2"
+    },
+    {
+      "file": "tests/test_feedback_processing.py",
+      "name": "test_migrated_v1_processing_round_resolves_idempotently_and_reopens",
+      "line": 4847,
+      "end_line": 4917,
+      "source_sha256": "fdfd1859d0a4d8ab344b55ab7b2171b368849340ff25f638e8055bf6628c69a8",
+      "ast_sha256": "e8b1ccbf73dcd8b4e908eb746396adc3c236a2ab202fd767c977dfe26ebac706"
+    },
+    {
+      "file": "app/audit_web.py",
+      "name": "handle_user_feedback_resolve_post",
+      "line": 9507,
+      "end_line": 9513,
+      "source_sha256": "68e26da215ede828f3e64c0557fc5a2561f5046e9969ddabb52e14242c07a304",
+      "ast_sha256": "c5815613fcc14247b51de868658eb746d64af9614cf96f326530dfeac8ca010b"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "name": "console_feedback_batch_claim",
+      "line": 1158,
+      "end_line": 1201,
+      "source_sha256": "2af51334bcc139b5faf62718e159e8bdde42b376ace329f77bffdf8cbfb24636",
+      "ast_sha256": "c9afe825205b2a5d05f35367b5fe24b1c1372504a6223af1c537c5da56f86221"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "name": "console_feedback_item_patch",
+      "line": 1265,
+      "end_line": 1320,
+      "source_sha256": "eb97b44c1fea099fa0cdf6971cf8e41cc0b4c3f89e3b7a7d0fe3d2feef0050e4",
+      "ast_sha256": "67d2f4a4f107f42e1421f6f893dcd06686e639e6ae39f7fef0254cf3d3221ac7"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "name": "console_feedback_batch_resolve",
+      "line": 1373,
+      "end_line": 1449,
+      "source_sha256": "69f76acc385e33fa3bde4af163b236c9b062b18fa5100d14a82c4322a95af551",
+      "ast_sha256": "cd1fafbd6740c5f6946f9358938cff8dc6f5a30681d096582c87efaca6185989"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "name": "console_feedback_resolve",
+      "line": 1482,
+      "end_line": 1483,
+      "source_sha256": "0d9177b6a4f0b622c430bdbc140aff407778934b9204dd79fd0094dc566dd6c7",
+      "ast_sha256": "8236a96e4d2401b7d88704e6888f5384f3fe4d4fd8bbcab5399e1ca11a82e7dd"
+    },
+    {
+      "file": "tests/test_console_web_api.py",
+      "name": "test_feedback_direct_resolve_requires_batch",
+      "line": 481,
+      "end_line": 489,
+      "source_sha256": "f40455f1f32a13252f65d58f53c80d3745248adf7ecbb5c22c73daa4602fcb4d",
+      "ast_sha256": "6c2f936dca6137855b68e385e413babc976e7bd53e73add66b8ff59dd9315b71"
+    },
+    {
+      "file": "tests/test_audit_web.py",
+      "name": "test_user_feedback_resolve_route_requires_processing_batch",
+      "line": 3456,
+      "end_line": 3479,
+      "source_sha256": "1f546c39cda99e0d1e9539d33897f3fe3935db3eaa36dbe673e16f9e9c3d6c1c",
+      "ast_sha256": "6975e54c0a612e042d5917691389cff9a4bb0ad49c770220bba20c1103606edb"
+    }
+  ],
+  "current_app_script_calls": [
+    {
+      "file": "app/feedback_events.py",
+      "line": 92,
+      "called_method": "upsert_feedback_event",
+      "owner": "sync_feedback_events_for_context"
+    },
+    {
+      "file": "app/audit_web.py",
+      "line": 9479,
+      "called_method": "upsert_feedback_event",
+      "owner": "_record_feedback_event_for_attempt"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "line": 1181,
+      "called_method": "claim_feedback_processing_items",
+      "owner": "register_console_routes.console_feedback_batch_claim"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "line": 1315,
+      "called_method": "patch_feedback_processing_item_evidence",
+      "owner": "register_console_routes.console_feedback_item_patch"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "line": 1345,
+      "called_method": "reopen_feedback_processing_item",
+      "owner": "register_console_routes.console_feedback_item_reopen"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "line": 1440,
+      "called_method": "resolve_feedback_processing_batch",
+      "owner": "register_console_routes.console_feedback_batch_resolve"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "line": 1191,
+      "called_method": "associate_feedback_processing_turn",
+      "owner": "register_console_routes.console_feedback_batch_claim"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "line": 1253,
+      "called_method": "associate_feedback_processing_turn",
+      "owner": "register_console_routes.console_feedback_batch_association"
+    },
+    {
+      "file": "app/web_api/registration.py",
+      "line": 1304,
+      "called_method": "associate_feedback_processing_turn",
+      "owner": "register_console_routes.console_feedback_item_patch"
+    }
+  ],
+  "unused_in_app_script_public_methods": {
+    "create_feedback_processing_batch": {
+      "app_script_call_count": 0,
+      "test_calls": [
+        {
+          "file": "tests/test_console_feedback_iteration_api.py",
+          "line": 14,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_feedback_iteration_api_reports_disabled_capability_and_rejects_claim"
+        },
+        {
+          "file": "tests/test_console_feedback_iteration_api.py",
+          "line": 32,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_feedback_iteration_decision_api_rejects_forged_round_identity"
+        },
+        {
+          "file": "tests/test_console_feedback_iteration_api.py",
+          "line": 67,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_feedback_iteration_decision_api_rejects_non_string_provenance"
+        },
+        {
+          "file": "tests/test_feedback_iteration.py",
+          "line": 151,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_skill_only_decision_resolves_with_loaded_revision_and_no_commit"
+        },
+        {
+          "file": "tests/test_feedback_iteration.py",
+          "line": 204,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_skill_only_decision_resolves_with_loaded_revision_and_no_commit"
+        },
+        {
+          "file": "tests/test_feedback_iteration.py",
+          "line": 258,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_runtime_config_decision_replay_rejects_an_alternate_load_receipt"
+        },
+        {
+          "file": "tests/test_feedback_iteration.py",
+          "line": 301,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_disabled_feedback_iteration_rejects_batch_claim"
+        },
+        {
+          "file": "tests/test_feedback_iteration.py",
+          "line": 327,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_persisted_decision_is_strict_and_append_only"
+        },
+        {
+          "file": "tests/test_feedback_iteration.py",
+          "line": 348,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_decision_rejects_forged_or_mixed_current_round_workbench_identity"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1756,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_claim_associate_patch_and_resolve_feedback_batch"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1835,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_claim_cannot_reassign_pending_item_seeded_by_another_batch"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1850,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_batch_reopen_requires_same_normalized_key_set"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1853,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_batch_reopen_requires_same_normalized_key_set"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1878,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_reopen_existing_batch_is_idempotent_after_source_resolution"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1880,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_reopen_existing_batch_is_idempotent_after_source_resolution"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 2774,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_claim_rejects_existing_batch_requested_count_mismatch_without_mutation"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1858,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_batch_reopen_requires_same_normalized_key_set"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1870,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_create_batch_rejects_unknown_feedback_keys_atomically"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1918,
+          "called_method": "create_feedback_processing_batch",
+          "owner": "test_resolved_event_projection_and_status_transition_are_consistent"
+        }
+      ]
+    },
+    "resolve_feedback_event": {
+      "app_script_call_count": 0,
+      "test_calls": [
+        {
+          "file": "tests/test_audit_web.py",
+          "line": 3449,
+          "called_method": "resolve_feedback_event",
+          "owner": "test_user_feedback_nav_badge_shows_pending_count"
+        },
+        {
+          "file": "tests/test_console_web_api.py",
+          "line": 1173,
+          "called_method": "resolve_feedback_event",
+          "owner": "test_console_feedback_pending_badge_is_global_when_filtered_to_resolved"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1802,
+          "called_method": "resolve_feedback_event",
+          "owner": "test_claim_rejects_unknown_or_resolved_keys_atomically"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1879,
+          "called_method": "resolve_feedback_event",
+          "owner": "test_reopen_existing_batch_is_idempotent_after_source_resolution"
+        },
+        {
+          "file": "tests/test_feedback_processing.py",
+          "line": 1903,
+          "called_method": "resolve_feedback_event",
+          "owner": "test_resolved_event_projection_and_status_transition_are_consistent"
+        }
+      ]
+    }
+  },
+  "history": {
+    "commit": "1303e40c92bcd7b7db0b471a626bda267cf32f49",
+    "date": "2026-08-30",
+    "subject": "fix: enforce feedback round migration invariants",
+    "lookup": "git log -S _reconcile_feedback_processing_round_backfill -- app/store.py; git show -s --format=fuller 1303e40c9",
+    "meaning": "Current-schema reconciliation was introduced as round migration invariant repair, and focused tests explicitly synthesize Task1-era interrupted migration or direct row/schema corruption."
+  },
+  "writer_disposition": [
+    {
+      "owner": "upsert_feedback_event",
+      "transaction": "_connect native transaction",
+      "processing_or_resolved_without_round": "New source feedback starts pending, or resolved with empty evidence; duplicate upsert keeps existing item status unless original source already resolved. Does not create meaningful processing evidence. Can propagate an already resolved source from manual/legacy mutation."
+    },
+    {
+      "owner": "create_feedback_processing_batch",
+      "transaction": "_immediate_write_transaction",
+      "processing_or_resolved_without_round": "Current source checks require unresolved events and unconflicted items; creates/updates pending membership. No app/scripts callers. Alone is excluded by status predicate; composed with retained direct resolver it produces eligible resolved/no-history state."
+    },
+    {
+      "owner": "claim_feedback_processing_items",
+      "transaction": "_immediate_write_transaction",
+      "processing_or_resolved_without_round": "The only normal current processing-state producer inserts receipt_version2 round, writes positive pointer/item, transition and batch in one transaction; idempotent retry validates existing complete lineage."
+    },
+    {
+      "owner": "associate_feedback_processing_turn",
+      "transaction": "_immediate_write_transaction",
+      "processing_or_resolved_without_round": "Requires positive current pointer and exact processing round, then updates round and item together; no missing round creation."
+    },
+    {
+      "owner": "patch_feedback_processing_item_evidence",
+      "transaction": "_immediate_write_transaction",
+      "processing_or_resolved_without_round": "Rejects status changes, requires positive exact processing round, writes the evidence on round and item together."
+    },
+    {
+      "owner": "resolve_feedback_processing_batch",
+      "transaction": "_immediate_write_transaction",
+      "processing_or_resolved_without_round": "Validates current lineage/receipts then resolves rounds/items/events/batch together; no-evidence processing shortcut returns False. Does not generate stale pointer."
+    },
+    {
+      "owner": "reopen_feedback_processing_item",
+      "transaction": "_immediate_write_transaction",
+      "processing_or_resolved_without_round": "Requires valid resolved history, marks round reopened, appends transition, clears item pointer/evidence and returns pending atomically; pending is excluded."
+    },
+    {
+      "owner": "resolve_feedback_event",
+      "transaction": "_connect native transaction",
+      "processing_or_resolved_without_round": "Retained legacy direct resolver has zero app/scripts call sites. It changes event/item to resolved without changing round/pointer/batch; two original-public-method counterexamples prove native startup backfill remains observable if this API is retained."
+    },
+    {
+      "owner": "_initialize/_backfill_feedback_processing_rounds",
+      "transaction": "Historical bootstrap script and native source bulk statements; current-schema reconcile owns immediate transaction",
+      "processing_or_resolved_without_round": "Historical event-to-item projection may mark resolved; legacy meaningful projections can need v1 history/pointer reconstruction. Current normal writers already create v2 history."
+    }
+  ],
+  "recommendation": {
+    "classification": "historical round-upgrade and corruption repair, with a retained but app-unreferenced legacy public API exception; not an unconditional current crash-recovery necessity",
+    "recommended_selected_runtime_disposition": "Explicitly retire unused resolve_feedback_event direct-resolution API and recurring startup round backfill from selected Tasks20 runtime. Preserve genuine historical source/predecessor code and original historical helper. create_feedback_processing_batch is also unused by app/scripts but its independent pending-membership behavior need not be removed for this disposition. Root owns API cancellation and focused test disposition. Do not port bulk INSERT SELECT to per-row target writes.",
+    "if_legacy_public_api_is_kept": "Do not silently remove backfill or describe it as behavior-preserving. Retaining both public APIs retains demonstrated eligible creation/cleanup semantics; root must retain exact behavior or explicitly accept its removal. No replacement helper/policy is proposed.",
+    "frozen_cutover_role": "Frozen970a and current production44ee each have all three original predicates count0. Migration preserves current facts exactly, without normalization. Final quiet-copy validation reruns original predicates; nonzero means missing business-state proof to report, not authorization for silent repair/discard or a new runtime guard.",
+    "unknowns": [
+      "Static app/scripts call inventory does not prove that no external Python integrator or operator uses retained public methods.",
+      "Statement abort probes verify rollback through original contexts, not real process termination or operating-system durability."
+    ]
+  },
+  "verification": {
+    "original_public_trace_profile_count": 2,
+    "expected_checkpoints_per_profile": 22,
+    "passed_checkpoints": 44,
+    "fault_rollback_controls_per_profile": 5,
+    "bulk_backfill_was_original_source_function": true,
+    "source_file_and_frozen_database_hashes_unchanged": true,
+    "constructors_executed": false,
+    "application_or_test_edits": false,
+    "database_file_writes": false,
+    "runtime_selection": false,
+    "provider_network_native_cli": false,
+    "focused_test_inventory_only_not_run": true,
+    "owned_temporary_probe_removed": true,
+    "current_production_aggregate_snapshot_taken": true,
+    "frozen_and_current_all_three_predicates_zero": true
+  },
+  "current_production_aggregate": {
+    "recorded_utc": "2026-10-16T20:29:03.203628+00:00",
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/auto-reply.sqlite3",
+    "uri_mode": "ro",
+    "query_only": true,
+    "snapshot_begin": true,
+    "production_head_before": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+    "marker_store": "2026-10-13.5",
+    "marker_email": 51,
+    "counts": {
+      "item_count": 48,
+      "round_count": 3,
+      "needed_eligible_count": 0,
+      "insert_no_history_eligible_count": 0,
+      "bulk_update_where_eligible_count": 0,
+      "item_status_counts": {
+        "resolved": 48
+      },
+      "round_status_counts": {
+        "resolved": 3
+      }
+    },
+    "source_table_ddl_sha256": {
+      "feedback_processing_items": "4af0fbc683fd53ad6d90405dc7f50ab8e1615ad393f4fe6822905f8bf10c87aa",
+      "feedback_processing_rounds": "ebabb4fe22d3bead5d411d57329a426dd036683bdc7d8e7fdb1f3176a43b4a09",
+      "feedback_processing_batches": "29f7a2d9b5e0bebb7cac9c303f6ce274bc38113a23d2fded2063aae8767d2654"
+    },
+    "production_head_after": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+    "boundary": "One current production read-only read snapshot, exact original SQL predicates aggregated; no source row/evidence body fetched, no constructor, provider, write or backfill invoked. Concurrent service writes outside snapshot remain possible."
+  },
+  "dynamic_dispatch_and_endpoint_audit": {
+    "app_script_direct_calls": 0,
+    "exact_method_name_string_literals": 0,
+    "getattr_review": "App/scripts store getattr and method_name/store_method matches contain no exact name or dispatch mapping reaching direct resolver or pending batch creator.",
+    "docs": "Matches are database-redesign source/acceptance/caller documents only; no operational README/API instruction invokes direct resolver.",
+    "rejecting_endpoints": [
+      {
+        "file": "app/web_api/registration.py",
+        "line": 1481,
+        "end_line": 1483,
+        "owner": "console_feedback_resolve",
+        "result": "409 feedback_batch_required; no Store call"
+      },
+      {
+        "file": "app/audit_web.py",
+        "line": 9507,
+        "end_line": 9513,
+        "owner": "handle_user_feedback_resolve_post",
+        "result": "409 feedback_batch_required; discards store/body"
+      }
+    ],
+    "endpoint_tests": [
+      {
+        "file": "tests/test_console_web_api.py",
+        "line": 481,
+        "name": "test_feedback_direct_resolve_requires_batch"
+      },
+      {
+        "file": "tests/test_audit_web.py",
+        "line": 3456,
+        "name": "test_user_feedback_resolve_route_requires_processing_batch"
+      }
+    ],
+    "five_direct_test_call_roles": [
+      {
+        "file": "tests/test_feedback_processing.py",
+        "line": 1802,
+        "role": "resolved-key fixture for claim rejection"
+      },
+      {
+        "file": "tests/test_feedback_processing.py",
+        "line": 1879,
+        "role": "source-resolution fixture for legacy pending-batch idempotency"
+      },
+      {
+        "file": "tests/test_feedback_processing.py",
+        "line": 1903,
+        "role": "direct legacy DAO contract assertion, not merely fixture setup"
+      },
+      {
+        "file": "tests/test_audit_web.py",
+        "line": 3449,
+        "role": "resolved-feedback fixture for navigation badge"
+      },
+      {
+        "file": "tests/test_console_web_api.py",
+        "line": 1173,
+        "role": "resolved-feedback fixture for filtered global pending badge"
+      }
+    ],
+    "test_disposition": "Four calls are state setup, one is old direct DAO contract. None proves a real resolving endpoint. Root explicitly retires old DAO assertion and preserves badge/filter/claim behavior via intended fixtures."
+  },
+  "initializer_seeding_aggregate": {
+    "recorded_utc": "2026-10-16T20:32:49.900897+00:00",
+    "production_head_before": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+    "queries": {
+      "missing_items_left_join": "select count(*) from feedback_events fe left join feedback_processing_items pi on pi.feedback_key=fe.key where pi.feedback_key is null",
+      "exact_initializer_insert": "insert or ignore into feedback_processing_items (\n                    feedback_key, status, resolved_at\n                )\n                    select key,\n                           case when trim(resolved_at) <> ''\n                                then 'resolved' else 'pending' end,\n                           resolved_at\n                    from feedback_events;",
+      "exact_initializer_update": "update feedback_processing_items\n                   set status='resolved',\n                       resolved_at=(select fe.resolved_at from feedback_events fe\n                                    where fe.key=feedback_processing_items.feedback_key),\n                       updated_at=current_timestamp\n                 where exists (\n                     select 1 from feedback_events fe\n                      where fe.key=feedback_processing_items.feedback_key\n                        and trim(fe.resolved_at) <> ''\n                        and feedback_processing_items.status <> 'resolved'\n                 );",
+      "legacy_resolution_update_count_same_predicate": "select count(*) from feedback_processing_items where exists (\n                     select 1 from feedback_events fe\n                      where fe.key=feedback_processing_items.feedback_key\n                        and trim(fe.resolved_at) <> ''\n                        and feedback_processing_items.status <> 'resolved'\n                 )"
+    },
+    "profiles": {
+      "current": {
+        "feedback_event_count": 48,
+        "missing_item_count": 0,
+        "legacy_resolved_projection_update_count": 0
+      },
+      "frozen": {
+        "feedback_event_count": 48,
+        "missing_item_count": 0,
+        "legacy_resolved_projection_update_count": 0
+      }
+    },
+    "production_head_after": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+    "boundary": "Separate aggregate-only mode=ro/query_only snapshots. No source identity/body returned; no seeding or normalization executed; frozen hash unchanged."
+  },
+  "root_disposition": {
+    "status": "root approved scoped retirement; implementation remains root-owned",
+    "retire_selected_runtime": [
+      "resolve_feedback_event",
+      "_feedback_processing_round_backfill_needed",
+      "_backfill_feedback_processing_rounds",
+      "_reconcile_feedback_processing_round_backfill",
+      "all startup calls to those three backfill methods",
+      "_replace_feedback_processing_round_guards_atomically",
+      "_replace_feedback_iteration_decision_immutability_guards_atomically",
+      "old current initializer feedback item INSERT/UPDATE seeding"
+    ],
+    "keep": [
+      "create_feedback_processing_batch",
+      "all normal current batch APIs and valid source-event/item production",
+      "genuine archived predecessor and exact historical source helper code for inverse tests"
+    ],
+    "facts": "No current/frozen missing projections or eligible legacy resolution-sync rows; no source normalization or new business guard authorized. Four direct-resolver test calls are fixtures; one old DAO contract assertion requires explicit retirement."
+  },
+  "feedback_event_writer_closure": [
+    {
+      "owner": "upsert_feedback_event",
+      "line": 19893,
+      "meaning": "only current source event INSERT/upsert; event+item share original _connect transaction"
+    },
+    {
+      "owner": "reopen_feedback_processing_item",
+      "line": 20716,
+      "meaning": "source resolution cleared together with item reset/round reopen under immediate transaction"
+    },
+    {
+      "owner": "resolve_feedback_processing_batch",
+      "line": 22125,
+      "meaning": "source resolution written together with round/item/batch under immediate transaction"
+    },
+    {
+      "owner": "resolve_feedback_event",
+      "line": 22530,
+      "meaning": "obsolete direct event/item writer, approved for retirement"
+    }
+  ]
+}
