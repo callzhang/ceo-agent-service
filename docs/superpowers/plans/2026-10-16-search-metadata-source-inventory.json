@@ -1,0 +1,640 @@
+{
+  "purpose": "Read-only actual-source and narrow current-call-path inventory for approved independent search metadata/FTS retirement; no target implementation.",
+  "as_of": "2026-10-16",
+  "worktree": "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service",
+  "head": "10867f5dc4eb6a8e63178995af5f4464f9a04957",
+  "source": {
+    "path": "/private/tmp/ceo-business-combined-actual-u6i3ldg0/source.sqlite3",
+    "sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "schema_marker": "2026-10-13.5",
+    "access": "sqlite URI mode=ro&immutable=1 plus pragma query_only=on; no source or target writes; aggregate/declaration reads only"
+  },
+  "approved_direction": {
+    "design": "docs/superpowers/specs/2026-10-11-database-redesign-design.md:109",
+    "retire": [
+      "codex_session_search_index",
+      "codex_session_search_fts",
+      "four FTS5 shadow tables"
+    ],
+    "preserve": "Exact 700 metadata memberships and all seven genuine metadata fields in runs/tasks; native-file corpus, RAM FTS/vectors, result ranking and unavailable reasons. Root owns final typed run kind/data choices; no alias repair."
+  },
+  "declarations": [
+    {
+      "type": "index",
+      "name": "idx_codex_session_search_source",
+      "table": "codex_session_search_index",
+      "sql": "CREATE INDEX idx_codex_session_search_source on codex_session_search_index(source_type,source_id)"
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_codex_session_search_index_1",
+      "table": "codex_session_search_index",
+      "sql": null
+    },
+    {
+      "type": "table",
+      "name": "codex_session_search_fts",
+      "table": "codex_session_search_fts",
+      "sql": "CREATE VIRTUAL TABLE codex_session_search_fts using fts5(\n    title, content='codex_session_search_index', content_rowid='id')"
+    },
+    {
+      "type": "table",
+      "name": "codex_session_search_fts_config",
+      "table": "codex_session_search_fts_config",
+      "sql": "CREATE TABLE 'codex_session_search_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "codex_session_search_fts_data",
+      "table": "codex_session_search_fts_data",
+      "sql": "CREATE TABLE 'codex_session_search_fts_data'(id INTEGER PRIMARY KEY, block BLOB)"
+    },
+    {
+      "type": "table",
+      "name": "codex_session_search_fts_docsize",
+      "table": "codex_session_search_fts_docsize",
+      "sql": "CREATE TABLE 'codex_session_search_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)"
+    },
+    {
+      "type": "table",
+      "name": "codex_session_search_fts_idx",
+      "table": "codex_session_search_fts_idx",
+      "sql": "CREATE TABLE 'codex_session_search_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "codex_session_search_index",
+      "table": "codex_session_search_index",
+      "sql": "CREATE TABLE codex_session_search_index (\n    id integer primary key autoincrement,\n    session_id text not null unique,\n    source_type text not null default '',\n    source_id text not null default '',\n    title text not null default '',\n    created_at text not null default current_timestamp,\n    updated_at text not null default current_timestamp\n)"
+    }
+  ],
+  "metadata_fields": [
+    {
+      "cid": 0,
+      "name": "id",
+      "type": "INTEGER",
+      "notnull": 0,
+      "default": null,
+      "pk": 1,
+      "hidden": 0
+    },
+    {
+      "cid": 1,
+      "name": "session_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "default": null,
+      "pk": 0,
+      "hidden": 0
+    },
+    {
+      "cid": 2,
+      "name": "source_type",
+      "type": "TEXT",
+      "notnull": 1,
+      "default": "''",
+      "pk": 0,
+      "hidden": 0
+    },
+    {
+      "cid": 3,
+      "name": "source_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "default": "''",
+      "pk": 0,
+      "hidden": 0
+    },
+    {
+      "cid": 4,
+      "name": "title",
+      "type": "TEXT",
+      "notnull": 1,
+      "default": "''",
+      "pk": 0,
+      "hidden": 0
+    },
+    {
+      "cid": 5,
+      "name": "created_at",
+      "type": "TEXT",
+      "notnull": 1,
+      "default": "current_timestamp",
+      "pk": 0,
+      "hidden": 0
+    },
+    {
+      "cid": 6,
+      "name": "updated_at",
+      "type": "TEXT",
+      "notnull": 1,
+      "default": "current_timestamp",
+      "pk": 0,
+      "hidden": 0
+    }
+  ],
+  "retired_cache_fields": {
+    "names": [
+      "summary_text",
+      "fts_text",
+      "embedding_json",
+      "embedding_model",
+      "embedding_updated_at"
+    ],
+    "actually_present_in_fixed_source": [],
+    "historical_boundary": "Historical store13 source has these five NOT NULL TEXT DEFAULT empty fields; current frozen source has already removed them. Do not reintroduce them or claim their body bytes remain."
+  },
+  "indexes": [
+    {
+      "name": "idx_codex_session_search_source",
+      "unique": 0,
+      "origin": "c",
+      "partial": 0,
+      "xinfo": [
+        [
+          0,
+          2,
+          "source_type",
+          0,
+          "BINARY",
+          1
+        ],
+        [
+          1,
+          3,
+          "source_id",
+          0,
+          "BINARY",
+          1
+        ],
+        [
+          2,
+          -1,
+          null,
+          0,
+          "BINARY",
+          0
+        ]
+      ]
+    },
+    {
+      "name": "sqlite_autoindex_codex_session_search_index_1",
+      "unique": 1,
+      "origin": "u",
+      "partial": 0,
+      "xinfo": [
+        [
+          0,
+          1,
+          "session_id",
+          0,
+          "BINARY",
+          1
+        ],
+        [
+          1,
+          -1,
+          null,
+          0,
+          "BINARY",
+          0
+        ]
+      ]
+    }
+  ],
+  "foreign_keys": [],
+  "triggers": [],
+  "sequence": {
+    "present": true,
+    "value": 700,
+    "count": 700,
+    "min_id": 1,
+    "max_id": 700,
+    "actual": [
+      [
+        "codex_session_search_index",
+        700
+      ]
+    ]
+  },
+  "aggregates": {
+    "metadata_count_unique_session_min_id_max_id_empty_session_source_title_created_updated": [
+      700,
+      700,
+      1,
+      700,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "source_type_counts": [
+      [
+        "meeting_alignment",
+        700
+      ]
+    ],
+    "metadata_count_distinct_source_id_canonical_integer_source_ids": [
+      700,
+      698,
+      700
+    ],
+    "meeting_runs_total_nonempty_session_unique_nonempty_session": [
+      2565,
+      752,
+      752
+    ],
+    "metadata_count_resolved_runs_missing_runs_same_session_different_session_resolved_jobs_same_title_different_title": [
+      700,
+      700,
+      0,
+      698,
+      2,
+      700,
+      698,
+      2
+    ],
+    "source_id_membership_of_nonempty_session_runs": {
+      "members": 698,
+      "nonmembers": 54,
+      "query": "select sum(exists(select 1 from codex_session_search_index s where s.source_type='meeting_alignment' and s.source_id=cast(r.legacy_key as text))),sum(not exists(select 1 from codex_session_search_index s where s.source_type='meeting_alignment' and s.source_id=cast(r.legacy_key as text))) from runs r where r.record_type='meeting_alignment_runs' and r.session_id<>''"
+    },
+    "session_only_membership_of_nonempty_session_runs": {
+      "members": 700,
+      "nonmembers": 52,
+      "meaning": "Different relation: two aliases store sessions belonging to runs without source-id membership. Never substitute for the 698+54 source-id relation.",
+      "query": "select sum(exists(select 1 from codex_session_search_index s where s.session_id=r.session_id)),sum(not exists(select 1 from codex_session_search_index s where s.session_id=r.session_id)) from runs r where r.record_type='meeting_alignment_runs' and r.session_id<>''"
+    },
+    "source_id_nonmember_status_counts": [
+      [
+        "failed",
+        27
+      ],
+      [
+        "no_action",
+        5
+      ],
+      [
+        "ready_to_send",
+        17
+      ],
+      [
+        "retry",
+        5
+      ]
+    ],
+    "metadata_timestamp_same_different_null_created_null_updated_nontext_created_nontext_updated": [
+      700,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "duplicate_source_groups_rows_excess": [
+      2,
+      4,
+      2
+    ],
+    "session_and_title_difference_partition": [
+      [
+        "different_session",
+        "different_title",
+        2
+      ],
+      [
+        "same_session",
+        "same_title",
+        698
+      ]
+    ],
+    "alias_identity_only": [
+      {
+        "metadata_id": 1,
+        "stored_source_public_run_id": 45,
+        "stored_source_physical_run_id": 187789,
+        "stored_session_actual_public_run_id": 12,
+        "stored_session_actual_physical_run_id": 187756,
+        "session_actual_run_has_source_id_membership": false
+      },
+      {
+        "metadata_id": 2,
+        "stored_source_public_run_id": 60,
+        "stored_source_physical_run_id": 187804,
+        "stored_session_actual_public_run_id": 13,
+        "stored_session_actual_physical_run_id": 187757,
+        "session_actual_run_has_source_id_membership": false
+      }
+    ],
+    "fts_shadow_counts": {
+      "codex_session_search_fts_config": 1,
+      "codex_session_search_fts_data": 16,
+      "codex_session_search_fts_docsize": 700,
+      "codex_session_search_fts_idx": 14
+    },
+    "fts_docsize_count_min_id_max_id_extra_rowids": [
+      700,
+      1,
+      700,
+      0
+    ]
+  },
+  "caller_inventory": [
+    {
+      "file": "app/store.py",
+      "owners": [
+        "upsert_codex_session_search_index:24309",
+        "search_codex_sessions:24340",
+        "_native_meeting_search_corpus:24472"
+      ],
+      "facts": [
+        "Blank stripped session returns without mutation; supplied nonblank session value itself is not trimmed.",
+        "Upsert identity is exact session_id; insert uses native AUTOINCREMENT/default times; update preserves id/session_id/created_at, updates source_type/source_id/title and sets current_timestamp. Legacy summary/fts/embedding arguments ignored.",
+        "Search iterates only metadata members ordered updated_at desc, resolves public source_id via MEETING_RUN_SQL, joins meeting job, selects latest_standalone_ref per source, then computes temporary in-memory FTS and embeddings.",
+        "RAM FTS uses metadata id as rowid; BM25 candidate cap max(limit*5,10); embedding candidates require query vector and available nonempty native summary; score .55*embedding+.30*normalizedBM25, stable score sort then [:limit].",
+        "Native corpus requires source_type meeting_alignment, resolved run/ref, and run session exact stored metadata session. Failures retain title-only tokens and unchanged unavailable reason; no canonical alias repair.",
+        "RAM corpus key retains metadata id/source/title, DB path, runtime kind/session/range, native stat/path, meeting id/title; vectors scoped by corpus key and model identity."
+      ]
+    },
+    {
+      "file": "app/meeting_alignment.py",
+      "owners": [
+        "_index_meeting_codex_session:1014",
+        "caller:1467",
+        "similar-session reader:802"
+      ],
+      "facts": [
+        "Only production upsert caller. It uses stripped runner.last_session_id, returns if empty, writes meeting_alignment source, original public run_id string and source.title.",
+        "Called after _record_agent_run ready_to_send; source_id is run_id, not job.id and not physical run rowid; does not index every run."
+      ]
+    },
+    {
+      "file": "app/audit_web.py",
+      "owners": [
+        "render_attempt_list search call:6300"
+      ],
+      "facts": [
+        "History meeting search calls Store before read snapshot; uses same result and unavailable display. Preserve meeting filter, source links and title-only missing-native result."
+      ]
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "owners": [
+        "compact_native_duplicates:149-181"
+      ],
+      "facts": [
+        "One search FTS rebuild statement at173; remove it when persisted FTS retires, while preserving typed-event/native-duplicate compaction, transaction, quick_check, commit/vacuum/WAL contract."
+      ]
+    },
+    {
+      "file": "app/task20_current_schema.py",
+      "owners": [
+        "create_current_workbench_auxiliary_schema:72",
+        "_current_objects:82",
+        "workbench current validator:125"
+      ],
+      "facts": [
+        "Current bootstrap/validator explicitly retains search table/index/FTS. Requires coordinated constructor/manifest update. Historical workbench_storage factory/source oracle has a separate historical role."
+      ]
+    }
+  ],
+  "test_owner_inventory": [
+    {
+      "file": "tests/test_store.py",
+      "function": "test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings",
+      "line": 3977,
+      "end_line": 4142,
+      "terms": [
+        "codex_session_search_index",
+        "codex_session_search_fts",
+        "search_codex_sessions"
+      ]
+    },
+    {
+      "file": "tests/test_meeting_alignment.py",
+      "function": "test_consumer_injects_similar_codex_sessions_into_meeting_prompt",
+      "line": 1476,
+      "end_line": 1503,
+      "terms": [
+        "codex_session_search_index"
+      ]
+    },
+    {
+      "file": "tests/test_meeting_alignment.py",
+      "function": "test_consumer_indexes_completed_meeting_codex_session",
+      "line": 1506,
+      "end_line": 1549,
+      "terms": [
+        "codex_session_search_index",
+        "search_codex_sessions"
+      ]
+    },
+    {
+      "file": "tests/test_audit_web.py",
+      "function": "test_history_search_shows_similar_codex_sessions",
+      "line": 2154,
+      "end_line": 2189,
+      "terms": [
+        "codex_session_search_index",
+        "search_codex_sessions"
+      ]
+    },
+    {
+      "file": "tests/test_audit_web.py",
+      "function": "test_history_object_dropdown_controls_results",
+      "line": 2192,
+      "end_line": 2328,
+      "terms": [
+        "codex_session_search_index"
+      ]
+    },
+    {
+      "file": "tests/test_native_standalone.py",
+      "function": "test_meeting_legacy_complete_range_is_read_without_attempt",
+      "line": 104,
+      "end_line": 134,
+      "terms": [
+        "codex_session_search_index",
+        "search_codex_sessions"
+      ]
+    },
+    {
+      "file": "tests/test_native_only_maintenance.py",
+      "function": "test_native_only_cleanup_removes_missing_native_copies_preserves_service_state",
+      "line": 17,
+      "end_line": 59,
+      "terms": [
+        "codex_session_search_index",
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/test_workbench_storage.py",
+      "function": "test_current_bootstrap_removes_only_approved_sources_and_caches",
+      "line": 20,
+      "end_line": 46,
+      "terms": [
+        "codex_session_search_index"
+      ]
+    },
+    {
+      "file": "tests/test_workbench_storage.py",
+      "function": "test_forward_inverse_exact_rows_constraints_sequences_and_known_orphan",
+      "line": 79,
+      "end_line": 123,
+      "terms": [
+        "codex_session_search_index",
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/test_workbench_storage.py",
+      "function": "fts_state",
+      "line": 260,
+      "end_line": 266,
+      "terms": [
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/test_workbench_storage.py",
+      "function": "test_inverse_restores_exact_fts_shadow_state",
+      "line": 270,
+      "end_line": 291,
+      "terms": [
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/test_workbench_storage.py",
+      "function": "test_metadata_upsert_changes_only_title_tokens_and_preserves_metadata",
+      "line": 294,
+      "end_line": 331,
+      "terms": [
+        "codex_session_search_index",
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/test_workbench_storage.py",
+      "function": "test_native_compaction_uses_current_typed_events_and_title_cache",
+      "line": 334,
+      "end_line": 415,
+      "terms": [
+        "codex_session_search_index",
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/test_workbench_schema_release.py",
+      "function": "test_fts_inverse_keeps_mixed_original_index_state_and_new_metadata",
+      "line": 208,
+      "end_line": 273,
+      "terms": [
+        "codex_session_search_index",
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/test_workbench_schema_release.py",
+      "function": "match",
+      "line": 254,
+      "end_line": 258,
+      "terms": [
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/test_task20_current_schema.py",
+      "function": "test_fresh_factories_converge_with_exact_migration_target",
+      "line": 30,
+      "end_line": 44,
+      "terms": [
+        "codex_session_search_index",
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/workbench_schema_fixtures.py",
+      "function": "source_database",
+      "line": 22,
+      "end_line": 101,
+      "terms": [
+        "codex_session_search_index",
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/workbench_schema_fixtures.py",
+      "function": "fingerprint",
+      "line": 119,
+      "end_line": 144,
+      "terms": [
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/workbench_schema_fixtures.py",
+      "function": "full_source_database",
+      "line": 147,
+      "end_line": 236,
+      "terms": [
+        "codex_session_search_fts"
+      ]
+    },
+    {
+      "file": "tests/workbench_caller_fixtures.py",
+      "function": "empty_source13",
+      "line": 87,
+      "end_line": 149,
+      "terms": [
+        "codex_session_search_index"
+      ]
+    }
+  ],
+  "regression_positive_controls": [
+    "Native metadata insert/update: blank session no-op, id/created_at stable on update, exact defaults/timestamps and unique session constraint, source_type/source_id/title update; whitespace nonblank stored unchanged; current-fact inverse preserves post-migration insert/update/delete.",
+    "Membership: seed indexed run and nonmember run with same searchable title/native text; only indexed member returns. Seed two distinct metadata rows sharing source_id with different session/title; preserve both records and exact alias unavailability.",
+    "Original 700 metadata rows map all seven fields/SQLite typeof and IDs; 698 distinct public pointers plus54 nonmember runs preserved; no all-run reconstruction, session matching substitution or derived-title replacement.",
+    "Search: native positive Chinese/English FTS+embedding ranking; query limit/BM25 candidate cap/stable ordering; exact native ranges; latest valid attempt/ref; unavailable cases preserve title-only match, empty summary/vector and exact reason.",
+    "RAM cache controls: native path/mtime/size/range/session/title change refresh corpus; model identity change refresh vectors; cache hit avoids repeat embedding; service/job source_json never substitutes for missing original native input.",
+    "Persistence negative control after search: retired independent table, virtual FTS and four shadows absent; native body/embeddings not stored under replacement fields. Adjacent event compaction state/idempotence and unavailable history UI still pass.",
+    "Inverse: recreate native seven-field table/source index/unique index/FTS declarations and preserved source sequence presence/water; restore exact current metadata rows and rebuild title FTS logically. Rebuilt FTS title MATCH positive control and stale/deleted token negative control; do not assert shadow BLOB equality or persist raw shadow snapshots.",
+    "Fresh bootstrap/reopen and current schema validator converge with migration target; unrelated rows/declarations/sequences stay exact. Historical source13 fixture/factory and its five-empty-cache-fields tests remain explicit historical oracles, not current-target expectations."
+  ],
+  "inverse_boundary": {
+    "checker": "scripts/validate_task20_runtime_copy.py:inventory (55-104)",
+    "ordinary_facts": "pragma main.table_list row[2] == table excludes FTS virtual/shadow row data; declarations includes all non-sqlite sqlite_schema objects and global sqlite_sequence",
+    "new_current_facts_contract": "Recreate seven metadata columns and source declarations; current rows and source sequence facts; title-only FTS rebuild gives logical token behavior. Shadow bytes/segment packing are engine output, excluded from existing ordinary fact equality. Add explicit logical MATCH assertions; do not silently equate declarations/integrity with MATCH evidence.",
+    "historical_distinction": "app/workbench_storage.py capture_workbench_schema and _restore_search_index save/restore original shadow rows for earlier source13 inverse and reconcile changed metadata against original tokens. Do not copy that raw FTS state snapshot into the new inverse or persist retired cache bodies. Historical tests test_fts_inverse_* retain that distinct older contract."
+  },
+  "source_file_hashes": {
+    "app/store.py": "695078ab9dcddb860836b7fcd224b9a8a6d8f89cc4a11d40ad23e759e4864da2",
+    "app/meeting_alignment.py": "1ac82ea8b10dd886b71b8304bcd1d0a5548f7b1cfe738fe49f413d85deda9714",
+    "app/audit_web.py": "d10a0995be2abaf7cd6163e0337f474933d724081353a9d806050ad65b2b9559",
+    "app/storage_maintenance.py": "07f965f76e5583f0edd09be82ec53be838604594ab469bcafe93f301ed5f503c",
+    "app/task20_current_schema.py": "9755559984b454d36e494b76e9b8fb1823f27e348ad0e8d55bfc950b1eb88667",
+    "app/workbench_storage.py": "03e99ec30333e9a6dbde422d06ef49b03bd2fb0c02211bb915fa7b94c3249398",
+    "scripts/validate_task20_runtime_copy.py": "0b2858a92e99efb9e32b674ae0def559b9e1e392f5cd927eebce16fedf46d148"
+  },
+  "verification_boundary": {
+    "performed": [
+      "canonical rules/design/narrow code/fixture inspection",
+      "frozen SQLite read-only aggregate/declaration queries",
+      "source SHA256 verification",
+      "test-role static inventory",
+      "independently rechecked source-ID membership698+54 versus session membership700+52",
+      "source SHA256 unchanged after inventory"
+    ],
+    "not_performed": [
+      "application or tests edit",
+      "database write or migration",
+      "tests or constructors execution",
+      "native/provider/CLI/network invocation",
+      "production access/change",
+      "git stage/commit/push/deploy"
+    ],
+    "owned_temporary_artifacts": "none created; only two new requested concise documents and own claim row"
+  }
+}
