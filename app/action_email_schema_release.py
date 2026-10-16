@@ -4,6 +4,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from functools import lru_cache
 import json
 import os
 import sqlite3
@@ -49,6 +50,7 @@ from app.configs_schema_transfer import (
     SOURCE_TABLES as CONFIG_SOURCE_TABLES, capture_config_declarations,
     _target_declarations as _config_target_declarations,
 )
+from app.run_storage import create_run_schema
 
 
 SOURCE_STORE_VERSION = "2026-10-13.5"
@@ -71,8 +73,37 @@ CURRENT_SCHEDULE_REPAIRABLE_INDEXES = frozenset({
 })
 
 
+def _repair_names_available(db: sqlite3.Connection, missing) -> bool:
+    """A missing auxiliary name must be free in SQLite's matching namespace."""
+    for object_type, name in missing:
+        if object_type == "index":
+            conflict = db.execute(
+                "select 1 from main.sqlite_schema where name=? collate nocase "
+                "and type in ('index','table','view')", (name,),
+            ).fetchone()
+        elif object_type == "trigger":
+            conflict = db.execute(
+                "select 1 from main.sqlite_schema where name=? collate nocase "
+                "and type='trigger'", (name,),
+            ).fetchone()
+        else:
+            return False
+        if conflict is not None:
+            return False
+    return True
+
+
+@lru_cache(maxsize=1)
+def _canonical_run_object_types() -> dict[str, str]:
+    with closing(sqlite3.connect(":memory:")) as reference:
+        create_run_schema(reference, include_task_runs=True, include_workbench=True)
+        return dict(reference.execute(
+            "select name,type from sqlite_schema where tbl_name='runs' and sql is not null"
+        ))
+
+
 def _current_table_with_known_missing_objects(
-    actual: dict, expected: dict, *, indexes: frozenset[str],
+    db: sqlite3.Connection, actual: dict, expected: dict, *, indexes: frozenset[str],
     triggers: frozenset[str] = frozenset(),
 ) -> bool:
     if any(actual[key] != expected[key] for key in ("sql", "columns", "foreign_keys")):
@@ -81,6 +112,9 @@ def _current_table_with_known_missing_objects(
     expected_indexes = {item["name"]: item for item in expected["indexes"]}
     if (not set(actual_indexes) <= set(expected_indexes)
             or not set(expected_indexes) - set(actual_indexes) <= indexes
+            or not _repair_names_available(
+                db, (("index", name) for name in set(expected_indexes) - set(actual_indexes))
+            )
             or any({key: value for key, value in item.items() if key != "seq"}
                    != {key: value for key, value in expected_indexes[name].items()
                        if key != "seq"}
@@ -90,6 +124,9 @@ def _current_table_with_known_missing_objects(
     expected_triggers = {item["name"]: item for item in expected["triggers"]}
     return (set(actual_triggers) <= set(expected_triggers)
             and set(expected_triggers) - set(actual_triggers) <= triggers
+            and _repair_names_available(
+                db, (("trigger", name) for name in set(expected_triggers) - set(actual_triggers))
+            )
             and all(item == expected_triggers[name]
                     for name, item in actual_triggers.items()))
 
@@ -100,18 +137,19 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
         return True
     target = _config_target_declarations()
     if not _current_table_with_known_missing_objects(
-        _source_declaration(db, "schedules"), target["schedules"],
+        db, _source_declaration(db, "schedules"), target["schedules"],
         indexes=CURRENT_SCHEDULE_REPAIRABLE_INDEXES,
     ):
         return False
     if not _current_table_with_known_missing_objects(
-        _source_declaration(db, "configs"), target["configs"],
+        db, _source_declaration(db, "configs"), target["configs"],
         indexes=CURRENT_CONFIG_REPAIRABLE_INDEXES,
         triggers=CURRENT_CONFIG_REPAIRABLE_TRIGGERS,
     ):
         return False
     expected_runs = _config_run_declarations(mapped=True)
     actual_runs = _config_run_objects(db)
+    run_types = _canonical_run_object_types()
     return (action_schema_is_current(db, allow_missing_objects=True,
                                      include_reply=True, reply_variant=action_variant,
                                      include_email=True, include_skill_config_receipts=True)
@@ -119,6 +157,9 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
                 db, reply_variant=action_variant)
             and actual_runs.get("runs") == expected_runs["runs"]
             and set(actual_runs) <= set(expected_runs)
+            and set(expected_runs) == set(run_types)
+            and _repair_names_available(db, ((run_types[name], name)
+                for name in set(expected_runs) - set(actual_runs)))
             and all(actual_runs.get(name, sql) == sql
                     for name, sql in expected_runs.items())
             and all(_source_declaration(db, kind)["sql"] is None

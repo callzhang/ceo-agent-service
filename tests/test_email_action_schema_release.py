@@ -812,10 +812,98 @@ def test_current_constructor_refuses_nonrepairable_metadata_without_mutation(tmp
         else:
             db.execute("drop index idx_actions_email_email_action_plans_0")
     before = _database_image(path)
+    with closing(sqlite3.connect(path)) as db:
+        schema_version_before = db.execute("pragma schema_version").fetchone()[0]
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
     with pytest.raises(sqlite3.IntegrityError):
         AutoReplyStore(path)
     assert _database_image(path) == before
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("pragma schema_version").fetchone()[0] == schema_version_before
+
+
+@pytest.mark.parametrize("damage", (
+    "schedule_wrong_owner", "schedule_casefold_owner", "schedule_view", "schedule_table",
+    "config_index_wrong_owner", "config_trigger_wrong_owner",
+    "run_index_wrong_owner", "run_trigger_wrong_owner",
+    "action_index_wrong_owner", "action_trigger_wrong_owner",
+))
+def test_current_constructor_refuses_occupied_repair_name_before_mutation(tmp_path, damage):
+    from app.store import AutoReplyStore
+    import app.store as store_module
+    from app.email_store import EmailStore
+
+    path = tmp_path / "occupied-repair-name.sqlite3"
+    EmailStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        if damage in ("schedule_wrong_owner", "schedule_casefold_owner", "schedule_view", "schedule_table"):
+            db.execute("drop index idx_schedules_enabled")
+            if damage == "schedule_view":
+                db.execute("create view idx_schedules_enabled as select 1 as value")
+            elif damage == "schedule_table":
+                db.execute("create table idx_schedules_enabled(value integer)")
+            else:
+                name = ("IDX_SCHEDULES_ENABLED" if damage == "schedule_casefold_owner"
+                        else "idx_schedules_enabled")
+                db.execute(f"create index {name} on conversations(conversation_id)")
+        elif damage == "config_index_wrong_owner":
+            db.execute("drop index idx_configs_revision_number")
+            db.execute("create index idx_configs_revision_number on conversations(conversation_id)")
+        elif damage == "config_trigger_wrong_owner":
+            db.execute("drop trigger trg_configs_runtime_config_update")
+            db.execute("create trigger trg_configs_runtime_config_update after insert on conversations begin select 1; end")
+        elif damage == "run_index_wrong_owner":
+            db.execute("drop index idx_scheduled_task_runs_latest")
+            db.execute("create index idx_scheduled_task_runs_latest on conversations(conversation_id)")
+        elif damage == "run_trigger_wrong_owner":
+            db.execute("drop trigger trg_runs_workbench_turn_insert")
+            db.execute("create trigger trg_runs_workbench_turn_insert after insert on conversations begin select 1; end")
+        elif damage == "action_index_wrong_owner":
+            db.execute("drop index idx_actions_skill_export_revision")
+            db.execute("create index idx_actions_skill_export_revision on conversations(conversation_id)")
+        else:
+            db.execute("drop trigger trg_actions_runtime_skill_load_receipts_update")
+            db.execute("create trigger trg_actions_runtime_skill_load_receipts_update after insert on conversations begin select 1; end")
+    before = _database_image(path)
+    with closing(sqlite3.connect(path)) as db:
+        schema_version_before = db.execute("pragma schema_version").fetchone()[0]
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    with pytest.raises(sqlite3.IntegrityError):
+        AutoReplyStore(path)
+    assert _database_image(path) == before
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("pragma schema_version").fetchone()[0] == schema_version_before
+
+
+@pytest.mark.parametrize("kind,name,other_sql", (
+    ("index", "idx_schedules_enabled",
+     "create trigger idx_schedules_enabled after insert on conversations begin select 1; end"),
+    ("trigger", "trg_configs_runtime_config_update",
+     "create index trg_configs_runtime_config_update on conversations(conversation_id)"),
+))
+def test_current_repair_name_checks_preserve_independent_sqlite_namespaces(
+    tmp_path, kind, name, other_sql
+):
+    from app.email_store import EmailStore
+    from app.action_email_schema_release import configs_current_or_known_skill_guard_repair
+    from app.configs_schema_transfer import _target_declarations
+
+    path = tmp_path / "independent-namespaces.sqlite3"
+    EmailStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        db.execute(f"drop {kind} {name}")
+        db.execute(other_sql)
+        assert configs_current_or_known_skill_guard_repair(
+            db, action_variant="fresh_memory_fk"
+        )
+        owner = "schedules" if kind == "index" else "configs"
+        canonical = next(item["sql"] for item in _target_declarations()[owner]
+                         ["indexes" if kind == "index" else "triggers"]
+                         if item["name"] == name)
+        db.execute(canonical)
+        assert db.execute(
+            "select count(*) from sqlite_schema where name=? collate nocase", (name,)
+        ).fetchone()[0] == 2
 
 
 def test_business_facts_after_prepare_are_converted_instead_of_restoring_capture(source):

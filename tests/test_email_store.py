@@ -3213,9 +3213,9 @@ def test_current_email_schema_persists_external_training_payload(tmp_path: Path)
     assert read_snapshot(store.path, snapshot.snapshot_digest).to_dict() == snapshot.to_dict()
     with sqlite3.connect(store.path) as db:
         assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
-        assert db.execute("select count(*) from email_training_snapshot_observations").fetchone()[0] == 0
+        assert db.execute("select 1 from sqlite_schema where name='email_training_snapshot_observations'").fetchone() is None
         summary = json.loads(db.execute(
-            "select manifest_json from email_training_snapshots where snapshot_id=?",
+            f"select manifest_json from ({config_projection('email_training_snapshots')}) where snapshot_id=?",
             (snapshot.snapshot_id,),
         ).fetchone()[0])
         assert summary["sample_count"] == len(snapshot.observations)
