@@ -64,6 +64,19 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     }
 
 
+def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
+    root = Path(__file__).resolve().parents[1]
+    card = (
+        root / "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
+    ).read_text(encoding="utf-8")
+
+    assert "Prior return count is history, not an action rule" in card
+    assert (
+        "Count only returns that independently established the same material gap from readable, "
+        "source-verified evidence and gave the applicant a fair chance to resolve it."
+    ) in card
+
+
 def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads(
