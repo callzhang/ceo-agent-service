@@ -497,6 +497,34 @@ TASK20_NATIVE_INDEXES = (
     ),
 )
 
+TASK12_PRIMARY_KEYS = {
+    "business_object_tasks": ("business_object_key",),
+    "email_agent_classification_tasks": ("task_id",),
+    "email_historical_candidates": (
+        "account_id",
+        "folder",
+        "model_id",
+        "stable_message_identity",
+    ),
+    "feedback_iteration_decisions": ("id",),
+    "feedback_processing_batches": ("batch_id",),
+    "feedback_processing_items": ("feedback_key",),
+    "feedback_processing_rounds": ("id",),
+    "oa_notification_events": ("id",),
+    "okr_review_items": ("id",),
+    "wechat_memory_import_jobs": ("id",),
+    "workbench_artifacts": ("id",),
+    "workbench_attachments": ("id",),
+}
+
+TASK12_AUTOINCREMENT_KINDS = (
+    "feedback_iteration_decisions",
+    "feedback_processing_rounds",
+    "oa_notification_events",
+    "okr_review_items",
+    "wechat_memory_import_jobs",
+)
+
 TASK20_FIELDS = {
     kind: tuple(c[0] for c in columns) for kind, columns in TASK20_COLUMNS.items()
 }
@@ -527,6 +555,23 @@ def task20_column(kind, field):
     if kind not in TASK20_FIELDS or field not in TASK20_FIELDS[kind]:
         raise ValueError("unsupported Tasks kind or source field")
     return _quote(kind + "__" + field)
+
+
+def task20_value(kind, field):
+    """Preserve native REAL reads when SQLite flattens an ordered subquery."""
+    column = task20_column(kind, field)
+    affinity = next(c[1] for c in TASK20_COLUMNS[kind] if c[0] == field)
+    if affinity == "REAL":
+        return (
+            "case when typeof("
+            + column
+            + ") in ('integer','real') then "
+            + column
+            + "+0.0 else "
+            + column
+            + " end"
+        )
+    return column
 
 
 def _checks(kind):
@@ -829,6 +874,35 @@ def _definitions():
             "(typeof(" + number + ")<>'integer' or " + number + "<=0) begin "
             "select raise(abort,'feedback round number must be a positive integer'); end"
         )
+    for kind in TASK12_AUTOINCREMENT_KINDS:
+        name = "tasks:" + kind
+        triggers.append(
+            "create trigger trg_task12_sequence_" + kind + " before insert on tasks "
+            "when new.record_type=" + repr(kind) + " begin "
+            "insert into sqlite_sequence(name,seq) select " + repr(name) + ",0 "
+            "where not exists(select 1 from sqlite_sequence where name="
+            + repr(name)
+            + "); "
+            "update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) "
+            "where name=" + repr(name) + "; end"
+        )
+    # A newly assigned shared physical id can equal its source parent value.
+    # Before-insert guards cannot see that new row; source separate tables could
+    # not satisfy a missing Tasks parent by inserting the child itself.
+    for kind in (
+        "business_object_tasks",
+        "workbench_artifacts",
+        "workbench_attachments",
+    ):
+        triggers.append(
+            "create trigger trg_task12_parent_after_"
+            + kind
+            + " after insert on tasks when new.record_type="
+            + repr(kind)
+            + " and exists(select 1 from tasks where id=new.parent_id and record_type<>"
+            + repr(TASK20_PARENTS[kind])
+            + ") begin select raise(abort,'task parent type mismatch'); end"
+        )
     return (
         "create table tasks(" + ",".join(parts + constraints) + ")",
         tuple(indexes),
@@ -851,7 +925,7 @@ def task20_projection(kind):
         raise ValueError("unsupported Tasks kind")
     result = []
     for field in TASK20_FIELDS[kind]:
-        value = task20_column(kind, field)
+        value = task20_value(kind, field)
         if kind == "reply_task_inputs" and field == "reply_task_id":
             value = "(select cast(p.legacy_key as integer) from tasks p where p.id=tasks.parent_id)"
         elif kind == "workbench_turns" and field == "task_id":

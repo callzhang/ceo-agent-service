@@ -61,3 +61,5 @@ Unselected Tasks20 executable declaration: app/task20_definitions.py compiles20s
 
 
 声明层验收记录：[2026-10-16-task20-definitions-acceptance.json](superpowers/specs/2026-10-16-task20-definitions-acceptance.json)。应用声明提交388d486e；测试控制修正30c2c4b9，应用SHA保持不变。新建临时验证目录已清理，生产数据库和运行路径未修改。
+
+Unselected Tasks12 transactional storage: app/task12_storage.py supplies source-shaped insert/update/delete/ROWID projection for12residual kinds using the Tasks20 declaration.532focused synthetic cases (207actual/fresh source-target +325declaration) pass, covering5independent AUTO streams,7hiddenROWID families, native ignored/FULL semantics, owner-generation CAS, source PK/ROWID replacement and referencedbatch physical identity. The declaration adds5sequence triggers,3source-parent self-alias guards and native REAL projection preservation; no currentcaller/constructor/migration/source retirement/production selection occurs. Existing8writers, allcaller conversions andcopy/inverse/native/UI/final11publication remain required.

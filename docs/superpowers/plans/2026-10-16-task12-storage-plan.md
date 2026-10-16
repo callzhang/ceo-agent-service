@@ -16,8 +16,8 @@
 **Modify:** app/task20_definitions.py; own claim row/this plan's implementation checkboxes; exact paragraph in docs/database-redesign-tasks20-field-map-20261016.md and docs/superpowers/plans/2026-10-11-database-redesign-program.md.
 
 - [x] Root complete canonical source/regressions/preflight. Initial differential10failures identified8REAL scalar-type differences and2testfield-selection omissions, corrected before transfer. Source standalone probe confirms SQLite3.50.4 drops REAL integer-storage reads in ordered flattened subqueries. Generic REAL source-value projection preserves native numeric floating type and leaves text/BLOB values unchanged. All532focused cases pass26.64s; new owned temporary code/DB removed. Ruff clean.
-- [ ] Claim exactly the three app/test paths and bounded documentation before editing.
-- [ ] Copy all complete adjacent canonical source files byte-for-byte:
+- [x] Claim exactly the three app/test paths and bounded documentation before editing.
+- [x] Copy all complete adjacent canonical source files byte-for-byte:
 
 ```python
 from pathlib import Path
@@ -42,7 +42,7 @@ The declaration update exports12exact source PKs/5AUTO kinds, adds5source-kind s
 
 ### Task 2: verify applied code
 
-- [ ] Run the full focused source/target plus declaration check:
+- [x] Run the full focused source/target plus declaration check:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python docs/superpowers/plans/2026-10-16-task12-storage-preflight.py --applied --with-declarations
@@ -52,7 +52,7 @@ Expected532pass (207new source/target checks +325existing declaration checks) an
 
 Coverage includes both actual and fresh source layouts, all12source schemas/defaults/scalar classes, signed ROWIDs/reuse,5interleaved independent AUTO streams, ignored conflict/NULL water consumption, source-native FULL scope and round BEFORE-trigger precedence, nullable/BLOB source PKs and hidden identities, INSERT/UPDATE REPLACE with valid linked batch children plus failed replacement rollback, source-NOT-NULL default replacement, owner/generation CAS, source identity update/next allocation, guarded delete including sourceROWID, immutable decisions, source legal REAL/text/BLOB/nonfinite/subnormal projections, source-parent self-alias rejection, and indexed source-counter/CAS reads. Existing8kind declarations/projections remain covered by325cases; their transactional writers still require conversion.
 
-- [ ] Run exact hashes, Ruff and whitespace checks:
+- [x] Run exact hashes, Ruff and whitespace checks:
 
 ```sh
 /Users/derek/.cache/uv/archive-v0/1vqK0HG0A7DbkHHlOjztN/bin/ruff check --no-cache app/task20_definitions.py app/task12_storage.py tests/test_task12_storage.py
@@ -61,13 +61,13 @@ git diff --check
 
 ### Task 3: bounded docs and commit
 
-- [ ] Append exactly this paragraph to the two named documents:
+- [x] Append exactly this paragraph to the two named documents:
 
 ```text
 Unselected Tasks12 transactional storage: app/task12_storage.py supplies source-shaped insert/update/delete/ROWID projection for12residual kinds using the Tasks20 declaration.532focused synthetic cases (207actual/fresh source-target +325declaration) pass, covering5independent AUTO streams,7hiddenROWID families, native ignored/FULL semantics, owner-generation CAS, source PK/ROWID replacement and referencedbatch physical identity. The declaration adds5sequence triggers,3source-parent self-alias guards and native REAL projection preservation; no currentcaller/constructor/migration/source retirement/production selection occurs. Existing8writers, allcaller conversions andcopy/inverse/native/UI/final11publication remain required.
 ```
 
-- [ ] Commit exactly the3app/test paths, ownclaim, this plan's implementation checkboxes and the two exact doc paragraphs (7paths). Do not include root-owned canonical/preflight artifacts or touch other claims.
+- [x] Commit exactly the3app/test paths, ownclaim, this plan's implementation checkboxes and the two exact doc paragraphs (7paths). Do not include root-owned canonical/preflight artifacts or touch other claims.
 - [ ] Fresh independent SPEC verifies finite source semantics/identity/constraint/transaction/selector boundaries, then fresh QUALITY tests meaningful adversarial controls, including REAL projection deletion, self-parent guard deletion, sequence consumption and referenced batch replacement. Resolve findings before root accepts.
 
 ### Full-goal continuation
