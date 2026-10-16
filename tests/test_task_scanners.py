@@ -2182,15 +2182,31 @@ def test_scan_meeting_todos_queues_a_meeting_without_a_transcript_and_keeps_its_
     assert scan_meeting_todos(store, _friday_dws()) == 0
 
 
-def test_scan_meeting_todos_retries_when_the_transcript_cannot_be_read(tmp_path):
+def test_scan_meeting_todos_uses_the_meeting_summary_when_transcript_cannot_be_read(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
-    assert scan_meeting_todos(store, _friday_dws(transcript_error=RuntimeError("transcript unavailable"))) == 0
-    assert store.claim_work_summary_inputs(limit=10) == []
+    assert scan_meeting_todos(
+        store,
+        _friday_dws(
+            transcript_error=RuntimeError("transcript unavailable"),
+            summary="会议确认由磊哥负责整理访谈问题清单。",
+        ),
+    ) == 1
+
+    [claimed] = store.claim_work_summary_inputs(limit=10)
+    payload = json.loads(claimed.payload_json)
+    summary = json.loads(payload["summary"])
+    assert summary["meeting_summary"] == "会议确认由磊哥负责整理访谈问题清单。"
+    assert payload["context"]["source_transcript_unavailable"] is True
+
     from app.task_scanners import MEETING_TODO_SCANNER
 
     state = store.get_daily_scan_state(MEETING_TODO_SCANNER)
-    assert "transcript unavailable" in state["last_error"]
+    assert state["last_error"] == ""
+    from app.quality_gate import scan_hourly_quality
+
+    report = scan_hourly_quality(store.path)
+    assert not any(issue.source == MEETING_TODO_SCANNER for issue in report.violations)
 
 
 def test_scan_meeting_todos_also_hands_over_the_meetings_own_summary(tmp_path):

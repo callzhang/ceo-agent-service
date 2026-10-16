@@ -33,6 +33,13 @@
 
 ## Unreleased
 
+- Meeting Todo scanning no longer drops an entire meeting solely because its
+  transcript endpoint is unavailable. It still reads the independent meeting
+  summary, queues the observed Todos with an explicit transcript-unavailable
+  marker, and tells Task Agent not to infer owners or commitments from missing
+  evidence. Summary read failures remain retryable and visible as scanner
+  errors.
+
 - Store Consumer task artifacts in a private task/generation-specific `/tmp`
   workspace rather than the durable memory workspace. Keep artifacts available
   through task recovery and Audit readback, lazily migrate legacy task folders

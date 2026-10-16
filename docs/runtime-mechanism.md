@@ -1973,10 +1973,10 @@ Task Agent 会把负责人证据再结构化为 `owner_kind`（`individual` / `t
 1. 入队前读完整份逐字稿，**再读一次这场会议自己的 DingTalk 摘要**（`get_minutes_summary`，`minutes_full_summary` 取其 `result.fullSummary`）。
 2. 转录窗口：对每条有有效 `createdTime` 的行动项，截取包含该时刻的那一段及前 6 段、后 4 段，每句写成一行“说话人：内容”放进 `transcript_excerpts`（钉钉的 `sentenceList` 把整段当作一句，所以在句末标点处自己拆句）。
 3. 会议摘要：原样整段放进 `meeting_summary`，不做关键词或分节切片——钉钉的摘要经常直接写“行动项：**磊哥**与**周俊杰**负责代码 Review”，但可能出现在整场会议的任何位置，切片会漏掉切片规则没覆盖到的写法。
-4. 没有摘录/摘要的情况：`createdTime` 缺失或为 0、超出逐字稿的行动项在转录窗口里没有摘录；逐字稿为空、或摘要为空字符串，对应字段就不放进去。逐字稿或摘要任一读不到时，这场会议本轮不入队、也不记为已见，下一轮重读。
+4. 没有摘录/摘要的情况：`createdTime` 缺失或为 0、超出逐字稿的行动项在转录窗口里没有摘录；逐字稿为空、或摘要为空字符串，对应字段就不放进去。逐字稿读取失败时仍继续读会议摘要，并把 `source_transcript_unavailable=true` 标记交给 Task Agent；Agent 只能基于实际传入的行动项和摘要作判断，不得从缺失转写中推断负责人、承诺或指派。若会议摘要读取失败，才将该会议保留为未入队、未记为已见并由下一轮重读。
 5. 去重摘要仍只覆盖行动项本身，所以之后补读逐字稿或摘要不会让处理过的会议重复入队。
 
-**提示词规则**：负责人是对话把事情交给的人或接下的人，不一定是说话人（甲说“你写下来”是指派给被点名的乙）；负责人引文可以来自 `transcript_excerpts` 或 `meeting_summary`，是一句带说话人标签、包含负责人名字的话（可摘取），常常不是决定本身的 `source_excerpt`；钉钉对认不出的说话人给的“发言人 N”是占位标签、团队或部门名（“研发”“算法团队”“Product Marketing”）也不是人，两者都绝不作负责人；转录窗口和摘要都说不清就留空——这是来源本身的边界，不是要去凑一个负责人出来。日期仍不从听记取，因为没有可信的说话人到身份映射。
+**提示词规则**：负责人是对话把事情交给的人或接下的人，不一定是说话人（甲说“你写下来”是指派给被点名的乙）；负责人引文可以来自 `transcript_excerpts` 或 `meeting_summary`，是一句带说话人标签、包含负责人名字的话（可摘取），常常不是决定本身的 `source_excerpt`；钉钉对认不出的说话人给的“发言人 N”是占位标签、团队或部门名（“研发”“算法团队”“Product Marketing”）也不是人，两者都绝不作负责人；转录窗口和摘要都说不清就留空——这是来源本身的边界，不是要去凑一个负责人出来。转写不可用标记存在时，Agent 只能使用实际可读的行动项和会议摘要，不得补造转写证据；没有明确个人负责人时仍不得将行动项升级为正式分派任务。日期仍不从听记取，因为没有可信的说话人到身份映射。
 
 **回填已入库的候选**（已处理过的会议不会被再读到，所以必须回填）：`python -m app.cli backfill-minutes-owners`（`app/minutes_owner_backfill.py`）。
 
@@ -3172,3 +3172,12 @@ Consumer and Audit both persist a new Codex session selected by the existing run
 Attention list, summary and count readers follow a historical Attempt's original AgentRun task ID when the OA scanner has since changed the trigger message key. A current bound task in done/skipped no longer appears as an unresolved historical Attempt. Same-generation failed tasks remain visible, valid reviewed human decisions keep their independent projection, and the historical Attempt/run/receipt records are unchanged.
 
 听记管理页认证失效（2026-10-15）：组织选择或登录校验抛出 MinutesBrowserSessionExpired 时，服务使用 macOS open 在本人普通 Google Chrome 中打开听记 history 登录页。原命令仍保留失败，不把打开页面当成认证成功；后台浏览器照常关闭。本人完成登录后的既有 cookie 同步与正式重试流程不变。
+
+原生进程退出与输出采集（2026-10-15）：子进程退出不代表 stdout/stderr 管道已经读完。Process runner 在既有进程组终止之后以非阻塞方式读取已到达的剩余字节，继续使用相同 UTF-8 解码及逐行回调，再刷新无换行尾行。如此 thread.started 会话定位和最终回答不会因先读到 stderr 而丢失；无效结果仍按原合同失败并保留已观察的原生证据。超时、路由、结果校验、外部动作及回执策略不变，不重放历史退订或清除执行标记。回归和验收见 docs/405078-process-output-validation.md。
+
+Task Agent's existing cross-Project supporting-Task validation reports the exact
+assessment index, Task decision index, and both canonical Project selectors to
+the existing correction turn. A Task may not support an assessment for a different
+selected Project. Validation predicates, output schema, and correction budget are
+unchanged. Regression coverage exercises the correction prompt and valid removal
+of only the mismatched membership.

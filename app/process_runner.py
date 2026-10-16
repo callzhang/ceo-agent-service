@@ -125,6 +125,27 @@ def run_process_with_idle_timeout(
         if process.poll() is None:
             returncode = process.wait(timeout=5)
 
+    # Child exit does not mean its pipes have been consumed. Drain bytes
+    # already available after termination without waiting on inherited pipes.
+    # In particular, stderr can become ready before buffered final JSON stdout.
+    for stream, chunks in (
+        (process.stdout, stdout_chunks), (process.stderr, stderr_chunks),
+    ):
+        os.set_blocking(stream.fileno(), False)
+        while True:
+            try:
+                chunk = os.read(stream.fileno(), 65536)
+            except BlockingIOError:
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if on_stdout_line is not None and chunks is stdout_chunks:
+                stdout_line_buffer = _emit_stdout_lines(
+                    stdout_line_buffer + stdout_decoder.decode(chunk),
+                    emit_progress_line,
+                )
+
     if on_stdout_line is not None:
         stdout_line_buffer += stdout_decoder.decode(b"", final=True)
         if stdout_line_buffer:
