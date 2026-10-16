@@ -1065,3 +1065,14 @@ Metadata is `superpowers/specs/2026-10-16-configs-current-fixture-acceptance.jso
 No app, schema, validator, actual database, provider, native CLI, send, main,
 push or deployment changed in this unit. Full CI, remaining harnesses/native
 fixtures and complete ten-core-plus-ledger consolidation remain outstanding.
+
+
+### State source behavior and next physical merge, 2026-10-16
+
+The metadata-only preflight receipt is `superpowers/specs/2026-10-16-state-native-behavior-preflight.json`. It preserves previously executed native actual/fresh identity/CHECK probes, three genuine7dad public lease baseline cases and the frozen970a default/null conversation-field probe. These remain source-only evidence; no state target or retirement is selected.
+
+Current code closure has now been independently read across all16 state families: Store/Email compound mutations, dispatcher adapters, quality/Attention, processing reactions, quiet/deploy progress and active publication-marker readers. Native service_state marker migration and fresh CREATE/ALTER/backfill must move in the same atomic cutover. Existing ownership, CAS, rowid tie order, NULL/affinity domains and transaction boundaries must remain; no incidental policy tightening is authorized.
+
+The source-contract implementation plan is `superpowers/plans/2026-10-16-state-source-contract-plan.md`. Its complete disposable prototype passes172 native cases; NULL-key, affinity and CHECK mutants each fail two intended cases. It reuses unchanged literal source metadata/fixtures, creates no app target and carries no production/native-CLI acceptance. Proposed temporary files were removed. The next action is committing that executable source oracle and independent review, followed by one state16-to1 storage/caller/release plan.
+
+Reusable copy/native harness updates remain a final integration requirement; they will be wired to the final selected table set rather than repeatedly adapting intermediate table-count literals. Existing config frozen-copy and fixture acceptance are retained at their recorded scope. The full ten-core-plus-ledger goal remains open.

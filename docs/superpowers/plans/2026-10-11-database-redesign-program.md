@@ -1,5 +1,11 @@
 # Database Redesign Program
 
+## Latest state source closure, 2026-10-16
+
+The next physical consolidation is state16-to1. Read-only caller closure covers all sixteen families, including current version/publication readers and deployment progress that span schema publication. Existing literal actual91/fresh87 fields are unchanged; source-only evidence and the complete executable-oracle plan are recorded in `../specs/2026-10-16-state-native-behavior-preflight.json` and `2026-10-16-state-source-contract-plan.md`. A disposable proposal passes172 native cases and three two-failure mutants. No target state schema, retention or retirement is selected by that evidence.
+
+Final reusable copy/native harness integration remains required. It is deferred to the final selected structure; independent config actual-copy and155-case current-fixture evidence remain valid at their stated scopes. Current intermediate copy remains82 ordinary tables and full ten-core-plus-ledger consolidation is still incomplete.
+
 ## Latest local configs caller integration, 2026-10-16
 
 Commit `5c8aeb57` selects the complete configs coordinator in the existing
