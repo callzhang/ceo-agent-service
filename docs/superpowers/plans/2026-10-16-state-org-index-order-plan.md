@@ -81,7 +81,7 @@ Coverage crosses actual/fresh, open-ID/name, reverse explicit/MAX-auto allocatio
 
 - [x] Reproduce independent SPEC blocker; write complete correction and regression module before runtime file edits.
 - [x] Root all8 RED, corrected314 GREEN, Ruff and own temporary cleanup.
-- [ ] Implement exact2 strings/hash/new8 cases; add scoped paragraphs in docs/architecture.md and docs/runtime-mechanism.md marking unselected foundation amendment.
-- [ ] Run narrow focused matrix; compile, Ruff, confirm native source metadata SHA604496... unchanged and only2 of20 index declarations changed.
+- [x] Implement exact2 strings/hash/new8 cases; add scoped paragraphs in docs/architecture.md and docs/runtime-mechanism.md marking unselected foundation amendment.
+- [x] Run narrow focused matrix; compile, Ruff, confirm native source metadata SHA604496... unchanged and only2 of20 index declarations changed.
 - [ ] Fresh SPEC review then QUALITY; re-review previously blocked Store DAO proposal against amended foundation.
 - [ ] Re-establish target-copy acceptance with this fingerprint during State atomic caller/publication integration. Existing pure source-row fact proof remains historical; do not claim current full-candidate acceptance.

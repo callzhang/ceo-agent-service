@@ -16,7 +16,7 @@ SOURCE_HASHES = {
     "actual": "b7e149e432369018ba105f9e1ac12b052f38bfe245ee7e6d7b7b7b8b3ab9caa6",
     "fresh": "48e1608e66d2a35fdb467708e24fd6bef1f2f4ecd58e8a6e45c4af9fb6449a70",
 }
-TARGET_HASH = "ae25aecef5d8e9a0615ca3c180bb018eb6412a36bb25e850692d7f050eb8e5ab"
+TARGET_HASH = "327c94f68a9354f8766dfebb9ef7c85c9d03c2a4b27f95387eb88cc32fabc1f2"
 TARGET_INDEXES = tuple(sql.split(" on state(", 1)[0].split()[-1].strip('"')
                        for sql in STATE_INDEX_DDL)
 

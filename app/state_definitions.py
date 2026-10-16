@@ -291,8 +291,8 @@ def _definitions():
         "where record_type='dispatcher_claim_leases' and terminal_at<>''",
         "create index idx_state_dispatcher_expiry on state(adapter_name,lease_expires_at,source_id) "
         "where record_type='dispatcher_claim_leases'",
-        "create index idx_state_org_name on state(name) where record_type='org_user_profiles'",
-        "create index idx_state_org_open_id on state(open_dingtalk_id) where record_type='org_user_profiles'",
+        "create index idx_state_org_name on state(name,cast(legacy_key as integer)) where record_type='org_user_profiles'",
+        "create index idx_state_org_open_id on state(open_dingtalk_id,cast(legacy_key as integer)) where record_type='org_user_profiles'",
     ))
     return "create table state(" + ",".join(parts) + ")", tuple(indexes)
 
