@@ -596,13 +596,14 @@ REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL = """
 
 
 def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=False,
-                            include_email=False) -> str:
+                            include_email=False, include_skill_config_receipts=False) -> str:
     """Select one complete canonical E declaration, including its FK and indexes."""
     matches = [
         variant for variant in REPLY_VARIANTS
         if action_schema_is_current(
             db, allow_missing_objects=allow_missing_objects,
             include_reply=True, reply_variant=variant, include_email=include_email,
+            include_skill_config_receipts=include_skill_config_receipts,
         )
     ]
     if len(matches) != 1:
@@ -610,10 +611,12 @@ def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=Fal
     return matches[0]
 
 
-def reply_schema_is_current(db: sqlite3.Connection, *, include_email=False) -> bool:
+def reply_schema_is_current(db: sqlite3.Connection, *, include_email=False,
+                            include_skill_config_receipts=False) -> bool:
     """Recognize the selected complete reply declaration without altering the DB."""
     return any(action_schema_is_current(db, include_reply=True, reply_variant=variant,
-                                        include_email=include_email)
+                                        include_email=include_email,
+                                        include_skill_config_receipts=include_skill_config_receipts)
                for variant in REPLY_VARIANTS)
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]

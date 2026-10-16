@@ -3697,3 +3697,5 @@ same envelope validator; it returns diagnostic strings only and cannot be adopte
 as a candidate. Malformed relationship syntax supplies no inferred relationship
 errors. Supporting membership violations are reported together. Full candidate
 validation, the native output schema, and the one-correction budget are unchanged.
+
+Reply declaration selectors accept an explicit optional Skill configuration receipt scaffold and forward it to the existing complete-shape recognizer. The default remains false for historical callers; current callers and schema publication/release remain unselected.
