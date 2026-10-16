@@ -14,6 +14,11 @@ run, Skill receipt and non-Skill action writes. The final declaration predicate
 checks the mapped runs, selected 31-kind actions and absence of all nineteen
 retired tables. No constructor, schema marker or runtime caller selects this
 coordinator yet; the paired Email release must first establish Email29/Email52.
+Preflight rejects inbound FKs, external view/trigger SQL references, and TEMP
+name shadows of tables changed in either direction before schema DDL begins.
+The complete source profiles are the two post-Email13 config declarations;
+standalone row-transfer coverage of original profiles does not make their
+old account blockers a valid Email29 source.
 
 The unselected retained-runs translator now stages stored columns in a
 transaction-lifetime SQLite TEMP table instead of Python row/type matrices.

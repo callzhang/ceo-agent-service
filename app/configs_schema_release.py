@@ -31,11 +31,20 @@ _OBSERVATION_HASHES = {
 _ACTION_VARIANTS = ('actual_no_memory_fk', 'fresh_memory_fk')
 _SKILL_KINDS = ('managed_skill_export_receipts', 'runtime_skill_load_receipts')
 _STAGE = '__configs_actions_stage'
+_TEMP_NAMES = (_STAGE, 'configs', 'schedules', 'actions', 'runs', _OBSERVATIONS,
+               *SOURCE_TABLES)
 
 
 def _transaction(db: sqlite3.Connection) -> None:
     if not db.in_transaction or db.execute('pragma foreign_keys').fetchone()[0]:
         raise sqlite3.ProgrammingError('config release requires caller FK-off transaction')
+
+
+def _no_temp_names(db: sqlite3.Connection) -> None:
+    placeholders = ','.join('?' for _ in _TEMP_NAMES)
+    if db.execute('select 1 from temp.sqlite_schema where name collate nocase in ('
+                  + placeholders + ') limit 1', _TEMP_NAMES).fetchone():
+        raise ValueError('config release TEMP name collision')
 
 
 def _actions(variant: str, *, skill: bool) -> list[dict]:
@@ -62,24 +71,29 @@ def _state(metadata: dict) -> None:
 
 def _foreign_key_children(db: sqlite3.Connection, parents: set[str]) -> None:
     """Only the two translated runs edges and retired observation may escape."""
-    source = set(SOURCE_TABLES) | {_OBSERVATIONS}
+    normalize = action_storage.sqlite_schema_name
+    source = {normalize(name) for name in (*SOURCE_TABLES, _OBSERVATIONS)}
+    parents = {normalize(name) for name in parents}
     allowed = {
         ('runs', 'scheduled_tasks', 'scheduled_task_id', 'id'),
         ('runs', 'scheduled_task_config_versions', 'snapshot_id', 'id'),
     }
     for (child,) in db.execute("select name from main.sqlite_schema where type='table' and name not glob 'sqlite_*'"):
-        if child in source:
+        child_name = normalize(child)
+        if child_name in source:
             continue
         for edge in db.execute(f'pragma main.foreign_key_list({_quote(child)})'):
-            if edge[2] in parents and (child, edge[2], edge[3], edge[4]) not in allowed:
+            parent_name = normalize(edge[2])
+            if parent_name in parents and (child_name, parent_name, edge[3], edge[4]) not in allowed:
                 raise ValueError('unsupported external config foreign key')
 
 
 def _target_foreign_key_children(db: sqlite3.Connection) -> None:
+    normalize = action_storage.sqlite_schema_name
     for (child,) in db.execute("select name from main.sqlite_schema where type='table' and name not glob 'sqlite_*'"):
-        if child in {'actions', 'runs', 'configs', 'schedules'}:
+        if normalize(child) in {'actions', 'runs', 'configs', 'schedules'}:
             continue
-        if any(edge[2] in {'configs', 'schedules'} for edge in db.execute(
+        if any(normalize(edge[2]) in {'configs', 'schedules'} for edge in db.execute(
                 f'pragma main.foreign_key_list({_quote(child)})')):
             raise ValueError('unsupported external config target foreign key')
 
@@ -102,10 +116,9 @@ def capture_config_source(db: sqlite3.Connection) -> dict:
         raise ValueError('nonempty training observations cannot be retired')
     if any(_source_declaration(db, name)['sql'] is not None for name in ('configs', 'schedules')):
         raise ValueError('partial config target already exists')
-    if db.execute("select 1 from temp.sqlite_schema where name collate nocase in (?, 'configs', 'schedules')",
-                  (_STAGE,)).fetchone():
-        raise ValueError('config release TEMP name collision')
-    _foreign_key_children(db, set(SOURCE_TABLES))
+    _no_temp_names(db)
+    _foreign_key_children(db, set(SOURCE_TABLES) | {_OBSERVATIONS})
+    action_storage._no_sql_dependencies(db, set(SOURCE_TABLES) | {_OBSERVATIONS})
     return {'configs': configs, 'action_variant': variant, 'observations': observation}
 
 
@@ -255,10 +268,9 @@ def restore_config_schema(db: sqlite3.Connection, metadata: dict) -> dict[str, i
         raise ValueError('unsupported 31-kind actions target declaration')
     if _run_objects(db) != _run_declarations(mapped=True):
         raise ValueError('unsupported mapped runs declaration')
+    _no_temp_names(db)
     _target_foreign_key_children(db)
-    if db.execute('select 1 from temp.sqlite_schema where name=? collate nocase',
-                  (_STAGE,)).fetchone():
-        raise ValueError('actions TEMP name collision')
+    action_storage._no_sql_dependencies(db, {'configs', 'schedules'})
     _create_native(db, metadata)
     counts = restore_config_rows(db, db, metadata['configs'])
     restore_native_run_fks(db)

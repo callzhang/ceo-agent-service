@@ -882,11 +882,13 @@ synthetic source retirement; caller selection is still open.
 retained-runs translator in a caller-owned FK-off transaction. It binds the
 finite native eighteen-family declaration, independently binds the exact
 Email29 action variant, and checks the actual/fresh declaration of the empty
-training-observation table. The production paired path would invoke it after
-Email13, so its current source profiles are `actual_email52` and
-`fresh_email52`; synthetic controls also exercise the two original config
-fingerprints independently of the two action variants. Those controls do not
-claim an original config source plus Email29 is a full published source.
+training-observation table. The paired path would invoke it after Email13, so
+its supported complete source profiles are `actual_email52` and
+`fresh_email52`, each with an independently matched action reply variant.
+The standalone row engine still supports four native config fingerprints.
+An original config profile combined with Email29 is an invalid synthetic full
+source: its old account blocker triggers still refer to the retired Email
+action tables, and the release preflight refuses that mixture.
 
 Forward installs configs/schedules, stages old actions in SQLite TEMP, rebuilds
 only the Skill receipt extension, copies eighteen families and six source
@@ -899,12 +901,20 @@ waters, restores native run FKs and 29-kind actions, and removes only synthetic
 config/Skill allocator aliases. It leaves rollback to the caller and neither
 direction changes Store/Email markers or current constructors.
 
-The focused synthetic suite covers the four config fingerprints crossed with
-the two independent action variants, post-forward schedule/config/run and
-Skill export/success/failure plus non-Skill action writes, exact native DDL on
-inverse, second forward, unrelated run orphan preservation, nonempty
-observation and noncanonical receipt refusal, changed/mixed declarations,
+The focused synthetic suite covers both post-Email13 config fingerprints
+crossed with the two independent action variants, post-forward
+schedule/config/run and Skill export/success/failure plus non-Skill action
+writes, exact native DDL on inverse, second forward, unrelated run orphan
+preservation, nonempty observation and noncanonical receipt refusal,
+changed/mixed declarations,
 inverse broken-target FK refusal, and savepoint rollback after a mid-copy
 failure. This unit has no real database, provider, native CLI or production
 effect. Caller integration, actual combined-copy proof, and publication are
 separate work.
+
+Additional regression-first preflight coverage rejects an empty external child
+FK to the retired observation table, including mixed-case SQLite parent names;
+external views and triggers that refer to any retired source table or either
+target table being dropped on inverse; and MAIN/TEMP name shadows before any
+schema change. The SQL dependency check reuses the existing SQLite schema-only
+rename parser. Both directions still leave transaction rollback to the caller.

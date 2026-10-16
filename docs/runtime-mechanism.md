@@ -10,6 +10,11 @@ classes and sequence waters; inverse restores current facts written after
 forward conversion. The final predicate requires exact configs, schedules,
 Skill-extended actions, mapped runs and absence of nineteen native names.
 Current constructors, schema markers and callers do not select this path.
+Both directions preflight external FK and SQL dependencies plus case-insensitive
+TEMP shadows of changed table names before DDL. Complete forward sources are
+post-Email13 `actual_email52` or `fresh_email52` with independently matched
+Email29 reply declarations; an original config profile combined with Email29
+still has legacy account blocker SQL dependencies and is refused.
 
 Unselected retained-runs FK rebuilding uses SQLite TEMP staging and SQL value/
 storage-class comparisons rather than loading the whole runs table into Python.
@@ -46,8 +51,8 @@ retires them before its final exact schema predicate can succeed.
 Exact source capture supports the six account blockers already translated by
 Email13, including its fresh counterpart, and rejects partial mixtures. This
 permits the row engine to follow existing Email/Business/Provider conversion
-on a copy. The paired caller will use the Email52 source variants; synthetic
-cross-variant declaration tests do not select extra runtime paths.
+on a copy. The paired caller will use the Email52 source variants; the
+standalone row engine's original variants do not select extra runtime paths.
 
 The Skill receipt opt-in composes with Email actions independently of the
 follow-up/sync opt-in. The transfer engine checks the exact declaration for

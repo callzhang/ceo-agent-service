@@ -86,7 +86,17 @@ def test_release_entry_points_exist():
     assert callable(restore_config_schema)
 
 
-@pytest.mark.parametrize('variant', ('actual', 'fresh', 'actual_email52', 'fresh_email52'))
+@pytest.mark.parametrize('variant', ('actual', 'fresh'))
+def test_original_config_profile_with_email29_is_not_a_complete_source(variant):
+    with source(variant) as db:
+        before = tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name'))
+        with pytest.raises(sqlite3.OperationalError, match='no such table: main.email_actions'):
+            capture_config_source(db)
+        assert tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name')) == before
+        assert _source_declaration(db, 'configs')['sql'] is None
+
+
+@pytest.mark.parametrize('variant', ('actual_email52', 'fresh_email52'))
 @pytest.mark.parametrize('action_variant', ('actual_no_memory_fk', 'fresh_memory_fk'))
 def test_retire_restore_current_facts_and_exact_declarations(variant, action_variant):
     with source(variant, action_variant) as db:
@@ -258,3 +268,98 @@ def test_new_external_target_foreign_key_refuses_inverse():
         with pytest.raises(ValueError, match='external config target'):
             restore_config_schema(db, metadata)
         assert configs_schema_is_current(db, action_variant=metadata['action_variant'])
+
+
+def test_empty_external_observation_child_refuses_before_forward_ddl():
+    with source() as db:
+        db.execute('create table external_observation_child('
+                   'snapshot_id text, account_id text, stable_message_identity text, '
+                   'foreign key(snapshot_id,account_id,stable_message_identity) '
+                   f'references {OBS}(snapshot_id,account_id,stable_message_identity))')
+        before = tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name'))
+        with pytest.raises(ValueError, match='external config foreign key'):
+            capture_config_source(db)
+        assert tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name')) == before
+        assert _source_declaration(db, 'configs')['sql'] is None
+
+
+def test_mixed_case_external_source_parent_refuses_before_ddl():
+    with source() as db:
+        db.execute('create table mixed_case_source_child('
+                   'skill_id integer references "MANAGED_SKILLS"(id))')
+        before = tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name'))
+        with pytest.raises(ValueError, match='external config foreign key'):
+            capture_config_source(db)
+        assert tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name')) == before
+
+
+@pytest.mark.parametrize('sql', (
+    'create view external_config_view as select id from scheduled_tasks',
+    f'create view external_config_view as select snapshot_id from {OBS}',
+    'create trigger external_config_trigger after insert on external_probe '
+    'begin select id from scheduled_tasks; end',
+    'create trigger external_config_trigger after insert on external_probe '
+    'begin select id from managed_skills; end',
+))
+def test_external_source_sql_dependency_refuses_before_forward_ddl(sql):
+    with source() as db:
+        db.execute('create table external_probe(id integer primary key)')
+        db.execute(sql)
+        before = tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name'))
+        with pytest.raises(ValueError, match='SQL dependency'):
+            capture_config_source(db)
+        assert tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name')) == before
+        assert _source_declaration(db, 'configs')['sql'] is None
+
+
+@pytest.mark.parametrize('sql', (
+    'create view external_config_view as select id from configs',
+    'create trigger external_config_trigger after insert on external_probe '
+    'begin select id from schedules; end',
+))
+def test_external_target_sql_dependency_refuses_before_inverse_ddl(sql):
+    with source() as db:
+        metadata = capture_config_source(db)
+        migrate_config_schema(db, metadata)
+        db.execute('create table external_probe(id integer primary key)')
+        db.execute(sql)
+        before = tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name'))
+        with pytest.raises(ValueError, match='SQL dependency'):
+            restore_config_schema(db, metadata)
+        assert tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name')) == before
+
+
+def test_mixed_case_external_target_parent_refuses_before_ddl():
+    with source() as db:
+        metadata = capture_config_source(db)
+        migrate_config_schema(db, metadata)
+        db.execute('create table mixed_case_target_child('
+                   'config_id integer references "CONFIGS"(id))')
+        before = tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name'))
+        with pytest.raises(ValueError, match='external config target foreign key'):
+            restore_config_schema(db, metadata)
+        assert tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name')) == before
+
+
+@pytest.mark.parametrize('name', ('actions', 'Actions', 'runs', OBS))
+def test_forward_temp_shadow_refuses_before_ddl(name):
+    with source() as db:
+        db.execute(f'create temp table "{name}"(id integer)')
+        before = tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name'))
+        with pytest.raises(ValueError, match='TEMP name collision'):
+            capture_config_source(db)
+        assert tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name')) == before
+        assert _source_declaration(db, 'configs')['sql'] is None
+
+
+@pytest.mark.parametrize('name', ('configs', 'CONFIGS', 'schedules', 'actions', 'runs', OBS,
+                                  'MANAGED_SKILLS'))
+def test_inverse_temp_shadow_refuses_before_ddl(name):
+    with source() as db:
+        metadata = capture_config_source(db)
+        migrate_config_schema(db, metadata)
+        db.execute(f'create temp table "{name}"(id integer)')
+        before = tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name'))
+        with pytest.raises(ValueError, match='TEMP name collision'):
+            restore_config_schema(db, metadata)
+        assert tuple(db.execute('select type,name,sql from main.sqlite_schema order by type,name')) == before
