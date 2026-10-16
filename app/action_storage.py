@@ -279,7 +279,7 @@ def _reply_payload_check(fields):
 
 
 def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False):
-    if include_skill_config_receipts and not include_followup_sync:
+    if include_skill_config_receipts and not include_email:
         raise ValueError("Skill receipts require current Email action scaffold")
     if include_followup_sync and not include_email:
         raise ValueError("follow-up/Todo action storage requires the Email29 scaffold")

@@ -20,6 +20,10 @@ mode. It does not install/drop schemas or change markers. The release still
 needs retained-child FK translation, source-table retirement and caller
 selection; the row engine alone cannot activate this schema.
 
+Skill receipts require the current Email action scaffold; the independent
+follow-up/sync kinds are optional. This removes an unneeded declaration
+dependency without selecting new runtime kinds or retiring their source tables.
+
 The unpublished Store20/Email52 candidate selects `provider_state` for provider
 observations and folder generations as two typed rows in one table. It keeps
 the source's account-scoped composite identities and twelve named fields;

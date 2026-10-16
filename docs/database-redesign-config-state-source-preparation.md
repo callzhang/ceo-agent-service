@@ -701,9 +701,10 @@ from earlier runs varied widely, so this is not a speedup claim.
 
 This unit does not rewrite `runs` FKs, retire empty training observations,
 rebuild existing action rows, drop the eighteen native families, install schema
-markers or convert current callers. Its target requires the already declared
-opt-in follow-up/sync action scaffold; those caller/release paths also remain
-unselected. All are still required for the final ten-core-plus-ledger release.
+markers or convert current callers. Its target requires the current Email
+action scaffold; follow-up/sync kinds are independently optional. Their own
+caller/release paths remain unselected and are still required for the final
+ten-core-plus-ledger release.
 
 Fresh sequential review closure for `3fbbbd07`: after the independent
 source-fidelity/delta review above, a fresh QUALITY reviewer inspected the
@@ -712,3 +713,30 @@ transfer cases and the combined48-case set, and verified the exact executed
 module hash and clean worktree. No concrete blocker was found in this bounded
 row engine. No additional production, caller or table-retirement claim follows
 from those review passes.
+
+### Skill receipts compose with the existing Email scaffold
+
+The initial Skill opt-in guard unnecessarily required the unrelated follow-up/
+sync opt-in. Source inspection and an independent four-variant SQLite DDL
+probe found no dependency in Skill columns, FKs, checks, indexes or triggers.
+The guard now requires Email (which already requires reply storage), while the
+transfer engine accepts either exact Email+Skill declaration with or without
+follow-up/sync. No constructor selects either declaration yet.
+
+Two new behavioral controls failed on the old guard and pass on both actual
+and fresh reply variants after the fix. They copy a real native config and
+load receipt into the no-follow-up declaration and assert no follow-up kinds
+are present. An incomplete first fixture lacked unrelated core parent tables;
+it was corrected to install them rather than weakening storage checks.
+All fifteen transfer, thirty-five integrated and seventeen follow-up storage
+cases pass:67 in4.08seconds. Ruff/diff pass and the owned pytest parent is
+removed. Comparing all56 valid pre-existing flag/variant combinations with
+Skill opt-in false found byte-identical objects. The frozen proof recorded
+above remains explicitly tied to the3fbbbd07 module; it is not a new no-sync
+release proof. No source table, marker or production path changed here.
+
+Independent source-dependency audit and subsequent fresh QUALITY review both
+accepted this bounded decoupling. QUALITY verified the exact diff and the
+independent fragment composition; it did not repeat the67-case run. The test
+checks one representative follow-up kind absent in DDL; all nine absent kinds
+also follow from the reviewed conditional declaration assembly.

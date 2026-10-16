@@ -18,6 +18,10 @@ verified; no row snapshot is persisted. Same-connection copy permits old source
 tables only during the pre-retirement transaction; runtime schema validation
 continues to require their retirement after release.
 
+The Skill receipt opt-in composes with Email actions independently of the
+follow-up/sync opt-in. The transfer engine checks the exact declaration for
+either combination; default action schemas and runtime selection are unchanged.
+
 The unpublished Store `2026-10-14.1`/Email52 candidate selects one typed
 `provider_state` table in fresh and current Email schema construction, converts
 the two source families through paired release, and uses the target in current

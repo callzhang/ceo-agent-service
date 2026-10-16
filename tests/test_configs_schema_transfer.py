@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -10,6 +11,10 @@ from app.configs_schema_transfer import (
 )
 from app.configs_storage import insert_config, update_config
 from app.action_skill_config_storage import insert_skill_receipt
+from app.action_storage import create_action_schema, action_schema_is_current
+from app.configs_storage import create_configs_schema
+from app.schedules_storage import create_schedules_schema
+from app.email_classification_schema import create_current_email_classifications
 from tests.configs_source_fixtures import ROOT, source_db, insert
 from tests.test_configs_storage import VALID, INSERT_ORDER
 from tests.test_configs_skill_storage import (
@@ -223,3 +228,26 @@ def test_forward_can_share_release_connection_without_changing_native_facts(targ
     assert counts == {kind: len(rows) for kind, rows in before.items()}
     assert facts(target, metadata) == before
     assert target.in_transaction
+
+
+@pytest.mark.parametrize('variant', ('actual_no_memory_fk', 'fresh_memory_fk'))
+def test_skill_receipt_transfer_needs_email_scaffold_without_followup_types(variant):
+    with closing(sqlite3.connect(':memory:')) as target, native('actual') as source:
+        target.execute('create table tasks(id integer primary key,record_type text)')
+        target.execute('create table runs(id integer primary key,record_type text)')
+        create_current_email_classifications(target)
+        create_schedules_schema(target)
+        create_configs_schema(target)
+        create_action_schema(target, include_reply=True, reply_variant=variant,
+                             include_email=True, include_skill_config_receipts=True)
+        assert action_schema_is_current(target, include_reply=True, reply_variant=variant,
+                                        include_email=True, include_skill_config_receipts=True)
+        target.commit()
+        target.execute('begin')
+        source.execute('begin')
+        insert(source, 'runtime_skill_configs', {'id': 1, 'status': 'pending_restart'})
+        source.execute("insert into runtime_skill_load_receipts(config_id,pid,loaded_json) values(1,7,'{}')")
+        counts = copy_config_rows(source, target, capture_config_declarations(source))
+        assert counts['runtime_skill_load_receipts'] == 1
+        assert target.execute("select record_type from actions").fetchall() == [('runtime_skill_load_receipts',)]
+        assert 'follow_up_drafts' not in target.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]

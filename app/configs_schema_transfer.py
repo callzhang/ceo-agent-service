@@ -89,8 +89,9 @@ def _target(db, *, empty=False):
     actual_actions = _objects(db, 'actions')
     if not any(actual_actions == _current_objects(
             include_reply=True, reply_variant=variant, include_email=True,
-            include_followup_sync=True, include_skill_config_receipts=True)
-            for variant in ('actual_no_memory_fk', 'fresh_memory_fk')):
+            include_followup_sync=followup, include_skill_config_receipts=True)
+            for variant in ('actual_no_memory_fk', 'fresh_memory_fk')
+            for followup in (False, True)):
         raise ValueError('unsupported config receipt target declaration')
     if empty:
         if (db.execute('select 1 from configs limit 1').fetchone()
