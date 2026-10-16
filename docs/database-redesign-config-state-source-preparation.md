@@ -1043,3 +1043,25 @@ with a function that raises failed both source-phase installer cases (2 failed,
 rerun passed 155/155 in 58.75 seconds with the same Starlette deprecation
 warning. Scoped Ruff, compileall, and diff checks passed. No application logic
 or accepted source fingerprint changed.
+
+
+### Independent current-fixture acceptance, 2026-10-16
+
+Sequential SPEC re-review and fresh QUALITY accept exact `00a4fd4f`, covering
+the test-only `98297c3d` and production-installer coverage correction. The
+independent QUALITY exact ten-file matrix passes155 cases in61.09 seconds,
+with only the existing Starlette BlockingPortal deprecation. Ruff, compilation,
+diff checks, final clean worktree and owned-temp absence all pass.
+
+SPEC independently observes eight real installer calls across four split cases.
+A helper that commits prematurely and one that replaces existing triggers each
+make both source-phase tests fail. Current target manifest validation remains
+separate from those production-helper assertions. Genuine2773 source oracles,
+original business/corruption/readback checks and the real-constructor public
+readonly preview remain; unsupported-source publisher coverage is not claimed.
+The separate supported-source cold publication receipt remains unchanged.
+
+Metadata is `superpowers/specs/2026-10-16-configs-current-fixture-acceptance.json`.
+No app, schema, validator, actual database, provider, native CLI, send, main,
+push or deployment changed in this unit. Full CI, remaining harnesses/native
+fixtures and complete ten-core-plus-ledger consolidation remain outstanding.

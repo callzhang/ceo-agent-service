@@ -37,10 +37,19 @@ is unchanged; copied database/code/archive were removed. Metadata evidence is
 `../specs/2026-10-16-configs-current-cold-copy.json`.
 
 The intermediate target still has82 ordinary tables, excluding virtual, shadow
-and SQLite internal tables. Other current fixtures using retired native-table
-SQL, full CI, latest native Agent CLI acceptance, sixteen state families,
-remaining business/email/provenance consolidation and final retirement and
-publication gates remain open. No provider, native Agent CLI, real send,
+and SQLite internal tables. The named ten-file current fixture closure is now
+accepted at `00a4fd4f` after sequential independent SPEC and fresh QUALITY.
+The exact matrix passes155 cases (QUALITY61.09s); genuine2773 source oracles
+remain intact. The source-phase production installer has real rollback,
+idempotence and nonrepair tests with failing poison controls, separate from
+current typed manifest validation. The synthetic2773 target retains real
+EmailStore construction and public readonly preview without claiming paired
+publication from that unsupported mixed source. Metadata acceptance is
+`../specs/2026-10-16-configs-current-fixture-acceptance.json`.
+
+Other native fixtures/harnesses outside that matrix, full CI, latest native
+Agent CLI acceptance, sixteen state families, remaining business/email/
+provenance consolidation and final retirement and publication gates remain open. No provider, native Agent CLI, real send,
 production write, main merge or deployment occurred. The complete destination
 remains ten core tables plus one ledger.
 
