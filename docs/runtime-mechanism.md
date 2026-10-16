@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+Unselected retained-runs FK rebuilding uses SQLite TEMP staging and SQL value/
+storage-class comparisons rather than loading the whole runs table into Python.
+The stage exists only inside the caller's FK-off migration transaction: it is
+dropped on success, and the caller must roll back on any exception. No runtime
+constructor, source-table retirement or schema marker is activated by this change.
+
 An unselected retained-runs helper translates exactly the two scheduled-run
 FK targets after the mapped parents exist. It requires an active caller FK-off
 transaction and exact current full Workbench `runs` declarations, including

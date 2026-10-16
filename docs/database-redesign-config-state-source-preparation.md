@@ -824,3 +824,25 @@ SQLite TEMP-staging prototype is under review; no new runtime path is selected.
 The attempt to interrupt only the owned test process was rejected by automatic
 approval (approval required, AskForApproval Never); it was not retried through
 another tool, and the test subsequently completed naturally and cleaned up.
+
+### SQLite-staged retained-runs implementation
+
+The reviewed staging prototype replaces the two full Python row/type matrices
+with an ephemeral SQLite TEMP table over all 95 stored columns. Before source
+drop and after explicit-column INSERT SELECT, row counts and indexed ID joins
+check every value with IS and every SQLite typeof. This retains the existing
+exact declaration, allocator, two-edge FK, unrelated-orphan and current-fact
+inverse contracts. Successful transfer drops staging; the caller must roll back
+its transaction on any exception. There is no durable row archive.
+
+SPEC found a real mixed-case TEMP-name regression in the prototype's IN/COLLATE
+placement; four failing cases became passing after applying NOCASE to the name
+operand. Direct BLOB/NUL readback assertions strengthen the special-type tests;
+the original escape literals already represented binary/NUL input. Re-SPEC and
+subsequent fresh QUALITY accepted module SHA256
+`3d911e9ffc223ba4ad1579ce87d7271f6f806cd8c9191657774f1bc94c79881d`.
+The repository adopted that exact module and the same regression functions on
+the existing captured-source fixture. All 148 selected cases passed in 45.18s;
+Ruff and diff checks pass, and the owned pytest parent is absent. A new actual
+copy proof is still needed; the old 736-second result belongs to the earlier
+Python-materialized module and is not evidence for this implementation.

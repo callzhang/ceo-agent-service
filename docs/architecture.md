@@ -1,5 +1,13 @@
 # CEO Agent Service Architecture
 
+The unselected retained-runs translator now stages stored columns in a
+transaction-lifetime SQLite TEMP table instead of Python row/type matrices.
+Before dropping the source and after inserting the replacement, indexed ID
+joins compare each value and SQLite storage class plus row counts. Successful
+translation drops the stage; exceptions require the caller transaction rollback.
+Its two FK substitutions, all other run objects, allocator streams and current-
+fact inverse remain unchanged. This helper is not selected by constructors.
+
 The unselected retained-runs translator binds the exact current Workbench
 `runs` declaration and changes only `scheduled_task_id` to `schedules(id)`
 and `snapshot_id` to a kind-restricted, full-unique

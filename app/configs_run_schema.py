@@ -5,8 +5,7 @@ This module changes only two FK targets and never persists a row backup.
 """
 import sqlite3
 
-from app.action_email_storage import _sequence, _set_sequence
-from app.business_schema_release import _restore_rows, _snapshot
+from app.action_email_storage import _quote, _sequence, _set_sequence
 from app.run_storage import _declared_run_objects
 
 _SOURCE_EDGES = (
@@ -17,6 +16,7 @@ _TARGET_EDGES = (
     "foreign key(scheduled_task_id) references schedules(id)",
     "foreign key(snapshot_id) references configs(schedule_snapshot_public_id)",
 )
+_STAGE = "__configs_runs_fk_stage"
 
 
 def _declarations(*, mapped: bool) -> dict[str, str]:
@@ -41,7 +41,8 @@ def _objects(db: sqlite3.Connection) -> dict[str, str]:
 def _require_state(db: sqlite3.Connection, *, mapped: bool) -> dict[str, str]:
     if not db.in_transaction or db.execute("pragma foreign_keys").fetchone()[0]:
         raise sqlite3.ProgrammingError("runs translation requires caller FK-off transaction")
-    if db.execute("select 1 from temp.sqlite_schema where name='runs' collate nocase").fetchone():
+    if db.execute("select 1 from temp.sqlite_schema where name collate nocase in ('runs',?)",
+                  (_STAGE,)).fetchone():
         raise ValueError("runs TEMP name collision")
     expected = _declarations(mapped=mapped)
     if _objects(db) != expected:
@@ -61,6 +62,29 @@ def _waters(db: sqlite3.Connection) -> dict[str, int | None]:
         "where name='runs' or name like 'runs:%' order by name"
     ))
     return {name: _sequence(db, name) for name in names}
+
+
+def _stored_columns(db: sqlite3.Connection) -> tuple[str, ...]:
+    return tuple(row[1] for row in db.execute("pragma main.table_xinfo(runs)")
+                 if row[6] == 0)
+
+
+def _assert_stage_matches_runs(db: sqlite3.Connection, columns: tuple[str, ...]) -> None:
+    """Compare every value and SQLite storage class using indexed main IDs."""
+    stage = f"temp.{_quote(_STAGE)}"
+    if db.execute(f"select count(*) from {stage}").fetchone()[0] != db.execute(
+            "select count(*) from main.runs").fetchone()[0]:
+        raise ValueError("runs translation changed row count")
+    differences = " or ".join(
+        f"not (s.{_quote(column)} is r.{_quote(column)}) "
+        f"or typeof(s.{_quote(column)})<>typeof(r.{_quote(column)})"
+        for column in columns
+    )
+    if db.execute(
+        f"select 1 from {stage} s left join main.runs r on r.id=s.id "
+        f"where r.id is null or ({differences}) limit 1"
+    ).fetchone():
+        raise ValueError("runs translation changed values or storage classes")
 
 
 def _check_edges(db: sqlite3.Connection, *, mapped: bool) -> None:
@@ -83,20 +107,25 @@ def _check_edges(db: sqlite3.Connection, *, mapped: bool) -> None:
 
 def _rebuild(db: sqlite3.Connection, *, from_mapped: bool) -> None:
     _require_state(db, mapped=from_mapped)
-    rows = _snapshot(db, "runs")
+    columns = _stored_columns(db)
+    names = ",".join(_quote(column) for column in columns)
     waters = _waters(db)
     target = _declarations(mapped=not from_mapped)
+    db.execute(f"create temp table {_quote(_STAGE)} as select {names} from main.runs")
+    _assert_stage_matches_runs(db, columns)
     db.execute("drop table main.runs")
     db.execute(target["runs"])
-    _restore_rows(db, "runs", rows)
+    db.execute(f"insert into main.runs({names}) select {names} from temp.{_quote(_STAGE)}")
+    _assert_stage_matches_runs(db, columns)
     for name, sql in target.items():
         if name != "runs":
             db.execute(sql)
     for name in set(_waters(db)) | set(waters):
         _set_sequence(db, name, waters.get(name))
-    if _snapshot(db, "runs") != rows or _waters(db) != waters or _objects(db) != target:
-        raise ValueError("runs translation changed facts or declarations")
+    if _waters(db) != waters or _objects(db) != target:
+        raise ValueError("runs translation changed waters or declarations")
     _check_edges(db, mapped=not from_mapped)
+    db.execute(f"drop table temp.{_quote(_STAGE)}")
 
 
 def map_runs_to_configs(db: sqlite3.Connection) -> None:

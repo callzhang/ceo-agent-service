@@ -188,3 +188,52 @@ def test_savepoint_rollback_restores_source_rows_and_declarations(db):
     assert (snapshot(db), objects(db)) == before
     db.execute('release retained_runs')
     db.rollback()
+
+
+def _event(conn, physical_id, task_id, sequence, marker):
+    insert_run(conn, 'workbench_events', dict(
+        id=physical_id, task_id=task_id, sequence=sequence,
+        event_type=b'\x00\xff' + bytes([marker]),
+        payload_json='head\x00tail' + str(marker)))
+
+
+def _stage_absent(conn):
+    assert conn.execute("select 1 from temp.sqlite_schema where name='__configs_runs_fk_stage'").fetchone() is None
+
+
+def test_storage_classes_and_current_facts_across_repeated_round_trip(db):
+    db.execute('pragma foreign_keys=off')
+    _event(db, -5, 987654, 2.5, 1)
+    raw = db.execute('select event_type,payload_json from main.runs where id=-5').fetchone()
+    assert raw == (bytes((0, 255, 1)), 'head' + chr(0) + 'tail1')
+    assert raw[0][0] == 0 and ord(raw[1][4]) == 0
+    before = snapshot(db)
+    assert ('real',) in [(row[before[0].index('sequence')],) for row in before[2]]
+    db.commit()
+    db.execute('begin')
+    for cycle in range(2):
+        map_runs_to_configs(db)
+        assert snapshot(db) == before
+        _stage_absent(db)
+        _event(db, -6 - cycle, 987655 + cycle, 3.5 + cycle, cycle + 2)
+        current = snapshot(db)
+        restore_native_run_fks(db)
+        assert snapshot(db) == current
+        assert len(tuple(db.execute('pragma main.foreign_key_check(runs)'))) == cycle + 2
+        _stage_absent(db)
+        before = current
+    db.rollback()
+
+
+@pytest.mark.parametrize('name', (
+    '__configs_runs_fk_stage', 'RUNS', '__CONFIGS_RUNS_FK_STAGE'))
+def test_temp_stage_collision_fails_before_main_write(db, name):
+    db.execute('pragma foreign_keys=off')
+    db.execute('begin')
+    before = snapshot(db), objects(db)
+    db.execute(f'create temp table "{name}"(x)')
+    with pytest.raises(ValueError, match='TEMP name collision'):
+        map_runs_to_configs(db)
+    assert (snapshot(db), objects(db)) == before
+    db.rollback()
+    _stage_absent(db)
