@@ -832,3 +832,8 @@ Production readonly confirmation still ordinary116tables, head44ee956d10a1360c1b
 
 
 Next coupled execution protocol is 2026-10-16-task20-coupled-cutover-plan.md. It requires all caller/import/constructor/schema-map/codec/retained-FK changes together, source declarations and allocator presence, current-fact forward/inverse and genuine predecessor writes. The original wide per-kind unused slot disposition is being verified from exact CHECK constraints and live readonly aggregates before any source-table replacement. No hidden row-image inverse metadata is authorized.
+
+
+### Tasks20 migration and constructor foundations, 2026-10-16
+
+Unselected Tasks20 release dfbfc07bd and applied review receipt are accepted: exact current-fact inverse restores original82-column values/types, 12native source families/public ROWIDs and6counter states;184 focused cases and refreshed standalone actual116→104→116 proof pass. The last integrated State copy remains67tables. Current Tasks20 declaration helper da5c6f27b has103 writer/SPEC/QUALITY cases accepted, with historical factories unchanged and no existing constructor selection. Store constructor proposal04bc8bacb explicitly retires six verified obsolete feedback methods and four native guard constants; supported batch workflow remains unchanged. Nine complete caller proposals and current Store/Email/publication/coordinator selection remain unselected, with final10core+ledger and production approval open. A current-water preparation correction is under review because native writes may change allocator presence after declaration capture; this is mutable state, not a schema change.
