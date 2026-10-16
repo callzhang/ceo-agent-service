@@ -32,7 +32,7 @@ Root preflight extracted all three complete modules below into a task-owned over
 - Create: `tests/test_state_storage.py`
 - Read-only authority: `tests/configs_source_fixtures.py`, `tests/test_state_source_contract.py`, captured native metadata.
 
-- [ ] **Step 1: Write the complete test module below.**
+- [x] **Step 1: Write the complete test module below.**
 
 ```python
 """State primitives compared with literal approved native SQLite declarations."""
@@ -330,7 +330,7 @@ def test_structural_shape_has_no_extra_business_fields_or_sequences():
         assert db.execute("pragma quick_check").fetchone() == ("ok",)
 ```
 
-- [ ] **Step 2: Run the new test before creating application modules and record the missing-module RED.**
+- [x] **Step 2: Run the new test before creating application modules and record the missing-module RED.**
 
 Run from the isolated worktree:
 ```bash
@@ -345,7 +345,7 @@ Expected: collection fails because app.state_definitions is absent. Do not weake
 - Create: `app/state_storage.py`
 - Preserve existing app caller/constructor/release paths.
 
-- [ ] **Step 1: Write this complete declaration module.**
+- [x] **Step 1: Write this complete declaration module.**
 
 ```python
 """Finite State declarations from the approved actual/fresh native inventory.
@@ -658,7 +658,7 @@ def state_projection(kind, *, include_rowid=False):
     return "select " + ",".join(fields) + " from state where record_type=" + repr(kind)
 ```
 
-- [ ] **Step 2: Write this complete storage module.**
+- [x] **Step 2: Write this complete storage module.**
 
 ```python
 """Caller-transactional storage for the unselected fifteen-kind State table."""
@@ -788,7 +788,7 @@ def delete_state(db, kind, source_rowid, *, where_sql="", parameters=()):
     ).rowcount
 ```
 
-- [ ] **Step 3: Run the focused tests and verify native parity, original-field shape and transaction behavior.**
+- [x] **Step 3: Run the focused tests and verify native parity, original-field shape and transaction behavior.**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_state_storage.py tests/test_state_source_contract.py tests/test_native_scalar_codec.py
@@ -797,11 +797,11 @@ git diff --check
 ```
 Expected:135 State foundation cases,172 source oracle cases and17 codec cases pass (324 total); source metadata6 cases are a separate adjacent selection if run. Compile the three new files without leaving bytecode. Put pytest temporary artifacts in an owned /tmp directory and remove only that directory after verification.
 
-- [ ] **Step 4: Document the verified scope in the same commit.**
+- [x] **Step 4: Document the verified scope in the same commit.**
 
 Append to `docs/database-redesign-config-state-source-preparation.md` with actual commands/counts/interpreter/cleanup evidence. Add one scoped paragraph to `docs/architecture.md` and `docs/runtime-mechanism.md` saying this foundation is unselected, fifteen original state kinds share one declaration, writes require caller-owned transactions, and current callers/releases still use their existing selected paths. Do not rewrite unrelated accepted sections or claim sixteen source tables were removed. Update only this task's checkboxes and own claim row.
 
-- [ ] **Step 5: Self-review and commit owned hunks.**
+- [x] **Step 5: Self-review and commit owned hunks.**
 
 ```bash
 git add app/state_definitions.py app/state_storage.py tests/test_state_storage.py

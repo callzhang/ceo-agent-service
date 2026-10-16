@@ -3630,3 +3630,5 @@ Attention list, summary and count readers follow a historical Attempt's original
 ### Exact native-source scalar representation (unpublished)
 
 The unpublished native-source Email/Business/Provider/Configs/Skill/Sync storage encodes finite REAL values as an exact binary significand and exponent and decodes them with SQLite's built-in `pow`, preserving native TEXT/INTEGER affinity results. SQLite JSON, `unhex` and math functions are required. Published Reply keeps its existing declaration and scalar format, and frozen source fingerprints remain unchanged; native-source inverse consumes current decoded facts. This does not select State or publish a deployment.
+
+The unselected State foundation supplies one declaration and point-write primitives for fifteen retained native state kinds. Its writes run inside caller-owned transactions and do not commit or roll back an outer transaction. No current caller, constructor, or schema release selects it yet; existing native state paths remain the runtime contract.
