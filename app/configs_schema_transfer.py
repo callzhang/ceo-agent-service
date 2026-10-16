@@ -83,9 +83,24 @@ def _target_declarations():
         return {kind: _source_declaration(db, kind) for kind in ('configs', 'schedules')}
 
 
+def target_declaration_matches(db: sqlite3.Connection, kind: str, expected: dict) -> bool:
+    """Compare target metadata; PRAGMA index_list.seq is only enumeration order."""
+    actual = _source_declaration(db, kind)
+    if any(actual[key] != expected[key]
+           for key in ('sql', 'columns', 'foreign_keys', 'triggers')):
+        return False
+    actual_indexes = {item['name']: item for item in actual['indexes']}
+    expected_indexes = {item['name']: item for item in expected['indexes']}
+    return (set(actual_indexes) == set(expected_indexes)
+            and all({key: value for key, value in item.items() if key != 'seq'}
+                    == {key: value for key, value in expected_indexes[name].items()
+                        if key != 'seq'}
+                    for name, item in actual_indexes.items()))
+
+
 def _target(db, *, empty=False):
     _no_temp(db, ('configs', 'schedules', 'actions'))
-    if any(_source_declaration(db, kind) != definition
+    if any(not target_declaration_matches(db, kind, definition)
            for kind, definition in _target_declarations().items()):
         raise ValueError('unsupported config target declaration')
     # During an in-place release, old receipt tables still exist until the

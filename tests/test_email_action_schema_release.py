@@ -23,6 +23,10 @@ from tests.test_provider_state_source import declarations as provider_declaratio
 from app.provider_state_schema_release import capture_provider_state_source
 from app.provider_state_storage import insert_observation, insert_folder_generation
 from app.provider_state_schema_release import provider_state_schema_is_current
+from app.run_storage import create_run_schema
+from app.configs_schema_transfer import SOURCE_TABLES as CONFIG_SOURCE_TABLES
+from tests.configs_source_fixtures import capture as config_capture
+from tests.test_configs_schema_release import install_observations
 
 
 # Deliberate test markers, not allocated deployment versions.
@@ -41,8 +45,32 @@ def source(tmp_path, request):
     path = tmp_path / "paired.sqlite3"
     with closing(sqlite3.connect(path)) as db:
         db.execute("create table tasks(id integer primary key,record_type text)")
-        db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
+        create_run_schema(db, include_workbench=True)
         create_current_email_non_action_schema(db)
+        config_variant = "actual" if request.param == "actual" else "fresh"
+        native = {name: definition for name, definition in
+                  config_capture()[config_variant]["tables"].items()
+                  if name in CONFIG_SOURCE_TABLES and name not in (
+                      "managed_skill_export_receipts", "runtime_skill_load_receipts")}
+        for name in (*native, "email_training_snapshot_observations"):
+            db.execute(f'drop table if exists "{name}"')
+        for definition in native.values():
+            db.execute(definition["sql"])
+        for definition in native.values():
+            for index in reversed(definition["indexes"]):
+                if index["sql"] is not None:
+                    db.execute(index["sql"])
+            for trigger in definition["triggers"]:
+                db.execute(trigger["sql"])
+        receipts = json.loads((ROOT / "docs/superpowers/specs/2026-10-15-configs-load-receipt-dedup-probe.json").read_text())
+        for name in ("managed_skill_export_receipts", "runtime_skill_load_receipts"):
+            for obj in receipts["actual_frozen_receipt_metadata"][name]["objects"]:
+                if obj["type"] == "table":
+                    db.execute(obj["sql"])
+            for obj in receipts["actual_frozen_receipt_metadata"][name]["objects"]:
+                if obj["type"] != "table" and obj["sql"]:
+                    db.execute(obj["sql"])
+        install_observations(db, config_variant)
         # This fixture models the published Email51 source. The fresh current
         # factory owns the target, so replace only its synthetic provider unit
         # with the frozen actual/fresh source declarations.
@@ -74,7 +102,10 @@ def source(tmp_path, request):
                     if item["type"] == "trigger"]
         external += CHILDREN["actual"]["external_schema_references"]
         for trigger in external:
-            db.execute(trigger["sql"])
+            if trigger["name"] not in {
+                item["name"] for item in native["email_accounts"]["triggers"]
+            }:
+                db.execute(trigger["sql"])
         db.execute("""insert into email_classifications(
             id,account_id,folder,uidvalidity,uid,stable_message_identity,
             confidence,margin,probabilities_json,model_id,config_version,status,
@@ -428,11 +459,34 @@ def test_prepare_is_readonly_and_captures_exact_pair_schema_aliases_and_ledger(s
     assert release.original_version == ORIGINAL_STORE
     assert release.versions == ORIGINAL_LEDGER
     with closing(sqlite3.connect(source)) as db:
+        db.execute("begin")
         expected = email_storage.capture_email_action_source(db)
         expected["business"] = capture_business_source(db)
         expected["provider"] = capture_provider_state_source(db)
+        expected["configs"] = release_module._project_config_source(db, expected["action_variant"])
         assert release.source_schema == expected
     assert release.source_fk == (("unrelated_child", 1, "unrelated_parent", 0),)
+    assert _fingerprint(source) == before
+
+
+def test_readonly_config_projection_accepts_independent_source_variants(source):
+    with closing(sqlite3.connect(source)) as db:
+        db.execute("begin")
+        config_variant = release_module.capture_config_declarations(db)['variant']
+        action_variant = ("fresh_memory_fk" if config_variant == "actual"
+                          else "actual_no_memory_fk")
+        projected = release_module._project_config_source(db, action_variant)
+        assert projected["configs"]["variant"] == config_variant + "_email52"
+        assert projected["action_variant"] == action_variant
+
+
+def test_prepare_refuses_external_native_config_view_without_mutation(source):
+    with closing(sqlite3.connect(source)) as db:
+        db.execute("create view unrelated_config_reader as select id from managed_skills")
+        db.commit()
+    before = _fingerprint(source)
+    with pytest.raises(ValueError, match="dependency"):
+        _prepare(source)
     assert _fingerprint(source) == before
 
 
@@ -450,7 +504,8 @@ def test_publish_commits_both_markers_with_complete_target_then_inverse_is_repea
         assert ledger[:-1] == ORIGINAL_LEDGER
         assert ledger[-1] == (TARGET_EMAIL, store[1])
         assert storage.action_schema_is_current(db, include_reply=True,
-            reply_variant=release.source_schema["action_variant"], include_email=True)
+            reply_variant=release.source_schema["action_variant"], include_email=True,
+            include_skill_config_receipts=True)
         assert not set(email_storage.SOURCE_TABLES).intersection(
             row[0] for row in db.execute("select name from sqlite_schema where type='table'"))
     release.rollback()
@@ -496,6 +551,51 @@ def test_inverse_uses_current_facts_receipt_backfill_native_ids_and_allocator_wa
     release.rollback()
     with closing(sqlite3.connect(source)) as db:
         assert db.execute("select seq from sqlite_sequence where name='email_action_attempts'").fetchone() == (81,)
+
+
+def test_repaired_target_indexes_preserve_current_config_writes_and_inverse(source):
+    from app.configs_storage import insert_config
+    from app.schedules_storage import insert_schedule
+    from app.configs_definitions import config_projection
+    from app.schedules_definitions import schedule_projection
+    from app.configs_schema_transfer import _target_declarations
+
+    release = _prepare(source)
+    release.apply()
+    target = _target_declarations()
+    with closing(sqlite3.connect(source)) as db:
+        for owner, name in (
+            ("configs", "idx_configs_revision_number"),
+            ("schedules", "idx_schedules_enabled"),
+        ):
+            canonical = next(item["sql"] for item in target[owner]["indexes"]
+                             if item["name"] == name)
+            db.execute(f"drop index {name}")
+            db.execute(canonical)
+        db.execute("begin immediate")
+        insert_config(db, "managed_skills", {
+            "id": 43, "name": "current-skill", "display_name": "Current Skill",
+            "created_at": "current-time",
+        })
+        insert_schedule(db, {
+            "id": 42, "name": "Current schedule", "prompt": "current",
+            "cron_expression": "0 * * * *", "timezone": "UTC",
+            "runtime_id": "codex_oauth", "enabled": 1,
+        })
+        db.commit()
+    release.verify_loaded()
+    release.rollback()
+    with closing(sqlite3.connect(source)) as db:
+        assert db.execute("select name from managed_skills where id=43").fetchone() == ("current-skill",)
+        assert db.execute("select name from scheduled_tasks where id=42").fetchone() == ("Current schedule",)
+    release.apply()
+    with closing(sqlite3.connect(source)) as db:
+        assert db.execute(
+            f"select name from ({config_projection('managed_skills')}) where id=43"
+        ).fetchone() == ("current-skill",)
+        assert db.execute(
+            f"select name from ({schedule_projection()}) where id=42"
+        ).fetchone() == ("Current schedule",)
 
 
 @pytest.mark.parametrize("damage", ("store", "email", "timestamp", "ledger", "declaration", "provider_declaration"))
@@ -574,7 +674,7 @@ def test_publication_failure_rolls_back_ddl_markers_and_all_source_facts(source,
     assert _fingerprint(source) == before
 
 
-@pytest.mark.parametrize("damage", ("store", "ledger", "action_declaration", "provider_index", "external_trigger", "alias"))
+@pytest.mark.parametrize("damage", ("store", "ledger", "action_declaration", "provider_index", "external_trigger", "account_guard", "alias"))
 def test_unsupported_current_inverse_preserves_entire_database(source, damage):
     release = _prepare(source)
     release.apply()
@@ -588,7 +688,9 @@ def test_unsupported_current_inverse_preserves_entire_database(source, damage):
         elif damage == "provider_index":
             db.execute("drop index idx_provider_state_observation_folder")
         elif damage == "external_trigger":
-            db.execute("drop trigger trg_email_direct_action_blocks_account_delete")
+            db.execute("drop trigger trg_email_reply_dispatch_blocks_plan_switch")
+        elif damage == "account_guard":
+            db.execute("drop trigger trg_configs_direct_account_delete")
         else:
             db.execute("insert into sqlite_sequence(name,seq) values('actions:unknown',100)")
         db.commit()
@@ -626,7 +728,94 @@ def test_active_versions_constructors_select_coupled_target_and_noop_reprepare(t
     assert prepare_database_schema_release(ROOT, path) is None
     with closing(sqlite3.connect(path)) as db:
         assert db.execute("select 1 from sqlite_schema where name='email_action_plans'").fetchone() is None
-        assert storage.action_schema_is_current(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
+        assert storage.action_schema_is_current(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True, include_skill_config_receipts=True)
+
+
+def test_fresh_email_seeds_disabled_categories_for_preexisting_enabled_typed_account(tmp_path):
+    from app.store import AutoReplyStore
+    from app.email_store import EmailStore
+    from app.configs_storage import insert_config
+    from app.configs_definitions import config_projection
+
+    path = tmp_path / "preseeded-account.sqlite3"
+    store = AutoReplyStore(path)
+    with store._immediate_write_transaction() as db:
+        insert_config(db, "email_accounts", {
+            "account_id": "preseeded", "display_name": "Preseeded",
+            "email_address": "preseeded@example.test", "imap_host": "imap.example.test",
+            "imap_port": 993, "imap_tls": 1, "imap_username": "preseeded",
+            "imap_secret_reference": "env:TEST_IMAP", "imap_move_mode": "move",
+            "smtp_host": "smtp.example.test", "smtp_port": 465, "smtp_tls": 1,
+            "smtp_username": "preseeded", "smtp_secret_reference": "env:TEST_SMTP",
+            "enabled": 1, "scan_folders_json": '["INBOX"]',
+            "scan_interval_seconds": 60, "created_at": "2026-10-15 00:00:00",
+            "updated_at": "2026-10-15 00:00:00",
+        })
+    EmailStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        rows = db.execute(
+            f"select enabled from ({config_projection('email_category_configs')})"
+        ).fetchall()
+        assert rows and all(row[0] == 0 for row in rows)
+
+
+@pytest.mark.parametrize("object_type,name", [
+    ("index", "idx_schedules_enabled"),
+    ("index", "idx_configs_revision_number"),
+    ("index", "idx_scheduled_task_runs_latest"),
+    ("trigger", "trg_configs_runtime_config_update"),
+    ("trigger", "trg_actions_runtime_skill_load_receipts_update"),
+])
+def test_current_constructor_repairs_only_known_missing_store_objects(
+    tmp_path, object_type, name
+):
+    from app.store import AutoReplyStore
+    import app.store as store_module
+    from app.email_store import EmailStore
+
+    path = tmp_path / "known-repair.sqlite3"
+    EmailStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        expected = db.execute(
+            "select sql from sqlite_schema where type=? and name=?", (object_type, name)
+        ).fetchone()[0]
+        db.execute(f"drop {object_type} {name}")
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    AutoReplyStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute(
+            "select sql from sqlite_schema where type=? and name=?", (object_type, name)
+        ).fetchone() == (expected,)
+
+
+@pytest.mark.parametrize("damage", [
+    "altered_store_index", "unique_store_index", "partial_store_index",
+    "missing_email_index",
+])
+def test_current_constructor_refuses_nonrepairable_metadata_without_mutation(tmp_path, damage):
+    from app.store import AutoReplyStore
+    import app.store as store_module
+    from app.email_store import EmailStore
+
+    path = tmp_path / "malformed-current.sqlite3"
+    EmailStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        if damage == "altered_store_index":
+            db.execute("drop index idx_schedules_enabled")
+            db.execute("create index idx_schedules_enabled on schedules(name)")
+        elif damage == "unique_store_index":
+            db.execute("drop index idx_schedules_enabled")
+            db.execute("create unique index idx_schedules_enabled on schedules(enabled,deleted_at,id)")
+        elif damage == "partial_store_index":
+            db.execute("drop index idx_schedules_enabled")
+            db.execute("create index idx_schedules_enabled on schedules(enabled,deleted_at,id) where enabled=1")
+        else:
+            db.execute("drop index idx_actions_email_email_action_plans_0")
+    before = _database_image(path)
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    with pytest.raises(sqlite3.IntegrityError):
+        AutoReplyStore(path)
+    assert _database_image(path) == before
 
 
 def test_business_facts_after_prepare_are_converted_instead_of_restoring_capture(source):

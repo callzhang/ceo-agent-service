@@ -216,12 +216,13 @@ def test_a_retired_or_unknown_type_filters_nothing_instead_of_failing(tmp_path: 
 
 
 def _scheduled_task(db, *, task_id: int, name: str, command: str) -> None:
-    db.execute(
-        "insert into scheduled_tasks (id, name, prompt, command, cron_expression, "
-        "timezone, runtime_id, enabled) values (?, ?, 'p', ?, '0 * * * *', "
-        "'Asia/Shanghai', '', 1)",
-        (task_id, name, command),
-    )
+    from app.schedules_storage import insert_schedule
+
+    assert insert_schedule(db, {
+        "id": task_id, "name": name, "prompt": "p", "command": command,
+        "cron_expression": "0 * * * *", "timezone": "Asia/Shanghai",
+        "runtime_id": "", "enabled": 1,
+    }) == task_id
 
 
 def _scheduled_run(
@@ -259,6 +260,7 @@ def _scheduled_run(
 def test_service_command_runs_appear_with_their_result_and_recovery(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     with store._connect() as db:
+        db.execute("begin immediate")
         _scheduled_task(db, task_id=7, name="下载新增的钉钉 AI 听记", command="sync-minutes-once")
         _scheduled_task(db, task_id=10, name="分类新邮件", command="email-message-check-once")
         _scheduled_task(db, task_id=1, name="处理新的钉钉消息", command="produce-once")

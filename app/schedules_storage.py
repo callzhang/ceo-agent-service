@@ -36,3 +36,16 @@ def delete_schedule(db: sqlite3.Connection, identity: int, expected_version: int
     return db.execute("update schedules set updated_at=?,deleted_at=?,enabled=0,version=version+1 "
                       "where id=? and version=? and deleted_at is null",
                       (deleted_at, deleted_at, identity, expected_version)).rowcount
+
+
+def rename_schedule_runtime(
+    db: sqlite3.Connection, old_runtime_id: str, new_runtime_id: str,
+    updated_at: str,
+) -> int:
+    """Move current schedules as one caller-owned route rename transaction."""
+    _write_ready(db, {"runtime_id": new_runtime_id, "updated_at": updated_at})
+    return db.execute(
+        "update schedules set runtime_id=?,version=version+1,updated_at=? "
+        "where runtime_id=?",
+        (new_runtime_id, updated_at, old_runtime_id),
+    ).rowcount

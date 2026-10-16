@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 from app.store import AutoReplyStore
 from app.run_storage import AGENT_RUN_SQL
+from app.configs_definitions import config_projection
+from app.schedules_definitions import schedule_projection
 
 
 _LEGACY_AGENT_FAILURES = (
@@ -55,8 +57,8 @@ def close_superseded_scheduled_reply_tasks(
              and run.execution_kind='reply_task'
              and run.execution_id=cast(task.id as text)
              and run.dispatch_status='dispatched'
-            join scheduled_task_config_versions as config on config.id=run.snapshot_id
-            join scheduled_tasks as current_task
+            join ({config_projection('scheduled_task_config_versions')}) as config on config.id=run.snapshot_id
+            join ({schedule_projection()}) as current_task
               on current_task.id=run.scheduled_task_id
             join ({REPLY_ATTEMPT_COMMON_SQL}) as latest_attempt
               on latest_attempt.channel=task.channel

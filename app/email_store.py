@@ -68,7 +68,7 @@ from app.email_category_config import (
     legacy_config_row,
     validate_category_descriptions,
 )
-from app.action_email_storage import finite_target_external_sql, create_email_action_external_triggers
+from app.action_email_storage import finite_target_external_sql
 from app.action_email_schema_release import require_current_email_pair
 from app.provider_state_schema_release import provider_state_schema_is_current
 from app.provider_state_definitions import FRESH_OBSERVATION_FIELDS
@@ -76,7 +76,13 @@ from app.provider_state_storage import (
     mark_authoritative_missing, mark_inactive_accounts, mark_unavailable_folder,
     update_important_signals, upsert_folder_generations, upsert_observations,
 )
-from app.email_current_schema import create_current_email_non_action_schema, create_current_email_migration_ledger
+from app.email_current_schema import (
+    create_current_email_runtime_schema,
+    create_current_email_migration_ledger,
+)
+from app.configs_definitions import CONFIG_FIELDS, config_projection
+from app.configs_storage import insert_config, update_config, delete_config
+from app.configs_schema_release import configs_schema_is_current
 from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
@@ -84,7 +90,7 @@ from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import AGENT_RUN_SQL
 from app.action_storage import (
     ActionWriteResult, EMAIL_ACTION_PROJECTIONS, REPLY_VARIANTS,
-    action_schema_is_current, email_action_projection, email_action_auxiliary_objects_are_current,
+    email_action_projection, email_action_auxiliary_objects_are_current,
     insert_action, insert_email_action, update_email_action, update_action,
     delete_action, delete_email_action,
 )
@@ -1669,6 +1675,40 @@ def _json_dump(value: object) -> str:
     )
 
 
+def _config_source_rowid(db: sqlite3.Connection, kind: str, field: str, value: object) -> int | None:
+    """Resolve a public Email key to the exact source rowid in a current config projection."""
+    row = db.execute(
+        f"select rowid from ({config_projection(kind, include_rowid=True)}) where {field}=?",
+        (value,),
+    ).fetchone()
+    return int(row["rowid"]) if row is not None else None
+
+
+def _folder_binding_rowid(db: sqlite3.Connection, account_id: str, category_key: str) -> int | None:
+    row = db.execute(
+        f"select rowid from ({config_projection('email_category_folder_bindings', include_rowid=True)}) "
+        "where account_id=? and category_key=?",
+        (account_id, category_key),
+    ).fetchone()
+    return int(row["rowid"]) if row is not None else None
+
+
+def _upsert_current_folder_binding(db: sqlite3.Connection, category_key: str,
+                                   binding: VerifiedEmailFolderBinding) -> None:
+    values = {
+        "account_id": binding.account_id, "category_key": category_key,
+        "provider_folder_id": binding.provider_folder_id,
+        "provider_folder_name": binding.provider_folder_name,
+        "binding_status": binding.binding_status,
+        "last_verified_at": binding.last_verified_at,
+    }
+    identity = _folder_binding_rowid(db, binding.account_id, category_key)
+    if identity is None:
+        insert_config(db, "email_category_folder_bindings", values)
+    else:
+        update_config(db, "email_category_folder_bindings", identity, values)
+
+
 def _historical_candidate_projection(
     message: Mapping[str, object],
     *,
@@ -1814,7 +1854,8 @@ def _explicit_direct_retry_sql(alias: str, attempt_offset: int = 0) -> str:
 def _direct_retry_configuration_sql(alias: str) -> str:
     return (
         f"(NOT {_explicit_direct_retry_sql(alias, 1)} OR EXISTS("
-        f"select 1 from ({EMAIL_RETRY_SQL}) r join email_accounts cfg "
+        f"select 1 from ({EMAIL_RETRY_SQL}) r "
+        f"join ({config_projection('email_accounts')}) cfg "
         f"on cfg.account_id={alias}.account_id where r.action_id={alias}.action_id "
         f"and r.attempt_number={alias}.attempt_count+1 "
         "and r.account_configuration_snapshot=json_array(cfg.account_id,cfg.email_address,"
@@ -3163,10 +3204,16 @@ class EmailStore:
                 raise EmailPersistenceCorruption("unsupported Email source; paired schema release required")
             db.rollback()
             db.execute("begin immediate")
-            create_current_email_non_action_schema(db)
+            create_current_email_runtime_schema(db)
             create_current_email_migration_ledger(db)
             self._seed_current_fresh_state(db)
-            create_email_action_external_triggers(db)
+            for name, sql in finite_target_external_sql().items():
+                if _REQUIRED_TRIGGER_TABLES.get(name) == "email_accounts":
+                    continue
+                if db.execute(
+                    "select 1 from sqlite_schema where type='trigger' and name=?", (name,)
+                ).fetchone() is None:
+                    db.execute(sql)
             db.execute("insert into email_schema_migrations(version,applied_at) values(?,?)", (EMAIL_SCHEMA_VERSION, self._now()))
             self._validate_durable_state(db)
             return True
@@ -4814,10 +4861,53 @@ class EmailStore:
         Only the fresh Email constructor invokes this inside its schema transaction.
         Current reopen and verified-source migration must not invoke it.
         """
-        if db.execute("select 1 from email_category_configs limit 1").fetchone() is None:
-            self._insert_initial_category_configs(db, {}, now=self._now())
-        self._seed_model_promotion_config(db)
-        self._seed_initial_category_description_revisions(db)
+        if db.execute("select 1 from configs where record_type='email_category_configs'").fetchone() is None:
+            now = self._now()
+            has_enabled_account = db.execute(
+                f"select 1 from ({config_projection('email_accounts')}) where enabled=1 limit 1"
+            ).fetchone() is not None
+            for category_key, definition in sorted(INITIAL_CATEGORY_CONFIGS.items()):
+                insert_config(db, "email_category_configs", {
+                    "category_key": category_key,
+                    "display_name": str(definition["display_name"]),
+                    "core_description": str(definition["core"]),
+                    "include_json": _json_dump(list(definition["include"])),
+                    "exclude_json": _json_dump(list(definition["exclude"])),
+                    "threshold": SEEDED_THRESHOLD,
+                    "actions_json": "[]",
+                    "action_parameters_json": "{}",
+                    "enabled": int(not has_enabled_account),
+                    "description_version": DESCRIPTION_VERSION,
+                    "config_version": SEEDED_CONFIG_VERSION,
+                    "updated_at": now,
+                })
+        if db.execute("select 1 from configs where record_type='email_model_promotion_configs'").fetchone() is None:
+            insert_config(db, "email_model_promotion_configs", {
+                "config_version": str(uuid4()),
+                "micro_f1_min": 0.95,
+                "category_precision_min": 0.95,
+                "category_validation_samples_min": 20,
+                "p95_latency_max_ms": 500.0,
+                "created_at": self._now(),
+            })
+        for row in db.execute(
+            f"select * from ({config_projection('email_category_configs')}) order by category_key"
+        ).fetchall():
+            category_key = row["category_key"]
+            if db.execute(
+                f"select 1 from ({config_projection('email_category_description_revisions')}) "
+                "where category_key=?", (category_key,)
+            ).fetchone() is None:
+                previous = db.execute(
+                    f"select max(created_at) from ({config_projection('email_category_description_revisions')})"
+                ).fetchone()[0]
+                insert_config(db, "email_category_description_revisions", {
+                    "revision_id": str(uuid4()),
+                    "category_key": category_key,
+                    "config_version": row["config_version"],
+                    "config_json": _json_dump(self._category_config_row(row)),
+                    "created_at": self._next_account_timestamp(previous),
+                })
 
     def _migrate_v34_to_v35(
         self, db: sqlite3.Connection, *, replace_version: bool = False
@@ -5145,7 +5235,7 @@ class EmailStore:
     def current_model_promotion_config(self) -> dict[str, Any]:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_model_promotion_configs order by created_at desc limit 1"
+                f"select * from ({config_projection('email_model_promotion_configs')}) order by created_at desc limit 1"
             ).fetchone()
         if row is None:
             raise EmailPersistenceCorruption("missing model promotion config")
@@ -5156,7 +5246,7 @@ class EmailStore:
             return [
                 dict(row)
                 for row in db.execute(
-                    "select * from email_model_promotion_configs order by created_at desc"
+                    f"select * from ({config_projection('email_model_promotion_configs')}) order by created_at desc"
                 )
             ]
 
@@ -5677,22 +5767,20 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             current = db.execute(
-                "select config_version from email_model_promotion_configs order by created_at desc limit 1"
+                f"select config_version from ({config_projection('email_model_promotion_configs')}) order by created_at desc limit 1"
             ).fetchone()
             if current is None or current["config_version"] != expected_current_version:
                 raise ValueError("model promotion config changed")
             version = str(uuid4())
-            db.execute(
-                "insert into email_model_promotion_configs values (?, ?, ?, ?, ?, ?)",
-                (
-                    version,
-                    *values.values(),
-                    self._next_model_control_timestamp(db, "email_model_promotion_configs"),
+            insert_config(db, "email_model_promotion_configs", {
+                "config_version": version, **values,
+                "created_at": self._next_model_control_timestamp(
+                    db, f"({config_projection('email_model_promotion_configs')})"
                 ),
-            )
+            })
             return dict(
                 db.execute(
-                    "select * from email_model_promotion_configs where config_version=?",
+                    f"select * from ({config_projection('email_model_promotion_configs')}) where config_version=?",
                     (version,),
                 ).fetchone()
             )
@@ -5765,7 +5853,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_model_mode_transitions where request_id=?",
+                f"select * from ({config_projection('email_model_mode_transitions')}) where request_id=?",
                 (request_id,),
             ).fetchone()
             if existing is not None:
@@ -5774,7 +5862,7 @@ class EmailStore:
                 return dict(existing)
             if (
                 db.execute(
-                    "select 1 from email_model_promotion_configs where config_version=?",
+                    f"select 1 from ({config_projection('email_model_promotion_configs')}) where config_version=?",
                     (promotion_config_version,),
                 ).fetchone()
                 is None
@@ -5782,19 +5870,16 @@ class EmailStore:
                 raise ValueError("unknown promotion_config_version")
             result = payload | {
                 "created_at": self._next_model_control_timestamp(
-                    db, "email_model_mode_transitions"
+                    db, f"({config_projection('email_model_mode_transitions')})"
                 )
             }
-            db.execute(
-                "insert into email_model_mode_transitions values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                tuple(result.values()),
-            )
+            insert_config(db, "email_model_mode_transitions", result)
             return result
 
     def get_model_mode_transition(self, request_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_model_mode_transitions where request_id=?",
+                f"select * from ({config_projection('email_model_mode_transitions')}) where request_id=?",
                 (request_id,),
             ).fetchone()
             return dict(row) if row is not None else None
@@ -5804,7 +5889,7 @@ class EmailStore:
             return [
                 dict(row)
                 for row in db.execute(
-                    "select * from email_model_mode_transitions order by created_at desc"
+                    f"select * from ({config_projection('email_model_mode_transitions')}) order by created_at desc"
                 )
             ]
 
@@ -6890,10 +6975,11 @@ class EmailStore:
             # Historical maps remain the source contract. Current validation
             # retains the original nonaction coverage and validates actions
             # against the exact accepted finite manifest separately.
+            retired_config_tables = {*CONFIG_FIELDS, "email_training_snapshot_observations"}
             required_tables = {
                 table: columns
                 for table, columns in _REQUIRED_TABLE_COLUMNS.items()
-                if table not in EMAIL_ACTION_PROJECTIONS
+                if table not in EMAIL_ACTION_PROJECTIONS and table not in retired_config_tables
             }
             missing_tables = set(required_tables) - table_names
             if missing_tables:
@@ -6916,13 +7002,11 @@ class EmailStore:
                 )
 
             if not any(
-                action_schema_is_current(
-                    db, include_reply=True, reply_variant=variant, include_email=True
-                )
+                configs_schema_is_current(db, action_variant=variant)
                 for variant in REPLY_VARIANTS
             ):
                 raise EmailPersistenceCorruption(
-                    "required Email29 action schema is missing or malformed"
+                    "required Email31/config schema is missing or malformed"
                 )
 
             indexes_by_table: dict[str, dict[str, sqlite3.Row]] = {}
@@ -6931,7 +7015,6 @@ class EmailStore:
                 for table in required_tables
                 if table != "email_category_folder_bindings"
             ]
-            table_order.append("email_category_folder_bindings")
             for table in table_order:
                 required_columns = required_tables[table]
                 column_rows = list(
@@ -7125,7 +7208,10 @@ class EmailStore:
                 if _REQUIRED_TRIGGER_TABLES.get(name, "email_classifications")
                 in required_tables
             }
-            required_triggers.update(translated_triggers)
+            required_triggers.update(
+                (name, sql) for name, sql in translated_triggers.items()
+                if _REQUIRED_TRIGGER_TABLES.get(name, "email_classifications") not in retired_config_tables
+            )
             for trigger_name, expected_sql in required_triggers.items():
                 trigger = trigger_rows.get(trigger_name)
                 if (
@@ -7169,7 +7255,7 @@ class EmailStore:
             ) from exc
 
     def _validate_account_configuration(self, db: sqlite3.Connection) -> None:
-        for row in db.execute("select * from email_accounts"):
+        for row in db.execute(config_projection("email_accounts")):
             self._account_row(row)
             folders = _json_load(
                 row["scan_folders_json"],
@@ -7185,7 +7271,7 @@ class EmailStore:
                 )
 
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
-        configs = db.execute("select * from email_model_promotion_configs").fetchall()
+        configs = db.execute(config_projection("email_model_promotion_configs")).fetchall()
         if not configs:
             raise EmailPersistenceCorruption("missing model promotion config")
         versions = {row["config_version"] for row in configs}
@@ -7202,11 +7288,11 @@ class EmailStore:
                         )
                     }
                 )
-            for row in db.execute("select * from email_model_mode_transitions"):
+            for row in db.execute(config_projection("email_model_mode_transitions")):
                 self._validate_model_mode_transition(row)
                 if row["promotion_config_version"] not in versions:
                     raise ValueError("unknown promotion_config_version")
-            for row in db.execute("select * from email_category_description_revisions"):
+            for row in db.execute(config_projection("email_category_description_revisions")):
                 config = _json_load(
                     row["config_json"], field="config_json", expected_type=dict
                 )
@@ -7753,7 +7839,7 @@ class EmailStore:
                 )
             if claim["status"] == "dispatching":
                 live_account = db.execute(
-                    "select * from email_accounts where account_id=?",
+                    f"select * from ({config_projection('email_accounts')}) where account_id=?",
                     (claim["account_id"],),
                 ).fetchone()
                 live_message = messages.get(claim["stable_message_identity"])
@@ -7889,7 +7975,7 @@ class EmailStore:
                 )
             if claim["status"] == "dispatching":
                 live_account = db.execute(
-                    "select * from email_accounts where account_id=?",
+                    f"select * from ({config_projection('email_accounts')}) where account_id=?",
                     (claim["account_id"],),
                 ).fetchone()
                 if (
@@ -8009,7 +8095,7 @@ class EmailStore:
                     "unsubscribe receipt does not match its exact accepted effect"
                 )
 
-        for row in db.execute("select * from email_category_configs"):
+        for row in db.execute(config_projection("email_category_configs")):
             try:
                 validate_email_category_key(row["category_key"])
                 validate_category_descriptions(
@@ -8047,7 +8133,7 @@ class EmailStore:
                     "invalid configured email action"
                 ) from exc
 
-        for row in db.execute("select * from email_category_folder_bindings"):
+        for row in db.execute(config_projection("email_category_folder_bindings")):
             try:
                 VerifiedEmailFolderBinding(
                     account_id=row["account_id"],
@@ -9324,14 +9410,14 @@ class EmailStore:
     def list_accounts(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from email_accounts order by account_id"
+                f"select * from ({config_projection('email_accounts')}) order by account_id"
             ).fetchall()
         return [self._account_row(row) for row in rows]
 
     def get_account(self, account_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (account_id,),
             ).fetchone()
         return None if row is None else self._account_row(row)
@@ -9470,7 +9556,7 @@ class EmailStore:
                 ),
             ).fetchone()
             account = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (account_id,),
             ).fetchone()
             if (
@@ -9652,7 +9738,7 @@ class EmailStore:
                   on classifications.id=claims.classification_id
                 join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=claims.action_plan_id
-                join email_accounts as accounts
+                join ({config_projection('email_accounts')}) as accounts
                   on accounts.account_id=claims.account_id
                 join email_messages as messages
                   on messages.account_id=claims.account_id
@@ -10185,7 +10271,7 @@ class EmailStore:
                  and plans.classification_id=classifications.id
                 join email_messages as messages
                   on messages.stable_message_identity=?
-                join email_accounts as accounts on accounts.account_id=?
+                join ({config_projection('email_accounts')}) as accounts on accounts.account_id=?
                 {task_join}
                 where classifications.id=?
                 {task_predicates}
@@ -12410,7 +12496,7 @@ class EmailStore:
                         "unsubscribe continuation terminal is missing its prefix claim"
                     )
                 account = db.execute(
-                    "select updated_at from email_accounts where account_id=?",
+                    f"select updated_at from ({config_projection('email_accounts')}) where account_id=?",
                     (account_id,),
                 ).fetchone()
                 insert_email_action(
@@ -12702,7 +12788,7 @@ class EmailStore:
             db.execute("begin immediate")
             if (
                 db.execute(
-                    "select 1 from email_accounts where account_id=?",
+                    f"select 1 from ({config_projection('email_accounts')}) where account_id=?",
                     (values["account_id"],),
                 ).fetchone()
                 is not None
@@ -12721,7 +12807,7 @@ class EmailStore:
             )
             self._validate_category_binding_completeness(db)
             row = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (values["account_id"],),
             ).fetchone()
         assert row is not None
@@ -12761,7 +12847,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (account_id,),
             ).fetchone()
             if existing is None:
@@ -12774,53 +12860,36 @@ class EmailStore:
                 allow_shared_email=allow_shared_email,
                 excluding_account_id=account_id,
             )
-            db.execute(
-                """
-                update email_accounts set
-                    display_name=?, email_address=?, imap_host=?, imap_port=?,
-                    imap_tls=?, imap_username=?, imap_secret_reference=?,
-                    imap_move_mode=?,
-                    smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
-                    smtp_secret_reference=?, enabled=?, scan_folders_json=?,
-                    scan_interval_seconds=?, agent_lookback_days=?,
-                    model_lookback_days=?, scan_read_state=?, updated_at=?
-                where account_id=?
-                """,
-                (
-                    values["display_name"],
-                    values["email_address"],
-                    values["imap_host"],
-                    values["imap_port"],
-                    int(bool(values["imap_tls"])),
-                    values["imap_username"],
-                    values["imap_secret_reference"],
-                    # A save that does not mention the move mode keeps it. The
-                    # console never sends it, and falling back to "move" turned
-                    # a server with no MOVE command into one whose every move
-                    # failed, the moment its owner flipped an unrelated switch.
-                    values.get("imap_move_mode", existing["imap_move_mode"]),
-                    values["smtp_host"],
-                    values["smtp_port"],
-                    int(bool(values["smtp_tls"])),
-                    values["smtp_username"],
-                    values["smtp_secret_reference"],
-                    int(bool(values["enabled"])),
-                    _json_dump(list(values["scan_folders"])),
-                    values["scan_interval_seconds"],
-                    int(values.get("agent_lookback_days", existing["agent_lookback_days"])),
-                    int(values.get("model_lookback_days", existing["model_lookback_days"])),
-                    str(values.get("scan_read_state", existing["scan_read_state"])),
-                    updated_at,
-                    account_id,
-                ),
-            )
+            update_config(db, "email_accounts", _config_source_rowid(db, "email_accounts", "account_id", account_id), {
+                "display_name": values["display_name"],
+                "email_address": values["email_address"],
+                "imap_host": values["imap_host"],
+                "imap_port": values["imap_port"],
+                "imap_tls": int(bool(values["imap_tls"])),
+                "imap_username": values["imap_username"],
+                "imap_secret_reference": values["imap_secret_reference"],
+                # A save that does not mention the move mode keeps it.
+                "imap_move_mode": values.get("imap_move_mode", existing["imap_move_mode"]),
+                "smtp_host": values["smtp_host"],
+                "smtp_port": values["smtp_port"],
+                "smtp_tls": int(bool(values["smtp_tls"])),
+                "smtp_username": values["smtp_username"],
+                "smtp_secret_reference": values["smtp_secret_reference"],
+                "enabled": int(bool(values["enabled"])),
+                "scan_folders_json": _json_dump(list(values["scan_folders"])),
+                "scan_interval_seconds": values["scan_interval_seconds"],
+                "agent_lookback_days": int(values.get("agent_lookback_days", existing["agent_lookback_days"])),
+                "model_lookback_days": int(values.get("model_lookback_days", existing["model_lookback_days"])),
+                "scan_read_state": str(values.get("scan_read_state", existing["scan_read_state"])),
+                "updated_at": updated_at,
+            })
             category_snapshot = self._disable_categories_missing_active_bindings(
                 db,
                 updated_at=updated_at,
             )
             self._validate_category_binding_completeness(db)
             row = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (account_id,),
             ).fetchone()
         assert row is not None
@@ -12842,17 +12911,22 @@ class EmailStore:
                 )
             ):
                 return False
-            cursor = db.execute(
-                "delete from email_accounts where account_id=? and updated_at=?",
-                (account_id, expected_updated_at),
+            current = db.execute(
+                f"select updated_at from ({config_projection('email_accounts')}) where account_id=?",
+                (account_id,),
+            ).fetchone()
+            deleted = (
+                delete_config(db, "email_accounts", _config_source_rowid(db, "email_accounts", "account_id", account_id))
+                if current is not None and current["updated_at"] == expected_updated_at
+                else 0
             )
-            if cursor.rowcount == 1 and category_enablement_snapshot is not None:
+            if deleted == 1 and category_enablement_snapshot is not None:
                 self._restore_category_enablement_snapshot(
                     db,
                     category_enablement_snapshot,
                 )
                 self._validate_category_binding_completeness(db)
-        return cursor.rowcount == 1
+        return deleted == 1
 
     def restore_account_if_unchanged(
         self,
@@ -12870,45 +12944,36 @@ class EmailStore:
                 )
             ):
                 return False
-            cursor = db.execute(
-                """
-                update email_accounts set
-                    display_name=?, email_address=?, imap_host=?, imap_port=?,
-                    imap_tls=?, imap_username=?, imap_secret_reference=?,
-                    imap_move_mode=?,
-                    smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
-                    smtp_secret_reference=?, enabled=?, scan_folders_json=?,
-                    scan_interval_seconds=?, agent_lookback_days=?,
-                    model_lookback_days=?, scan_read_state=?, created_at=?, updated_at=?
-                where account_id=? and updated_at=?
-                """,
-                (
-                    snapshot["display_name"],
-                    snapshot["email_address"],
-                    snapshot["imap_host"],
-                    snapshot["imap_port"],
-                    int(bool(snapshot["imap_tls"])),
-                    snapshot["imap_username"],
-                    snapshot["imap_secret_reference"],
-                    snapshot.get("imap_move_mode", "move"),
-                    snapshot["smtp_host"],
-                    snapshot["smtp_port"],
-                    int(bool(snapshot["smtp_tls"])),
-                    snapshot["smtp_username"],
-                    snapshot["smtp_secret_reference"],
-                    int(bool(snapshot["enabled"])),
-                    _json_dump(list(snapshot["scan_folders"])),
-                    snapshot["scan_interval_seconds"],
-                    int(snapshot.get("agent_lookback_days", 30)),
-                    int(snapshot.get("model_lookback_days", 365)),
-                    str(snapshot.get("scan_read_state", "unread")),
-                    snapshot["created_at"],
-                    snapshot["updated_at"],
-                    snapshot["account_id"],
-                    expected_updated_at,
-                ),
-            )
-            if cursor.rowcount == 1:
+            current = db.execute(
+                f"select updated_at from ({config_projection('email_accounts')}) where account_id=?",
+                (snapshot["account_id"],),
+            ).fetchone()
+            restored = 0
+            if current is not None and current["updated_at"] == expected_updated_at:
+                restored = update_config(db, "email_accounts", _config_source_rowid(db, "email_accounts", "account_id", snapshot["account_id"]), {
+                    "display_name": snapshot["display_name"],
+                    "email_address": snapshot["email_address"],
+                    "imap_host": snapshot["imap_host"],
+                    "imap_port": snapshot["imap_port"],
+                    "imap_tls": int(bool(snapshot["imap_tls"])),
+                    "imap_username": snapshot["imap_username"],
+                    "imap_secret_reference": snapshot["imap_secret_reference"],
+                    "imap_move_mode": snapshot.get("imap_move_mode", "move"),
+                    "smtp_host": snapshot["smtp_host"],
+                    "smtp_port": snapshot["smtp_port"],
+                    "smtp_tls": int(bool(snapshot["smtp_tls"])),
+                    "smtp_username": snapshot["smtp_username"],
+                    "smtp_secret_reference": snapshot["smtp_secret_reference"],
+                    "enabled": int(bool(snapshot["enabled"])),
+                    "scan_folders_json": _json_dump(list(snapshot["scan_folders"])),
+                    "scan_interval_seconds": snapshot["scan_interval_seconds"],
+                    "agent_lookback_days": int(snapshot.get("agent_lookback_days", 30)),
+                    "model_lookback_days": int(snapshot.get("model_lookback_days", 365)),
+                    "scan_read_state": str(snapshot.get("scan_read_state", "unread")),
+                    "created_at": snapshot["created_at"],
+                    "updated_at": snapshot["updated_at"],
+                })
+            if restored == 1:
                 if category_enablement_snapshot is None:
                     self._disable_categories_missing_active_bindings(
                         db,
@@ -12920,7 +12985,7 @@ class EmailStore:
                         category_enablement_snapshot,
                     )
                 self._validate_category_binding_completeness(db)
-        return cursor.rowcount == 1
+        return restored == 1
 
     @staticmethod
     def _categories_missing_active_bindings(
@@ -12935,10 +13000,10 @@ class EmailStore:
         """
 
         rows = db.execute(
-            """
+            f"""
             select configs.category_key
-            from email_category_configs as configs
-            left join email_category_folder_bindings as bindings
+            from ({config_projection('email_category_configs')}) as configs
+            left join ({config_projection('email_category_folder_bindings')}) as bindings
               on bindings.category_key=configs.category_key
              and bindings.account_id=?
             where coalesce(bindings.binding_status, '') != 'active'
@@ -12946,7 +13011,7 @@ class EmailStore:
                 configs.enabled=1
                 or bindings.account_id is not null
                 or exists (
-                    select 1 from email_category_folder_bindings as elsewhere
+                    select 1 from ({config_projection('email_category_folder_bindings')}) as elsewhere
                     where elsewhere.category_key=configs.category_key
                       and elsewhere.binding_status='active'
                 )
@@ -12986,18 +13051,14 @@ class EmailStore:
                 if not self._bindings_cover_enabled_accounts(db, state.category_key):
                     still_disabled.append(state.category_key)
                     continue
-                db.execute(
-                    """
-                    update email_category_configs set enabled=?, updated_at=?
-                    where category_key=? and enabled=0 and updated_at=?
-                    """,
-                    (
-                        int(state.enabled),
-                        now,
-                        state.category_key,
-                        state.mutation_updated_at,
-                    ),
-                )
+                row = db.execute(
+                    f"select enabled, updated_at from ({config_projection('email_category_configs')}) "
+                    "where category_key=?", (state.category_key,),
+                ).fetchone()
+                if row is not None and row["enabled"] == 0 and row["updated_at"] == state.mutation_updated_at:
+                    update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", state.category_key), {
+                        "enabled": int(state.enabled), "updated_at": now,
+                    })
             self._validate_category_binding_completeness(db)
         return tuple(sorted(still_disabled))
 
@@ -13008,40 +13069,27 @@ class EmailStore:
         updated_at: str,
     ) -> EmailCategoryEnablementSnapshot:
         rows = db.execute(
-            """
-            select category_key, enabled, updated_at
-            from email_category_configs
+            f"""
+            select configs.category_key, configs.enabled, configs.updated_at
+            from ({config_projection('email_category_configs')}) as configs
             where enabled=1 and exists (
-                select 1 from email_accounts as accounts
+                select 1 from ({config_projection('email_accounts')}) as accounts
                 where accounts.enabled=1
                   and not exists (
-                      select 1 from email_category_folder_bindings as bindings
+                      select 1 from ({config_projection('email_category_folder_bindings')}) as bindings
                       where bindings.account_id=accounts.account_id
                         and bindings.category_key=
-                            email_category_configs.category_key
+                            configs.category_key
                         and bindings.binding_status='active'
                   )
             )
             order by category_key
             """
         ).fetchall()
-        db.execute(
-            """
-            update email_category_configs set enabled=0, updated_at=?
-            where enabled=1 and exists (
-                select 1 from email_accounts as accounts
-                where accounts.enabled=1
-                  and not exists (
-                      select 1 from email_category_folder_bindings as bindings
-                      where bindings.account_id=accounts.account_id
-                        and bindings.category_key=
-                            email_category_configs.category_key
-                        and bindings.binding_status='active'
-                  )
-            )
-            """,
-            (updated_at,),
-        )
+        for row in rows:
+            update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", row["category_key"]), {
+                "enabled": 0, "updated_at": updated_at,
+            })
         return EmailCategoryEnablementSnapshot(
             states=tuple(
                 EmailCategoryEnablementState(
@@ -13065,7 +13113,7 @@ class EmailStore:
             if type(state) is not EmailCategoryEnablementState:
                 return False
             row = db.execute(
-                "select enabled, updated_at from email_category_configs "
+                f"select enabled, updated_at from ({config_projection('email_category_configs')}) "
                 "where category_key=?",
                 (state.category_key,),
             ).fetchone()
@@ -13083,18 +13131,17 @@ class EmailStore:
         snapshot: EmailCategoryEnablementSnapshot,
     ) -> None:
         for state in snapshot.states:
-            updated = db.execute(
-                """
-                update email_category_configs set enabled=?, updated_at=?
-                where category_key=? and enabled=0 and updated_at=?
-                """,
-                (
-                    int(state.enabled),
-                    state.updated_at,
-                    state.category_key,
-                    state.mutation_updated_at,
-                ),
-            ).rowcount
+            row = db.execute(
+                f"select enabled, updated_at from ({config_projection('email_category_configs')}) "
+                "where category_key=?", (state.category_key,),
+            ).fetchone()
+            updated = (
+                update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", state.category_key), {
+                    "enabled": int(state.enabled), "updated_at": state.updated_at,
+                })
+                if row is not None and row["enabled"] == 0 and row["updated_at"] == state.mutation_updated_at
+                else 0
+            )
             if updated != 1:
                 raise EmailPersistenceCorruption(
                     "category enablement changed during account compensation"
@@ -13103,11 +13150,11 @@ class EmailStore:
     @staticmethod
     def _validate_category_binding_completeness(db: sqlite3.Connection) -> None:
         incomplete = db.execute(
-            """
+            f"""
             select configs.category_key, accounts.account_id
-            from email_category_configs as configs
-            cross join email_accounts as accounts
-            left join email_category_folder_bindings as bindings
+            from ({config_projection('email_category_configs')}) as configs
+            cross join ({config_projection('email_accounts')}) as accounts
+            left join ({config_projection('email_category_folder_bindings')}) as bindings
               on bindings.category_key=configs.category_key
              and bindings.account_id=accounts.account_id
              and bindings.binding_status='active'
@@ -13132,8 +13179,8 @@ class EmailStore:
         if allow_shared_email:
             return
         row = db.execute(
-            """
-            select 1 from email_accounts
+            f"""
+            select 1 from ({config_projection('email_accounts')})
             where lower(email_address)=lower(?) and account_id != ?
             """,
             (email_address, excluding_account_id),
@@ -13149,43 +13196,30 @@ class EmailStore:
         created_at: str,
         updated_at: str,
     ) -> None:
-        db.execute(
-            """
-            insert into email_accounts (
-                account_id, display_name, email_address, imap_host, imap_port,
-                imap_tls, imap_username, imap_secret_reference, imap_move_mode,
-                smtp_host,
-                smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
-                enabled, scan_folders_json, scan_interval_seconds, created_at,
-                updated_at, agent_lookback_days, model_lookback_days,
-                scan_read_state
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                values["account_id"],
-                values["display_name"],
-                values["email_address"],
-                values["imap_host"],
-                values["imap_port"],
-                int(bool(values["imap_tls"])),
-                values["imap_username"],
-                values["imap_secret_reference"],
-                values.get("imap_move_mode", "move"),
-                values["smtp_host"],
-                values["smtp_port"],
-                int(bool(values["smtp_tls"])),
-                values["smtp_username"],
-                values["smtp_secret_reference"],
-                int(bool(values["enabled"])),
-                _json_dump(list(values["scan_folders"])),
-                values["scan_interval_seconds"],
-                created_at,
-                updated_at,
-                int(values.get("agent_lookback_days", 30)),
-                int(values.get("model_lookback_days", 365)),
-                str(values.get("scan_read_state", "unread")),
-            ),
-        )
+        insert_config(db, "email_accounts", {
+            "account_id": values["account_id"],
+            "display_name": values["display_name"],
+            "email_address": values["email_address"],
+            "imap_host": values["imap_host"],
+            "imap_port": values["imap_port"],
+            "imap_tls": int(bool(values["imap_tls"])),
+            "imap_username": values["imap_username"],
+            "imap_secret_reference": values["imap_secret_reference"],
+            "imap_move_mode": values.get("imap_move_mode", "move"),
+            "smtp_host": values["smtp_host"],
+            "smtp_port": values["smtp_port"],
+            "smtp_tls": int(bool(values["smtp_tls"])),
+            "smtp_username": values["smtp_username"],
+            "smtp_secret_reference": values["smtp_secret_reference"],
+            "enabled": int(bool(values["enabled"])),
+            "scan_folders_json": _json_dump(list(values["scan_folders"])),
+            "scan_interval_seconds": values["scan_interval_seconds"],
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "agent_lookback_days": int(values.get("agent_lookback_days", 30)),
+            "model_lookback_days": int(values.get("model_lookback_days", 365)),
+            "scan_read_state": str(values.get("scan_read_state", "unread")),
+        })
 
     @staticmethod
     def _account_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -14468,7 +14502,7 @@ class EmailStore:
         created_at = self._now()
         with self._connect() as db:
             existing = db.execute(
-                "select snapshot_digest from email_training_snapshots "
+                f"select snapshot_digest from ({config_projection('email_training_snapshots')}) "
                 "where snapshot_id=?",
                 (snapshot.snapshot_id,),
             ).fetchone()
@@ -14486,10 +14520,10 @@ class EmailStore:
             # label back to what that snapshot already said read as a smaller
             # number, and promotion refused the run for "regressing".
             previous_snapshot = db.execute(
-                """
+                f"""
                 select snapshot_id, folder_label_watermark,
                        important_label_watermark
-                from email_training_snapshots
+                from ({config_projection('email_training_snapshots')})
                 where frozen=1 and snapshot_version=?
                   and json_extract(manifest_json, '$.sample_count') is not null
                 order by observed_at desc, snapshot_id desc
@@ -14497,10 +14531,10 @@ class EmailStore:
                 """,
                 (snapshot.snapshot_version,),
             ).fetchone() or db.execute(
-                """
+                f"""
                 select snapshot_id, folder_label_watermark,
                        important_label_watermark
-                from email_training_snapshots
+                from ({config_projection('email_training_snapshots')})
                 where frozen=1
                   and snapshot_version='email-folder-training-snapshot-v1'
                   and json_extract(manifest_json, '$.sample_count') is not null
@@ -14538,38 +14572,19 @@ class EmailStore:
                     important_label_watermark += 1
             write_snapshot(self.path, snapshot)
             try:
-                db.execute(
-                    """
-                    insert into email_training_snapshots (
-                        snapshot_id, snapshot_version, description_version,
-                        input_schema_version, seed, observed_at, snapshot_digest,
-                        manifest_json, frozen, created_at,
-                        folder_label_watermark, important_label_watermark
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-                    """,
-                    (
-                        snapshot.snapshot_id,
-                        snapshot.snapshot_version,
-                        snapshot.description_version,
-                        snapshot.input_schema_version,
-                        snapshot.seed,
-                        snapshot.observed_at,
-                        snapshot.snapshot_digest,
-                        manifest_json,
-                        created_at,
-                        folder_label_watermark,
-                        important_label_watermark,
-                    ),
-                )
-                frozen = db.execute(
-                    "update email_training_snapshots set frozen=1 "
-                    "where snapshot_id=? and frozen=0",
-                    (snapshot.snapshot_id,),
-                ).rowcount
-                if frozen != 1:
-                    raise EmailTrainingSnapshotConflict(
-                        "training snapshot could not be atomically frozen"
-                    )
+                db.execute("begin immediate")
+                insert_config(db, "email_training_snapshots", {
+                    "snapshot_id": snapshot.snapshot_id,
+                    "snapshot_version": snapshot.snapshot_version,
+                    "description_version": snapshot.description_version,
+                    "input_schema_version": snapshot.input_schema_version,
+                    "seed": snapshot.seed, "observed_at": snapshot.observed_at,
+                    "snapshot_digest": snapshot.snapshot_digest,
+                    "manifest_json": manifest_json, "frozen": 1,
+                    "created_at": created_at,
+                    "folder_label_watermark": folder_label_watermark,
+                    "important_label_watermark": important_label_watermark,
+                })
             except sqlite3.IntegrityError as exc:
                 raise EmailTrainingSnapshotConflict(
                     "training snapshot already exists or violates frozen constraints"
@@ -14590,10 +14605,10 @@ class EmailStore:
 
         with self._connect() as db:
             latest = db.execute(
-                "select snapshot_id, snapshot_digest from email_training_snapshots "
+                f"select snapshot_id, snapshot_digest from ({config_projection('email_training_snapshots')}) "
                 "where frozen=1 and json_extract(manifest_json, '$.sample_count') is not null "
                 "and snapshot_version=(select snapshot_version from "
-                "email_training_snapshots where snapshot_id=?) "
+                f"({config_projection('email_training_snapshots')}) where snapshot_id=?) "
                 "order by observed_at desc, snapshot_id desc limit 1",
                 (snapshot_id,),
             ).fetchone()
@@ -14612,7 +14627,7 @@ class EmailStore:
                 "select snapshot_digest from ("
                 "select snapshot_digest, row_number() over ("
                 "partition by snapshot_version order by observed_at desc, snapshot_id desc"
-                ") as ordinal from email_training_snapshots where frozen=1 "
+                f") as ordinal from ({config_projection('email_training_snapshots')}) where frozen=1 "
                 "and json_extract(manifest_json, '$.sample_count') is not null"
                 ") where ordinal=1"
             ).fetchall()
@@ -14915,12 +14930,12 @@ class EmailStore:
 
         with self._connect() as db:
             latest = db.execute(
-                """
+                f"""
                 select snapshot_id, snapshot_version, snapshot_digest,
                        description_version, input_schema_version, observed_at,
                        folder_label_watermark, important_label_watermark,
                        manifest_json
-                from email_training_snapshots
+                from ({config_projection('email_training_snapshots')})
                 where frozen=1
                   and snapshot_version='email-folder-training-snapshot-v1'
                   and json_extract(manifest_json, '$.sample_count') is not null
@@ -14932,10 +14947,10 @@ class EmailStore:
                 return None
             summary = json.loads(str(latest["manifest_json"]))
             description_rows = db.execute(
-                """
+                f"""
                 select category_key, core_description, include_json, exclude_json,
                        description_version
-                from email_category_configs where enabled=1
+                from ({config_projection('email_category_configs')}) where enabled=1
                 order by category_key
                 """
             ).fetchall()
@@ -15146,12 +15161,12 @@ class EmailStore:
                     "last_error": row["last_error"],
                 }
                 for row in db.execute(
-                    """
+                    f"""
                     select cursors.account_id, cursors.folder,
                            cursors.last_seen_uid, cursors.last_success_at,
                            cursors.last_error, accounts.display_name
                     from email_scan_cursors as cursors
-                    left join email_accounts as accounts
+                    left join ({config_projection('email_accounts')}) as accounts
                       on accounts.account_id=cursors.account_id
                     order by cursors.account_id, cursors.folder
                     """
@@ -15552,14 +15567,14 @@ class EmailStore:
         from app.email_training_data import TrainingSnapshotUnavailable, pinned_digest, read_snapshot
 
         snapshot = db.execute(
-            "select * from email_training_snapshots where snapshot_id=?", (snapshot_id,)
+            f"select * from ({config_projection('email_training_snapshots')}) where snapshot_id=?", (snapshot_id,)
         ).fetchone()
         if snapshot is None:
             return None
         if snapshot["frozen"] != 1:
             raise EmailPersistenceCorruption("training snapshot is not frozen")
         latest = db.execute(
-            "select snapshot_id from email_training_snapshots where frozen=1 "
+            f"select snapshot_id from ({config_projection('email_training_snapshots')}) where frozen=1 "
             "and snapshot_version=? "
             "and json_extract(manifest_json, '$.sample_count') is not null "
             "order by observed_at desc, snapshot_id desc limit 1",
@@ -16055,9 +16070,9 @@ class EmailStore:
         str,
     ]:
         selected_config = db.execute(
-            """
+            f"""
             select actions_json, action_parameters_json, enabled, config_version
-            from email_category_configs where category_key=?
+            from ({config_projection('email_category_configs')}) where category_key=?
             """,
             (category,),
         ).fetchone()
@@ -16083,9 +16098,9 @@ class EmailStore:
                     selected_config["config_version"],
                 )
             binding = db.execute(
-                """
+                f"""
                 select provider_folder_name
-                from email_category_folder_bindings
+                from ({config_projection('email_category_folder_bindings')})
                 where account_id=? and category_key=? and binding_status='active'
                 """,
                 (account_id, category),
@@ -17160,7 +17175,7 @@ class EmailStore:
             raise ValueError("exact move/trash source verification is required")
         with self._connect() as db:
             db.execute("begin immediate" if apply else "begin")
-            account = db.execute("select * from email_accounts where account_id=?", (expected.account_id,)).fetchone()
+            account = db.execute(f"select * from ({config_projection('email_accounts')}) where account_id=?", (expected.account_id,)).fetchone()
             if account is None:
                 return False
             current_configuration_snapshot = email_imap_configuration_snapshot(dict(account))
@@ -17359,7 +17374,7 @@ class EmailStore:
         ).fetchone()
         if request is None:
             return True
-        account = db.execute("select * from email_accounts where account_id=?", (row["account_id"],)).fetchone()
+        account = db.execute(f"select * from ({config_projection('email_accounts')}) where account_id=?", (row["account_id"],)).fetchone()
         return account is not None and request[0] == email_imap_configuration_snapshot(dict(account))
 
     @staticmethod
@@ -17749,7 +17764,7 @@ class EmailStore:
     def list_category_configs(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from email_category_configs order by category_key"
+                f"select * from ({config_projection('email_category_configs')}) order by category_key"
             ).fetchall()
         return [self._category_config_row(row) for row in rows]
 
@@ -17757,7 +17772,7 @@ class EmailStore:
         category_key = validate_email_category_key(category_key)
         with self._connect() as db:
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
         return None if row is None else self._category_config_row(row)
@@ -17816,12 +17831,12 @@ class EmailStore:
             enabled_accounts = {
                 row["account_id"]
                 for row in db.execute(
-                    "select account_id from email_accounts where enabled=1"
+                    f"select account_id from ({config_projection('email_accounts')}) where enabled=1"
                 )
             }
             existing_accounts = {
                 row["account_id"]
-                for row in db.execute("select account_id from email_accounts")
+                for row in db.execute(f"select account_id from ({config_projection('email_accounts')})")
             }
             if not set(account_ids) <= existing_accounts:
                 raise EmailFolderBindingConflict("folder binding account is unknown")
@@ -17832,61 +17847,39 @@ class EmailStore:
             }
             final_enabled = bool(enabled and enabled_accounts <= active_accounts)
             try:
-                db.execute(
-                    """
-                    insert into email_category_configs (
-                        category_key, display_name, core_description,
-                        include_json, exclude_json, threshold, actions_json,
-                        action_parameters_json, enabled, description_version,
-                        config_version, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        category_key,
-                        display_name,
-                        core_description,
-                        _json_dump(list(include_values)),
-                        _json_dump(list(exclude_values)),
-                        threshold,
-                        _json_dump([action.value for action in actions]),
-                        _json_dump(
-                            {
-                                action.value: dict(parameters)
-                                for action, parameters in action_parameters.items()
-                            }
-                        ),
-                        int(final_enabled),
-                        description_version,
-                        config_version,
-                        now,
-                    ),
-                )
+                insert_config(db, "email_category_configs", {
+                    "category_key": category_key, "display_name": display_name,
+                    "core_description": core_description,
+                    "include_json": _json_dump(list(include_values)),
+                    "exclude_json": _json_dump(list(exclude_values)),
+                    "threshold": threshold,
+                    "actions_json": _json_dump([action.value for action in actions]),
+                    "action_parameters_json": _json_dump({
+                        action.value: dict(parameters)
+                        for action, parameters in action_parameters.items()
+                    }),
+                    "enabled": int(final_enabled),
+                    "description_version": description_version,
+                    "config_version": config_version, "updated_at": now,
+                })
                 for binding in bindings:
-                    db.execute(
-                        """
-                        insert into email_category_folder_bindings (
-                            account_id, category_key, provider_folder_id,
-                            provider_folder_name, binding_status, last_verified_at
-                        ) values (?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            binding.account_id,
-                            category_key,
-                            binding.provider_folder_id,
-                            binding.provider_folder_name,
-                            binding.binding_status,
-                            binding.last_verified_at,
-                        ),
-                    )
+                    insert_config(db, "email_category_folder_bindings", {
+                        "account_id": binding.account_id,
+                        "category_key": category_key,
+                        "provider_folder_id": binding.provider_folder_id,
+                        "provider_folder_name": binding.provider_folder_name,
+                        "binding_status": binding.binding_status,
+                        "last_verified_at": binding.last_verified_at,
+                    })
             except sqlite3.IntegrityError as exc:
                 raise EmailFolderBindingConflict(
                     "email category or folder binding conflicts with stored state"
                 ) from exc
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
-            self._append_category_description_revision(db, row)
+            self._append_category_description_revision(db, row, current=True)
         assert row is not None
         return self._category_config_row(row)
 
@@ -17897,12 +17890,12 @@ class EmailStore:
     ) -> bool:
         return (
             db.execute(
-                """
+                f"""
                 select not exists (
-                    select 1 from email_accounts as accounts
+                    select 1 from ({config_projection('email_accounts')}) as accounts
                     where accounts.enabled=1
                       and not exists (
-                          select 1 from email_category_folder_bindings as bindings
+                          select 1 from ({config_projection('email_category_folder_bindings')}) as bindings
                           where bindings.account_id=accounts.account_id
                             and bindings.category_key=?
                             and bindings.binding_status='active'
@@ -17968,6 +17961,7 @@ class EmailStore:
         *,
         previous_row: sqlite3.Row | None = None,
         expected_current_version: str | None = None,
+        current: bool = False,
     ) -> None:
         config = self._category_config_row(row)
         if (
@@ -17983,16 +17977,24 @@ class EmailStore:
                 raise EmailFolderBindingConflict(
                     "config_version must be new and never used"
                 )
-            db.execute(
-                "update email_category_configs set updated_at=? where category_key=?",
-                (previous["updated_at"], config["category_key"]),
-            )
+            if current:
+                update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", config["category_key"]), {
+                    "updated_at": previous["updated_at"],
+                })
+            else:
+                db.execute(
+                    "update email_category_configs set updated_at=? where category_key=?",
+                    (previous["updated_at"], config["category_key"]),
+                )
             return
         # A description version identifies semantic content within one category;
         # configuration-only changes may append another snapshot of that content.
+        revision_source = (
+            f"({config_projection('email_category_description_revisions')})"
+            if current else "email_category_description_revisions"
+        )
         for revision in db.execute(
-            "select config_json from email_category_description_revisions "
-            "where category_key=?",
+            f"select config_json from {revision_source} where category_key=?",
             (config["category_key"],),
         ):
             previous = _json_load(
@@ -18009,18 +18011,21 @@ class EmailStore:
                 raise EmailFolderBindingConflict(
                     "description_version already identifies different category content"
                 )
-        db.execute(
-            "insert into email_category_description_revisions values (?, ?, ?, ?, ?)",
-            (
-                str(uuid4()),
-                config["category_key"],
-                config["config_version"],
-                _json_dump(config),
-                self._next_model_control_timestamp(
-                    db, "email_category_description_revisions"
-                ),
-            ),
-        )
+        created_at = self._next_model_control_timestamp(db, revision_source)
+        values = {
+            "revision_id": str(uuid4()),
+            "category_key": config["category_key"],
+            "config_version": config["config_version"],
+            "config_json": _json_dump(config),
+            "created_at": created_at,
+        }
+        if current:
+            insert_config(db, "email_category_description_revisions", values)
+        else:
+            db.execute(
+                "insert into email_category_description_revisions values (?, ?, ?, ?, ?)",
+                tuple(values.values()),
+            )
 
     def list_category_description_revisions(
         self, category_key: str
@@ -18043,7 +18048,7 @@ class EmailStore:
                     )
                 }
                 for row in db.execute(
-                    "select * from email_category_description_revisions where category_key=? order by created_at desc",
+                    f"select * from ({config_projection('email_category_description_revisions')}) where category_key=? order by created_at desc",
                     (category_key,),
                 )
             ]
@@ -18078,7 +18083,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             if existing is None:
@@ -18091,36 +18096,25 @@ class EmailStore:
             final_enabled = bool(
                 enabled and self._bindings_cover_enabled_accounts(db, category_key)
             )
-            db.execute(
-                """
-                update email_category_configs set
-                    core_description=?, include_json=?, exclude_json=?,
-                    threshold=?, enabled=?, description_version=?,
-                    config_version=?, updated_at=?
-                where category_key=?
-                """,
-                (
-                    core_description,
-                    _json_dump(list(include_values)),
-                    _json_dump(list(exclude_values)),
-                    float(threshold),
-                    int(final_enabled),
-                    description_version,
-                    config_version,
-                    self._now(),
-                    category_key,
-                ),
-            )
+            update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                "core_description": core_description,
+                "include_json": _json_dump(list(include_values)),
+                "exclude_json": _json_dump(list(exclude_values)),
+                "threshold": float(threshold), "enabled": int(final_enabled),
+                "description_version": description_version,
+                "config_version": config_version, "updated_at": self._now(),
+            })
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             self._append_category_description_revision(
                 db, row, previous_row=existing,
                 expected_current_version=expected_current_version,
+                current=True,
             )
             row = db.execute(
-                "select * from email_category_configs where category_key=?", (category_key,)
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?", (category_key,)
             ).fetchone()
         assert row is not None
         return self._category_config_row(row)
@@ -18168,7 +18162,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             if existing is None:
@@ -18181,7 +18175,7 @@ class EmailStore:
             enabled_accounts = {
                 row["account_id"]
                 for row in db.execute(
-                    "select account_id from email_accounts where enabled=1"
+                    f"select account_id from ({config_projection('email_accounts')}) where enabled=1"
                 )
             }
             if set(account_ids) != enabled_accounts:
@@ -18190,65 +18184,34 @@ class EmailStore:
                 )
             try:
                 for binding in bindings:
-                    db.execute(
-                        """
-                        insert into email_category_folder_bindings (
-                            account_id, category_key, provider_folder_id,
-                            provider_folder_name, binding_status, last_verified_at
-                        ) values (?, ?, ?, ?, ?, ?)
-                        on conflict(account_id, category_key) do update set
-                            provider_folder_id=excluded.provider_folder_id,
-                            provider_folder_name=excluded.provider_folder_name,
-                            binding_status=excluded.binding_status,
-                            last_verified_at=excluded.last_verified_at
-                        """,
-                        (
-                            binding.account_id,
-                            category_key,
-                            binding.provider_folder_id,
-                            binding.provider_folder_name,
-                            binding.binding_status,
-                            binding.last_verified_at,
-                        ),
-                    )
+                    _upsert_current_folder_binding(db, category_key, binding)
                 final_enabled = bool(
                     enabled and self._bindings_cover_enabled_accounts(db, category_key)
                 )
-                db.execute(
-                    """
-                    update email_category_configs set
-                        core_description=?, include_json=?, exclude_json=?,
-                        threshold=?, enabled=?, description_version=?,
-                        config_version=?, updated_at=?
-                    where category_key=?
-                    """,
-                    (
-                        core_description,
-                        _json_dump(list(include_values)),
-                        _json_dump(list(exclude_values)),
-                        float(threshold),
-                        int(final_enabled),
-                        description_version,
-                        config_version,
-                        now,
-                        category_key,
-                    ),
-                )
+                update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                    "core_description": core_description,
+                    "include_json": _json_dump(list(include_values)),
+                    "exclude_json": _json_dump(list(exclude_values)),
+                    "threshold": float(threshold), "enabled": int(final_enabled),
+                    "description_version": description_version,
+                    "config_version": config_version, "updated_at": now,
+                })
                 self._validate_category_binding_completeness(db)
             except sqlite3.IntegrityError as exc:
                 raise EmailFolderBindingConflict(
                     "email category or folder binding conflicts with stored state"
                 ) from exc
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             self._append_category_description_revision(
                 db, row, previous_row=existing,
                 expected_current_version=expected_current_version,
+                current=True,
             )
             row = db.execute(
-                "select * from email_category_configs where category_key=?", (category_key,)
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?", (category_key,)
             ).fetchone()
         assert row is not None
         return self._category_config_row(row)
@@ -18277,22 +18240,13 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             try:
-                updated = db.execute(
-                    """
-                    update email_category_folder_bindings set
-                        provider_folder_id=?, provider_folder_name=?,
-                        binding_status=?, last_verified_at=?
-                    where account_id=? and category_key=?
-                    """,
-                    (
-                        binding.provider_folder_id,
-                        binding.provider_folder_name,
-                        binding.binding_status,
-                        binding.last_verified_at,
-                        binding.account_id,
-                        category_key,
-                    ),
-                ).rowcount
+                identity = _folder_binding_rowid(db, binding.account_id, category_key)
+                updated = update_config(db, "email_category_folder_bindings", identity, {
+                    "provider_folder_id": binding.provider_folder_id,
+                    "provider_folder_name": binding.provider_folder_name,
+                    "binding_status": binding.binding_status,
+                    "last_verified_at": binding.last_verified_at,
+                }) if identity is not None else 0
             except sqlite3.IntegrityError as exc:
                 raise EmailFolderBindingConflict(
                     "email folder binding conflicts with stored state"
@@ -18300,16 +18254,12 @@ class EmailStore:
             if updated != 1:
                 raise EmailFolderBindingConflict("email folder binding does not exist")
             if binding.binding_status != "active":
-                db.execute(
-                    "update email_category_configs set enabled=0, updated_at=? "
-                    "where category_key=?",
-                    (self._now(), category_key),
-                )
+                update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                    "enabled": 0, "updated_at": self._now(),
+                })
             row = db.execute(
-                """
-                select * from email_category_folder_bindings
-                where account_id=? and category_key=?
-                """,
+                f"select * from ({config_projection('email_category_folder_bindings')}) "
+                "where account_id=? and category_key=?",
                 (binding.account_id, category_key),
             ).fetchone()
         assert row is not None
@@ -18328,46 +18278,24 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             try:
-                db.execute(
-                    """
-                    insert into email_category_folder_bindings (
-                        account_id, category_key, provider_folder_id,
-                        provider_folder_name, binding_status, last_verified_at
-                    ) values (?, ?, ?, ?, ?, ?)
-                    on conflict(account_id, category_key) do update set
-                        provider_folder_id=excluded.provider_folder_id,
-                        provider_folder_name=excluded.provider_folder_name,
-                        binding_status=excluded.binding_status,
-                        last_verified_at=excluded.last_verified_at
-                    """,
-                    (
-                        binding.account_id,
-                        category_key,
-                        binding.provider_folder_id,
-                        binding.provider_folder_name,
-                        binding.binding_status,
-                        binding.last_verified_at,
-                    ),
-                )
+                _upsert_current_folder_binding(db, category_key, binding)
             except sqlite3.IntegrityError as exc:
                 raise EmailFolderBindingConflict(
                     "email folder binding conflicts with stored state"
                 ) from exc
             complete = self._bindings_cover_enabled_accounts(db, category_key)
             if not complete:
-                db.execute(
-                    """
-                    update email_category_configs
-                    set enabled=0, updated_at=?
-                    where category_key=? and enabled=1
-                    """,
-                    (now, category_key),
-                )
+                category = db.execute(
+                    f"select enabled from ({config_projection('email_category_configs')}) "
+                    "where category_key=?", (category_key,),
+                ).fetchone()
+                if category is not None and category["enabled"] == 1:
+                    update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                        "enabled": 0, "updated_at": now,
+                    })
             row = db.execute(
-                """
-                select * from email_category_folder_bindings
-                where account_id=? and category_key=?
-                """,
+                f"select * from ({config_projection('email_category_folder_bindings')}) "
+                "where account_id=? and category_key=?",
                 (binding.account_id, category_key),
             ).fetchone()
             self._validate_category_binding_completeness(db)
@@ -18381,18 +18309,14 @@ class EmailStore:
         with self._connect() as db:
             if category_key is None:
                 rows = db.execute(
-                    """
-                    select * from email_category_folder_bindings
-                    order by account_id, category_key
-                    """
+                    f"select * from ({config_projection('email_category_folder_bindings')}) "
+                    "order by account_id, category_key"
                 ).fetchall()
             else:
                 validated_key = validate_email_category_key(category_key)
                 rows = db.execute(
-                    """
-                    select * from email_category_folder_bindings
-                    where category_key=? order by account_id
-                    """,
+                    f"select * from ({config_projection('email_category_folder_bindings')}) "
+                    "where category_key=? order by account_id",
                     (validated_key,),
                 ).fetchall()
         return [dict(row) for row in rows]
@@ -18429,7 +18353,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             if existing is None:
@@ -18437,31 +18361,18 @@ class EmailStore:
             final_enabled = bool(
                 enabled and self._bindings_cover_enabled_accounts(db, category_key)
             )
-            db.execute(
-                """
-                update email_category_configs set
-                    core_description=?, threshold=?, actions_json=?,
-                    action_parameters_json=?, enabled=?, config_version=?,
-                    updated_at=? where category_key=?
-                """,
-                (
-                    description,
-                    threshold,
-                    _json_dump([action.value for action in actions]),
-                    _json_dump(
-                        {
-                            action.value: dict(parameters)
-                            for action, parameters in action_parameters.items()
-                        }
-                    ),
-                    int(final_enabled),
-                    config_version,
-                    now,
-                    category_key,
-                ),
-            )
+            update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                "core_description": description, "threshold": threshold,
+                "actions_json": _json_dump([action.value for action in actions]),
+                "action_parameters_json": _json_dump({
+                    action.value: dict(parameters)
+                    for action, parameters in action_parameters.items()
+                }),
+                "enabled": int(final_enabled),
+                "config_version": config_version, "updated_at": now,
+            })
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
         assert row is not None

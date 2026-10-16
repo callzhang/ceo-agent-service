@@ -668,18 +668,19 @@ def _seed_runtime_operation_parent(
             ))
             db.execute("update tasks set status='processing', claimed_input_id=current_input_id where record_type='reply_tasks' and id=?", (task.id,))
         elif workload_kind == "email_description_optimization":
+            from app.configs_storage import insert_config
+
             snapshot_id, _, _ = workload_key.removeprefix(
                 "description-optimization:"
             ).rpartition(":")
-            db.execute(
-                "create table if not exists email_training_snapshots ("
-                "snapshot_id text primary key, frozen integer not null)"
-            )
-            db.execute(
-                "insert into email_training_snapshots (snapshot_id, frozen) "
-                "values (?, 1)",
-                (snapshot_id,),
-            )
+            db.execute("begin immediate")
+            insert_config(db, "email_training_snapshots", {
+                "snapshot_id": snapshot_id, "snapshot_version": "v1",
+                "description_version": "v1", "input_schema_version": "v1",
+                "seed": 0, "observed_at": "now", "snapshot_digest": "a" * 64,
+                "manifest_json": "{}", "frozen": 1, "created_at": "now",
+                "folder_label_watermark": 0, "important_label_watermark": 0,
+            })
 
 
 def test_runtime_attempt_claim_is_ordered_and_idempotent(tmp_path: Path):

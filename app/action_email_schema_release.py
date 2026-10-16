@@ -20,6 +20,7 @@ from app.action_email_storage import (
     restore_email_action_schema,
 )
 from app.action_storage import action_schema_is_current, _encoded_sqlite_value
+from app import action_storage
 from app.business_schema_release import (
     business_inverse_metadata,
     business_schema_is_current,
@@ -36,6 +37,18 @@ from app.provider_state_schema_release import (
     provider_state_schema_is_current,
     rollback_provider_state_migration,
 )
+from app.action_reply_storage import _fingerprint, _source_declaration
+from app.configs_run_schema import _declarations as _config_run_declarations, _objects as _config_run_objects
+from app.configs_schema_release import (
+    _OBSERVATION_HASHES, _OBSERVATIONS, _config_metadata, _foreign_key_children,
+    _no_temp_names, _state as _validate_config_metadata,
+    capture_config_source, configs_schema_is_current, migrate_config_schema,
+    restore_config_schema,
+)
+from app.configs_schema_transfer import (
+    SOURCE_TABLES as CONFIG_SOURCE_TABLES, capture_config_declarations,
+    _target_declarations as _config_target_declarations,
+)
 
 
 SOURCE_STORE_VERSION = "2026-10-13.5"
@@ -43,6 +56,73 @@ SOURCE_EMAIL_VERSION = 51
 TARGET_STORE_VERSION = "2026-10-14.1"
 TARGET_EMAIL_VERSION = 52
 VERSION_KEY = "store_schema_version"
+CURRENT_CONFIG_REPAIRABLE_TRIGGERS = frozenset({
+    "trg_configs_skill_revision_update", "trg_configs_skill_revision_delete",
+    "trg_configs_runtime_config_update", "trg_configs_runtime_config_delete",
+    "trg_configs_skill_binding_update", "trg_configs_skill_binding_delete",
+    "trg_configs_feedback_capability_update", "trg_configs_feedback_capability_delete",
+})
+CURRENT_CONFIG_REPAIRABLE_INDEXES = frozenset({
+    "idx_configs_revision_number", "idx_configs_revision_identity",
+    "idx_configs_schedule_ref_position", "idx_configs_binding_config_order",
+})
+CURRENT_SCHEDULE_REPAIRABLE_INDEXES = frozenset({
+    "idx_schedules_migration_key", "idx_schedules_enabled",
+})
+
+
+def _current_table_with_known_missing_objects(
+    actual: dict, expected: dict, *, indexes: frozenset[str],
+    triggers: frozenset[str] = frozenset(),
+) -> bool:
+    if any(actual[key] != expected[key] for key in ("sql", "columns", "foreign_keys")):
+        return False
+    actual_indexes = {item["name"]: item for item in actual["indexes"]}
+    expected_indexes = {item["name"]: item for item in expected["indexes"]}
+    if (not set(actual_indexes) <= set(expected_indexes)
+            or not set(expected_indexes) - set(actual_indexes) <= indexes
+            or any({key: value for key, value in item.items() if key != "seq"}
+                   != {key: value for key, value in expected_indexes[name].items()
+                       if key != "seq"}
+                   for name, item in actual_indexes.items())):
+        return False
+    actual_triggers = {item["name"]: item for item in actual["triggers"]}
+    expected_triggers = {item["name"]: item for item in expected["triggers"]}
+    return (set(actual_triggers) <= set(expected_triggers)
+            and set(expected_triggers) - set(actual_triggers) <= triggers
+            and all(item == expected_triggers[name]
+                    for name, item in actual_triggers.items()))
+
+
+def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, action_variant: str) -> bool:
+    """Exact target, allowing only Store's known missing Skill guard repair."""
+    if configs_schema_is_current(db, action_variant=action_variant):
+        return True
+    target = _config_target_declarations()
+    if not _current_table_with_known_missing_objects(
+        _source_declaration(db, "schedules"), target["schedules"],
+        indexes=CURRENT_SCHEDULE_REPAIRABLE_INDEXES,
+    ):
+        return False
+    if not _current_table_with_known_missing_objects(
+        _source_declaration(db, "configs"), target["configs"],
+        indexes=CURRENT_CONFIG_REPAIRABLE_INDEXES,
+        triggers=CURRENT_CONFIG_REPAIRABLE_TRIGGERS,
+    ):
+        return False
+    expected_runs = _config_run_declarations(mapped=True)
+    actual_runs = _config_run_objects(db)
+    return (action_schema_is_current(db, allow_missing_objects=True,
+                                     include_reply=True, reply_variant=action_variant,
+                                     include_email=True, include_skill_config_receipts=True)
+            and action_storage.email_action_auxiliary_objects_are_current(
+                db, reply_variant=action_variant)
+            and actual_runs.get("runs") == expected_runs["runs"]
+            and set(actual_runs) <= set(expected_runs)
+            and all(actual_runs.get(name, sql) == sql
+                    for name, sql in expected_runs.items())
+            and all(_source_declaration(db, kind)["sql"] is None
+                    for kind in (*CONFIG_SOURCE_TABLES, _OBSERVATIONS)))
 
 
 def require_current_email_pair(path: Path, *, store_version: str, email_version: int) -> None:
@@ -69,11 +149,17 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
             return
         if store == store_version:
             if email == email_version:
-                if provider_state_schema_is_current(db):
+                if provider_state_schema_is_current(db) and any(
+                    configs_current_or_known_skill_guard_repair(db, action_variant=variant)
+                    for variant in ('actual_no_memory_fk', 'fresh_memory_fk')
+                ):
                     return
-                raise sqlite3.IntegrityError("malformed current provider-state declaration")
+                raise sqlite3.IntegrityError("malformed current provider/config declaration")
             if email is None and not (email_tables - {"email_classifications"}).intersection(names):
-                return  # Complete Store-first, before Email's fresh transaction.
+                if any(configs_current_or_known_skill_guard_repair(db, action_variant=variant)
+                       for variant in ('actual_no_memory_fk', 'fresh_memory_fk')):
+                    return  # Complete Store-first, before Email's fresh transaction.
+                raise sqlite3.IntegrityError("malformed current Store-first config declaration")
         raise sqlite3.IntegrityError("unsupported or mixed Store/Email source schema")
 
 
@@ -98,7 +184,51 @@ def _inverse_metadata(source):
         **email_inverse_metadata(source),
         "business": business_inverse_metadata(source["business"]),
         "provider": source["provider"],
+        "configs": source["configs"],
     }
+
+
+def _project_config_source(db, action_variant: str) -> dict:
+    """Bind native declarations before Email replaces six account blockers.
+
+    Preparation is a read transaction. It does not open a writable database,
+    create a scratch copy, or read config and receipt bodies.
+    """
+    original = capture_config_declarations(db)
+    if original['variant'] not in ('actual', 'fresh'):
+        raise ValueError('unsupported pre-Email config source variant')
+    if action_variant not in ('actual_no_memory_fk', 'fresh_memory_fk'):
+        raise ValueError('unsupported Email action source variant')
+    if _config_run_objects(db) != _config_run_declarations(mapped=False):
+        raise ValueError('unsupported native runs declaration')
+    observation = _source_declaration(db, _OBSERVATIONS)
+    if _fingerprint(observation) != _OBSERVATION_HASHES[original['variant']]:
+        raise ValueError('unsupported observation source declaration')
+    if db.execute(f'select 1 from main.{_OBSERVATIONS} limit 1').fetchone():
+        raise ValueError('nonempty training observations cannot be retired')
+    if any(_source_declaration(db, name)['sql'] is not None for name in ('configs', 'schedules')):
+        raise ValueError('partial config target already exists')
+    _no_temp_names(db)
+    _foreign_key_children(db, set(CONFIG_SOURCE_TABLES) | {_OBSERVATIONS})
+    action_storage._no_sql_dependencies(db, set(CONFIG_SOURCE_TABLES) | {_OBSERVATIONS})
+    projected = {**original, 'variant': original['variant'] + '_email52',
+                 'tables': {**original['tables']}}
+    accounts = {**original['tables']['email_accounts']}
+    replacements = _target_external_sql()
+    account_names = {item['name'] for item in accounts['triggers']}
+    if not account_names <= replacements.keys():
+        raise ValueError('unsupported account blocker declarations')
+    accounts['triggers'] = sorted((
+        {'name': item['name'], 'sql': replacements[item['name']]}
+        if item['name'] in account_names else item
+        for item in accounts['triggers']
+    ), key=lambda item: item['name'])
+    projected['tables']['email_accounts'] = accounts
+    _config_metadata(projected)
+    result = {'configs': projected, 'action_variant': action_variant,
+              'observations': observation}
+    _validate_config_metadata(result)
+    return result
 
 
 def _migrate_pair(release: "ActionEmailSchemaRelease") -> None:
@@ -142,6 +272,7 @@ class ActionEmailSchemaRelease:
         current = capture_email_action_source(db)
         current["business"] = capture_business_source(db)
         current["provider"] = capture_provider_state_source(db)
+        current["configs"] = _project_config_source(db, current["action_variant"])
         if _inverse_metadata(current) != _inverse_metadata(self.source_schema):
             raise ValueError("paired Email/Business source declaration changed")
         self._verify_integrity(db)
@@ -153,7 +284,8 @@ class ActionEmailSchemaRelease:
                 versions[-1] != (self.target_email_version, marker[1]):
             raise ValueError("Email paired target markers mismatch")
         if not action_schema_is_current(
-            db, include_reply=True, reply_variant=self.source_schema["action_variant"], include_email=True
+            db, include_reply=True, reply_variant=self.source_schema["action_variant"],
+            include_email=True, include_skill_config_receipts=True,
         ) or db.execute(
             "select 1 from main.sqlite_schema where name in (" +
             ",".join("?" for _ in SOURCE_TABLES) + ") limit 1", SOURCE_TABLES
@@ -165,7 +297,12 @@ class ActionEmailSchemaRelease:
             raise ValueError("paired Business target declaration mismatch")
         if not provider_state_schema_is_current(db):
             raise ValueError("paired Provider target declaration mismatch")
-        expected = _target_external_sql()
+        if not configs_schema_is_current(db, action_variant=self.source_schema["action_variant"]):
+            raise ValueError("paired Configs target declaration mismatch")
+        account_names = {item['name'] for item in self.source_schema['configs']
+                         ['configs']['tables']['email_accounts']['triggers']}
+        expected = {name: sql for name, sql in _target_external_sql().items()
+                    if name not in account_names}
         triggers = tuple(db.execute(
             "select name,sql from main.sqlite_schema where type='trigger' and name in (" +
             ",".join("?" for _ in EXTERNAL_TRIGGER_NAMES) + ") order by name", EXTERNAL_TRIGGER_NAMES
@@ -196,6 +333,10 @@ class ActionEmailSchemaRelease:
                     raise ValueError("Business captured inverse declaration mismatch")
                 if not provider_state_schema_is_current(db):
                     raise ValueError("Provider target declaration mismatch")
+                config_inverse = capture_config_source(db)
+                if config_inverse != self.source_schema["configs"]:
+                    raise ValueError("Config captured inverse declaration mismatch")
+                migrate_config_schema(db, config_inverse)
                 now = datetime.now(timezone.utc).isoformat()
                 db.execute(
                     "update main.service_state set value=?,updated_at=? where key=?",
@@ -227,6 +368,7 @@ class ActionEmailSchemaRelease:
                     db.commit()
                     return
                 self._verify_target(db)
+                restore_config_schema(db, self.source_schema["configs"])
                 restore_business_schema(db, self.source_schema["business"])
                 restore_email_action_schema(db, email_inverse_metadata(self.source_schema))
                 rollback_provider_state_migration(db, self.source_schema["provider"])
@@ -292,6 +434,7 @@ def prepare_action_email_schema_release(
         source = capture_email_action_source(db)
         source["business"] = capture_business_source(db)
         source["provider"] = capture_provider_state_source(db)
+        source["configs"] = _project_config_source(db, source["action_variant"])
         release = ActionEmailSchemaRelease(
             root, path, version, versions, source, _foreign_keys(db),
             target_store_version, target_email_version,

@@ -16,7 +16,7 @@ from app.configs_run_schema import (
 )
 from app.configs_schema_transfer import (
     SOURCE_TABLES, _metadata as _config_metadata, _native_rows,
-    _preflight_bodies, _fields, _target_declarations,
+    _preflight_bodies, _fields, _target_declarations, target_declaration_matches,
     capture_config_declarations, copy_config_rows, restore_config_rows,
 )
 from app.configs_storage import create_configs_schema
@@ -219,7 +219,7 @@ def configs_schema_is_current(db: sqlite3.Connection, *, action_variant: str) ->
     """Read-only predicate for the exact unselected final config declaration."""
     if action_variant not in _ACTION_VARIANTS:
         raise ValueError('unsupported action declaration variant')
-    return (all(_source_declaration(db, kind) == declaration
+    return (all(target_declaration_matches(db, kind, declaration)
                 for kind, declaration in _target_declarations().items())
             and action_storage._objects(db, 'actions') == _actions(action_variant, skill=True)
             and action_storage.action_schema_is_current(
@@ -261,7 +261,7 @@ def restore_config_schema(db: sqlite3.Connection, metadata: dict) -> dict[str, i
     if any(_source_declaration(db, kind)['sql'] is not None
            for kind in (*SOURCE_TABLES, _OBSERVATIONS)):
         raise ValueError('native config source already exists')
-    if any(_source_declaration(db, kind) != declaration
+    if any(not target_declaration_matches(db, kind, declaration)
            for kind, declaration in _target_declarations().items()):
         raise ValueError('unsupported config target declaration')
     if action_storage._objects(db, 'actions') != _actions(metadata['action_variant'], skill=True):

@@ -1,6 +1,6 @@
 # CEO Agent Service Architecture
 
-The unselected `configs_schema_release` coordinator composes the reviewed
+The `configs_schema_release` coordinator composes the reviewed
 eighteen-family row transfer with the retained-runs FK translator. In one
 caller-owned FK-off transaction it installs `configs` and `schedules`, rebuilds
 the exact current Email29 `actions` declaration with only the two Skill
@@ -12,8 +12,8 @@ without a Python action-row image. The inverse reconstructs native declarations
 from metadata and reads current target facts, including later config, schedule,
 run, Skill receipt and non-Skill action writes. The final declaration predicate
 checks the mapped runs, selected 31-kind actions and absence of all nineteen
-retired tables. No constructor, schema marker or runtime caller selects this
-coordinator yet; the paired Email release must first establish Email29/Email52.
+retired tables. The local unpublished Store20/Email52 candidate now selects it
+inside the same paired release, after Email, Business and Provider conversion.
 Preflight rejects inbound FKs, external view/trigger SQL references, and TEMP
 name shadows of tables changed in either direction before schema DDL begins.
 The complete source profiles are the two post-Email13 config declarations;
@@ -2605,11 +2605,12 @@ still have zero runtime callers. External Task5 and full-copy/native/publication
 acceptance remain separate gates.
 
 
-### Coupled Email29 candidate defaults, Task4F (unpublished)
+### Coupled Email29 and Configs candidate defaults (unpublished)
 
 This local candidate supersedes the E1/E2 staging boundaries above: default
 AutoReplyStore now selects Store `2026-10-14.1` (program Store20), and EmailStore
-selects Email52 with the single29-kind actions schema. This is local candidate
+selects Email52 with the single 31-kind actions schema, including two typed Skill
+receipt kinds. This is local candidate
 selection, not publication or a claim that the whole service can be deployed.
 
 The supported predecessor is exactly Store `2026-10-13.5`/Email51. The real
@@ -2620,16 +2621,21 @@ older/newer/missing/mixed markers and genuine old Email-only databases are refus
 there is no alternate legacy validator or constructor upgrade route.
 
 Fresh Store preserves its existing early bootstrap commits. Its final transaction
-creates the canonical30-column classification parent,29-kind actions and Store20
+creates the canonical30-column classification parent, current configs and schedules,
+mapped runs, 31-kind actions and Store20
 marker together, validates the existing Store manifest and commits. Earlier or
 suffix failure may leave the same unversioned core that existing bootstrap rules
 refuse on retry. A completed Store-first state is supported. Fresh Email invokes
 the genuine public AutoReplyStore once outside Email's non-reentrant path lock,
 then creates the retained current nonaction schema, ledger, existing fresh seeds,
-13 translated blockers and Email52 marker in one transaction. Email failure rolls
+seven retained Email blockers and Email52 marker in one transaction. Six account
+blockers live on `configs`. Email failure rolls
 back to Store-first and can retry. Store never constructs EmailStore. Current
 reopen and51 migration do not seed existing empty configs/revision histories;
-known coherent-current Store repairs retain their existing route. Email current
+known coherent-current Store repairs retain their existing route, including
+missing canonical Store-owned Skill/runtime guards, selected schedule/Skill indexes,
+run auxiliaries and action auxiliaries after read-only declaration checks. Altered
+objects and Email-owned auxiliaries remain refusals. Email current
 reopen validates the exact `provider_state` declaration, including partial
 indexes and source-name absence, before using it. A malformed target is refused
 without recreating the old provider tables or repairing a column.
@@ -2638,7 +2644,11 @@ Paired publication uses a real child process carrying the prepared marker/full
 ledger/declarations/FK binding through stdin, applies the same atomic protocol,
 then cold opens both genuine current default classes. Legal native BLOB marker
 and ledger timestamps use the existing scalar encoding and survive inverse with
-their original values/types. The inverse reconstructs current action facts,
+their original values/types. Read-only preparation projects only the bounded
+native config declarations through the six Email-owned account blocker changes;
+apply checks the actual post-Email capture before Configs conversion. The inverse
+restores native configs and schedules before Business, Email and Provider, then
+reconstructs current action facts,
 source identities/ROWIDs/allocator waters and exact source markers/ledger; it does
 not restore an old database snapshot. The source SQL NULL/application policy
 remains method-specific and unchanged.

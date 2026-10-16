@@ -11,6 +11,7 @@ from app.managed_skills import (
     runtime_skill_snapshot_for_process,
 )
 from app.store import AutoReplyStore
+from app.configs_storage import insert_config
 from app.consumer_agent import ConsumerAgentRunner, consumer_wire_contract_hash
 
 
@@ -163,12 +164,7 @@ def test_failed_latest_candidate_never_revives_an_older_pending_config(
     assert snapshot.config_id == active.id
     assert store.get_active_runtime_skill_config().id == active.id
     assert store.get_runtime_skill_config(pending.id).status == "pending_restart"
-    with store._connect() as db:
-        pending_receipts = db.execute(
-            "select count(*) from runtime_skill_load_receipts where config_id=?",
-            (pending.id,),
-        ).fetchone()[0]
-    assert pending_receipts == 0
+    assert store.list_runtime_skill_load_receipts(pending.id) == ()
 
 
 def test_parent_compare_and_swap_rejects_stale_configuration(tmp_path: Path) -> None:
@@ -217,13 +213,16 @@ def test_direct_status_transition_requires_a_persisted_load_receipt(tmp_path: Pa
         sqlite3.IntegrityError, match="runtime Skill activation requires matching load receipt"
     ):
         db.execute(
-            "update runtime_skill_configs set status='active' where id=?", (pending.id,)
+            "update configs set runtime_config_status='active' "
+            "where record_type='runtime_skill_configs' and numeric_public_key=?",
+            (pending.id,),
         )
     with store._connect() as db, pytest.raises(
         sqlite3.IntegrityError, match="runtime Skill activation requires matching load receipt"
     ):
         db.execute(
-            "update runtime_skill_configs set status='load_failed' where id=?",
+            "update configs set runtime_config_status='load_failed' "
+            "where record_type='runtime_skill_configs' and numeric_public_key=?",
             (pending.id,),
         )
 
@@ -245,18 +244,15 @@ def test_resolver_marks_malformed_candidate_failed_and_returns_prior_active(
     active = store.get_active_runtime_skill_config()
     assert active is not None
     with sqlite3.connect(store.path) as db:
-        candidate_id = int(
-            db.execute(
-                "insert into runtime_skill_configs (parent_id, status) values (?, 'pending_restart')",
-                (active.id,),
-            ).lastrowid
-        )
-        db.execute(
-            """insert into runtime_skill_bindings
-               (config_id, skill_id, revision_id, enabled, load_order, purpose)
-               values (?, ?, ?, 1, 0, '')""",
-            (candidate_id, revision.skill_id, revision.id + 999),
-        )
+        db.execute("begin immediate")
+        candidate_id = int(insert_config(db, "runtime_skill_configs", {
+            "parent_id": active.id, "status": "pending_restart",
+        }).lastrowid)
+        insert_config(db, "runtime_skill_bindings", {
+            "config_id": candidate_id, "skill_id": revision.skill_id,
+            "revision_id": revision.id + 999, "enabled": 1,
+            "load_order": 0, "purpose": "",
+        })
 
     fallback = resolve_pending_runtime_skills(store, pid=7655)
 
@@ -339,9 +335,19 @@ def test_schema_initialization_repairs_runtime_guards_idempotently(tmp_path: Pat
     revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
     config = store.create_runtime_skill_config({skill.id: revision.id}, expected_parent_id=None)
     with store._connect() as db:
-        db.execute("drop trigger trg_runtime_skill_configs_immutable_update")
+        db.execute("drop trigger trg_configs_runtime_config_update")
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
     reopened = AutoReplyStore(path)
 
-    with reopened._connect() as db, pytest.raises(Exception):
-        db.execute("update runtime_skill_configs set parent_id=99 where id=?", (config.id,))
+    with reopened._connect() as db:
+        assert db.execute(
+            "select 1 from sqlite_schema where type='trigger' "
+            "and name='trg_configs_runtime_config_update'"
+        ).fetchone()
+        with pytest.raises(sqlite3.IntegrityError, match="runtime Skill activation requires matching load receipt"):
+            db.execute(
+                "update configs set runtime_config_parent_ref=99 "
+                "where record_type='runtime_skill_configs' and numeric_public_key=?",
+                (config.id,),
+            )
+    assert reopened.get_runtime_skill_config(config.id) == config

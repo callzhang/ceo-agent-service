@@ -39,7 +39,8 @@ config relations, with no persisted load-body copy. Native malformed,
 noncanonical/BLOB load bodies and late binding remain explicit copy-validation
 exceptions; the release preflights exact reconstruction before retirement.
 
-The config row-transfer engine is also unselected. Its forward and inverse
+The config row-transfer engine is selected only by the unpublished paired
+Store20/Email52 candidate. Its forward and inverse
 read current rows under caller snapshots, require an FK-off destination
 transaction and leave rollback to the caller. Inverse reads current target
 facts, including receipts appended after conversion. Exact source declarations,
@@ -50,13 +51,16 @@ retires them before its final exact schema predicate can succeed.
 
 Exact source capture supports the six account blockers already translated by
 Email13, including its fresh counterpart, and rejects partial mixtures. This
-permits the row engine to follow existing Email/Business/Provider conversion
-on a copy. The paired caller will use the Email52 source variants; the
-standalone row engine's original variants do not select extra runtime paths.
+permits the row engine to follow Email/Business/Provider conversion in the same
+release transaction. Paired preparation projects the post-Email account blocker
+declarations from read-only source metadata; application captures and compares
+them after Email conversion. The standalone engine's original variants do not
+select extra runtime paths.
 
 The Skill receipt opt-in composes with Email actions independently of the
 follow-up/sync opt-in. The transfer engine checks the exact declaration for
-either combination; default action schemas and runtime selection are unchanged.
+either combination; current runtime selects Email29 plus the two Skill receipt
+kinds. The independent follow-up/sync opt-in remains unchanged.
 
 The unpublished Store `2026-10-14.1`/Email52 candidate selects one typed
 `provider_state` table in fresh and current Email schema construction, converts
@@ -3468,7 +3472,8 @@ unselected; external Task5 and copy/native/publication Task6 remain open.
 ### Coupled Email29 bootstrap and release candidate, Task4F
 
 The unpublished candidate now selects Store `2026-10-14.1`/Email52 together with
-29-kind actions. Exact Store19 (`2026-10-13.5`)/Email51 must pass through one paired
+31-kind actions and typed configs, schedules and Skill receipts. Exact Store19
+(`2026-10-13.5`)/Email51 must pass through one paired
 coordinator release before target constructors run. Direct old-pair construction
 refuses read-only before WAL/cache/schema mutation and repeats selection under
 the existing lock; unsupported/mixed/old Email-only sources are also refused.
@@ -3479,15 +3484,22 @@ the existing current-fact inverse before the old restart; unsupported inverse
 leaves the replacement stopped under existing updater behavior.
 
 Fresh Store keeps its legacy early commits but publishes canonical classification,
-29 actions and its marker in one final transaction. A failed prefix/suffix can
+31 actions, typed configs/schedules, mapped runs and its marker in one final
+transaction. A failed prefix/suffix can
 leave unversioned core and existing retry refusal; no new repair is introduced.
 A successful Store-first state is valid. Email-first invokes actual AutoReplyStore
 once before taking Email's non-reentrant path lock. Its fresh transaction creates
-current retained nonactions, ledger, original seeds, translated blockers and52;
+current retained nonactions, ledger, original seeds, seven retained Email blockers
+and52; the six account-owned blockers are installed by configs;
 rollback returns to Store-first. No historical0→51/action_plan_json/old13 creation
 runs. Current reopen and source51 migration leave existing empty config/revision
-sets empty. Existing coherent-current Store repair behavior is retained. Email current
-reopen validates the exact current `provider_state` declaration before durable
+sets empty. Existing coherent-current Store repair behavior is retained for
+missing canonical Store-owned Skill/runtime guards, selected schedule/Skill
+indexes, run auxiliaries and action auxiliaries; altered declarations and
+Email-owned auxiliaries remain refusals. Target index definitions and constraints
+remain exact after repair; SQLite's `PRAGMA index_list.seq` enumeration order
+may differ after recreation. Email current reopen validates the exact current
+`provider_state` declaration before durable
 reads. The old Email51 provider-observation signal-column repair is retired;
 malformed marker-correct current targets are refused without repair.
 

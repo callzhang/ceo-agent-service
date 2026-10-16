@@ -74,6 +74,23 @@ from app.action_storage import (
 )
 from app.action_email_definitions import EMAIL_TYPES_ORDER
 from app.action_email_storage import SOURCE_TABLES
+from app.configs_definitions import config_projection
+from app.configs_storage import insert_config, update_config
+
+
+def _set_training_snapshot_raw(db, snapshot_id: str, field: str, value) -> None:
+    if field in {"snapshot_digest", "frozen"}:
+        column = "snapshot_snapshot_digest" if field == "snapshot_digest" else "snapshot_frozen"
+        db.execute(
+            f"update configs set {column}=? where record_type='email_training_snapshots' and public_key=?",
+            (value, snapshot_id),
+        )
+    else:
+        db.execute(
+            "update configs set payload_json=json_set(payload_json, ?, ?) "
+            "where record_type='email_training_snapshots' and public_key=?",
+            ("$." + field, value, snapshot_id),
+        )
 
 
 def _frozen_training_observation(**overrides):
@@ -230,35 +247,17 @@ def test_snapshot_readback_requires_external_data_for_db_digest(
     store = EmailStore(tmp_path / "training-snapshot-v24-legacy-manifest.sqlite3")
     snapshot = _frozen_training_snapshot()
     store.persist_training_snapshot(snapshot)
-    legacy_manifest, legacy_digest, legacy_record_digests = (
-        _unsigned_time_legacy_manifest(snapshot, include_counts=True)
+    legacy_manifest, legacy_digest, _ = _unsigned_time_legacy_manifest(
+        snapshot, include_counts=True
     )
     with sqlite3.connect(store.path) as db:
-        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
-        db.execute("drop trigger trg_email_training_observations_immutable_update")
-        db.execute(
-            "update email_training_snapshots set manifest_json=?, snapshot_digest=?",
-            (
-                json.dumps(
-                    legacy_manifest,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                legacy_digest,
-            ),
+        db.execute("drop trigger trg_configs_snapshot_update")
+        _set_training_snapshot_raw(
+            db, snapshot.snapshot_id, "manifest_json",
+            json.dumps(legacy_manifest, ensure_ascii=False, sort_keys=True,
+                       separators=(",", ":")),
         )
-        db.executemany(
-            "update email_training_snapshot_observations "
-            "set ordered_record_digest=? where snapshot_id=? "
-            "and stable_message_identity=?",
-            [
-                (digest, snapshot.snapshot_id, row.stable_message_identity)
-                for row, digest in zip(
-                    snapshot.observations, legacy_record_digests, strict=True
-                )
-            ],
-        )
+        _set_training_snapshot_raw(db, snapshot.snapshot_id, "snapshot_digest", legacy_digest)
 
     with pytest.raises(RuntimeError, match="unavailable"):
         store.get_training_snapshot(snapshot.snapshot_id)
@@ -356,15 +355,10 @@ def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
     assert second == first
     with sqlite3.connect(store.path) as db:
         assert (
-            db.execute("select count(*) from email_training_snapshots").fetchone()[0]
+            db.execute("select count(*) from configs where record_type='email_training_snapshots'").fetchone()[0]
             == 1
         )
-        assert (
-            db.execute(
-                "select count(*) from email_training_snapshot_observations"
-            ).fetchone()[0]
-            == 0
-        )
+        assert db.execute("select 1 from sqlite_schema where name='email_training_snapshot_observations'").fetchone() is None
 
 
 def test_same_snapshot_id_rejects_changed_frozen_content(tmp_path: Path):
@@ -475,12 +469,12 @@ def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    "statement",
+    "field,value",
     (
-        "update email_training_snapshots set seed=99",
+        ("seed", 99),
     ),
 )
-def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, statement: str):
+def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, field: str, value):
     store = EmailStore(tmp_path / "training-snapshot-immutable.sqlite3")
     store.persist_training_snapshot(_frozen_training_snapshot())
 
@@ -488,19 +482,18 @@ def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, statement: st
         sqlite3.connect(store.path) as db,
         pytest.raises(sqlite3.IntegrityError, match="immutable"),
     ):
-        db.execute(statement)
+        _set_training_snapshot_raw(db, "snapshot-store-1", field, value)
 
 
-def test_database_rejects_observation_append_after_snapshot_freeze(tmp_path: Path):
+def test_retired_observations_and_frozen_snapshot_immutability(tmp_path: Path):
     store = EmailStore(tmp_path / "training-snapshot-append.sqlite3")
     snapshot = _frozen_training_snapshot()
     store.persist_training_snapshot(snapshot)
 
-    with pytest.raises(sqlite3.IntegrityError, match="frozen"):
-        with sqlite3.connect(store.path) as db:
-            _insert_legacy_snapshot_observations(
-                db, snapshot, [snapshot.observations[0].ordered_record_digest]
-            )
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select 1 from sqlite_schema where name='email_training_snapshot_observations'").fetchone() is None
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            _set_training_snapshot_raw(db, snapshot.snapshot_id, "manifest_json", "{}")
 
 
 def test_readback_rejects_persisted_observation_not_covered_by_manifest(
@@ -537,11 +530,8 @@ def test_external_snapshot_readback_rejects_parent_identity_tampering(tmp_path, 
     snapshot = _frozen_training_snapshot()
     store.persist_training_snapshot(snapshot)
     with sqlite3.connect(store.path) as db:
-        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
-        db.execute(
-            f"update email_training_snapshots set {field}=? where snapshot_id=?",
-            (value, snapshot.snapshot_id),
-        )
+        db.execute("drop trigger trg_configs_snapshot_update")
+        _set_training_snapshot_raw(db, snapshot.snapshot_id, field, value)
     with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
         store.get_training_snapshot(snapshot.snapshot_id)
 
@@ -560,8 +550,8 @@ def test_snapshot_publication_rejects_corrupt_previous_identity(tmp_path):
     first = _frozen_training_snapshot("first")
     store.persist_training_snapshot(first)
     with sqlite3.connect(store.path) as db:
-        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
-        db.execute("update email_training_snapshots set seed=99 where snapshot_id=?", (first.snapshot_id,))
+        db.execute("drop trigger trg_configs_snapshot_update")
+        _set_training_snapshot_raw(db, first.snapshot_id, "seed", 99)
     second = build_folder_training_snapshot(
         [_frozen_training_observation(body="Changed body, unchanged labels")],
         snapshot_id="second",
@@ -572,7 +562,7 @@ def test_snapshot_publication_rejects_corrupt_previous_identity(tmp_path):
     with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
         store.persist_training_snapshot(second)
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from email_training_snapshots").fetchone()[0] == 1
+        assert db.execute("select count(*) from configs where record_type='email_training_snapshots'").fetchone()[0] == 1
 
 
 def test_readback_rejects_coordinated_parent_and_child_timestamp_tampering(
@@ -3039,25 +3029,18 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
     }
     retained_email_tables = {
         "email_schema_migrations",
-        "email_accounts",
         "email_agent_classification_tasks",
         "email_scan_cursors",
         "email_messages",
         "email_classifications",
-        "email_category_configs",
-        "email_category_description_revisions",
-        "email_category_folder_bindings",
         "email_classifier_runtime_samples",
         "email_historical_candidates",
         "email_historical_classification_history",
         "email_historical_operations",
         "email_historical_traversals",
-        "email_model_mode_transitions",
-        "email_model_promotion_configs",
-        "email_training_snapshot_observations",
-        "email_training_snapshots",
     }
     assert {name for name in table_names if name.startswith("email_")} == retained_email_tables
+    assert {"configs", "schedules", "runs", "actions"} <= table_names
     assert "provider_state" in table_names
     assert not {"email_provider_observations", "email_provider_folder_observation_generations"} & table_names
     assert "actions" in table_names
@@ -3074,9 +3057,10 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
     assert "reply_tasks" not in table_names
     assert "agent_runs" not in table_names
 
-    account_columns = {
-        row["name"] for row in _fetchall(database, "pragma table_info(email_accounts)")
-    }
+    with sqlite3.connect(database) as db:
+        account_columns = {column[0] for column in db.execute(
+            f"select * from ({config_projection('email_accounts')}) limit 0"
+        ).description}
     assert {"imap_secret_reference", "smtp_secret_reference"} <= account_columns
     assert not {"password", "imap_secret", "smtp_secret"} & account_columns
 
@@ -3715,46 +3699,20 @@ def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path)
     EmailStore(database)
     gc.collect()
     with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            alter table email_accounts rename to old_email_accounts;
-            create table email_accounts (
-                account_id text primary key,
-                display_name text,
-                email_address text not null,
-                imap_host text not null,
-                imap_port integer not null check(imap_port between 1 and 65535),
-                imap_tls integer not null check(imap_tls in (0, 1)),
-                imap_username text not null,
-                imap_secret_reference text not null,
-                imap_move_mode text not null default 'move'
-                    check(imap_move_mode in ('move', 'copy_as_move')),
-                smtp_host text not null,
-                smtp_port integer not null check(smtp_port between 1 and 65535),
-                smtp_tls integer not null check(smtp_tls in (0, 1)),
-                smtp_username text not null,
-                smtp_secret_reference text not null,
-                enabled integer not null check(enabled in (0, 1)),
-                scan_folders_json text not null check(json_valid(scan_folders_json)),
-                scan_interval_seconds integer not null check(scan_interval_seconds > 0),
-                created_at text not null,
-                updated_at text not null,
-                agent_lookback_days integer not null default 30
-                    check(agent_lookback_days between 1 and 365),
-                model_lookback_days integer not null default 365
-                    check(model_lookback_days between 1 and 3650),
-                scan_read_state text not null default 'unread'
-                    check(scan_read_state in ('unread', 'all'))
-            );
-            drop table old_email_accounts;
-            """
-        )
+        original = db.execute("select sql from sqlite_schema where name='configs'").fetchone()[0]
+        assert original.count("(account_display_name is not null)") == 1
+        damaged = original.replace("(account_display_name is not null)", "(1)")
+        version = db.execute("pragma schema_version").fetchone()[0]
+        db.execute("pragma writable_schema=on")
+        db.execute("update sqlite_schema set sql=? where name='configs'", (damaged,))
+        db.execute(f"pragma schema_version={version + 1}")
+        db.commit()
+        db.execute("pragma writable_schema=off")
 
-    with pytest.raises(
-        EmailPersistenceCorruption,
-        match="email_accounts.*display_name",
-    ):
+    before = sha256(database.read_bytes()).hexdigest()
+    with pytest.raises(sqlite3.IntegrityError, match="malformed current provider/config declaration"):
         EmailStore(database)
+    assert sha256(database.read_bytes()).hexdigest() == before
 
 
 @pytest.mark.parametrize(
@@ -8346,37 +8304,19 @@ def test_account_scan_folders_json_must_be_a_list_of_folder_names(tmp_path: Path
     database = tmp_path / "corrupt-account.sqlite3"
     EmailStore(database)
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_accounts (
-                account_id, display_name, email_address, imap_host, imap_port,
-                imap_tls, imap_username, imap_secret_reference, smtp_host,
-                smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
-                enabled, scan_folders_json, scan_interval_seconds, created_at,
-                updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "ding-main",
-                "DingTalk",
-                "redacted@example.com",
-                "imap.example.com",
-                993,
-                1,
-                "redacted@example.com",
-                "CEO_EMAIL_DING_IMAP_SECRET",
-                "smtp.example.com",
-                465,
-                1,
-                "redacted@example.com",
-                "CEO_EMAIL_DING_SMTP_SECRET",
-                1,
-                "{}",
-                60,
-                "2026-08-29T16:00:00+00:00",
-                "2026-08-29T16:00:00+00:00",
-            ),
-        )
+        db.execute("begin immediate")
+        insert_config(db, "email_accounts", {
+            "account_id": "ding-main", "display_name": "DingTalk",
+            "email_address": "redacted@example.com", "imap_host": "imap.example.com",
+            "imap_port": 993, "imap_tls": 1, "imap_username": "redacted@example.com",
+            "imap_secret_reference": "CEO_EMAIL_DING_IMAP_SECRET",
+            "smtp_host": "smtp.example.com", "smtp_port": 465, "smtp_tls": 1,
+            "smtp_username": "redacted@example.com",
+            "smtp_secret_reference": "CEO_EMAIL_DING_SMTP_SECRET", "enabled": 1,
+            "scan_folders_json": "{}", "scan_interval_seconds": 60,
+            "created_at": "2026-08-29T16:00:00+00:00",
+            "updated_at": "2026-08-29T16:00:00+00:00",
+        })
 
     with pytest.raises(EmailPersistenceCorruption, match="scan_folders_json"):
         EmailStore(database)
@@ -8515,27 +8455,25 @@ def test_fresh_category_configs_seed_structured_approved_boundaries(tmp_path: Pa
     assert all(config["action_parameters"] == {} for config in configs.values())
 
 
-@pytest.mark.parametrize(
-    "statement",
-    (
-        "update email_category_configs set include_json='not-json' where category_key='work'",
-        "update email_category_configs set core_description=' ' where category_key='work'",
-        "update email_category_configs set include_json='[]' where category_key='work'",
-        "update email_category_configs set include_json='[\" \" ]' where category_key='work'",
-        "update email_category_configs set exclude_json='[]' where category_key='work'",
-        "update email_category_configs set exclude_json='[\"\"]' where category_key='work'",
-    ),
-)
+@pytest.mark.parametrize("field,value", (
+    ("include_json", "not-json"), ("core_description", " "),
+    ("include_json", "[]"), ("include_json", '[" " ]'),
+    ("exclude_json", "[]"), ("exclude_json", '[""]'),
+))
 def test_category_config_schema_rejects_invalid_structured_descriptions(
     tmp_path: Path,
-    statement: str,
+    field: str, value: str,
 ):
     database = tmp_path / "invalid-category-description.sqlite3"
     EmailStore(database)
 
     with sqlite3.connect(database) as db:
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute(statement)
+            db.execute(
+                "update configs set payload_json=json_set(payload_json, ?, ?) "
+                "where record_type='email_category_configs' and public_key='work'",
+                ("$." + field, value),
+            )
 
 
 def test_create_category_with_verified_bindings_is_atomic_and_account_complete(
@@ -8758,8 +8696,9 @@ def test_account_enable_and_category_disabling_are_one_transaction(tmp_path: Pat
         db.execute(
             """
             create trigger abort_category_disabling
-            before update of enabled on email_category_configs
-            when old.enabled=1 and new.enabled=0
+            before update on configs
+            when old.record_type='email_category_configs'
+              and old.category_enabled=1 and new.category_enabled=0
             begin
                 select raise(abort, 'forced category disable failure');
             end
@@ -8780,9 +8719,12 @@ def test_reopen_rejects_enabled_category_missing_enabled_account_binding(
     store = EmailStore(database)
     store.create_account(_task2_account_values("primary"))
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_category_configs set enabled=1 where category_key='work'"
-        )
+        db.execute("begin immediate")
+        rowid = db.execute(
+            f"select rowid from ({config_projection('email_category_configs', include_rowid=True)}) "
+            "where category_key='work'"
+        ).fetchone()[0]
+        assert update_config(db, "email_category_configs", rowid, {"enabled": 1}) == 1
 
     with pytest.raises(
         EmailPersistenceCorruption,

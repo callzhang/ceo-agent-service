@@ -3,14 +3,14 @@
 import json
 import sqlite3
 
+from app.configs_definitions import config_projection
+from app.configs_storage import insert_config
+
 
 def intern_scheduled_config(db: sqlite3.Connection, snapshot_json: str) -> int:
-    db.execute(
-        "insert or ignore into scheduled_task_config_versions(snapshot_json) values (?)",
-        (snapshot_json,),
-    )
+    insert_config(db, "scheduled_task_config_versions", {"snapshot_json": snapshot_json}, ignore=True)
     return int(db.execute(
-        "select id from scheduled_task_config_versions where snapshot_json=?",
+        f"select id from ({config_projection('scheduled_task_config_versions')}) where snapshot_json=?",
         (snapshot_json,),
     ).fetchone()[0])
 
@@ -36,7 +36,13 @@ def migrate_scheduled_configs(db: sqlite3.Connection) -> None:
         for key, value in defaults.items():
             payload.setdefault(key, value)
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        config_id = intern_scheduled_config(db, body)
+        db.execute(
+            "insert or ignore into scheduled_task_config_versions(snapshot_json) values (?)",
+            (body,),
+        )
+        config_id = int(db.execute(
+            "select id from scheduled_task_config_versions where snapshot_json=?", (body,)
+        ).fetchone()[0])
         db.execute("update runs set snapshot_id=? where record_type='scheduled_task_runs' and snapshot_id=?",
                    (config_id, row[0]))
         db.execute("delete from scheduled_task_config_versions where id=?", (row[0],))

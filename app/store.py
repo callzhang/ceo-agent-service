@@ -33,7 +33,35 @@ from app.reviewed_candidate_store import (
 )
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.email_classification_schema import create_current_email_classifications
-from app.action_email_schema_release import require_current_email_pair, TARGET_EMAIL_VERSION
+from app.configs_schema_release import configs_schema_is_current
+from app.configs_run_schema import (
+    _declarations as _config_run_declarations,
+    _objects as _config_run_objects,
+    map_runs_to_configs,
+)
+from app.configs_definitions import config_projection
+from app.configs_storage import create_configs_schema, insert_config, update_config, delete_config
+from app.action_skill_config_storage import (
+    insert_skill_receipt, load_receipt_projection, list_skill_load_receipts,
+    latest_skill_load_receipt_for_pid, export_receipt_projection,
+    latest_managed_skill_export_receipt as latest_skill_export_receipt,
+)
+from app.schedules_definitions import schedule_projection
+from app.schedules_storage import (
+    create_schedules_schema, insert_schedule, update_schedule, delete_schedule,
+    rename_schedule_runtime,
+)
+from app.configs_schema_transfer import (
+    SOURCE_TABLES as CONFIG_SOURCE_TABLES,
+    _target_declarations as _config_target_declarations,
+)
+from app.action_email_schema_release import (
+    require_current_email_pair, TARGET_EMAIL_VERSION,
+    CURRENT_CONFIG_REPAIRABLE_TRIGGERS,
+    CURRENT_CONFIG_REPAIRABLE_INDEXES,
+    CURRENT_SCHEDULE_REPAIRABLE_INDEXES,
+    configs_current_or_known_skill_guard_repair,
+)
 from app.email_publication_sources import current_email_actions_available
 from app.run_storage import (
     SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
@@ -362,17 +390,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "workbench_attachments",
     "workbench_artifacts",
     "workbench_confirmations",
-    "managed_skills",
-    "managed_skill_revisions",
-    "managed_skill_export_receipts",
-    "scheduled_tasks",
-    "scheduled_task_skill_refs",
-    "scheduled_task_config_versions",
     "dispatcher_claim_leases",
-    "runtime_skill_configs",
-    "runtime_skill_bindings",
-    "runtime_skill_load_receipts",
-    "runtime_feedback_iteration_capabilities",
     "feedback_iteration_decisions",
     "feedback_iteration_decision_items",
     "business",
@@ -432,12 +450,6 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_todo_evidence_candidates_status",
     "idx_todo_evidence_candidates_work_input",
     "idx_todo_evidence_candidates_project",
-    "idx_managed_skill_revisions_number",
-    "idx_managed_skill_revisions_identity",
-    "idx_managed_skill_export_receipts_revision",
-    "idx_scheduled_tasks_migration_key",
-    "idx_scheduled_tasks_enabled",
-    "idx_scheduled_task_skill_refs_position",
     "idx_scheduled_task_runs_scheduled_instant",
     "idx_scheduled_task_runs_dispatch",
     "idx_scheduled_task_runs_claim",
@@ -445,8 +457,6 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_scheduled_task_runs_reply_execution",
     "idx_dispatcher_claim_leases_expiry",
     "idx_dispatcher_claim_leases_terminal",
-    "idx_runtime_skill_bindings_config_order",
-    "idx_runtime_skill_load_receipts_config",
     "idx_meeting_memory_write_events_lease",
     "idx_task_memory_write_events_lease",
     "idx_feedback_iteration_decisions_batch",
@@ -596,21 +606,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "project_candidate_id", "attention_item_id", "work_project_id",
         "work_todo_id", "work_update_id", "created_at",
     ),
-    "scheduled_tasks": (
-        "migration_key",
-        "description",
-        "command",
-        "runtime_options_json",
-        "required_runtime_capabilities_json",
-        "version",
-        "deleted_at",
-    ),
-    "scheduled_task_skill_refs": (
-        "skill_source",
-        "managed_skill_id",
-        "managed_revision_id",
-        "position",
-    ),
     "dispatcher_claim_leases": (
         "terminal_at",
         "last_error",
@@ -677,18 +672,6 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_insert",
     "trg_runtime_attempt_lineage_update",
     "trg_runtime_attempt_lineage_immutable",
-    "trg_managed_skill_revisions_immutable_update",
-    "trg_managed_skill_revisions_immutable_delete",
-    "trg_managed_skill_export_receipts_immutable_update",
-    "trg_managed_skill_export_receipts_immutable_delete",
-    "trg_runtime_skill_configs_immutable_update",
-    "trg_runtime_skill_configs_immutable_delete",
-    "trg_runtime_skill_bindings_immutable_update",
-    "trg_runtime_skill_bindings_immutable_delete",
-    "trg_runtime_skill_load_receipts_immutable_update",
-    "trg_runtime_skill_load_receipts_immutable_delete",
-    "trg_runtime_feedback_iteration_capabilities_immutable_update",
-    "trg_runtime_feedback_iteration_capabilities_immutable_delete",
     "trg_feedback_iteration_decisions_immutable_update",
     "trg_feedback_iteration_decisions_immutable_delete",
     "trg_feedback_iteration_decision_items_immutable_update",
@@ -1063,42 +1046,6 @@ STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
     ),
     "trg_feedback_processing_round_integer_v2_update": _normalize_schema_sql(
         FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL
-    ),
-    "trg_managed_skill_revisions_immutable_update": _normalize_schema_sql(
-        MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL
-    ),
-    "trg_managed_skill_revisions_immutable_delete": _normalize_schema_sql(
-        MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL
-    ),
-    "trg_managed_skill_export_receipts_immutable_update": _normalize_schema_sql(
-        MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL
-    ),
-    "trg_managed_skill_export_receipts_immutable_delete": _normalize_schema_sql(
-        MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL
-    ),
-    "trg_runtime_skill_configs_immutable_update": _normalize_schema_sql(
-        RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL
-    ),
-    "trg_runtime_skill_configs_immutable_delete": _normalize_schema_sql(
-        RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL
-    ),
-    "trg_runtime_skill_bindings_immutable_update": _normalize_schema_sql(
-        RUNTIME_SKILL_BINDINGS_IMMUTABLE_UPDATE_TRIGGER_SQL
-    ),
-    "trg_runtime_skill_bindings_immutable_delete": _normalize_schema_sql(
-        RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL
-    ),
-    "trg_runtime_skill_load_receipts_immutable_update": _normalize_schema_sql(
-        RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL
-    ),
-    "trg_runtime_skill_load_receipts_immutable_delete": _normalize_schema_sql(
-        RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL
-    ),
-    "trg_runtime_feedback_iteration_capabilities_immutable_update": _normalize_schema_sql(
-        RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_UPDATE_TRIGGER_SQL
-    ),
-    "trg_runtime_feedback_iteration_capabilities_immutable_delete": _normalize_schema_sql(
-        RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_DELETE_TRIGGER_SQL
     ),
     "trg_feedback_iteration_decisions_immutable_update": _normalize_schema_sql(
         FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL
@@ -1954,7 +1901,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         try:
             with self._connect() as db:
                 healthy = self._feedback_processing_round_guard_state_is_valid(db) and business_schema_is_current(db) and any(
-                    action_schema_is_current(db, include_reply=True, reply_variant=variant, include_email=True)
+                    configs_schema_is_current(db, action_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
         except BaseException:
@@ -2449,13 +2396,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         malformed` arrives as `sqlite3.DatabaseError`, which the callers'
         `except sqlite3.OperationalError` does not catch.
         """
-        if "scheduled_task_config_versions" not in {
-            str(item["name"])
-            for item in db.execute(
-                "select name from sqlite_master where type='table'"
-            )
-        }:
-            return True
         # Ask SQLite for the first offending row instead of materialising the
         # table.  A snapshot that cannot be parsed is corrupt data, not an
         # out-of-date schema: migrating cannot repair it, so json_valid
@@ -2464,8 +2404,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         # value is JSON null, which is what the presence test needs.
         return (
             db.execute(
-                """
-                select 1 from scheduled_task_config_versions
+                f"""
+                select 1 from ({config_projection('scheduled_task_config_versions')})
                 where json_valid(snapshot_json)
                   and json_type(snapshot_json) = 'object'
                   and (
@@ -2549,11 +2489,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and required_trigger_definitions_present
             and feedback_processing_round_storage_valid
             and required_columns_present
-            and run_schema_is_current(db, include_task_runs=True, include_workbench=True)
+            and _config_run_objects(db) == _config_run_declarations(mapped=True)
             and task_schema_is_current(db, include_workbench=True)
-            and workbench_schema_is_current(db)
+            and workbench_schema_is_current(db, mapped_runs=True)
             and business_schema_is_current(db)
-            and any(action_schema_is_current(db, include_reply=True, reply_variant=variant, include_email=True)
+            and any(configs_schema_is_current(db, action_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
             and not removed_columns_present
@@ -2786,6 +2726,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def _initialize(self) -> None:
         with self._connect() as db:
+            fresh = db.execute(
+                "select 1 from sqlite_schema where type='table' and name='service_state'"
+            ).fetchone() is None
+            db.execute("pragma foreign_keys=off")
             reply_variant = (
                 _reply_variant_for(db)
                 if db.execute("select 1 from sqlite_master where name='actions'").fetchone()
@@ -2807,79 +2751,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_session_id text,
                     codex_session_contract_hash text not null default ''
                 );
-                create table if not exists managed_skills (
-                    id integer primary key autoincrement,
-                    name text not null unique,
-                    display_name text not null,
-                    created_at text not null default current_timestamp
-                );
-                create table if not exists managed_skill_revisions (
-                    id integer primary key autoincrement,
-                    skill_id integer not null,
-                    revision_number integer not null check(revision_number > 0),
-                    content text not null,
-                    sha256 text not null,
-                    parent_revision_id integer,
-                    source text not null,
-                    created_at text not null default current_timestamp,
-                    foreign key(skill_id) references managed_skills(id),
-                    foreign key(parent_revision_id)
-                        references managed_skill_revisions(id)
-                );
-                create unique index if not exists idx_managed_skill_revisions_number
-                    on managed_skill_revisions(skill_id, revision_number);
-                drop index if exists idx_managed_skill_revisions_sha256;
-                create unique index if not exists idx_managed_skill_revisions_identity
-                    on managed_skill_revisions(skill_id, sha256, source);
-                create table if not exists managed_skill_export_receipts (
-                    id integer primary key autoincrement,
-                    revision_id integer not null,
-                    sha256 text not null,
-                    path text not null,
-                    created_at text not null default current_timestamp,
-                    foreign key(revision_id) references managed_skill_revisions(id)
-                );
-                create index if not exists idx_managed_skill_export_receipts_revision
-                    on managed_skill_export_receipts(revision_id, id);
-                create table if not exists scheduled_tasks (
-                    id integer primary key autoincrement,
-                    migration_key text,
-                    name text not null,
-                    description text not null default '',
-                    prompt text not null,
-                    command text not null default '',
-                    cron_expression text not null,
-                    timezone text not null,
-                    runtime_id text not null,
-                    runtime_options_json text not null default '{}',
-                    required_runtime_capabilities_json text not null default '[]',
-                    working_directory text not null default '',
-                    enabled integer not null check(enabled in (0, 1)),
-                    version integer not null default 1 check(version > 0),
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    deleted_at text
-                );
-                create unique index if not exists idx_scheduled_tasks_migration_key
-                    on scheduled_tasks(migration_key)
-                    where migration_key is not null;
-                create index if not exists idx_scheduled_tasks_enabled
-                    on scheduled_tasks(enabled, deleted_at, id);
-                create table if not exists scheduled_task_skill_refs (
-                    scheduled_task_id integer not null,
-                    skill_source text not null,
-                    skill_name text not null,
-                    managed_skill_id integer,
-                    managed_revision_id integer,
-                    position integer not null check(position >= 0),
-                    primary key(scheduled_task_id, position),
-                    foreign key(scheduled_task_id) references scheduled_tasks(id),
-                    foreign key(managed_skill_id) references managed_skills(id),
-                    foreign key(managed_revision_id)
-                        references managed_skill_revisions(id)
-                );
-                create unique index if not exists idx_scheduled_task_skill_refs_position
-                    on scheduled_task_skill_refs(scheduled_task_id, position);
                 create table if not exists dispatcher_claim_leases (
                     adapter_name text not null,
                     source_id text not null,
@@ -2900,47 +2771,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 create index if not exists idx_dispatcher_claim_leases_terminal
                     on dispatcher_claim_leases(terminal_at)
                     where terminal_at<>'';
-                create table if not exists runtime_skill_configs (
-                    id integer primary key autoincrement,
-                    parent_id integer,
-                    status text not null check(status in (
-                        'pending_restart', 'active', 'load_failed'
-                    )),
-                    created_at text not null default current_timestamp,
-                    foreign key(parent_id) references runtime_skill_configs(id)
-                );
-                create table if not exists runtime_skill_bindings (
-                    config_id integer not null,
-                    skill_id integer not null,
-                    revision_id integer not null,
-                    enabled integer not null check(enabled in (0, 1)),
-                    load_order integer not null check(load_order >= 0),
-                    purpose text not null default '',
-                    primary key(config_id, skill_id),
-                    unique(config_id, load_order),
-                    foreign key(config_id) references runtime_skill_configs(id),
-                    foreign key(skill_id) references managed_skills(id),
-                    foreign key(revision_id) references managed_skill_revisions(id)
-                );
-                create index if not exists idx_runtime_skill_bindings_config_order
-                    on runtime_skill_bindings(config_id, load_order);
-                create table if not exists runtime_skill_load_receipts (
-                    id integer primary key autoincrement,
-                    config_id integer not null,
-                    pid integer not null check(pid > 0),
-                    loaded_json text not null default '{}',
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    foreign key(config_id) references runtime_skill_configs(id)
-                );
-                create index if not exists idx_runtime_skill_load_receipts_config
-                    on runtime_skill_load_receipts(config_id, id);
-                create table if not exists runtime_feedback_iteration_capabilities (
-                    config_id integer primary key,
-                    enabled integer not null check(enabled in (0, 1)),
-                    created_at text not null default current_timestamp,
-                    foreign key(config_id) references runtime_skill_configs(id)
-                );
                 create table if not exists seen_messages (
                     message_id text primary key,
                     conversation_id text not null,
@@ -3172,21 +3002,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     watermark_message_id text not null default '',
                     last_scan_at text not null default '',
                     updated_at text not null default current_timestamp
-                );
-                create table if not exists wechat_reply_scopes (
-                    account_id text not null,
-                    target_type text not null,
-                    target_id text not null,
-                    conversation_id text not null default '',
-                    display_name text not null,
-                    trigger_mode text not null,
-                    enabled integer not null default 1,
-                    binding_status text not null default 'unverified',
-                    binding_evidence_json text not null default '{}',
-                    disabled_reason text not null default '',
-                    last_discovered_at text not null default '',
-                    updated_at text not null default current_timestamp,
-                    primary key(account_id, target_type, target_id)
                 );
                 create table if not exists wechat_deliveries (
                     id integer primary key autoincrement,
@@ -3977,17 +3792,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if db.in_transaction:
                 db.commit()
             self._replace_feedback_processing_round_guards_atomically(db)
-            self._replace_managed_skill_revision_immutability_guards_atomically(db)
-            self._replace_managed_skill_export_receipt_immutability_guards_atomically(db)
-            self._replace_runtime_skill_immutability_guards_atomically(db)
             self._replace_feedback_iteration_decision_immutability_guards_atomically(db)
-            db.execute(
-                """insert into runtime_feedback_iteration_capabilities (config_id, enabled)
-                   select id, 1 from runtime_skill_configs
-                   where id not in (
-                       select config_id from runtime_feedback_iteration_capabilities
-                   )"""
-            )
             self._reconcile_legacy_workbench_confirmations(db)
             meeting_memory_write_columns = {
                 row["name"]
@@ -4436,32 +4241,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "alter table wechat_deliveries add column "
                     "pre_action_failure integer not null default 0"
                 )
-            scheduled_task_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(scheduled_tasks)").fetchall()
-            }
-            if "required_runtime_capabilities_json" not in scheduled_task_columns:
-                db.execute(
-                    "alter table scheduled_tasks add column "
-                    "required_runtime_capabilities_json text not null default '[]'"
-                )
-            if "command" not in scheduled_task_columns:
-                db.execute(
-                    "alter table scheduled_tasks add column "
-                    "command text not null default ''"
-                )
-            if "description" not in scheduled_task_columns:
-                db.execute(
-                    "alter table scheduled_tasks add column "
-                    "description text not null default ''"
-                )
-            db.execute(
-                "update scheduled_tasks set description=coalesce(nullif(trim(prompt), ''), name) "
-                "where trim(description)=''"
-            )
-            db.execute("""create table if not exists scheduled_task_config_versions (
-                id integer primary key, snapshot_json text not null unique
-            )""")
             error_columns = {
                 row["name"] for row in db.execute("pragma table_info(errors)").fetchall()
             }
@@ -4478,7 +4257,35 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             # parent/actions and Store marker publish together only after them.
             db.execute("begin immediate")
             create_current_email_classifications(db)
-            create_action_schema(db, include_reply=True, reply_variant=reply_variant, include_email=True)
+            if fresh:
+                create_schedules_schema(db)
+                create_configs_schema(db)
+            else:
+                target = _config_target_declarations()
+                for owner, repairable_indexes, repairable_triggers in (
+                    ("configs", CURRENT_CONFIG_REPAIRABLE_INDEXES,
+                     CURRENT_CONFIG_REPAIRABLE_TRIGGERS),
+                    ("schedules", CURRENT_SCHEDULE_REPAIRABLE_INDEXES,
+                     frozenset()),
+                ):
+                    for object_type, items, permitted in (
+                        ("index", target[owner]["indexes"], repairable_indexes),
+                        ("trigger", target[owner]["triggers"], repairable_triggers),
+                    ):
+                        for item in items:
+                            if item["name"] not in permitted:
+                                continue
+                            if db.execute(
+                                "select 1 from sqlite_schema where type=? and name=?",
+                                (object_type, item["name"]),
+                            ).fetchone() is None:
+                                db.execute(item["sql"])
+            create_action_schema(
+                db, include_reply=True, reply_variant=reply_variant,
+                include_email=True, include_skill_config_receipts=True,
+            )
+            if fresh:
+                map_runs_to_configs(db)
             runtime_session_columns = {
                 row["name"]
                 for row in db.execute(
@@ -4805,17 +4612,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not display_name:
             raise ValueError("managed Skill display name must be nonempty")
         with self._immediate_write_transaction() as db:
+            if db.execute(
+                f"select 1 from ({config_projection('managed_skills')}) where name=?",
+                (name,),
+            ).fetchone() is not None:
+                raise ValueError("managed Skill already exists")
             try:
-                cursor = db.execute(
-                    "insert into managed_skills (name, display_name) values (?, ?)",
-                    (name, display_name),
-                )
+                cursor = insert_config(db, "managed_skills", {"name": name, "display_name": display_name})
             except sqlite3.IntegrityError as exc:
-                if "managed_skills.name" in str(exc):
+                if "idx_configs_skill_name" in str(exc) or "configs.skill_name" in str(exc):
                     raise ValueError("managed Skill already exists") from exc
                 raise
             row = db.execute(
-                "select id, name, display_name, created_at from managed_skills where id=?",
+                f"select * from ({config_projection('managed_skills')}) where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
             assert row is not None
@@ -4824,14 +4633,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def list_managed_skills(self) -> tuple[ManagedSkill, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select id, name, display_name, created_at from managed_skills order by id"
+                f"select * from ({config_projection('managed_skills')}) order by id"
             ).fetchall()
         return tuple(self._managed_skill_from_row(row) for row in rows)
 
     def get_managed_skill(self, skill_id: int) -> ManagedSkill | None:
         with self._connect() as db:
             row = db.execute(
-                "select id, name, display_name, created_at from managed_skills where id=?",
+                f"select * from ({config_projection('managed_skills')}) where id=?",
                 (skill_id,),
             ).fetchone()
         return self._managed_skill_from_row(row) if row is not None else None
@@ -4841,7 +4650,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return None
         with self._connect() as db:
             row = db.execute(
-                "select id, name, display_name, created_at from managed_skills where name=?",
+                f"select * from ({config_projection('managed_skills')}) where name=?",
                 (name,),
             ).fetchone()
         return self._managed_skill_from_row(row) if row is not None else None
@@ -4859,7 +4668,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("managed Skill revision source must be nonempty")
         with self._immediate_write_transaction() as db:
             skill_row = db.execute(
-                "select name from managed_skills where id=?", (skill_id,)
+                f"select name from ({config_projection('managed_skills')}) where id=?", (skill_id,)
             ).fetchone()
             if skill_row is None:
                 raise ValueError("managed Skill does not exist")
@@ -4869,8 +4678,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 require_managed_marker=require_managed_marker,
             )
             latest_row = db.execute(
-                """
-                select id, revision_number from managed_skill_revisions
+                f"""
+                select id, revision_number from ({config_projection('managed_skill_revisions')})
                 where skill_id=? order by revision_number desc limit 1
                 """,
                 (skill_id,),
@@ -4879,7 +4688,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 parent_revision_id = int(latest_row["id"])
             if parent_revision_id is not None:
                 parent_row = db.execute(
-                    "select skill_id from managed_skill_revisions where id=?",
+                    f"select skill_id from ({config_projection('managed_skill_revisions')}) where id=?",
                     (parent_revision_id,),
                 ).fetchone()
                 if parent_row is None:
@@ -4893,35 +4702,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if latest_row is not None
                 else 1
             )
+            if db.execute(
+                f"select 1 from ({config_projection('managed_skill_revisions')}) "
+                "where skill_id=? and sha256=? and source=?",
+                (skill_id, sha256, source),
+            ).fetchone() is not None:
+                raise ValueError("managed Skill revision content already exists")
             try:
-                cursor = db.execute(
-                    """
-                    insert into managed_skill_revisions (
-                        skill_id, revision_number, content, sha256,
-                        parent_revision_id, source
-                    ) values (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        skill_id,
-                        revision_number,
-                        content,
-                        sha256,
-                        parent_revision_id,
-                        source,
-                    ),
-                )
+                cursor = insert_config(db, "managed_skill_revisions", {
+                    "skill_id": skill_id, "revision_number": revision_number,
+                    "content": content, "sha256": sha256,
+                    "parent_revision_id": parent_revision_id, "source": source,
+                })
             except sqlite3.IntegrityError as exc:
-                if "managed_skill_revisions.skill_id, managed_skill_revisions.sha256" in str(exc):
+                if "configs.skill_revision_skill_id, configs.skill_revision_sha256" in str(exc):
                     raise ValueError(
                         "managed Skill revision content already exists"
                     ) from exc
                 raise
             row = db.execute(
-                """
-                select id, skill_id, revision_number, content, sha256,
-                       parent_revision_id, source, created_at
-                from managed_skill_revisions where id=?
-                """,
+                f"select * from ({config_projection('managed_skill_revisions')}) where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
             assert row is not None
@@ -4932,11 +4732,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> ManagedSkillRevision | None:
         with self._connect() as db:
             row = db.execute(
-                """
-                select id, skill_id, revision_number, content, sha256,
-                       parent_revision_id, source, created_at
-                from managed_skill_revisions where id=?
-                """,
+                f"select * from ({config_projection('managed_skill_revisions')}) where id=?",
                 (revision_id,),
             ).fetchone()
         return self._managed_skill_revision_from_row(row) if row is not None else None
@@ -4946,12 +4742,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> tuple[ManagedSkillRevision, ...]:
         with self._connect() as db:
             rows = db.execute(
-                """
-                select id, skill_id, revision_number, content, sha256,
-                       parent_revision_id, source, created_at
-                from managed_skill_revisions
-                where skill_id=? order by revision_number
-                """,
+                f"select * from ({config_projection('managed_skill_revisions')}) "
+                "where skill_id=? order by revision_number",
                 (skill_id,),
             ).fetchall()
         return tuple(self._managed_skill_revision_from_row(row) for row in rows)
@@ -5014,10 +4806,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if ref.managed_skill_id is None or ref.managed_revision_id is None:
                     raise ValueError("managed Skill ref requires an exact revision")
                 row = db.execute(
-                    """
+                    f"""
                     select skill.name
-                      from managed_skills skill
-                      join managed_skill_revisions revision
+                      from ({config_projection('managed_skills')}) skill
+                      join ({config_projection('managed_skill_revisions')}) revision
                         on revision.skill_id=skill.id
                      where skill.id=? and revision.id=?
                     """,
@@ -5025,7 +4817,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ).fetchone()
                 if row is None:
                     skill = db.execute(
-                        "select 1 from managed_skills where id=?",
+                        f"select 1 from ({config_projection('managed_skills')}) where id=?",
                         (ref.managed_skill_id,),
                     ).fetchone()
                     if skill is None:
@@ -5051,10 +4843,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         scheduled_task_id: int,
     ) -> tuple[ScheduledTaskSkillRef, ...]:
         rows = db.execute(
-            """
+            f"""
             select scheduled_task_id, skill_source, skill_name,
                    managed_skill_id, managed_revision_id, position
-              from scheduled_task_skill_refs
+              from ({config_projection('scheduled_task_skill_refs')})
              where scheduled_task_id=?
              order by position
             """,
@@ -5203,29 +4995,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             skill_refs,
             scheduled_task_id=scheduled_task_id,
         )
-        db.execute(
-            "delete from scheduled_task_skill_refs where scheduled_task_id=?",
-            (scheduled_task_id,),
-        )
-        db.executemany(
-            """
-            insert into scheduled_task_skill_refs (
-                scheduled_task_id, skill_source, skill_name,
-                managed_skill_id, managed_revision_id, position
-            ) values (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                (
-                    scheduled_task_id,
-                    ref.skill_source,
-                    ref.skill_name.strip(),
-                    ref.managed_skill_id,
-                    ref.managed_revision_id,
-                    ref.position,
-                )
-                for ref in refs
-            ),
-        )
+        for row in db.execute(
+            f"select rowid from ({config_projection('scheduled_task_skill_refs', include_rowid=True)}) "
+            "where scheduled_task_id=?", (scheduled_task_id,)
+        ).fetchall():
+            delete_config(db, "scheduled_task_skill_refs", row["rowid"])
+        for ref in refs:
+            insert_config(db, "scheduled_task_skill_refs", {
+                "scheduled_task_id": scheduled_task_id,
+                "skill_source": ref.skill_source,
+                "skill_name": ref.skill_name.strip(),
+                "managed_skill_id": ref.managed_skill_id,
+                "managed_revision_id": ref.managed_revision_id,
+                "position": ref.position,
+            })
 
     def create_scheduled_task(
         self,
@@ -5295,43 +5078,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if migration_key is not None:
                 existing = db.execute(
                     f"select {self._scheduled_task_columns()} "
-                    "from scheduled_tasks where migration_key=?",
+                    f"from ({schedule_projection()}) where migration_key=?",
                     (migration_key,),
                 ).fetchone()
                 if existing is not None:
                     return self._scheduled_task_from_row(db, existing)
             refs = self._validate_scheduled_task_skill_refs(db, skill_refs)
-            cursor = db.execute(
-                """
-                insert into scheduled_tasks (
-                    migration_key, name, description, prompt, command, cron_expression, timezone,
-                    runtime_id, runtime_options_json, working_directory,
-                    required_runtime_capabilities_json, enabled, version,
-                    created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-                """,
-                (
-                    migration_key,
-                    name,
-                    description,
-                    prompt,
-                    command,
-                    cron_expression,
-                    timezone_name,
-                    runtime_id,
-                    runtime_options_json,
-                    working_directory,
-                    required_runtime_capabilities_json,
-                    int(enabled),
-                    now_text,
-                    now_text,
-                ),
-            )
-            task_id = int(cursor.lastrowid)
+            task_id = int(insert_schedule(db, {
+                "migration_key": migration_key, "name": name,
+                "description": description, "prompt": prompt, "command": command,
+                "cron_expression": cron_expression, "timezone": timezone_name,
+                "runtime_id": runtime_id, "runtime_options_json": runtime_options_json,
+                "working_directory": working_directory,
+                "required_runtime_capabilities_json": required_runtime_capabilities_json,
+                "enabled": int(enabled), "version": 1,
+                "created_at": now_text, "updated_at": now_text,
+            }))
             self._replace_scheduled_task_skill_refs(db, task_id, refs)
             row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where id=?",
+                f"from ({schedule_projection()}) where id=?",
                 (task_id,),
             ).fetchone()
             assert row is not None
@@ -5347,7 +5113,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                f"from scheduled_tasks where id=?{deleted_filter}",
+                f"from ({schedule_projection()}) where id=?{deleted_filter}",
                 (task_id,),
             ).fetchone()
             return self._scheduled_task_from_row(db, row) if row is not None else None
@@ -5360,7 +5126,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         deleted_filter = "" if include_deleted else " where deleted_at is null"
         with self._connect() as db:
             rows = db.execute(
-                f"select {self._scheduled_task_columns()} from scheduled_tasks"
+                f"select {self._scheduled_task_columns()} from ({schedule_projection()})"
                 f"{deleted_filter} order by id"
             ).fetchall()
             return tuple(self._scheduled_task_from_row(db, row) for row in rows)
@@ -6798,7 +6564,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where migration_key=?",
+                f"from ({schedule_projection()}) where migration_key=?",
                 (migration_key,),
             ).fetchone()
             if row is None:
@@ -6816,18 +6582,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 field="scheduled task required runtime capabilities",
             )
             enabled = current.enabled and not must_disable
-            db.execute(
-                """
-                update scheduled_tasks
-                   set required_runtime_capabilities_json=?, enabled=?,
-                       version=version + 1, updated_at=?
-                 where id=?
-                """,
-                (merged_json, int(enabled), now_text, current.id),
-            )
+            update_schedule(db, current.id, current.version, {
+                "required_runtime_capabilities_json": merged_json,
+                "enabled": int(enabled), "updated_at": now_text,
+            })
             updated_row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where id=?",
+                f"from ({schedule_projection()}) where id=?",
                 (current.id,),
             ).fetchone()
             assert updated_row is not None
@@ -6859,7 +6620,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where id=? and deleted_at is null",
+                f"from ({schedule_projection()}) where id=? and deleted_at is null",
                 (task_id,),
             ).fetchone()
             if row is None:
@@ -6948,39 +6709,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 next_refs,
                 scheduled_task_id=task_id,
             )
-            cursor = db.execute(
-                """
-                update scheduled_tasks
-                   set name=?, description=?, prompt=?, command=?, cron_expression=?, timezone=?,
-                       runtime_id=?, runtime_options_json=?, working_directory=?,
-                       required_runtime_capabilities_json=?,
-                       version=version + 1, updated_at=?
-                 where id=? and version=? and deleted_at is null
-                """,
-                (
-                    updates["name"],
-                    updates["description"],
-                    updates["prompt"],
-                    updates["command"],
-                    updates["cron_expression"],
-                    updates["timezone"],
-                    updates["runtime_id"],
-                    updates["runtime_options_json"],
-                    updates["working_directory"],
-                    updates["required_runtime_capabilities_json"],
-                    now_text,
-                    task_id,
-                    expected_version,
-                ),
-            )
-            if cursor.rowcount != 1:
+            if update_schedule(db, task_id, expected_version, {
+                **updates, "updated_at": now_text,
+            }) != 1:
                 raise ScheduledTaskVersionConflictError(
                     "scheduled task version conflict"
                 )
             self._replace_scheduled_task_skill_refs(db, task_id, validated_refs)
             updated_row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where id=?",
+                f"from ({schedule_projection()}) where id=?",
                 (task_id,),
             ).fetchone()
             assert updated_row is not None
@@ -7036,7 +6774,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where migration_key=?",
+                f"from ({schedule_projection()}) where migration_key=?",
                 (migration_key,),
             ).fetchone()
             if row is None:
@@ -7109,28 +6847,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 skill_refs=validated_refs,
             )
             enabled = current.enabled
-            db.execute(
-                """
-                update scheduled_tasks
-                   set description=?, command=?, prompt=?,
-                       runtime_id='', runtime_options_json='{}',
-                       required_runtime_capabilities_json='[]', working_directory='',
-                       enabled=?, version=version + 1, updated_at=?
-                 where id=?
-                """,
-                (
-                    target_description,
-                    command,
-                    target_prompt,
-                    int(enabled),
-                    now_text,
-                    current.id,
-                ),
-            )
+            update_schedule(db, current.id, current.version, {
+                "description": target_description, "command": command,
+                "prompt": target_prompt, "runtime_id": "",
+                "runtime_options_json": "{}",
+                "required_runtime_capabilities_json": "[]",
+                "working_directory": "", "enabled": int(enabled),
+                "updated_at": now_text,
+            })
             self._replace_scheduled_task_skill_refs(db, current.id, validated_refs)
             updated_row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where id=?",
+                f"from ({schedule_projection()}) where id=?",
                 (current.id,),
             ).fetchone()
             assert updated_row is not None
@@ -7166,7 +6894,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                f"select {self._scheduled_task_columns()} from scheduled_tasks where id=?",
+                f"select {self._scheduled_task_columns()} from ({schedule_projection()}) where id=?",
                 (task_id,),
             ).fetchone()
             if row is None:
@@ -7184,16 +6912,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             if target_name == current.name and target_description == current.description:
                 return current
-            db.execute(
-                """
-                update scheduled_tasks
-                   set name=?, description=?, version=version + 1, updated_at=?
-                 where id=?
-                """,
-                (target_name, target_description, now_text, task_id),
-            )
+            update_schedule(db, task_id, current.version, {
+                "name": target_name, "description": target_description,
+                "updated_at": now_text,
+            })
             updated_row = db.execute(
-                f"select {self._scheduled_task_columns()} from scheduled_tasks where id=?",
+                f"select {self._scheduled_task_columns()} from ({schedule_projection()}) where id=?",
                 (task_id,),
             ).fetchone()
             assert updated_row is not None
@@ -7215,17 +6939,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             field="scheduled task now",
         )
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                """
-                update scheduled_tasks
-                   set enabled=?, version=version + 1, updated_at=?
-                 where id=? and version=? and deleted_at is null
-                """,
-                (int(enabled), now_text, task_id, expected_version),
-            )
-            if cursor.rowcount != 1:
+            if update_schedule(db, task_id, expected_version, {
+                "enabled": int(enabled), "updated_at": now_text,
+            }) != 1:
                 row = db.execute(
-                    "select 1 from scheduled_tasks where id=? and deleted_at is null",
+                    f"select 1 from ({schedule_projection()}) where id=? and deleted_at is null",
                     (task_id,),
                 ).fetchone()
                 if row is None:
@@ -7235,7 +6953,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where id=?",
+                f"from ({schedule_projection()}) where id=?",
                 (task_id,),
             ).fetchone()
             assert row is not None
@@ -7254,17 +6972,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             field="scheduled task now",
         )
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                """
-                update scheduled_tasks
-                   set enabled=0, deleted_at=?, updated_at=?, version=version + 1
-                 where id=? and version=? and deleted_at is null
-                """,
-                (now_text, now_text, task_id, expected_version),
-            )
-            if cursor.rowcount != 1:
+            if delete_schedule(db, task_id, expected_version, now_text) != 1:
                 row = db.execute(
-                    "select 1 from scheduled_tasks where id=? and deleted_at is null",
+                    f"select 1 from ({schedule_projection()}) where id=? and deleted_at is null",
                     (task_id,),
                 ).fetchone()
                 if row is None:
@@ -7274,7 +6984,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where id=?",
+                f"from ({schedule_projection()}) where id=?",
                 (task_id,),
             ).fetchone()
             assert row is not None
@@ -7286,7 +6996,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             "id, event_id, scheduled_task_id, trigger_kind, scheduled_for, "
             "first_scheduled_for, occurrence_count, "
             "dispatch_status, skip_or_error_reason, "
-            "(select snapshot_json from scheduled_task_config_versions "
+            f"(select snapshot_json from ({config_projection('scheduled_task_config_versions')}) "
             f"where id={alias}.snapshot_id) as snapshot_json, "
             "execution_kind, execution_id, lease_owner, lease_expires_at, "
             "created_at, dispatched_at, result_summary"
@@ -7399,7 +7109,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             task_row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where id=?",
+                f"from ({schedule_projection()}) where id=?",
                 (task_id,),
             ).fetchone()
             if (
@@ -7557,7 +7267,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             task_row = db.execute(
                 f"select {self._scheduled_task_columns()} "
-                "from scheduled_tasks where id=? and deleted_at is null",
+                f"from ({schedule_projection()}) where id=? and deleted_at is null",
                 (task_id,),
             ).fetchone()
             if task_row is None:
@@ -8008,7 +7718,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on run.id=cast(
                         {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer
                     )
-                  join scheduled_task_config_versions as config on config.id=run.snapshot_id
+                  join ({config_projection('scheduled_task_config_versions')}) as config on config.id=run.snapshot_id
                   join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                     on attempts.channel=inputs.channel
                    and attempts.conversation_id=inputs.conversation_id
@@ -8133,36 +7843,28 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("managed Skill export receipt is malformed")
         with self._immediate_write_transaction() as db:
             revision = db.execute(
-                "select sha256 from managed_skill_revisions where id=?", (revision_id,)
+                f"select sha256 from ({config_projection('managed_skill_revisions')}) where id=?", (revision_id,)
             ).fetchone()
             if revision is None:
                 raise ValueError("managed Skill revision does not exist")
             if str(revision["sha256"]) != sha256:
                 raise ValueError("managed Skill export receipt SHA does not match revision")
-            cursor = db.execute(
-                """insert into managed_skill_export_receipts (revision_id, sha256, path)
-                   values (?, ?, ?)""",
-                (revision_id, sha256, path),
-            )
-            row = db.execute(
-                """select id, revision_id, sha256, path, created_at
-                   from managed_skill_export_receipts where id=?""",
-                (cursor.lastrowid,),
-            ).fetchone()
-            assert row is not None
-            return self._managed_skill_export_receipt_from_row(row)
+            receipt_id = insert_skill_receipt(db, "managed_skill_export_receipts", {
+                "revision_id": revision_id, "sha256": sha256, "path": path,
+            })
+            receipt = export_receipt_projection(db, db.execute(
+                "select id from actions where record_type='managed_skill_export_receipts' and legacy_key=?",
+                (str(receipt_id),),
+            ).fetchone()[0])
+            return ManagedSkillExportReceipt(**vars(receipt))
 
     def latest_managed_skill_export_receipt(
         self, revision_id: int
     ) -> ManagedSkillExportReceipt | None:
-        with self._connect() as db:
-            row = db.execute(
-                """select id, revision_id, sha256, path, created_at
-                   from managed_skill_export_receipts
-                   where revision_id=? order by id desc limit 1""",
-                (revision_id,),
-            ).fetchone()
-        return self._managed_skill_export_receipt_from_row(row) if row else None
+        with self.read_snapshot():
+            with self._connect() as db:
+                receipt = latest_skill_export_receipt(db, revision_id)
+        return ManagedSkillExportReceipt(**vars(receipt)) if receipt else None
 
     @staticmethod
     def _runtime_skill_config_from_row(row: sqlite3.Row) -> RuntimeSkillConfig:
@@ -8240,42 +7942,38 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("feedback iteration capability must be a boolean")
         with self._immediate_write_transaction() as db:
             latest = db.execute(
-                "select id from runtime_skill_configs order by id desc limit 1"
+                f"select id from ({config_projection('runtime_skill_configs')}) order by id desc limit 1"
             ).fetchone()
             current_parent_id = int(latest["id"]) if latest is not None else None
             if current_parent_id != expected_parent_id:
                 raise ValueError("runtime Skill configuration parent conflict")
             for skill_id, revision_id, _enabled, _order, _purpose in normalized:
                 revision = db.execute(
-                    "select skill_id from managed_skill_revisions where id=?",
+                    f"select skill_id from ({config_projection('managed_skill_revisions')}) where id=?",
                     (revision_id,),
                 ).fetchone()
                 if revision is None or int(revision["skill_id"]) != skill_id:
                     raise ValueError("runtime Skill binding references invalid managed Skill revision")
-            cursor = db.execute(
-                "insert into runtime_skill_configs (parent_id, status) values (?, 'pending_restart')",
-                (expected_parent_id,),
-            )
-            config_id = int(cursor.lastrowid)
+            config_id = int(insert_config(db, "runtime_skill_configs", {
+                "parent_id": expected_parent_id, "status": "pending_restart",
+            }).lastrowid)
             if feedback_iteration_enabled is None:
                 inherited = db.execute(
-                    "select enabled from runtime_feedback_iteration_capabilities where config_id=?",
+                    f"select enabled from ({config_projection('runtime_feedback_iteration_capabilities')}) where config_id=?",
                     (expected_parent_id,),
                 ).fetchone()
                 feedback_iteration_enabled = bool(inherited["enabled"]) if inherited else True
-            db.execute(
-                "insert into runtime_feedback_iteration_capabilities (config_id, enabled) values (?, ?)",
-                (config_id, int(feedback_iteration_enabled)),
-            )
-            db.executemany(
-                """insert into runtime_skill_bindings
-                   (config_id, skill_id, revision_id, enabled, load_order, purpose)
-                   values (?, ?, ?, ?, ?, ?)""",
-                [(config_id, skill_id, revision_id, int(enabled), load_order, purpose)
-                 for skill_id, revision_id, enabled, load_order, purpose in normalized],
-            )
+            insert_config(db, "runtime_feedback_iteration_capabilities", {
+                "config_id": config_id, "enabled": int(feedback_iteration_enabled),
+            })
+            for skill_id, revision_id, enabled, load_order, purpose in normalized:
+                insert_config(db, "runtime_skill_bindings", {
+                    "config_id": config_id, "skill_id": skill_id,
+                    "revision_id": revision_id, "enabled": int(enabled),
+                    "load_order": load_order, "purpose": purpose,
+                })
             row = db.execute(
-                "select id, parent_id, status, created_at from runtime_skill_configs where id=?",
+                f"select * from ({config_projection('runtime_skill_configs')}) where id=?",
                 (config_id,),
             ).fetchone()
             assert row is not None
@@ -8284,7 +7982,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_runtime_skill_config(self, config_id: int) -> RuntimeSkillConfig | None:
         with self._connect() as db:
             row = db.execute(
-                "select id, parent_id, status, created_at from runtime_skill_configs where id=?",
+                f"select * from ({config_projection('runtime_skill_configs')}) where id=?",
                 (config_id,),
             ).fetchone()
         return self._runtime_skill_config_from_row(row) if row is not None else None
@@ -8319,7 +8017,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             config_id = selected.id
         with self._connect() as db:
             row = db.execute(
-                "select enabled from runtime_feedback_iteration_capabilities where config_id=?",
+                f"select enabled from ({config_projection('runtime_feedback_iteration_capabilities')}) where config_id=?",
                 (config_id,),
             ).fetchone()
         return True if row is None else bool(row["enabled"])
@@ -8351,21 +8049,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_active_runtime_skill_config(self) -> RuntimeSkillConfig | None:
         with self._connect() as db:
             row = db.execute(
-                """select id, parent_id, status, created_at from runtime_skill_configs
-                   where status='active' order by id desc limit 1"""
+                f"select * from ({config_projection('runtime_skill_configs')}) "
+                "where status='active' order by id desc limit 1"
             ).fetchone()
         return self._runtime_skill_config_from_row(row) if row is not None else None
 
     def get_pending_or_active_runtime_skill_config(self) -> RuntimeSkillConfig | None:
         with self._connect() as db:
             row = db.execute(
-                """select id, parent_id, status, created_at from runtime_skill_configs
-                   order by id desc limit 1"""
+                f"select * from ({config_projection('runtime_skill_configs')}) "
+                "order by id desc limit 1"
             ).fetchone()
             if row is not None and str(row["status"]) == "load_failed":
                 row = db.execute(
-                    """select id, parent_id, status, created_at from runtime_skill_configs
-                       where status='active' order by id desc limit 1"""
+                    f"select * from ({config_projection('runtime_skill_configs')}) "
+                    "where status='active' order by id desc limit 1"
                 ).fetchone()
         return self._runtime_skill_config_from_row(row) if row is not None else None
 
@@ -8374,8 +8072,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> tuple[RuntimeSkillBinding, ...]:
         with self._connect() as db:
             rows = db.execute(
-                """select config_id, skill_id, revision_id, enabled, load_order, purpose
-                   from runtime_skill_bindings where config_id=? order by load_order""",
+                f"select * from ({config_projection('runtime_skill_bindings')}) "
+                "where config_id=? order by load_order",
                 (config_id,),
             ).fetchall()
         return tuple(self._runtime_skill_binding_from_row(row) for row in rows)
@@ -8394,7 +8092,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             normalized_loaded[skill_id] = digest
         with self._immediate_write_transaction() as db:
             config = db.execute(
-                "select status from runtime_skill_configs where id=?", (config_id,)
+                f"select status from ({config_projection('runtime_skill_configs')}) where id=?", (config_id,)
             ).fetchone()
             if config is None or str(config["status"]) not in {
                 "pending_restart", "active"
@@ -8403,30 +8101,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             expected = {
                 int(row["skill_id"]): str(row["sha256"])
                 for row in db.execute(
-                    """select binding.skill_id, revision.sha256
-                       from runtime_skill_bindings binding
-                       join managed_skill_revisions revision on revision.id=binding.revision_id
-                       where binding.config_id=? and binding.enabled=1""", (config_id,)
+                    f"select binding.skill_id, revision.sha256 "
+                    f"from ({config_projection('runtime_skill_bindings')}) binding "
+                    f"join ({config_projection('managed_skill_revisions')}) revision "
+                    "on revision.id=binding.revision_id "
+                    "where binding.config_id=? and binding.enabled=1", (config_id,)
                 )
             }
             if normalized_loaded != expected:
                 raise ValueError("runtime Skill load receipt does not match bindings")
-            receipt = db.execute(
-                """insert into runtime_skill_load_receipts (config_id, pid, loaded_json, error)
-                   values (?, ?, ?, '')""",
-                (config_id, pid, json.dumps(normalized_loaded, sort_keys=True)),
-            )
+            receipt_id = insert_skill_receipt(db, "runtime_skill_load_receipts", {
+                "config_id": config_id, "pid": pid,
+                "loaded_json": json.dumps(normalized_loaded, sort_keys=True),
+                "error": "",
+            })
             if str(config["status"]) == "pending_restart":
-                db.execute(
-                    "update runtime_skill_configs set status='active' where id=?",
-                    (config_id,),
-                )
-            row = db.execute(
-                "select id, config_id, pid, loaded_json, error, created_at from runtime_skill_load_receipts where id=?",
-                (receipt.lastrowid,),
-            ).fetchone()
-            assert row is not None
-            return self._runtime_skill_load_receipt_from_row(row)
+                update_config(db, "runtime_skill_configs", config_id, {"status": "active"})
+            action_id = db.execute(
+                "select id from actions where record_type='runtime_skill_load_receipts' and legacy_key=?",
+                (str(receipt_id),),
+            ).fetchone()[0]
+            return RuntimeSkillLoadReceipt(**vars(load_receipt_projection(db, action_id)))
 
     def record_runtime_skill_load_failure(
         self, config_id: int, *, pid: int, error: str
@@ -8435,32 +8130,28 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("runtime Skill load failure is malformed")
         with self._immediate_write_transaction() as db:
             config = db.execute(
-                "select status from runtime_skill_configs where id=?", (config_id,)
+                f"select status from ({config_projection('runtime_skill_configs')}) where id=?", (config_id,)
             ).fetchone()
             if config is None or str(config["status"]) != "pending_restart":
                 raise ValueError("runtime Skill configuration is not pending restart")
-            receipt = db.execute(
-                """insert into runtime_skill_load_receipts (config_id, pid, loaded_json, error)
-                   values (?, ?, '{}', ?)""", (config_id, pid, error),
-            )
-            db.execute("update runtime_skill_configs set status='load_failed' where id=?", (config_id,))
-            row = db.execute(
-                "select id, config_id, pid, loaded_json, error, created_at from runtime_skill_load_receipts where id=?",
-                (receipt.lastrowid,),
-            ).fetchone()
-            assert row is not None
-            return self._runtime_skill_load_receipt_from_row(row)
+            receipt_id = insert_skill_receipt(db, "runtime_skill_load_receipts", {
+                "config_id": config_id, "pid": pid,
+                "loaded_json": "{}", "error": error,
+            })
+            update_config(db, "runtime_skill_configs", config_id, {"status": "load_failed"})
+            action_id = db.execute(
+                "select id from actions where record_type='runtime_skill_load_receipts' and legacy_key=?",
+                (str(receipt_id),),
+            ).fetchone()[0]
+            return RuntimeSkillLoadReceipt(**vars(load_receipt_projection(db, action_id)))
 
     def list_runtime_skill_load_receipts(
         self, config_id: int
     ) -> tuple[RuntimeSkillLoadReceipt, ...]:
-        with self._connect() as db:
-            rows = db.execute(
-                """select id, config_id, pid, loaded_json, error, created_at
-                   from runtime_skill_load_receipts where config_id=? order by id""",
-                (config_id,),
-            ).fetchall()
-        return tuple(self._runtime_skill_load_receipt_from_row(row) for row in rows)
+        with self.read_snapshot():
+            with self._connect() as db:
+                receipts = list_skill_load_receipts(db, config_id)
+        return tuple(RuntimeSkillLoadReceipt(**vars(receipt)) for receipt in receipts)
 
     def latest_runtime_skill_load_receipt_for_pid(
         self,
@@ -8468,16 +8159,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> RuntimeSkillLoadReceipt | None:
         if type(pid) is not int or pid <= 0:
             raise ValueError("runtime Skill load receipt pid must be positive")
-        with self._connect() as db:
-            row = db.execute(
-                """select id, config_id, pid, loaded_json, error, created_at
-                     from runtime_skill_load_receipts
-                    where pid=? order by id desc limit 1""",
-                (pid,),
-            ).fetchone()
+        with self.read_snapshot():
+            with self._connect() as db:
+                receipt = latest_skill_load_receipt_for_pid(db, pid)
         return (
-            self._runtime_skill_load_receipt_from_row(row)
-            if row is not None
+            RuntimeSkillLoadReceipt(**vars(receipt))
+            if receipt is not None
             else None
         )
 
@@ -8958,24 +8645,31 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if "service_state" in tables else None
             )
             store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
+                            *CONFIG_SOURCE_TABLES, "email_training_snapshot_observations", "configs", "schedules",
                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)),
                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True)),
                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
+            expected_runs = _config_run_declarations(mapped=True)
+            actual_runs = _config_run_objects(db)
             current_core_with_known_repairs = (
                 marker is not None
                 and marker[0] == STORE_SCHEMA_VERSION
-                and run_schema_is_current(
-                    db, allow_missing_objects=True, include_task_runs=True,
-                    include_workbench=True,
-                )
+                and actual_runs.get("runs") == expected_runs["runs"]
+                and set(actual_runs) <= set(expected_runs)
+                and all(actual_runs.get(name, sql) == sql for name, sql in expected_runs.items())
+                and any(configs_current_or_known_skill_guard_repair(
+                    db, action_variant=variant)
+                    for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
+                and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
                 and task_schema_is_current(
                     db, allow_missing_objects=True, include_workbench=True,
                 )
-                and workbench_schema_is_current(db, allow_missing_objects=True)
+                and workbench_schema_is_current(db, allow_missing_objects=True, mapped_runs=True)
                 and any(
                     action_schema_is_current(
                         db, allow_missing_objects=True, include_reply=True,
                         reply_variant=variant, include_email=True,
+                        include_skill_config_receipts=True,
                     ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
@@ -10883,7 +10577,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "description-optimization:"
             ).rpartition(":")
             query = (
-                "select 1 from email_training_snapshots "
+                f"select 1 from ({config_projection('email_training_snapshots')}) "
                 "where snapshot_id=? and frozen=1"
             )
             args = (snapshot_id,)
@@ -14692,19 +14386,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("scope account mismatch")
         activation_at = datetime.now().astimezone().isoformat()
         with self._connect() as db:
+            db.execute("begin immediate")
+            now_text = db.execute("select current_timestamp").fetchone()[0]
             existing = {
                 (row["target_type"], row["target_id"]): row
                 for row in db.execute(
-                    "select * from wechat_reply_scopes where account_id=?",
+                    f"select * from ({config_projection('wechat_reply_scopes', include_rowid=True)}) where account_id=?",
                     (account_id,),
                 ).fetchall()
             }
-            db.execute(
-                "update wechat_reply_scopes set enabled=0, "
-                "disabled_reason='not_selected', updated_at=current_timestamp "
-                "where account_id=?",
-                (account_id,),
-            )
+            for row in existing.values():
+                update_config(db, "wechat_reply_scopes", row["rowid"], {
+                    "enabled": 0, "disabled_reason": "not_selected",
+                    "updated_at": now_text,
+                })
             for scope in scopes:
                 previous = existing.get((scope.target_type, scope.target_id))
                 if scope.last_active_at:
@@ -14713,33 +14408,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     watermark = previous["last_discovered_at"] or activation_at
                 else:
                     watermark = activation_at
-                db.execute(
-                    """
-                    insert into wechat_reply_scopes (
-                        account_id, target_type, target_id, conversation_id,
-                        display_name, trigger_mode, enabled, binding_status,
-                        binding_evidence_json, disabled_reason, last_discovered_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
-                    on conflict(account_id, target_type, target_id) do update set
-                        conversation_id=excluded.conversation_id,
-                        display_name=excluded.display_name,
-                        trigger_mode=excluded.trigger_mode,
-                        enabled=excluded.enabled,
-                        binding_status=excluded.binding_status,
-                        binding_evidence_json=excluded.binding_evidence_json,
-                        disabled_reason='',
-                        last_discovered_at=excluded.last_discovered_at,
-                        updated_at=current_timestamp
-                    """,
-                    (
-                        scope.account_id, scope.target_type, scope.target_id,
-                        scope.conversation_id, scope.display_name,
-                        scope.trigger_mode, int(scope.enabled),
-                        scope.binding_status,
-                        json.dumps(scope.binding_evidence, ensure_ascii=False),
-                        watermark,
-                    ),
-                )
+                values = {
+                    "account_id": scope.account_id,
+                    "target_type": scope.target_type, "target_id": scope.target_id,
+                    "conversation_id": scope.conversation_id,
+                    "display_name": scope.display_name,
+                    "trigger_mode": scope.trigger_mode,
+                    "enabled": int(scope.enabled),
+                    "binding_status": scope.binding_status,
+                    "binding_evidence_json": json.dumps(scope.binding_evidence, ensure_ascii=False),
+                    "disabled_reason": "", "last_discovered_at": watermark,
+                    "updated_at": now_text,
+                }
+                if previous is None:
+                    insert_config(db, "wechat_reply_scopes", values)
+                else:
+                    update_config(db, "wechat_reply_scopes", previous["rowid"], values)
 
     def advance_wechat_scope_watermark(
         self, account_id: str, target_type: str, target_id: str, sent_at: str
@@ -14747,19 +14431,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not sent_at:
             raise ValueError("scope watermark requires sent_at")
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                update wechat_reply_scopes
-                set last_discovered_at=?, updated_at=current_timestamp
-                where account_id=? and target_type=? and target_id=?
-                  and (
-                    last_discovered_at=''
-                    or last_discovered_at < ?
-                  )
-                """,
-                (sent_at, account_id, target_type, target_id, sent_at),
-            )
-            return cursor.rowcount == 1
+            db.execute("begin immediate")
+            row = db.execute(
+                f"select * from ({config_projection('wechat_reply_scopes', include_rowid=True)}) "
+                "where account_id=? and target_type=? and target_id=?",
+                (account_id, target_type, target_id),
+            ).fetchone()
+            if row is None or (row["last_discovered_at"] and row["last_discovered_at"] >= sent_at):
+                return False
+            return update_config(db, "wechat_reply_scopes", row["rowid"], {
+                "last_discovered_at": sent_at,
+                "updated_at": db.execute("select current_timestamp").fetchone()[0],
+            }) == 1
 
     def list_wechat_reply_scopes(
         self, account_id: str, *, enabled_only: bool = False
@@ -14767,7 +14450,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         where = "where account_id=?" + (" and enabled=1" if enabled_only else "")
         with self._connect() as db:
             rows = db.execute(
-                f"select * from wechat_reply_scopes {where} "
+                f"select * from ({config_projection('wechat_reply_scopes')}) {where} "
                 f"order by target_type, display_name, target_id",
                 (account_id,),
             ).fetchall()
@@ -18532,19 +18215,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         old_key = self._runtime_capability_state_key(old_name)
         new_key = self._runtime_capability_state_key(new_name)
         with self._immediate_write_transaction() as db:
-            tasks = db.execute(
-                """
-                update scheduled_tasks
-                   set runtime_id=?, version=version + 1, updated_at=?
-                 where runtime_id=?
-                """,
-                (new_name, task_time, old_name),
-            ).rowcount
+            tasks = rename_schedule_runtime(db, old_name, new_name, task_time)
             runs = 0
             for row in db.execute(
                 f"""
                 select runs.id, configs.snapshot_json from ({SCHEDULED_RUN_SQL}) as runs
-                 join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
+                 join ({config_projection('scheduled_task_config_versions')}) as configs on configs.id=runs.snapshot_id
                  where dispatch_status in ('pending', 'dispatched')
                    and json_valid(snapshot_json)
                    and json_extract(snapshot_json, '$.runtime_id')=?
@@ -22230,23 +21906,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         config_id: int,
         load_receipt_id: int,
     ) -> dict[int, str]:
+        if not db.in_transaction:
+            db.execute("begin")
         config = db.execute(
-            "select status from runtime_skill_configs where id=?", (config_id,)
+            f"select status from ({config_projection('runtime_skill_configs')}) where id=?", (config_id,)
         ).fetchone()
-        receipt = db.execute(
-            "select config_id, loaded_json, error from runtime_skill_load_receipts where id=?",
-            (load_receipt_id,),
+        action = db.execute(
+            "select id from actions where record_type='runtime_skill_load_receipts' and legacy_key=?",
+            (str(load_receipt_id),),
         ).fetchone()
+        receipt = load_receipt_projection(db, action[0]) if action is not None else None
         if (
             config is None
             or str(config["status"] or "") != "active"
             or receipt is None
-            or int(receipt["config_id"]) != config_id
-            or str(receipt["error"] or "")
+            or receipt.config_id != config_id
+            or receipt.error
         ):
             raise ValueError("resolution requires a successful active runtime load receipt")
         try:
-            loaded = json.loads(str(receipt["loaded_json"] or "{}"))
+            loaded = json.loads(receipt.loaded_json or "{}")
             if not isinstance(loaded, dict) or any(
                 not isinstance(skill_id, str) or not isinstance(sha256, str)
                 for skill_id, sha256 in loaded.items()
@@ -22278,7 +21957,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             loaded = {}
         if decision.scope in {"runtime_config", "mixed"}:
             config = db.execute(
-                "select parent_id from runtime_skill_configs where id=?",
+                f"select parent_id from ({config_projection('runtime_skill_configs')}) where id=?",
                 (evidence.runtime_config_id,),
             ).fetchone()
             if (
@@ -22298,7 +21977,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             for skill_id, revision_id in expected.items():
                 revision = actual[skill_id]
                 row = db.execute(
-                    "select sha256 from managed_skill_revisions where id=? and skill_id=?",
+                    f"select sha256 from ({config_projection('managed_skill_revisions')}) where id=? and skill_id=?",
                     (revision.revision_id, revision.skill_id),
                 ).fetchone()
                 if (
@@ -30781,7 +30460,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as todo_id,
                     0 as follow_up_id
                 from ({SCHEDULED_RUN_SQL}) as runs
-                join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
+                join ({config_projection('scheduled_task_config_versions')}) as configs on configs.id=runs.snapshot_id
                 where {history_types.scheduled_run_filter_sql("runs")}
         """
         if self._email_actions_history_available():
