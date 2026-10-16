@@ -16,7 +16,7 @@ the second time.
 """
 from __future__ import annotations
 from app.business_definitions import BUSINESS_PROJECTIONS
-from app.task_storage import WORK_SUMMARY_INPUT_SQL
+from app.task20_definitions import task20_projection
 
 import json
 from dataclasses import dataclass, field
@@ -31,6 +31,8 @@ from app.task_scanners import (
     _minutes_todo_actions,
     minutes_work_item,
 )
+
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
 # Bump when what the Agent is asked to do with the excerpts changes (their format, the prompt's

@@ -1,7 +1,9 @@
 from app.state_definitions import state_projection
 from app.run_storage import SCHEDULED_RUN_SQL
 
-from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task20_definitions import TASK20_FIELDS, task20_column, task20_projection
+from app.task12_storage import task12_projection
+
 from app.store import REPLY_TASK_CURRENT_SQL
 from app.work_summary_payload import decode_work_summary_payload
 import json
@@ -194,6 +196,11 @@ from app.action_storage import (
     reply_action_projection,
     validated_reply_variant,
 )
+
+MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
+OKR_REQUEST_SQL = task20_projection('okr_review_requests')
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
@@ -2652,15 +2659,10 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
 
 def _work_summary_input_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Count only typed work-summary rows without reading their payloads."""
-    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
-        "from tasks where record_type='work_summary_inputs' "
-        "group by lower(coalesce(status,''))").fetchall()
+    rows = db.execute(f"""select lower(coalesce({task20_column('work_summary_inputs', 'status')},'')) as status, count(*) as count from tasks where record_type='work_summary_inputs' group by lower(coalesce({task20_column('work_summary_inputs', 'status')},''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute("select updated_at from tasks where record_type='work_summary_inputs' "
-        "order by updated_at desc limit 1").fetchone()
-    failed = db.execute("select error from tasks where record_type='work_summary_inputs' "
-        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
-        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    latest = db.execute(f"""select {task20_column('work_summary_inputs', 'updated_at')} as updated_at from tasks where record_type='work_summary_inputs' order by {task20_column('work_summary_inputs', 'updated_at')} desc limit 1""").fetchone()
+    failed = db.execute(f"""select {task20_column('work_summary_inputs', 'error')} as error from tasks where record_type='work_summary_inputs' and lower({task20_column('work_summary_inputs', 'status')})='failed' and trim(coalesce({task20_column('work_summary_inputs', 'error')},''))<>'' order by {task20_column('work_summary_inputs', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
     return {
         "name": "Work items",
         "table": "work_summary_inputs",
@@ -2675,15 +2677,10 @@ def _work_summary_input_queue_snapshot(db: sqlite3.Connection) -> dict[str, obje
 
 
 def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
-    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
-        "from tasks where record_type='meeting_alignment_jobs' "
-        "group by lower(coalesce(status,''))").fetchall()
+    rows = db.execute(f"""select lower(coalesce({task20_column('meeting_alignment_jobs', 'status')},'')) as status, count(*) as count from tasks where record_type='meeting_alignment_jobs' group by lower(coalesce({task20_column('meeting_alignment_jobs', 'status')},''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute("select updated_at from tasks where record_type='meeting_alignment_jobs' "
-        "order by updated_at desc limit 1").fetchone()
-    failed = db.execute("select error from tasks where record_type='meeting_alignment_jobs' "
-        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
-        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    latest = db.execute(f"""select {task20_column('meeting_alignment_jobs', 'updated_at')} as updated_at from tasks where record_type='meeting_alignment_jobs' order by {task20_column('meeting_alignment_jobs', 'updated_at')} desc limit 1""").fetchone()
+    failed = db.execute(f"""select {task20_column('meeting_alignment_jobs', 'error')} as error from tasks where record_type='meeting_alignment_jobs' and lower({task20_column('meeting_alignment_jobs', 'status')})='failed' and trim(coalesce({task20_column('meeting_alignment_jobs', 'error')},''))<>'' order by {task20_column('meeting_alignment_jobs', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
     return {
         "name": "Meeting jobs", "table": "meeting_alignment_jobs", "counts": counts,
         "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
@@ -2695,15 +2692,10 @@ def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _okr_review_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
-    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
-        "from tasks where record_type='okr_review_requests' "
-        "group by lower(coalesce(status,''))").fetchall()
+    rows = db.execute(f"""select lower(coalesce({task20_column('okr_review_requests', 'status')},'')) as status, count(*) as count from tasks where record_type='okr_review_requests' group by lower(coalesce({task20_column('okr_review_requests', 'status')},''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute("select updated_at from tasks where record_type='okr_review_requests' "
-        "order by updated_at desc limit 1").fetchone()
-    failed = db.execute("select error from tasks where record_type='okr_review_requests' "
-        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
-        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    latest = db.execute(f"""select {task20_column('okr_review_requests', 'updated_at')} as updated_at from tasks where record_type='okr_review_requests' order by {task20_column('okr_review_requests', 'updated_at')} desc limit 1""").fetchone()
+    failed = db.execute(f"""select {task20_column('okr_review_requests', 'error')} as error from tasks where record_type='okr_review_requests' and lower({task20_column('okr_review_requests', 'status')})='failed' and trim(coalesce({task20_column('okr_review_requests', 'error')},''))<>'' order by {task20_column('okr_review_requests', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
     return {
         "name": "OKR reviews", "table": "okr_review_requests", "counts": counts,
         "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
@@ -2760,12 +2752,12 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
 def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize only the current task projection for each business object."""
 
-    current_projection = """
+    current_projection = f"""
         from tasks as tasks
-        left join business_object_tasks as current_business_object
-          on current_business_object.business_object_key=tasks.business_object_key
+        left join ({task12_projection('business_object_tasks')}) as current_business_object
+          on current_business_object.business_object_key=tasks.{task20_column('reply_tasks', 'business_object_key')}
         where tasks.record_type='reply_tasks' and (
-            trim(tasks.business_object_key)=''
+            trim(tasks.{task20_column('reply_tasks', 'business_object_key')})=''
             or current_business_object.reply_task_id is null
             or current_business_object.reply_task_id=tasks.id
         )
@@ -2773,8 +2765,8 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     rows = db.execute(
         f"""
         with current as materialized (
-            select tasks.id, lower(coalesce(tasks.status, '')) as status,
-                   tasks.updated_at, tasks.error
+            select tasks.id, lower(coalesce(tasks.{task20_column('reply_tasks', 'status')}, '')) as status,
+                   tasks.{task20_column('reply_tasks', 'updated_at')} as updated_at, tasks.{task20_column('reply_tasks', 'error')} as error
             {current_projection}
         ), counts as (
             select status, count(*) as count from current group by status
@@ -3140,7 +3132,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                         )
                         or exists (
                             select 1
-                            from business_object_tasks current_business_object
+                            from ({task12_projection('business_object_tasks')}) current_business_object
                             join ({REPLY_TASK_SQL}) current_task
                               on current_task.id=current_business_object.reply_task_id
                             where current_business_object.business_object_key=(
@@ -3177,7 +3169,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
               and not exists (
                   select 1
                   from ({REPLY_TASK_SQL}) as historical_task
-                  join business_object_tasks as current_business_object
+                  join ({task12_projection('business_object_tasks')}) as current_business_object
                     on current_business_object.business_object_key=
                        historical_task.business_object_key
                   where historical_task.channel=a.channel
@@ -3481,12 +3473,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                           and current_run.execution_generation=reply_tasks.execution_generation
                         order by current_run.id desc limit 1) as current_run_error
                 from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                left join business_object_tasks current_business_object
+                left join ({task12_projection('business_object_tasks')}) current_business_object
                   on current_business_object.business_object_key=reply_tasks.business_object_key
                 -- Select IDs through the compact status index before reading
                 -- message payloads; lower(status) alone scans the whole table.
                 where reply_tasks.id in (
-                    select cast(legacy_key as integer) from tasks indexed by idx_reply_tasks_status where record_type='reply_tasks' and lower(status) = 'failed'
+                    select cast(legacy_key as integer) from tasks indexed by idx_task20_published_1 where record_type='reply_tasks' and lower({task20_column('reply_tasks', 'status')}) = 'failed'
                 )
                   and (
                     current_business_object.reply_task_id is null
@@ -3566,7 +3558,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             candidate_sql = (
                 f"select cast(legacy_key as integer) from tasks "
                 f"where record_type='work_summary_inputs' "
-                f"and lower({status_column}) in ({status_placeholders})"
+                f"and lower({task20_column('work_summary_inputs', status_column)}) in ({status_placeholders})"
                 if table == "work_summary_inputs"
                 else f"select id from {source_table} "
                      f"where lower({status_column}) in ({status_placeholders})"
@@ -3609,7 +3601,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if _sqlite_table_exists(db, "email_agent_classification_tasks"):
-            email_task_sql = """
+            email_task_sql = f"""
                 select task_id as id, status,
                        coalesce(
                            nullif(json_extract(input_json, '$.message.sender.email'), ''),
@@ -3621,9 +3613,9 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                            stable_message_identity
                        ) as summary,
                        updated_at, error
-                from email_agent_classification_tasks
+                from ({task12_projection('email_agent_classification_tasks', include_rowid=True)})
                 where rowid in (
-                    select rowid from email_agent_classification_tasks
+                    select rowid from ({task12_projection('email_agent_classification_tasks', include_rowid=True)})
                     where lower(status)='failed'
                 )
                 order by updated_at desc, task_id desc
@@ -3695,10 +3687,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             _sqlite_table_exists(db, "meeting_memory_write_events")
             and _sqlite_table_exists(db, "tasks")
         ):
-            meeting_memory_sql = """
+            meeting_memory_sql = f"""
                 select events.id, events.status,
-                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as context,
-                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as summary,
+                       coalesce(nullif(jobs.{task20_column('meeting_alignment_jobs', 'title')}, ''), jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')}) as context,
+                       coalesce(nullif(jobs.{task20_column('meeting_alignment_jobs', 'title')}, ''), jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')}) as summary,
                        events.updated_at, events.error
                 from meeting_memory_write_events as events
                 join tasks as jobs on jobs.id=events.meeting_job_id
@@ -3899,7 +3891,7 @@ def _human_decision_attention_rows(
         join ({REPLY_TASK_SQL}) task on task.id=c.task_id
           and task.execution_generation=c.execution_generation
           and task.status='needs_human'
-        join business_object_tasks current_object
+        join ({task12_projection('business_object_tasks')}) current_object
           on current_object.business_object_key=task.business_object_key
           and current_object.reply_task_id=task.id
         left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
@@ -3939,6 +3931,8 @@ def _human_decision_attention_rows(
 
 
 def _sqlite_table_exists(db: sqlite3.Connection, table: str) -> bool:
+    if table == "email_agent_classification_tasks":
+        table = "tasks"
     row = db.execute(
         "select 1 from sqlite_master where type='table' and name=?",
         (table,),
@@ -3951,6 +3945,8 @@ def _queue_status_counts(
     table: str,
     status_column: str,
 ) -> dict[str, int]:
+    table = (f"({task12_projection(table, include_rowid=True)})"
+             if table == "email_agent_classification_tasks" else table)
     rows = db.execute(
         f"""
         select lower(coalesce({status_column}, '')) as status, count(*) as count
@@ -3993,6 +3989,8 @@ def _queue_retryable_count(
 
 
 def _queue_latest_value(db: sqlite3.Connection, table: str, column: str) -> str:
+    table = (f"({task12_projection(table, include_rowid=True)})"
+             if table == "email_agent_classification_tasks" else table)
     row = db.execute(
         f"select {column} as value from {table} order by {column} desc limit 1"
     ).fetchone()
@@ -4006,6 +4004,8 @@ def _queue_latest_error(
     error_column: str,
 ) -> str:
     columns = _sqlite_table_columns(db, table)
+    table = (f"({task12_projection(table, include_rowid=True)})"
+             if table == "email_agent_classification_tasks" else table)
     order_sql = "updated_at desc"
     if "id" in columns:
         order_sql += ", id desc"
@@ -4024,6 +4024,8 @@ def _queue_latest_error(
 
 
 def _sqlite_table_columns(db: sqlite3.Connection, table: str) -> set[str]:
+    if table == "email_agent_classification_tasks":
+        return set(TASK20_FIELDS[table]) if _sqlite_table_exists(db, table) else set()
     return {str(row["name"]) for row in db.execute(f"pragma table_info({table})")}
 
 

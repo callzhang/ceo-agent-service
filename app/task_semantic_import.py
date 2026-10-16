@@ -8,7 +8,7 @@ an old Project title or an Agent-created DingTalk TODO mirror.
 
 from __future__ import annotations
 from app.business_definitions import BUSINESS_PROJECTIONS
-from app.task_storage import WORK_SUMMARY_INPUT_SQL
+from app.task20_definitions import task20_projection
 
 import hashlib
 import json
@@ -27,6 +27,8 @@ from app.task_semantic_service import (
     SourceSignal,
     TaskSemanticService,
 )
+
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
 MANIFEST_VERSION = 2

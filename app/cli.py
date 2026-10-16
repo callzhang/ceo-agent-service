@@ -1,4 +1,4 @@
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_projection
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.action_storage import SENT_REPLY_SQL
 import argparse
@@ -144,6 +144,8 @@ from app.weekly_okr_report import (
     refresh_company_okr_archive_command,
     weekly_okr_report_command,
 )
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 
 def run_consumer_dispatcher_loop(

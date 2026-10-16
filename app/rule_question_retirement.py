@@ -2,7 +2,9 @@
 from app.state_definitions import state_projection
 from app.state_storage import insert_state
 
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_projection
+from app.task12_storage import task12_projection
+
 import argparse
 import hashlib
 import json
@@ -25,6 +27,8 @@ from app.action_storage import (
     REPLY_ATTEMPT_COMMON_SQL,
     update_action,
 )
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 
 class _RuleOption(BaseModel):
@@ -65,7 +69,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
                t.status as task_status, t.execution_generation as task_generation
         from ({REPLY_ATTEMPT_COMMON_SQL}) a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id
         join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
-        join business_object_tasks current_object
+        join ({task12_projection('business_object_tasks')}) current_object
           on current_object.business_object_key=t.business_object_key
          and current_object.reply_task_id=t.id
         where a.id=? and a.channel=t.channel

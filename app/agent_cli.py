@@ -1,5 +1,5 @@
 from __future__ import annotations
-from app.task_storage import REPLY_TASK_INPUT_SQL, REPLY_TASK_SQL
+from app.task20_definitions import task20_projection
 
 import asyncio
 import atexit
@@ -54,6 +54,9 @@ from app.native_cli_metadata import (
     prepare_material_output_root,
 )
 from app.task_artifacts import migrate_legacy_task_artifacts, task_artifact_directory
+
+REPLY_TASK_INPUT_SQL = task20_projection('reply_task_inputs')
+REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 # Codex truncates one MCP text block at 1 MiB. Keep command output below that
 # boundary even after JSON escaping so the controlled receipt remains valid.

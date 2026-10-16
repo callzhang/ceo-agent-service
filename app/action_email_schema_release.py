@@ -25,6 +25,12 @@ from app.state_definitions import state_projection
 from app.state_schema_release import (capture_state_source, migrate_state_schema,
     restore_state_schema, state_schema_is_current)
 from app.state_storage import update_state_rows
+from app.task20_schema_release import (
+    capture_task20_source, migrate_task20_schema, restore_task20_schema,
+)
+from app.task20_current_schema import (
+    task20_schema_is_current, task20_feedback_child_is_current,
+)
 from app import action_storage
 from app.business_schema_release import (
     business_inverse_metadata,
@@ -277,6 +283,7 @@ def _inverse_metadata(source):
         "provider": source["provider"],
         "configs": source["configs"],
         "state": source["state"],
+        "tasks": source["tasks"],
     }
 
 
@@ -366,11 +373,22 @@ class ActionEmailSchemaRelease:
         current["provider"] = capture_provider_state_source(db)
         current["configs"] = _project_config_source(db, current["action_variant"])
         current["state"] = capture_state_source(db)
-        if _inverse_metadata(current) != _inverse_metadata(self.source_schema):
+        current["tasks"] = capture_task20_source(db)
+        current_declarations = _inverse_metadata(current)
+        source_declarations = _inverse_metadata(self.source_schema)
+        # Counter presence is mutable state; retain it for inverse transport,
+        # but compare only the Tasks declarations after native current writes.
+        for declarations in (current_declarations, source_declarations):
+            declarations["tasks"] = {
+                key: declarations["tasks"][key] for key in ("variant", "tables")
+            }
+        if current_declarations != source_declarations:
             raise ValueError("paired Email/Business source declaration changed")
         self._verify_integrity(db)
 
     def _verify_target(self, db):
+        if not task20_schema_is_current(db) or not task20_feedback_child_is_current(db):
+            raise ValueError("paired Tasks20 target declaration mismatch")
         marker, versions = _markers(db, current=True)
         if marker is None or marker[0] != self.target_store_version or \
                 versions[:-1] != self.versions or not versions or \
@@ -431,6 +449,7 @@ class ActionEmailSchemaRelease:
                     raise ValueError("Config captured inverse declaration mismatch")
                 migrate_config_schema(db, config_inverse)
                 migrate_state_schema(db, self.source_schema["state"])
+                migrate_task20_schema(db, self.source_schema["tasks"])
                 now = datetime.now(timezone.utc).isoformat()
                 update_state_rows(db, "service_state",
                     {"value": self.target_store_version, "updated_at": now},
@@ -464,6 +483,7 @@ class ActionEmailSchemaRelease:
                     db.commit()
                     return
                 self._verify_target(db)
+                restore_task20_schema(db, self.source_schema["tasks"])
                 restore_state_schema(db, self.source_schema["state"])
                 restore_config_schema(db, self.source_schema["configs"])
                 restore_business_schema(db, self.source_schema["business"])
@@ -533,6 +553,7 @@ def prepare_action_email_schema_release(
         source["provider"] = capture_provider_state_source(db)
         source["configs"] = _project_config_source(db, source["action_variant"])
         source["state"] = capture_state_source(db)
+        source["tasks"] = capture_task20_source(db)
         release = ActionEmailSchemaRelease(
             root, path, version, versions, source, _foreign_keys(db),
             target_store_version, target_email_version,

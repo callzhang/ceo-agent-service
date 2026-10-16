@@ -2,7 +2,9 @@ from __future__ import annotations
 from app.run_storage import SCHEDULED_RUN_SQL
 from app.state_definitions import state_projection
 from app.state_storage import state_json_field, update_state, upsert_state
-from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, task_id_expression, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task_storage import task_id_expression
+from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import task8_set_parts
 
 from app.store import REPLY_TASK_CURRENT_SQL
 
@@ -17,6 +19,12 @@ from app.dispatcher.models import (
     QueueMetrics,
 )
 from app.store import AutoReplyStore
+
+
+MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
+OKR_REQUEST_SQL = task20_projection('okr_review_requests')
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
 _CLAIM_SCAN_PAGE_SIZE = 32
@@ -395,7 +403,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
             self.store._compact_settled_reply_task_input(db, int(envelope.source_id))
 
     def _channel_clause(self, alias: str = "task") -> str:
-        return f"{alias}.channel in ('dingtalk','wechat')"
+        return f"{alias}.{task20_column('reply_tasks', 'channel') if alias == 'tasks' else 'channel'} in ('dingtalk','wechat')"
 
     def metrics(self, now: datetime) -> QueueMetrics:
         now_text = _sqlite_time(now)
@@ -519,10 +527,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update tasks set status='processing', attempts=attempts+1, "
-                "claimed_input_version=input_version, claimed_input_id=current_input_id, locked_at=?, available_at='', "
-                "updated_at=? where record_type='reply_tasks' and id=? and status in ('pending','processing') and "
-                + self._channel_clause("tasks"),
+                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'processing'", 'attempts': f"{task20_column('reply_tasks', 'attempts')}+1", 'claimed_input_version': f"{task20_column('reply_tasks', 'input_version')}", 'locked_at': '?', 'available_at': "''", 'updated_at': '?'}, structural_sql={'claimed_input_id': 'current_input_id'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('pending','processing') and {self._channel_clause('tasks')}""",
                 (now_text, now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -560,8 +565,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update tasks set status='pending', attempts=max(attempts-1,0), "
-                "locked_at=null, updated_at=? where record_type='reply_tasks' and id=? and status='processing'",
+                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'attempts': f"max({task20_column('reply_tasks', 'attempts')}-1,0)", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing'""",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:
@@ -587,11 +591,10 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=now_text)
             cursor = db.execute(
-                """
+                f"""
                 update tasks
-                set status=?,
-                    locked_at=null, available_at=?, error=?, updated_at=?
-                where record_type='reply_tasks' and id=? and status='processing'
+                set {task8_set_parts('reply_tasks', {}, update_sql={'status': '?', 'locked_at': 'null', 'available_at': '?', 'error': '?', 'updated_at': '?'}).sql}
+                where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing'
                 """,
                 ('failed' if terminal else 'pending', available_at, error[:2000], now_text, int(envelope.source_id)),
             )
@@ -619,7 +622,7 @@ class ScheduledExecutionQueueAdapter(ReplyQueueAdapter):
     name = "scheduled_execution"
 
     def _channel_clause(self, alias: str = "task") -> str:
-        return f"{alias}.channel='scheduled'"
+        return f"{alias}.{task20_column('reply_tasks', 'channel') if alias == 'tasks' else 'channel'}='scheduled'"
 
 
 class MeetingQueueAdapter(_LedgerClaimLifecycle):
@@ -777,10 +780,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update tasks set status='processing', "
-                "attempts=attempts+1, locked_at=?, updated_at=? "
-                "where id=" + task_id_expression("meeting_alignment_jobs", "?")
-                + " and record_type='meeting_alignment_jobs' and status in ('waiting','pending','retry','processing')",
+                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'processing'", 'attempts': f"{task20_column('meeting_alignment_jobs', 'attempts')}+1", 'locked_at': '?', 'updated_at': '?'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')} in ('waiting','pending','retry','processing')""",
                 (now_text, now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -818,10 +818,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update tasks set status='retry', "
-                "attempts=max(attempts-1,0), locked_at=null, updated_at=? "
-                "where id=" + task_id_expression("meeting_alignment_jobs", "?")
-                + " and record_type='meeting_alignment_jobs' and status='processing'",
+                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'retry'", 'attempts': f"max({task20_column('meeting_alignment_jobs', 'attempts')}-1,0)", 'locked_at': 'null', 'updated_at': '?'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')}='processing'""",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:
@@ -857,7 +854,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
         now_text = _sqlite_time(now)
         with self.store._connect() as db:
             pending = db.execute(
-                "select count(*) from tasks where record_type='okr_review_requests' and status='pending'"
+                f"select count(*) from tasks where record_type='okr_review_requests' and {task20_column('okr_review_requests', 'status')}='pending'"
             ).fetchone()[0]
             due = db.execute(
                 f"select count(*) from ({OKR_REQUEST_SQL}) request "
@@ -963,9 +960,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update tasks set status='processing', error='', "
-                "updated_at=? where record_type='okr_review_requests' "
-                "and cast(legacy_key as integer)=? and status in ('pending','processing')",
+                f"""update tasks set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'processing'", 'error': "''", 'updated_at': '?'}).sql} where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')} in ('pending','processing')""",
                 (now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -999,9 +994,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update tasks set status='pending', updated_at=? "
-                "where record_type='okr_review_requests' "
-                "and cast(legacy_key as integer)=? and status='processing'",
+                f"""update tasks set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'pending'", 'updated_at': '?'}).sql} where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')}='processing'""",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:
@@ -1150,9 +1143,7 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update tasks set status='processing', "
-                "attempts=attempts+1, error='', available_at='', updated_at=? "
-                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and status in ('pending','processing')",
+                f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'processing'", 'attempts': f"{task20_column('work_summary_inputs', 'attempts')}+1", 'error': "''", 'available_at': "''", 'updated_at': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')} in ('pending','processing')""",
                 (now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -1190,9 +1181,7 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update tasks set status='pending', "
-                "attempts=max(attempts-1,0), updated_at=? "
-                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and status='processing'",
+                f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'attempts': f"max({task20_column('work_summary_inputs', 'attempts')}-1,0)", 'updated_at': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')}='processing'""",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:

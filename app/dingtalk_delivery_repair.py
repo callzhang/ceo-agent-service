@@ -11,6 +11,12 @@ from app.action_storage import (
 )
 from app.agent_contracts import SystemExecutionResult
 from app.run_storage import AGENT_RUN_SQL
+from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import task8_set_parts
+
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+
 
 
 def _same_timestamp_instant(actual: object, expected: object) -> bool:
@@ -42,8 +48,6 @@ def native_reply_text_matches(actual: object, sent_body: object, trigger_sender:
 
 def collect_native_chat_readback(store, dws, task_id: int) -> dict:
     """Read one reply's exact conversation window and bind it to the current principal."""
-    from app.store import REPLY_TASK_SQL
-
     with store._connect() as db:
         task = db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (task_id,)).fetchone()
         if task is None:
@@ -135,7 +139,7 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
             # Agent runs and historical Attempt rows are never rewritten.
             run = db.execute(f"select * from ({AGENT_RUN_SQL}) where id=?", (row["first_agent_run_id"],)).fetchone()
             if run is not None:
-                task = db.execute("select * from tasks where record_type='reply_tasks' and legacy_key=?", (str(run["reply_task_id"]),)).fetchone()
+                task = db.execute(f"select tasks.*, {task20_column('reply_tasks', 'execution_generation')} as execution_generation, {task20_column('reply_tasks', 'status')} as status, {task20_column('reply_tasks', 'error')} as error from tasks where record_type='reply_tasks' and legacy_key=?", (str(run["reply_task_id"]),)).fetchone()
                 if task is not None and task["execution_generation"] == run["execution_generation"]:
                     if task["status"] in ("pending", "processing"):
                         raise ValueError("delivery task is active")
@@ -144,7 +148,7 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
                             "id": run["reply_task_id"], "execution_generation": task["execution_generation"],
                             "status": task["status"], "error": task["error"],
                         }
-                        db.execute("update tasks set status='failed',error=?,updated_at=? where id=?",
+                        db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'failed'", 'error': '?', 'updated_at': '?'}).sql} where id=?""",
                                    (error_code, proof["queried_at"], task["id"]))
         body = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         update_action(db, "external_action_results", key, {
@@ -162,8 +166,6 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
 
 def apply_native_chat_readback(store, proof: dict) -> bool:
     """Settle one uncertain native reply from a complete, exact DWS history read."""
-    from app.store import REPLY_TASK_SQL
-
     task_id = proof.get("task_id")
     payload = proof.get("payload")
     if not isinstance(task_id, int) or task_id < 1:
@@ -344,9 +346,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             if receipt_cursor.rowcount != 1:
                 raise ValueError("external receipt changed during reconciliation")
             task_cursor = db.execute(
-                "update tasks set status='done',error='',available_at='',locked_at=null,updated_at=? "
-                "where record_type='reply_tasks' and id=? and status='failed' "
-                "and error='external_action_uncertain' and execution_generation=?",
+                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?""",
                 (queried_at, task_id, task["execution_generation"]),
             )
             if task_cursor.rowcount != 1:
@@ -471,9 +471,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             "lease_owner": "", "lease_expires_at": "", "updated_at": queried_at,
         })
         task_cursor = db.execute(
-            "update tasks set status='done',error='',available_at='',locked_at=null,updated_at=? "
-            "where record_type='reply_tasks' and id=? and status='failed' "
-            "and error='external_action_uncertain' and execution_generation=?",
+            f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?""",
             (queried_at, task_id, task["execution_generation"]),
         )
         if task_cursor.rowcount != 1:

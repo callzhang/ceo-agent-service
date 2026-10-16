@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 import app.audit_web as audit_web_module
 from tests.run_reader_fixtures import insert_native_run_fixture
+from tests.feedback_processing_fixtures import resolve_feedback_fixture
 from app.run_storage import insert_run
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
 from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression, task_physical_id
@@ -3446,7 +3447,7 @@ def test_user_feedback_nav_badge_shows_pending_count(tmp_path: Path):
     )
 
     pending_html = render_attempt_list(store)
-    store.resolve_feedback_event("event-1")
+    resolve_feedback_fixture(store, "event-1")
     resolved_html = render_attempt_list(store)
 
     assert '<span class="nav-badge">1</span>' in pending_html

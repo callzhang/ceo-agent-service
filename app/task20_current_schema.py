@@ -1,7 +1,7 @@
-"""Unselected current Tasks20 factories and declaration recognition.
+"""Current Tasks20 factories and declaration recognition.
 
 Historical task_storage/workbench_storage factories retain native source roles.
-No constructor or release selects these helpers until the complete cutover.
+Current constructors and the paired release select these declaration helpers.
 """
 from contextlib import closing
 from functools import lru_cache

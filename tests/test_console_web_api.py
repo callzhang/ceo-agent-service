@@ -18,6 +18,7 @@ import app.audit_web as audit_web_module
 import app.config as app_config_module
 import app.web_api.registration as registration_module
 from tests.run_reader_fixtures import insert_native_run_fixture
+from tests.feedback_processing_fixtures import resolve_feedback_fixture
 from app.audit_web import create_audit_app
 from app.email_classifier_contracts import (
     EmailCategory,
@@ -1170,7 +1171,7 @@ def test_console_feedback_pending_badge_is_global_when_filtered_to_resolved(
         comment="已处理",
         received_at="2026-08-29T07:00:00.000Z",
     )
-    store.resolve_feedback_event("resolved-feedback")
+    resolve_feedback_fixture(store, "resolved-feedback")
 
     with _client(tmp_path) as client:
         response = client.get("/api/console/feedback?status=resolved")

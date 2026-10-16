@@ -5,6 +5,8 @@ uses the real local Console API and persists only the deterministic summary
 and references; no model invocation is involved in the import step.
 """
 from app.action_storage import update_action
+from app.task12_storage import task12_set_parts
+from app.task20_definitions import task20_column
 
 import subprocess
 from pathlib import Path
@@ -883,9 +885,11 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert old_batch_after.json()["item"]["items"][0]["round_number"] == 1
 
         with store._connect() as db:
+            parts = task12_set_parts("feedback_processing_items", {"current_round_id": 999999})
             db.execute(
-                "update feedback_processing_items set current_round_id=999999 "
-                "where feedback_key='feedback-8308'"
+                f"update tasks set {parts.sql} where record_type='feedback_processing_items' "
+                f"and {task20_column('feedback_processing_items', 'feedback_key')}=?",
+                (*parts.parameters, "feedback-8308"),
             )
         history_error = client.post(
             "/api/console/feedback/items/feedback-8308/reopen",
@@ -895,10 +899,11 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert history_error.json()["code"] == "feedback_reopen_history_incomplete"
         assert store.get_feedback_event("feedback-8308").resolved_at
         with store._connect() as db:
+            parts = task12_set_parts("feedback_processing_items", {"current_round_id": round_two["id"]})
             db.execute(
-                "update feedback_processing_items set current_round_id=? "
-                "where feedback_key='feedback-8308'",
-                (round_two["id"],),
+                f"update tasks set {parts.sql} where record_type='feedback_processing_items' "
+                f"and {task20_column('feedback_processing_items', 'feedback_key')}=?",
+                (*parts.parameters, "feedback-8308"),
             )
 
         resolved_after = client.get("/api/console/feedback?status=resolved")

@@ -5,7 +5,7 @@ provider and never creates Agent, Audit, reply-task, or run records.
 """
 
 from __future__ import annotations
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_projection
 
 from app.store import REPLY_TASK_CURRENT_SQL, AutoReplyStore, STORE_SCHEMA_VERSION
 
@@ -71,6 +71,9 @@ from app.email_category_config import (
 from app.action_email_storage import finite_target_external_sql
 from app.action_email_schema_release import require_current_email_pair
 from app.provider_state_schema_release import provider_state_schema_is_current
+from app.task20_definitions import TASK20_NEW_KINDS
+from app.task20_current_schema import task20_schema_is_current
+from app.task8_storage import register_task8_functions
 from app.state_definitions import STATE_FIELDS, state_projection
 from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
 from app.state_schema_release import state_schema_is_current
@@ -97,6 +100,20 @@ from app.action_storage import (
     insert_action, insert_email_action, update_email_action, update_action,
     delete_action, delete_email_action,
 )
+
+
+from app.task12_storage import task12_insert_parts, task12_projection, task12_set_parts
+from app.task20_definitions import TASK20_FIELDS, task20_column
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+_EMAIL_CLASSIFICATION_SQL = task12_projection('email_agent_classification_tasks')
+_EMAIL_HISTORICAL_KIND = 'email_historical_candidates'
+_EMAIL_HISTORICAL_SQL = task12_projection(_EMAIL_HISTORICAL_KIND)
+_EMAIL_HISTORICAL_COLUMNS = {
+    field: task20_column(_EMAIL_HISTORICAL_KIND, field)
+    for field in TASK20_FIELDS[_EMAIL_HISTORICAL_KIND]
+}
 
 
 # Finite Email29 source-shaped reads used by the current DAO and validators.
@@ -3071,6 +3088,7 @@ class EmailStore:
         db.execute("pragma busy_timeout = 30000")
         db.execute("pragma foreign_keys = on")
         db.row_factory = sqlite3.Row
+        register_task8_functions(db)
         return db
 
     @contextmanager
@@ -6966,6 +6984,8 @@ class EmailStore:
     @classmethod
     def _validate_schema_shape(cls, db: sqlite3.Connection) -> None:
         try:
+            if not task20_schema_is_current(db):
+                raise EmailPersistenceCorruption("required Tasks20 declaration is missing or malformed")
             if not state_schema_is_current(db):
                 raise EmailPersistenceCorruption("required State declaration is missing or malformed")
             if not provider_state_schema_is_current(db):
@@ -6980,7 +7000,7 @@ class EmailStore:
             # Historical maps remain the source contract. Current validation
             # retains the original nonaction coverage and validates actions
             # against the exact accepted finite manifest separately.
-            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, "email_training_snapshot_observations"}
+            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, "email_training_snapshot_observations"}
             required_tables = {
                 table: columns
                 for table, columns in _REQUIRED_TABLE_COLUMNS.items()
@@ -7310,7 +7330,7 @@ class EmailStore:
         except ValueError as exc:
             raise EmailPersistenceCorruption(str(exc)) from exc
         for row in db.execute(
-            """
+            f"""
             select stable_message_identity, status, owner, lease_expires_at,
                    json_type(input_json) as input_json_type,
                    json_extract(input_json, '$.stable_message_identity')
@@ -7322,7 +7342,7 @@ class EmailStore:
                    json_type(result_json) as result_json_type,
                    json_type(result_json, '$.unsubscribe_url')
                        as result_unsubscribe_url_type
-            from email_agent_classification_tasks
+            from ({_EMAIL_CLASSIFICATION_SQL})
             """
         ):
             if row["input_json_type"] != "object":
@@ -9073,30 +9093,29 @@ class EmailStore:
                 normalized_input_hash = sha256(
                     str(candidate.normalized_text).encode("utf-8")
                 ).hexdigest()
+                parts = task12_insert_parts(db, _EMAIL_HISTORICAL_KIND, {
+                    'account_id': account_id, 'folder': folder, 'model_id': model_id,
+                    'stable_message_identity': candidate.stable_message_identity,
+                    'normalized_text': normalized_input_hash,
+                    'provider_message_json': _json_dump(projection),
+                    'uidvalidity': int(message.get('uidValidity') or uidvalidity),
+                    'uid': int(message.get('uid') or 0),
+                    'state': 'pending', 'reason': '', 'updated_at': now,
+                })
+                update_parts = task12_set_parts(_EMAIL_HISTORICAL_KIND, {}, update_sql={
+                    field: 'excluded.' + _EMAIL_HISTORICAL_COLUMNS[field]
+                    for field in ('normalized_text', 'provider_message_json',
+                                  'uidvalidity', 'uid', 'updated_at')
+                })
+                conflict_columns = ','.join(
+                    _EMAIL_HISTORICAL_COLUMNS[field]
+                    for field in ('account_id', 'folder', 'model_id', 'stable_message_identity')
+                )
                 db.execute(
-                    """
-                    insert into email_historical_candidates (
-                        account_id, folder, model_id, stable_message_identity,
-                        normalized_text, provider_message_json, uidvalidity, uid,
-                        state, reason, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?)
-                    on conflict(account_id, folder, model_id, stable_message_identity)
-                    do update set normalized_text=excluded.normalized_text,
-                        provider_message_json=excluded.provider_message_json,
-                        uidvalidity=excluded.uidvalidity, uid=excluded.uid,
-                        updated_at=excluded.updated_at
-                    """,
-                    (
-                        account_id,
-                        folder,
-                        model_id,
-                        candidate.stable_message_identity,
-                        normalized_input_hash,
-                        _json_dump(projection),
-                        int(message.get("uidValidity") or uidvalidity),
-                        int(message.get("uid") or 0),
-                        now,
-                    ),
+                    parts.sql + f" on conflict({conflict_columns}) "
+                    "where record_type='email_historical_candidates' do update set "
+                    + update_parts.sql,
+                    (*parts.parameters, *update_parts.parameters),
                 )
             upsert_state(
                 db, "email_historical_traversals",
@@ -9123,8 +9142,8 @@ class EmailStore:
         deferred_quota = min(2, limit)
         with self._connect() as db:
             deferred_rows = db.execute(
-                """
-                select * from email_historical_candidates
+                f"""
+                select * from ({_EMAIL_HISTORICAL_SQL})
                 where account_id=? and folder=? and model_id=?
                   and state='deferred'
                   and next_retry_at != '' and next_retry_at <= ?
@@ -9137,8 +9156,8 @@ class EmailStore:
             ).fetchall()
             reserved = list(deferred_rows[:deferred_quota])
             pending_rows = db.execute(
-                """
-                select * from email_historical_candidates
+                f"""
+                select * from ({_EMAIL_HISTORICAL_SQL})
                 where account_id=? and folder=? and model_id=? and state='pending'
                 order by uid, stable_message_identity
                 limit ?
@@ -9183,24 +9202,17 @@ class EmailStore:
                 + timedelta(seconds=HISTORICAL_DEFER_RETRY_SECONDS)
             ).isoformat(timespec="seconds")
         with self._connect() as db:
+            parts = task12_set_parts(_EMAIL_HISTORICAL_KIND, {
+                'state': state, 'reason': reason, 'attempted_at': attempted_at,
+                'next_retry_at': next_retry_at, 'updated_at': now,
+            })
             updated = db.execute(
-                """
-                update email_historical_candidates
-                set state=?, reason=?, attempted_at=?, next_retry_at=?, updated_at=?
-                where account_id=? and folder=? and model_id=?
-                  and stable_message_identity=?
-                """,
-                (
-                    state,
-                    reason,
-                    attempted_at,
-                    next_retry_at,
-                    now,
-                    account_id,
-                    folder,
-                    model_id,
-                    stable_message_identity,
-                ),
+                f"update tasks set {parts.sql} where record_type='email_historical_candidates' "
+                f"and {_EMAIL_HISTORICAL_COLUMNS['account_id']}=? "
+                f"and {_EMAIL_HISTORICAL_COLUMNS['folder']}=? "
+                f"and {_EMAIL_HISTORICAL_COLUMNS['model_id']}=? "
+                f"and {_EMAIL_HISTORICAL_COLUMNS['stable_message_identity']}=?",
+                (*parts.parameters, account_id, folder, model_id, stable_message_identity),
             ).rowcount
         if updated != 1:
             raise ValueError("historical queued candidate is missing")
@@ -15098,7 +15110,7 @@ class EmailStore:
             classification_queue = {
                 str(row["status"]): int(row["n"])
                 for row in db.execute(
-                    "select status, count(*) as n from email_agent_classification_tasks "
+                    f"select status, count(*) as n from ({_EMAIL_CLASSIFICATION_SQL}) "
                     "where status in ('pending','processing') group by status"
                 )
             }

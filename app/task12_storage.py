@@ -1,7 +1,8 @@
 """Native transactional writers and SQL parts for twelve Tasks source families.
 
-The target declaration remains unselected. Caller connection contexts own commit. Source ROWIDs/public keys and global
-physical Tasks ids are distinct; no API here commits, migrates or calls a provider.
+Current callers use the Tasks20 declaration; caller connection contexts own commit.
+Source ROWIDs/public keys and global physical Tasks ids are distinct; no API here
+commits, migrates or calls a provider.
 """
 
 from contextlib import closing

@@ -2,6 +2,8 @@
 from app.state_publication_sources import publication_store_version
 
 from app.action_storage import action_schema_is_current, reply_schema_is_current
+from app.task20_definitions import task20_projection
+from app.task20_current_schema import task20_schema_is_current
 
 from contextlib import closing
 from dataclasses import dataclass
@@ -58,9 +60,10 @@ def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
             "select status from tasks where record_type='work_summary_inputs'",
         )
     if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True)
+            and task20_schema_is_current(db)
             and {"tasks", "runs"} <= tables
             and not (old | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
-        return REPLY_TASK_SQL, "select status from tasks where record_type='work_summary_inputs'"
+        return task20_projection("reply_tasks"), "select status from (" + task20_projection("work_summary_inputs") + ")"
     raise ValueError("unknown or mixed task publication source schema")
 
 
@@ -90,9 +93,10 @@ def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
     ):
         return MEETING_JOB_SQL, MEETING_RUN_SQL
     if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True)
+            and task20_schema_is_current(db)
             and {"tasks", "runs"} <= tables
             and not (set(RETIRED_TASK_TABLES) | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
-        return MEETING_JOB_SQL, MEETING_RUN_SQL
+        return task20_projection("meeting_alignment_jobs"), MEETING_RUN_SQL
     raise ValueError("unknown or mixed meeting publication source schema")
 
 

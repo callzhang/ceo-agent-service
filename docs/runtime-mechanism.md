@@ -1,10 +1,12 @@
 # Current Runtime Mechanism
 
-Unselected current Tasks20 declaration helpers now provide fresh creation and the original explicit missing-object repair mode, without changing historical source factories. They preserve existing positive MAIN counters and unrelated TEMP allocators, retain the feedback child's three generated public-key FKs, and retain Workbench confirmation/search/FTS auxiliaries while leaving the two folded child tables absent. Existing physical tasks(id) child guard SQL keeps its original type/error behavior; generated public endpoints do not receive physical Reply-ID guards. Current constructors, callers and the paired release still do not select these helpers.
+Current Store/Email/Workbench constructors, typed task callers and the paired Store20/Email52 release select Tasks20 in this development branch. The twenty existing task families share one Tasks container with seven writable structural columns; generated source fields retain existing query and constraint semantics. Fresh creation and explicit missing-object repair preserve native behavior, current MAIN counters, retained feedback public-key FKs and Workbench confirmation/search/FTS auxiliaries. All twelve folded native tables remain absent. Historical task_storage/workbench_storage factories and earlier publication branches retain their original source roles.
 
-Tasks20 preparation binds source declarations, while allocator presence remains mutable state. Supported native writes after preparation are converted from current rows and counter waters; original absence metadata is retained only for current-fact inverse reconstruction. Declaration rechecks compare the source variant and table definitions. No constructor or paired coordinator selects this component until the complete Tasks20 cutover.
+The paired release converts Tasks20 after State in the existing FK-off transaction and restores Tasks20 before State on inverse. Preparation binds exact source declarations; allocator presence is mutable state, so source rechecks compare variant/table declarations while carrying original presence bits for inverse. Conversion and inverse read current rows and counters, including native writes after preparation and target writes after conversion. No business-row snapshot is stored. Existing physical Tasks IDs, source public keys/ROWIDs, input pointers and scalar types are retained; inverse reconstructs all82 original columns with unrelated source padding as SQL NULL. Non-trigger allocator access uses main.sqlite_sequence; MAIN trigger SQL is unchanged.
 
-The unselected Tasks20 schema component converts the original eight-kind Tasks container and twelve native task tables under a caller-owned FK-off transaction. It preserves existing physical Tasks IDs, source public keys/ROWIDs, input pointers, scalar storage classes and independent source counters. Its current-fact inverse rebuilds all82 original columns, reconstructing unrelated padding as SQL NULL, plus exact native declarations and the retained feedback child's three endpoints. Inverse metadata contains declarations and counter-presence bits only. Non-trigger allocator accesses explicitly use main.sqlite_sequence, so unrelated TEMP allocators cannot redirect them; MAIN trigger SQL remains unchanged. Current Store/Email/Workbench constructors and the paired release do not yet select this component. The ten-core-plus-ledger target remains incomplete and production is unchanged.
+Current startup no longer invokes the obsolete direct feedback resolver or recurring round backfill, old receipt/item seeding or the two obsolete native guard-replacement methods. Normal batch creation, claim, association, evidence, batch resolution and reopen remain supported; the existing direct-resolution HTTP routes still return409 feedback_batch_required. No new policy gate, transaction owner or schema version is introduced.
+
+The selected development candidate has55 ordinary tables. This is intermediate: the final ten core tables plus Email migration ledger, full native CLI/fake-provider/UI acceptance and production approval remain open. Production has not been switched by this development selection.
 
 The paired State release captures exact actual/fresh declarations for sixteen
 native State families and migrates fifteen retained kinds into one state table
@@ -3337,13 +3339,13 @@ The selected candidate coordinator in app/action_email_schema_release.py
 prepares the exact Store19/Email51 source and publishes Store20/Email52.
 Preparation records the original Store marker and complete Email ledger,
 native declarations/allocators and existing FK findings in one read snapshot.
-It carries Email, Business, Provider, Configs/Skill/mapped-runs and State schema
-metadata without a business-row snapshot.
+It carries Email, Business, Provider, Configs/Skill/mapped-runs, State and Tasks20
+schema metadata without a business-row snapshot.
 
 Forward converts those components in one FK-off transaction, with State after
-Configs and before the shared Store/Email marker timestamp. Readback validates
+Configs, then Tasks20 before the shared Store/Email marker timestamp. Readback validates
 the complete current declarations, translated dependencies, retired names,
-markers and unchanged FK findings. Inverse restores State first, then the
+markers and unchanged FK findings. Inverse restores Tasks20 first, then State and the
 existing Configs/Business/Email/Provider sequence, original Store timestamp and
 complete Email ledger from current facts and allocator waters. A failed
 transaction rolls back its DDL, markers and data together. The genuine cold

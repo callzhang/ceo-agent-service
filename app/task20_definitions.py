@@ -1,4 +1,4 @@
-"""Unselected finite twenty-kind Tasks declarations.
+"""Current finite twenty-kind Tasks declarations.
 
 All source business fields are explicit. Runtime never loads evidence artifacts.
 Caller conversion, allocators and the paired release select these declarations.

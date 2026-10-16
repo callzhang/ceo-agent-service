@@ -1,6 +1,7 @@
 from __future__ import annotations
 from app.run_storage import SCHEDULED_RUN_SQL
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import task8_set_parts
 from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, REPLY_ATTEMPT_COMMON_SQL, update_action
 
 from datetime import datetime, timezone
@@ -9,6 +10,9 @@ from app.store import AutoReplyStore
 from app.run_storage import AGENT_RUN_SQL
 from app.configs_definitions import config_projection
 from app.schedules_definitions import schedule_projection
+
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 
 _LEGACY_AGENT_FAILURES = (
@@ -121,15 +125,10 @@ def close_superseded_scheduled_reply_tasks(
         closed = 0
         for row in rows:
             task_cursor = db.execute(
-                """
+                f"""
                 update tasks
-                   set status='done',
-                       error='',
-                       available_at='',
-                       locked_at=null,
-                       recovery_code='superseded_by_service_command',
-                       updated_at=?
-                 where record_type='reply_tasks' and id=? and status='failed'
+                   set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'recovery_code': "'superseded_by_service_command'", 'updated_at': '?'}).sql}
+                 where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed'
                 """,
                 (now_text, int(row["task_id"])),
             )

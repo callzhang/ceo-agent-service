@@ -2,8 +2,8 @@
 
 Callers retain the native statement verb, CTE/FROM/WHERE/RETURNING and cursor.
 These builders do not access a connection or select a runtime schema.
-Current callers/constructors do not select this storage; connection registration
-and the complete paired migration/caller conversion remain release-owned.
+Current Store/Email/Workbench callers register the codec on their existing
+connections and select these parts with the paired Tasks20 release.
 """
 
 from dataclasses import dataclass

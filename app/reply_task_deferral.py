@@ -6,7 +6,8 @@ never constructs AutoReplyStore and cannot initialize or migrate a database.
 
 from __future__ import annotations
 from app.state_definitions import state_projection
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import register_task8_functions, task8_set_parts
 
 import argparse
 import hashlib
@@ -27,6 +28,9 @@ from app.action_storage import (
     EXTERNAL_ACTION_RESULT_SQL,
     REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL,
 )
+
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 
 _RECEIPT_DDL = """
@@ -89,6 +93,7 @@ def _connect(path: Path | str, *, readonly: bool):
         db.execute('pragma query_only=on')
     else:
         db = sqlite3.connect(resolved, timeout=5, isolation_level=None)
+        register_task8_functions(db)
     db.row_factory = sqlite3.Row
     try:
         yield db
@@ -301,8 +306,7 @@ def apply_deferral(
             until = _stamp(instant + timedelta(seconds=duration_seconds))
             if snap['available_at'] and snap['available_at'] >= until:
                 raise ValueError('existing deferral is later')
-            db.execute("""update tasks set status='pending', available_at=?,
-                locked_at=null, updated_at=? where record_type='reply_tasks' and id=? and status in ('pending','processing')""",
+            db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'available_at': '?', 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('pending','processing')""",
                 (until, _stamp(instant), task_id))
             db.execute("""insert into reply_task_deferral_receipts
                 (request_id,task_id,business_object_key,execution_generation,input_version,
@@ -353,7 +357,7 @@ def resume_deferral(
                 row['latest_failed_run_id'],row['latest_failed_run_fingerprint'],
                 'pending',row['deferred_until']):
                 raise ValueError('deferral state changed')
-            db.execute("update tasks set available_at=?,updated_at=? where record_type='reply_tasks' and id=? and status='pending'",
+            db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'available_at': '?', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='pending'""",
                        (row['original_available_at'],_stamp(instant),task_id))
             db.execute("""update reply_task_deferral_receipts set status='resumed',
                 resume_request_id=?,resumed_at=? where id=? and status='paused'""",

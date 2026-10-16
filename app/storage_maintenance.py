@@ -1,7 +1,10 @@
 """Remove persisted trajectory copies and reclaim SQLite pages."""
 
 from __future__ import annotations
-from app.task_storage import task_id_expression, REPLY_TASK_INPUT_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task_storage import task_id_expression
+from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import register_task8_functions, task8_set_parts
+from app.task12_storage import task12_projection, task12_set_parts
 
 import argparse
 import json
@@ -11,6 +14,10 @@ from pathlib import Path
 
 from app.store import AutoReplyStore, REPLY_TASK_CURRENT_SQL
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
+
+
+REPLY_TASK_INPUT_SQL = task20_projection('reply_task_inputs')
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
 def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
@@ -24,9 +31,10 @@ def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
     counts = {"tasks_compacted": 0, "logical_bytes_removed": 0}
     with closing(sqlite3.connect(database, timeout=60)) as db:
         db.row_factory = sqlite3.Row
+        register_task8_functions(db)
         db.execute("begin immediate")
         rows = db.execute(
-            "select task_id, input_json from email_agent_classification_tasks "
+            f"select task_id, input_json from ({task12_projection('email_agent_classification_tasks')}) "
             "where status='done' and json_extract(input_json, '$.input_compacted') is not 1 "
             "order by task_id"
         ).fetchall()
@@ -35,8 +43,9 @@ def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
                 row["input_json"]
             )
             updated = db.execute(
-                "update email_agent_classification_tasks set input_json=? "
-                "where task_id=? and status='done'",
+                f"update tasks set {task12_set_parts('email_agent_classification_tasks', {}, update_sql={'input_json': '?'}).sql} "
+                f"where record_type='email_agent_classification_tasks' and {task20_column('email_agent_classification_tasks', 'task_id')}=? "
+                f"and {task20_column('email_agent_classification_tasks', 'status')}='done'",
                 (compact, row["task_id"]),
             ).rowcount
             counts["tasks_compacted"] += updated
@@ -58,6 +67,7 @@ def compact_settled_reply_inputs(database: Path) -> dict[str, int]:
     counts = {"tasks_compacted": 0, "inputs_compacted": 0,
               "attempts_cleared": 0, "logical_bytes_removed": 0}
     with closing(sqlite3.connect(database, timeout=60)) as db:
+        register_task8_functions(db)
         db.row_factory = sqlite3.Row
         db.execute("begin immediate")
         task_ids = [int(row["id"]) for row in db.execute(
@@ -114,6 +124,7 @@ def compact_terminal_work_summary_inputs(database: Path) -> dict[str, int]:
     """
     counts = {"rows_compacted": 0, "logical_bytes_removed": 0}
     with closing(sqlite3.connect(database, timeout=60)) as db:
+        register_task8_functions(db)
         db.row_factory = sqlite3.Row
         db.execute("begin immediate")
         rows = db.execute(
@@ -125,9 +136,7 @@ def compact_terminal_work_summary_inputs(database: Path) -> dict[str, int]:
             payload = row["payload_json"]
             source_created_at, digest, body_bytes = AutoReplyStore._work_summary_input_provenance(payload)
             db.execute(
-                "update tasks set payload_json='{}', source_created_at=?, "
-                "body_sha256=?, body_bytes=?, body_compacted=1 "
-                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and status in ('done', 'skipped') and body_compacted=0",
+                f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': "'{}'", 'source_created_at': '?', 'body_sha256': '?', 'body_bytes': '?', 'body_compacted': '1'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')} in ('done', 'skipped') and {task20_column('work_summary_inputs', 'body_compacted')}=0""",
                 (source_created_at, digest, body_bytes, row["id"]),
             )
             counts["rows_compacted"] += 1
@@ -145,19 +154,20 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
     """
     counts = {"event_runs_cleared": 0, "payload_fields_cleared": 0, "payload_bytes_removed": 0}
     columns = {
-        "tasks": {"error_detail": ""},
+        "workbench_turns": {"error_detail": ""},
     }
     with closing(sqlite3.connect(database, timeout=60)) as db:
+        register_task8_functions(db)
         db.execute("begin immediate")
         _clear_workbench_event_bodies(db, counts)
-        for table, fields in columns.items():
+        for kind, fields in columns.items():
             for column, empty in fields.items():
                 counts["payload_bytes_removed"] += db.execute(
-                    f"select coalesce(sum(max(length(cast({column} as blob))-length(cast(? as blob)),0)),0) "
-                    f"from {table} where {column}<>?", (empty, empty),
+                    f"select coalesce(sum(max(length(cast({task20_column(kind, column)} as blob))-length(cast(? as blob)),0)),0) "
+                    f"from tasks where record_type=? and {task20_column(kind, column)}<>?", (empty, kind, empty),
                 ).fetchone()[0]
                 counts["payload_fields_cleared"] += db.execute(
-                    f"update {table} set {column}=? where {column}<>?", (empty, empty)
+                    f"update tasks set {task8_set_parts(kind, {}, update_sql={column: '?'}).sql} where record_type=? and {task20_column(kind, column)}<>?", (empty, kind, empty)
                 ).rowcount
         db.execute(
             "insert into codex_session_search_fts(codex_session_search_fts) values('rebuild')"

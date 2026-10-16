@@ -1,7 +1,7 @@
 """Auditable, idempotent repair planning for task project metadata."""
 
 from __future__ import annotations
-from app.task_storage import WORK_SUMMARY_INPUT_SQL
+from app.task20_definitions import task20_projection
 from app.run_storage import TASK_AGENT_RUN_SQL
 
 import hashlib
@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from app.work_summary_payload import decode_work_summary_payload
+
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
 RESTORABLE_FIELDS = (

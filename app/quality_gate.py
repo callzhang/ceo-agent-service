@@ -9,7 +9,9 @@ table as a failed check rather than silently dropping a queue from coverage.
 
 from __future__ import annotations
 from app.state_definitions import state_projection
-from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task20_definitions import task20_projection
+from app.task12_storage import task12_projection
+
 
 import json
 import sqlite3
@@ -33,6 +35,11 @@ from app.action_storage import (
     reply_action_projection,
     validated_reply_variant,
 )
+
+MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
+OKR_REQUEST_SQL = task20_projection('okr_review_requests')
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
 REQUIRED_SOURCES = (
@@ -135,11 +142,11 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state"}
+        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
-            *(source for source in OPTIONAL_QUEUE_SOURCES if source in existing),
+            *(source for source in OPTIONAL_QUEUE_SOURCES if physical_source.get(source, source) in existing),
         )
         if missing:
             return QualityGateReport(
@@ -172,7 +179,7 @@ def scan_hourly_quality(
         _check_reply_attempts(db, checked_now, violations, attention)
         _check_agent_runs(db, checked_now, violations, attention)
         _check_work_items(db, checked_now, violations, attention)
-        if "email_agent_classification_tasks" in existing:
+        if physical_source["email_agent_classification_tasks"] in existing:
             _check_email_classification_tasks(db, checked_now, violations)
         if "email_classifier_runtime_samples" in existing:
             _check_email_model_runtime(db, checked_now, violations, attention)
@@ -527,7 +534,7 @@ def _check_structured_needs_human(
               and not exists (
                   select 1
                   from ({REPLY_TASK_SQL}) as historical_task
-                  join business_object_tasks as current_business_object
+                  join ({task12_projection('business_object_tasks')}) as current_business_object
                     on current_business_object.business_object_key=
                        historical_task.business_object_key
                   where historical_task.channel=a.channel
@@ -648,7 +655,7 @@ def _check_email_classification_tasks(
         code="failed",
         count=_count(
             db,
-            "select count(*) from email_agent_classification_tasks where lower(status)='failed'",
+            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')}) where lower(status)='failed'""",
         ),
         severity="error",
         detail="email classification reached a non-retryable failure",
@@ -659,7 +666,7 @@ def _check_email_classification_tasks(
         code="running_stale",
         count=_count(
             db,
-            """select count(*) from email_agent_classification_tasks
+            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')})
                where lower(status)='running'
                  and datetime(updated_at) < datetime(?)""",
             (_cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),),
@@ -673,7 +680,7 @@ def _check_email_classification_tasks(
         code="pending_stale",
         count=_count(
             db,
-            """select count(*) from email_agent_classification_tasks
+            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')})
                where lower(status)='pending'
                  and (available_at='' or datetime(available_at) <= datetime(?))
                  and datetime(updated_at) < datetime(?)""",

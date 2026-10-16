@@ -1,6 +1,7 @@
 """Durable, generation-bound Consumer candidates and system execution progress."""
 
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import task8_set_parts
 import hashlib
 import json
 import sqlite3
@@ -18,6 +19,9 @@ from app.action_storage import (
     insert_action,
     update_action,
 )
+
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 
 
@@ -287,8 +291,7 @@ class ReviewedCandidateStoreMixin:
                 raise ValueError("stale candidate")
             task = db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (candidate["task_id"],)).fetchone()
             if task["status"] == "needs_human":
-                db.execute("""update tasks set status='pending',available_at='',locked_at=null,
-                    updated_at=current_timestamp where record_type='reply_tasks' and id=? and execution_generation=? and status='needs_human'""",
+                db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'execution_generation')}=? and {task20_column('reply_tasks', 'status')}='needs_human'""",
                     (candidate["task_id"],candidate["execution_generation"]))
             elif task["status"] not in ("pending", "processing", "done", "skipped"):
                 raise ValueError("selected candidate task is unavailable")

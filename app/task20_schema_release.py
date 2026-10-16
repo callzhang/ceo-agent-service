@@ -1,6 +1,6 @@
 """Source-bound Tasks20 conversion; caller owns the FK-off transaction.
 
-Unselected canonical implementation. Only declarations and allocator-presence
+The paired release selects this component. Only declarations and allocator-presence
 bits survive as inverse metadata; restoration always reads current task facts.
 """
 import sqlite3
