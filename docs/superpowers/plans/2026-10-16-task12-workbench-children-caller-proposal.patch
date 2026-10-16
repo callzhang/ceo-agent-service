@@ -10,8 +10,8 @@
  from app.workbench.native_events import (
 @@ -88,15 +89,15 @@
  WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
- 
- 
+
+
 -# Retained child tables store physical parents and return the original public IDs.
 -WORKBENCH_ATTACHMENT_SQL = """select c.id,t.legacy_key as task_id,
 +# Child source projections keep physical parents and return original public IDs.

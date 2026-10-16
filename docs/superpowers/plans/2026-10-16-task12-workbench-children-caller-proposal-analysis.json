@@ -160,7 +160,7 @@
     "prerequisite_patch": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26",
     "after_prerequisite": "59e56e58f9c071631b47e60827a931681ba14b2657115f1e14aee8cfae0d012a",
     "candidate": "b9027194eb4f9f277630935bf2d00a36792047f626e6b0242667d22a7de070db",
-    "incremental_patch": "d27b3a097f8ade8d4485647c9e07bc0d65848afd392067899ed16ab11db7aed6",
+    "incremental_patch": "f9e64c543a9aec532184a99ee9832d691635bdbaf4dfade9c515e25e3f268cc7",
     "task12_storage": "8a7a84db53006065697ae44a2e39dc27a2008ca2687b6ddfc54e23ff9cc1729a",
     "task20_definitions": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0"
   },
@@ -295,7 +295,10 @@
       "WorkbenchStore._confirmation_from_row"
     ],
     "qualified_ast_rerun": true,
-    "qualified_ast_owned_temp_removed": true
+    "qualified_ast_owned_temp_removed": true,
+    "blank_patch_context_normalized": true,
+    "normalized_patch_sequential_apply_reverse_exact": true,
+    "normalized_patch_owned_temp_removed": true
   },
   "changed_functions": [
     "save_attachment",

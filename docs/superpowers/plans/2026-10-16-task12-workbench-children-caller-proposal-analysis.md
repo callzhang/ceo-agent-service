@@ -7,7 +7,7 @@ The adjacent patch completes the bounded runtime SQL proposal for `workbench_art
 | Original Workbench source | `4a3bb9287dfea1f2e13e31be5ff2a9ac536a458ac079f30ccb1519848870e18e` |
 | Existing-eight prerequisite patch | `66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26` |
 | Workbench after prerequisite | `59e56e58f9c071631b47e60827a931681ba14b2657115f1e14aee8cfae0d012a` |
-| Incremental child patch | `d27b3a097f8ade8d4485647c9e07bc0d65848afd392067899ed16ab11db7aed6` |
+| Incremental child patch | `f9e64c543a9aec532184a99ee9832d691635bdbaf4dfade9c515e25e3f268cc7` |
 | Cumulative Workbench candidate | `b9027194eb4f9f277630935bf2d00a36792047f626e6b0242667d22a7de070db` |
 | Accepted `app/task12_storage.py` | `8a7a84db53006065697ae44a2e39dc27a2008ca2687b6ddfc54e23ff9cc1729a` |
 | Current `app/task20_definitions.py` | `cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0` |
