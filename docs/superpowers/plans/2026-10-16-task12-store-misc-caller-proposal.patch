@@ -1,0 +1,390 @@
+--- a/app/store.py
++++ b/app/store.py
+@@ -77,6 +77,7 @@
+
+ from app.task20_definitions import task20_column, task20_projection
+ from app.task8_storage import task8_insert_parts, task8_set_parts, task8_meeting_returning
++from app.task12_storage import insert_task12, task12_projection, task12_set_parts
+
+ from app.workbench_storage import (
+     RETIRED_WORKBENCH_TABLES, SEARCH_RETIRED_COLUMNS, create_workbench_auxiliary_schema,
+@@ -9127,14 +9128,13 @@
+             return cls._reply_task_from_row(row), False
+
+         mapping = db.execute(
+-            "select reply_task_id from business_object_tasks where business_object_key=?",
++            f"select reply_task_id from ({task12_projection('business_object_tasks')}) where business_object_key=?",
+             (key,),
+         ).fetchone()
+         if mapping is None and key.startswith("oa:"):
+             if key.endswith(":"):
+                 matches = db.execute(
+-                    "select business_object_key, reply_task_id "
+-                    "from business_object_tasks where business_object_key like ?",
++                    f"select business_object_key, reply_task_id from ({task12_projection('business_object_tasks')}) where business_object_key like ?",
+                     (f"{key}%",),
+                 ).fetchall()
+                 if len(matches) == 1:
+@@ -9144,8 +9144,7 @@
+                 process_id, _ = key[3:].rsplit(":", 1)
+                 provisional_key = f"oa:{process_id}:"
+                 provisional = db.execute(
+-                    "select reply_task_id from business_object_tasks "
+-                    "where business_object_key=?",
++                    f"select reply_task_id from ({task12_projection('business_object_tasks')}) where business_object_key=?",
+                     (provisional_key,),
+                 ).fetchone()
+                 if provisional is not None:
+@@ -9159,14 +9158,10 @@
+                         (key, task_id),
+                     )
+                     db.execute(
+-                        "delete from business_object_tasks where business_object_key=?",
++                        'delete from tasks where record_type=\'business_object_tasks\' and "business_object_tasks__business_object_key"=?',
+                         (provisional_key,),
+                     )
+-                    db.execute(
+-                        "insert into business_object_tasks "
+-                        "(business_object_key, reply_task_id) values (?, ?)",
+-                        (key, task_id),
+-                    )
++                    insert_task12(db, 'business_object_tasks', {'business_object_key': key, 'reply_task_id': task_id})
+                     mapping = provisional
+         if mapping is None:
+             _task8_insert = task8_insert_parts('reply_tasks', {'channel': spec.channel, 'conversation_id': spec.conversation_id, 'conversation_title': spec.conversation_title, 'single_chat': int(spec.single_chat), 'trigger_message_id': spec.trigger_message_id, 'trigger_create_time': spec.trigger_create_time, 'trigger_sender': spec.trigger_sender, 'available_at': spec.available_at, 'force_new_decision': int(spec.force_new_decision), 'oa_url': spec.oa_url, 'manual_rerun_attempt_id': spec.manual_rerun_attempt_id, 'execution_generation': spec.execution_generation, 'error': spec.error, 'business_object_key': key}, insert_sql={'input_version': '1', 'claimed_input_version': '0', 'status': "'pending'", 'attempts': '0', 'created_at': 'current_timestamp', 'updated_at': 'current_timestamp', 'manual_rerun_revision_key': "''", 'recovery_code': "''"})
+@@ -9177,11 +9172,7 @@
+                 _task8_insert.parameters,
+             )
+             task_id = int(cursor.lastrowid)
+-            db.execute(
+-                "insert into business_object_tasks (business_object_key, reply_task_id) "
+-                "values (?, ?)",
+-                (key, task_id),
+-            )
++            insert_task12(db, 'business_object_tasks', {'business_object_key': key, 'reply_task_id': task_id})
+         else:
+             task_id = int(mapping["reply_task_id"])
+
+@@ -9261,37 +9252,9 @@
+             else bool(requires_reply)
+         )
+         with self._immediate_write_transaction() as db:
+-            db.execute(
+-                """
+-                insert or ignore into oa_notification_events (
+-                    event_kind, requires_reply, process_instance_id, task_id,
+-                    channel, conversation_id, conversation_title,
+-                    trigger_message_id, trigger_create_time, trigger_sender,
+-                    trigger_text, trigger_message_json, oa_url, status
+-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+-                """,
+-                (
+-                    event_kind,
+-                    int(reply_required),
+-                    process_instance_id.strip(),
+-                    task_id.strip(),
+-                    channel,
+-                    conversation_id,
+-                    conversation_title,
+-                    trigger_message_id,
+-                    trigger_create_time,
+-                    trigger_sender,
+-                    trigger_text,
+-                    trigger_message_json,
+-                    oa_url,
+-                    "pending" if reply_required else "ignored",
+-                ),
+-            )
++            insert_task12(db, 'oa_notification_events', {'event_kind': event_kind, 'requires_reply': int(reply_required), 'process_instance_id': process_instance_id.strip(), 'task_id': task_id.strip(), 'channel': channel, 'conversation_id': conversation_id, 'conversation_title': conversation_title, 'trigger_message_id': trigger_message_id, 'trigger_create_time': trigger_create_time, 'trigger_sender': trigger_sender, 'trigger_text': trigger_text, 'trigger_message_json': trigger_message_json, 'oa_url': oa_url, 'status': 'pending' if reply_required else 'ignored'}, ignore=True)
+             row = db.execute(
+-                """
+-                select id from oa_notification_events
+-                where channel=? and conversation_id=? and trigger_message_id=?
+-                """,
++                f"\n                select id from ({task12_projection('oa_notification_events')})\n                where channel=? and conversation_id=? and trigger_message_id=?\n                ",
+                 (channel, conversation_id, trigger_message_id),
+             ).fetchone()
+             if row is None:
+@@ -9307,13 +9270,7 @@
+             return 0
+         with self._immediate_write_transaction() as db:
+             cursor = db.execute(
+-                """
+-                update oa_notification_events
+-                set task_id=?, status='adopted', updated_at=current_timestamp
+-                where requires_reply=1 and process_instance_id=?
+-                  and status in ('pending', 'adopted')
+-                  and (task_id='' or task_id=?)
+-                """,
++                f"""update tasks set {task12_set_parts('oa_notification_events', {}, update_sql={'task_id': '?', 'status': "'adopted'", 'updated_at': 'current_timestamp'}).sql} where record_type='oa_notification_events' and "oa_notification_events__requires_reply"=1 and "oa_notification_events__process_instance_id"=?\n                  and "oa_notification_events__status" in ('pending', 'adopted')\n                  and ("oa_notification_events__task_id"='' or "oa_notification_events__task_id"=?)\n                """,
+                 (node_id, process_id, node_id),
+             )
+             return int(cursor.rowcount)
+@@ -9326,35 +9283,19 @@
+         with self._connect() as db:
+             if process_id:
+                 rows = db.execute(
+-                    """
+-                    select * from oa_notification_events
+-                    where requires_reply=1 and process_instance_id=?
+-                      and status in ('pending', 'adopted')
+-                      and task_id=?
+-                    order by id
+-                    """,
++                    f"\n                    select * from ({task12_projection('oa_notification_events')})\n                    where requires_reply=1 and process_instance_id=?\n                      and status in ('pending', 'adopted')\n                      and task_id=?\n                    order by id\n                    ",
+                     (process_id, node_id),
+                 ).fetchall()
+             else:
+                 rows = db.execute(
+-                    """
+-                    select * from oa_notification_events
+-                    where requires_reply=1 and status in ('pending', 'adopted')
+-                    order by id
+-                    """
++                    f"\n                    select * from ({task12_projection('oa_notification_events')})\n                    where requires_reply=1 and status in ('pending', 'adopted')\n                    order by id\n                    "
+                 ).fetchall()
+             return [dict(row) for row in rows]
+
+     def claim_oa_reminder_target(self, event_id: int, attempt_id: int) -> bool:
+         with self._immediate_write_transaction() as db:
+             cursor = db.execute(
+-                """
+-                update oa_notification_events
+-                set status='sending', claimed_attempt_id=?, updated_at=current_timestamp
+-                where id=? and requires_reply=1
+-                  and status in ('pending', 'adopted')
+-                  and claimed_attempt_id=0
+-                """,
++                f"""update tasks set {task12_set_parts('oa_notification_events', {}, update_sql={'status': "'sending'", 'claimed_attempt_id': '?', 'updated_at': 'current_timestamp'}).sql} where record_type='oa_notification_events' and "oa_notification_events__id"=? and "oa_notification_events__requires_reply"=1\n                  and "oa_notification_events__status" in ('pending', 'adopted')\n                  and "oa_notification_events__claimed_attempt_id"=0\n                """,
+                 (attempt_id, event_id),
+             )
+             return cursor.rowcount == 1
+@@ -9364,12 +9305,7 @@
+     ) -> bool:
+         with self._immediate_write_transaction() as db:
+             cursor = db.execute(
+-                """
+-                update oa_notification_events
+-                set status='sent', result_attempt_id=?, sent_at=current_timestamp,
+-                    updated_at=current_timestamp
+-                where id=? and status='sending' and claimed_attempt_id=?
+-                """,
++                f"""update tasks set {task12_set_parts('oa_notification_events', {}, update_sql={'status': "'sent'", 'result_attempt_id': '?', 'sent_at': 'current_timestamp', 'updated_at': 'current_timestamp'}).sql} where record_type='oa_notification_events' and "oa_notification_events__id"=? and "oa_notification_events__status"='sending' and "oa_notification_events__claimed_attempt_id"=?\n                """,
+                 (result_attempt_id, event_id, attempt_id),
+             )
+             return cursor.rowcount == 1
+@@ -9379,12 +9315,7 @@
+     ) -> bool:
+         with self._immediate_write_transaction() as db:
+             cursor = db.execute(
+-                """
+-                update oa_notification_events
+-                set status='adopted', claimed_attempt_id=0, last_error=?,
+-                    updated_at=current_timestamp
+-                where id=? and status='sending' and claimed_attempt_id=?
+-                """,
++                f"""update tasks set {task12_set_parts('oa_notification_events', {}, update_sql={'status': "'adopted'", 'claimed_attempt_id': '0', 'last_error': '?', 'updated_at': 'current_timestamp'}).sql} where record_type='oa_notification_events' and "oa_notification_events__id"=? and "oa_notification_events__status"='sending' and "oa_notification_events__claimed_attempt_id"=?\n                """,
+                 (error, event_id, attempt_id),
+             )
+             return cursor.rowcount == 1
+@@ -10370,8 +10301,7 @@
+                     "and status='approved' and memory_write_status='writing'"
+                 ),
+                 "wechat_memory_import_job": (
+-                    "select 1 from wechat_memory_import_jobs "
+-                    "where id=? and status='running'"
++                    f"select 1 from ({task12_projection('wechat_memory_import_jobs')}) where id=? and status='running'"
+                 ),
+             }[source]
+             args = (
+@@ -14038,7 +13968,7 @@
+         with self._connect() as db:
+             row = db.execute(
+                 f"""
+-                select tasks.* from business_object_tasks as current_object
++                select tasks.* from ({task12_projection('business_object_tasks')}) as current_object
+                 join ({REPLY_TASK_CURRENT_SQL}) as tasks
+                   on tasks.id=current_object.reply_task_id
+                 where current_object.business_object_key=?
+@@ -17466,27 +17396,7 @@
+         item_json: str,
+     ) -> int:
+         with self._connect() as db:
+-            cursor = db.execute(
+-                """
+-                insert into okr_review_items (
+-                    request_id,
+-                    objective_title,
+-                    objective_weight,
+-                    kr_title,
+-                    kr_weight,
+-                    item_json
+-                )
+-                values (?, ?, ?, ?, ?, ?)
+-                """,
+-                (
+-                    request_id,
+-                    objective_title,
+-                    objective_weight,
+-                    kr_title,
+-                    kr_weight,
+-                    item_json,
+-                ),
+-            )
++            cursor = insert_task12(db, 'okr_review_items', {'request_id': request_id, 'objective_title': objective_title, 'objective_weight': objective_weight, 'kr_title': kr_title, 'kr_weight': kr_weight, 'item_json': item_json})
+             return int(cursor.lastrowid)
+
+     def upsert_conversation(
+@@ -18204,8 +18114,7 @@
+                     (task_id, *duplicate_ids),
+                 )
+                 db.execute(
+-                    f"update business_object_tasks set reply_task_id=? "
+-                    f"where reply_task_id in ({placeholders})",
++                    f"update tasks set parent_id=? where record_type='business_object_tasks' and parent_id in ({placeholders})",
+                     (task_id, *duplicate_ids),
+                 )
+             target_key = str(target["business_object_key"] or "").strip()
+@@ -18223,18 +18132,7 @@
+             parent.update(trigger_text=trigger_text, trigger_message_json=trigger_message_json)
+             input_id = self._append_reply_input_snapshot(db, task_id, parent, revision_key=f"merge:{execution_generation}")
+             db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={}, structural_sql={'current_input_id': "(select id from tasks where record_type='reply_task_inputs' and cast(legacy_key as integer)=?)"}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?""", (input_id, task_id))
+-            db.execute(
+-                "insert or ignore into business_object_tasks "
+-                "(business_object_key, reply_task_id) values (?, ?)",
+-                (
+-                    reply_business_object_key(
+-                        channel=channel,
+-                        conversation_id=conversation_id,
+-                        trigger_message_id=trigger_message_id,
+-                    ),
+-                    task_id,
+-                ),
+-            )
++            insert_task12(db, 'business_object_tasks', {'business_object_key': reply_business_object_key(channel=channel, conversation_id=conversation_id, trigger_message_id=trigger_message_id), 'reply_task_id': task_id}, ignore=True)
+             db.execute(
+                 f"""
+                 delete from tasks
+@@ -23032,7 +22930,7 @@
+                   and a.id=(select max(newest.id) from ({REPLY_ATTEMPT_COMMON_SQL}) as newest
+                       where newest.channel=t.channel and newest.conversation_id=t.conversation_id
+                         and newest.trigger_message_id=t.trigger_message_id)
+-                  and exists(select 1 from business_object_tasks current_object
++                  and exists(select 1 from ({task12_projection('business_object_tasks')}) current_object
+                       where current_object.business_object_key=t.business_object_key
+                         and current_object.reply_task_id=t.id)
+             """).fetchall()
+@@ -23122,7 +23020,7 @@
+                 set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'skipped'", 'error': "'superseded_by_terminal_business_object_task'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='historical.payload_json').sql}  where historical.record_type='reply_tasks' and historical.{task20_column('reply_tasks', 'status')}='failed'
+                   and exists (
+                       select 1
+-                      from business_object_tasks as current_mapping
++                      from ({task12_projection('business_object_tasks')}) as current_mapping
+                       join ({REPLY_TASK_SQL}) as current_task
+                         on current_task.id=current_mapping.reply_task_id
+                       where current_mapping.business_object_key=
+@@ -23144,7 +23042,7 @@
+                       from ({AGENT_RUN_SQL}) as source_run
+                       join ({REPLY_TASK_SQL}) as source_task
+                         on source_task.id=source_run.reply_task_id
+-                      join business_object_tasks as current_mapping
++                      join ({task12_projection('business_object_tasks')}) as current_mapping
+                         on current_mapping.business_object_key=
+                            source_task.business_object_key
+                       join ({REPLY_TASK_SQL}) as current_task
+@@ -24077,7 +23975,7 @@
+                   and not exists (
+                       select 1
+                       from ({REPLY_TASK_CURRENT_SQL}) as historical_task
+-                      join business_object_tasks as current_business_object
++                      join ({task12_projection('business_object_tasks')}) as current_business_object
+                         on current_business_object.business_object_key=historical_task.business_object_key
+                       where historical_task.channel=attempts.channel
+                         and historical_task.conversation_id=attempts.conversation_id
+@@ -24086,7 +23984,7 @@
+                   )
+                   and not exists (
+                       select 1
+-                      from business_object_tasks as current_business_object
++                      from ({task12_projection('business_object_tasks')}) as current_business_object
+                       join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                         on current_task.id=current_business_object.reply_task_id
+                       where current_business_object.business_object_key=(
+@@ -24206,7 +24104,7 @@
+                   and not exists (
+                       select 1
+                       from ({REPLY_TASK_CURRENT_SQL}) as historical_task
+-                      join business_object_tasks as current_business_object
++                      join ({task12_projection('business_object_tasks')}) as current_business_object
+                         on current_business_object.business_object_key=historical_task.business_object_key
+                       where historical_task.channel=attempts.channel
+                         and historical_task.conversation_id=attempts.conversation_id
+@@ -24215,7 +24113,7 @@
+                   )
+                   and not exists (
+                       select 1
+-                      from business_object_tasks as current_business_object
++                      from ({task12_projection('business_object_tasks')}) as current_business_object
+                       join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                         on current_task.id=current_business_object.reply_task_id
+                       where current_business_object.business_object_key=(
+@@ -24320,7 +24218,7 @@
+                   and not exists (
+                       select 1
+                       from ({REPLY_TASK_SQL}) as historical_task
+-                      join business_object_tasks as current_business_object
++                      join ({task12_projection('business_object_tasks')}) as current_business_object
+                         on current_business_object.business_object_key=historical_task.business_object_key
+                       where historical_task.channel=attempts.channel
+                         and historical_task.conversation_id=attempts.conversation_id
+@@ -24329,7 +24227,7 @@
+                   )
+                   and not exists (
+                       select 1
+-                      from business_object_tasks as current_business_object
++                      from ({task12_projection('business_object_tasks')}) as current_business_object
+                       join ({REPLY_TASK_SQL}) as current_task
+                         on current_task.id=current_business_object.reply_task_id
+                       where current_business_object.business_object_key=(
+@@ -27606,11 +27504,7 @@
+             account_id, field="account_id"
+         )
+         with self._agent_run_write_transaction(None) as (db, _):
+-            cursor = db.execute(
+-                "insert into wechat_memory_import_jobs "
+-                "(import_run_id, account_id, status) values (?, ?, 'running')",
+-                (import_run_id, account_id),
+-            )
++            cursor = insert_task12(db, 'wechat_memory_import_jobs', {'import_run_id': import_run_id, 'account_id': account_id, 'status': 'running'})
+             return int(cursor.lastrowid)
+
+     def finish_wechat_memory_import_job(
+@@ -27620,7 +27514,7 @@
+             raise ValueError("WeChat Memory import terminal status is invalid")
+         with self._agent_run_write_transaction(None) as (db, _):
+             row = db.execute(
+-                "select status, error from wechat_memory_import_jobs where id=?",
++                f"select status, error from ({task12_projection('wechat_memory_import_jobs')}) where id=?",
+                 (job_id,),
+             ).fetchone()
+             if row is None:
+@@ -27630,9 +27524,7 @@
+                     return
+                 raise ValueError("conflicting WeChat Memory import terminal rewrite")
+             db.execute(
+-                "update wechat_memory_import_jobs set status=?, error=?, "
+-                "finished_at=current_timestamp, updated_at=current_timestamp "
+-                "where id=? and status='running'",
++                f"""update tasks set {task12_set_parts('wechat_memory_import_jobs', {}, update_sql={'status': '?', 'error': '?', 'finished_at': 'current_timestamp', 'updated_at': 'current_timestamp'}).sql} where record_type='wechat_memory_import_jobs' and "wechat_memory_import_jobs__id"=? and "wechat_memory_import_jobs__status"='running'""",
+                 (status, error, job_id),
+             )
+
+@@ -29619,7 +29511,7 @@
+                             )
+                             or exists (
+                                 select 1
+-                                from business_object_tasks as current_business_object
++                                from ({task12_projection('business_object_tasks')}) as current_business_object
+                                 join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                                   on current_task.id=current_business_object.reply_task_id
+                                 where current_business_object.business_object_key=(
