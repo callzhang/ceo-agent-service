@@ -30,10 +30,10 @@ Preflight: `docs/superpowers/plans/2026-10-16-task8-allocator-preflight.py`; it 
 
 ### Task 2: exact mechanical transfer
 
-- [ ] Claim only app/task20_definitions.py, tests/test_task8_allocator.py, own row and this plan checkboxes.
-- [ ] Verify canonical hashes above; copy exact files. Do not edit previous source snapshots, stored fields, indexes, source defaults, existing trigger messages, helpers or callers.
-- [ ] Run `PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python docs/superpowers/plans/2026-10-16-task8-allocator-preflight.py --applied --with-declarations`.
-- [ ] Run Ruff on exact app/new test; git diff --check; commit only claimed changes. No production, provider, network, native CLI, main, push or deploy.
+- [x] Claim only app/task20_definitions.py, tests/test_task8_allocator.py, own row and this plan checkboxes.
+- [x] Verify canonical hashes above; copy exact files. Do not edit previous source snapshots, stored fields, indexes, source defaults, existing trigger messages, helpers or callers.
+- [x] Run pinned applied preflight with declarations: 961 passed in 68.82s; `OWNED_TEMP_REMOVED True`.
+- [x] Ruff on exact app/new test and `git diff --check` passed; committed only claimed changes. No production, provider, network, native CLI, main, push or deploy.
 
 ### Task 3: independent review then root acceptance
 

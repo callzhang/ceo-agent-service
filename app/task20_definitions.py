@@ -884,6 +884,23 @@ def _definitions():
             "update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) "
             "where name=" + repr(name) + "; end"
         )
+    # Published runtime inserts are single VALUES statements without physical id.
+    # New source kinds share physical ids but must not advance the old allocator.
+    high = (
+        "max(coalesce((select seq from sqlite_sequence where name='tasks'),0),"
+        "coalesce((select max(id) from tasks),0),0)"
+    )
+    allocated = (
+        "case when new.id<>-1 then new.id when " + high
+        + "<9223372036854775807 then " + high + "+1 else 0 end"
+    )
+    published = tuple(kind for kind in kinds if kind not in TASK20_NEW_KINDS)
+    triggers.append(
+        "create trigger trg_task8_sequence before insert on tasks "
+        "when new.record_type in (" + ",".join(map(repr, published)) + ") begin "
+        "update sqlite_sequence set seq=max(seq," + allocated + ") "
+        "where name='tasks:published'; end"
+    )
     # A newly assigned shared physical id can equal its source parent value.
     # Before-insert guards cannot see that new row; source separate tables could
     # not satisfy a missing Tasks parent by inserting the child itself.
@@ -915,6 +932,23 @@ def create_task20_schema(db):
     """Install the explicit target on a new connection; never select or commit."""
     for sql in (TASK20_TABLE_DDL, *TASK20_INDEX_DDL, *TASK20_TRIGGER_DDL):
         db.execute(sql)
+
+
+
+def initialize_task8_sequence(db, source_water):
+    """Set captured source water after bulk transfer, in the caller transaction.
+
+    The migration metadata retains absent versus zero independently. Runtime
+    uses single-VALUES INSERT/IGNORE/UPSERT; multi-row INSERT and OR FAIL are
+    outside the observed published caller contract.
+    """
+    if not db.in_transaction:
+        raise ValueError("Tasks allocator initialization requires a caller transaction")
+    db.execute("delete from sqlite_sequence where name='tasks:published'")
+    db.execute(
+        "insert into sqlite_sequence(name,seq) values('tasks:published',?)",
+        (source_water,),
+    )
 
 
 def task20_projection(kind):
