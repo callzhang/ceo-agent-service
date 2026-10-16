@@ -87,3 +87,64 @@ canonical hashes and final copy bindings reverified by root. See
 absent, and production HEAD44ee956d remains unchanged by this task. The Store
 caller proposal has only isolated4-test evidence and remains unselected pending
 review and cumulative Email/constructor/coordinator closure.
+
+## Current51 integration implementation sequence
+
+Root owns the coupled current-shape closure. Prepare a separate current Runs11
+factory/recognizer that mirrors native missing-index/trigger repair and leaves
+all counters alone. Factor the existing config content predicate from its
+historical mapped Runs8 binding; keep that original predicate exact for native
+config forward/inverse and use a distinct current Runs11 binding for current
+Store/Email/coordinator checks. Store creates mapped Runs11 directly, cancels
+setup/source-search creation and does not run native FK translation on fresh
+creation. Task20 current helpers retain child guards and stop search/FTS creation
+and recognition. Email keeps its historical maps/factories as source roles and
+excludes the retired sample table from current creation and current validation.
+
+Capture Runs11 declaration metadata with the real paired source, carry it through
+the existing JSON transport and source recheck, convert after Config/State/Tasks
+and confirmation retirement, and inverse before restoring native Config Runs
+FKs. Keep unpublished Store20/Email52; do not accept the earlier unshipped54
+shape as a silent compatibility alternative to current51. All current selectors
+and cold constructor orders must converge to51. Store/Email runtime proposals
+are integrated only after their independent SPEC then QUALITY reviews. Test and
+inspect the cumulative candidate on an owned code/DB copy before selecting it in
+this worktree, then repeat exact applied reviews. No production/main/push/deploy.
+
+## Current integration checkpoint
+
+The Store caller proposal passed bounded SPEC and revised QUALITY review. Its
+five copied-app regressions now assert explicit public tie order and native row
+facts rather than an incidental SQLite source plan. Email's four original
+functional regressions passed SPEC/QUALITY, but a larger no-statistics QUALITY
+probe found a real retention-query scaling regression: 2,048 sample rows plus
+231,340 higher-public-ID other-kind rows caused the general Runs index to be
+scanned. Median synthetic cost was9.371ms/~960k VM instructions, compared with
+native0.349ms/~29k; the existing partial sample index gave0.434ms/~31k. These are
+owned synthetic measurements at source coarse counts, not production latency.
+
+The Email proposal now directs only that inner retention SELECT to the existing
+`idx_runs11_sample_id`. Its new no-statistics scale regression fails without the
+direction (14,100 VM steps on120 samples/3,000 unrelated rows); revised five-case
+proposal tests pass. Revised SPEC and QUALITY both pass before selection: the independent
+231k no-statistics rerun uses~31k VM instructions versus native~29k. No new index, ANALYZE startup step, retention rule or business field
+was added.
+
+Root authored `2026-10-16-runs11-coupled-copy-preflight.py` for the complete paired
+116→51→116→51 proof. It compares original62-column Runs and all three native
+source families by value/type/public ID, native writes after prepare, target
+writes, exact inverse declarations/current counters/markers/Email ledger,
+logical title FTS rebuild and real44ee predecessor cold writes/reforward. The
+script passes Ruff. The cumulative old-hash286ded8 copy is currently running and
+has verified116→51→116, current source facts/types/counters/declarations, and
+genuine44ee predecessor writes; final reforward remains in progress. The final
+integration patchbcc16aab replaces dead Runs8 type probing and an inline SQL
+classifier with the existing SQLite-introspected helper using current Runs11.
+It passed final SPEC/QUALITY and121 cumulative tests; exact final-hash copy and
+mechanical/APPLIED gates remain open. A15-file prospective selection manifest
+binds the three code proposals, source-role-correct current regression fixtures
+and behavior documentation. First cumulative preparation stopped at overlapping
+patch context and the verifier then corrected its metadata key fromruns toruns11;
+neither attempt changed application or source data. The
+application still selects54 and production remains44ee; the final11-table goal
+and the program's native CLI/UI/performance/CI/publication gates remain open.

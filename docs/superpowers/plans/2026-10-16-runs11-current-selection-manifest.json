@@ -1,0 +1,92 @@
+{
+  "status": "prospective; unselected; final-hash copied-source and mechanical applied reviews required",
+  "base_commit": "c30532f8de9aa211a04000f7c94bed9ad8568aa8",
+  "patch_order": [
+    {
+      "path": "docs/superpowers/plans/2026-10-16-runs11-store-callers-proposal.patch",
+      "sha256": "1b0a146175be282682783778072ef2ab95bcc30d5ab7a2c3c9cadfc7d527addf"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-runs11-email-callers-proposal.patch",
+      "sha256": "2f6d29d21f91997b0aeb77a77c3ebe4e71438049c30e680ac17c5da08275e68e"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-runs11-current-integration-proposal.patch",
+      "sha256": "bcc16aab1c332b53c363b5a265cc7f2c2174d129ce51ff1d5d7d27703a2b41dc"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-runs11-current-behavior-proposal.patch",
+      "sha256": "9f18f8518a31443e2c0fb0a50b36c3d10b13225c536e254f31d00305e8791a0d"
+    }
+  ],
+  "new_test_canonicals": {
+    "tests/test_runs11_current_schema.py": "2026-10-16-runs11-current-integration-proposal-tests.py",
+    "tests/test_runs11_store_callers.py": "2026-10-16-runs11-current-store-tests.py",
+    "tests/test_runs11_email_callers.py": "2026-10-16-runs11-current-email-tests.py"
+  },
+  "files": {
+    "app/action_email_schema_release.py": {
+      "before_sha256": "0a8eb8bdf777d911275b3d1ed721a8d5b7c94d402a65d536feb2475ff5da5dc8",
+      "after_sha256": "ad6004c3a4a9ad33b53225bde71cc9d2e3d739c57fb694a2643a94f5ed5e4bc0"
+    },
+    "app/configs_schema_release.py": {
+      "before_sha256": "d0ed1eea3b2266b67d070add74a29a164bbc9fa53193e11fcb9df0b3c5088e25",
+      "after_sha256": "06cd217051a3bd7e6d056757c482d0455fee5a50a3683913751c04ba4838e5fe"
+    },
+    "app/email_current_schema.py": {
+      "before_sha256": "b00aba3e66453311707bf0bd9213acb1713b3b0c3fc3fcb7130851427db0eed4",
+      "after_sha256": "5aa7a428323f2ea2658471d2d2b0e351470244720155ae4d09207d9156509105"
+    },
+    "app/email_store.py": {
+      "before_sha256": "e0e61309164202bcaaeb677ed23cc8dbaca36c1c43d288e61b419c88cdc21ca5",
+      "after_sha256": "1811ca2e0b5e15b1b4e10adfa97bb896b190b9f030fd468e2604f7319e2327e9"
+    },
+    "app/meeting_alignment.py": {
+      "before_sha256": "1ac82ea8b10dd886b71b8304bcd1d0a5548f7b1cfe738fe49f413d85deda9714",
+      "after_sha256": "3b871db27b4be376cb4a0f6d8e30a23fa97a87ae43dca59b5346dc962750937e"
+    },
+    "app/quality_gate.py": {
+      "before_sha256": "0a198fff93ce894bf721c3a888b963bb15d694387fd4e538ff1ac85d6793340a",
+      "after_sha256": "c13acb1eae2aa7e6eae9003728937f7b65f19ea3b5af1cd80f04964df3383a39"
+    },
+    "app/runs11_current_schema.py": {
+      "before_sha256": null,
+      "after_sha256": "5ba80b22ec23396e6f9ecffe739ee3a64fae2104c9dde153d42ab867f731504b"
+    },
+    "app/store.py": {
+      "before_sha256": "695078ab9dcddb860836b7fcd224b9a8a6d8f89cc4a11d40ad23e759e4864da2",
+      "after_sha256": "aa0329a7657357e8f342bff097dce2fcc7e65bf3b64fd43e080e8ef98ad1244f"
+    },
+    "app/task20_current_schema.py": {
+      "before_sha256": "9755559984b454d36e494b76e9b8fb1823f27e348ad0e8d55bfc950b1eb88667",
+      "after_sha256": "c21db9f35ee7a1618f540ed1056a425ee19aad0e207707a2bba895441633e952"
+    },
+    "docs/architecture.md": {
+      "before_sha256": "7e7362ad7ba1c23b59aed1913ca3f0498a501aad194d82f5dc542405857c82a6",
+      "after_sha256": "aaf20b7b6694c6fdf93da56468fe4ffa1df19d852051e91d8a624e78f183fc46"
+    },
+    "docs/runtime-mechanism.md": {
+      "before_sha256": "6eb756d63f8a5e8d138e1014910a8f53436ee0a0222e4e8cc11fbffb6d3dd5bb",
+      "after_sha256": "3d33289be0c0756892a4b9b1519af33c67c32588d56eb01437b5048cc2d15bb5"
+    },
+    "tests/test_runs11_current_schema.py": {
+      "before_sha256": null,
+      "after_sha256": "d1b37459e05cb6c9ac82f6edb1d4c7d97cdab0baa046a4a268e655b1679c7760"
+    },
+    "tests/test_runs11_email_callers.py": {
+      "before_sha256": null,
+      "after_sha256": "a8edd0c9e740731ce5dc49e92220644bc58bd4a25f80975933859490cb381afa"
+    },
+    "tests/test_runs11_store_callers.py": {
+      "before_sha256": null,
+      "after_sha256": "73c7ecbcfa4d774c019e0f97a1b6dc05f2077a16544d7d51ec38a7e35a671568"
+    },
+    "tests/test_task20_current_schema.py": {
+      "before_sha256": "83113ac875a058580da425257ebb3673c43104a9668d446fde3fd20fb4a59b9c",
+      "after_sha256": "b44537e9b6ea7055bcdd6a6a90a3b586c8f873abfaf22ba5b042d9efb20e7a77"
+    }
+  },
+  "ordinary_tables_after_selection": 51,
+  "final_target_ordinary_tables": 11,
+  "production_changed": false
+}

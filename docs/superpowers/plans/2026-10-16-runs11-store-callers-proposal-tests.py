@@ -69,6 +69,28 @@ def test_metadata_aliases_update_and_title_search(tmp_path):
     assert "embedding_client" not in inspect.signature(_index_meeting_codex_session).parameters
 
 
+def test_metadata_update_uses_existing_public_id_index(tmp_path):
+    store = _migrated_store(tmp_path)
+    store.upsert_codex_session_search_index(
+        session_id="session", source_type="meeting_alignment",
+        source_id="45", title="old",
+    )
+    statement = (
+        "update runs set source_type=?,source_id=?,title=?,updated_at=current_timestamp "
+        "where record_type='codex_session_search_index' "
+        "and cast(legacy_key as integer)=?"
+    )
+    source = inspect.getsource(AutoReplyStore.upsert_codex_session_search_index)
+    assert "and cast(legacy_key as integer)=?" in source
+    with store._connect() as db:
+        details = [row[3] for row in db.execute(
+            "explain query plan " + statement,
+            ("meeting_alignment", "60", "new", 1),
+        )]
+    assert any("SEARCH runs USING INDEX idx_runs_public_id" in item for item in details)
+    assert not any("SCAN runs" in item for item in details)
+
+
 def test_search_tied_timestamp_uses_native_public_id_order(tmp_path):
     store = _migrated_store(tmp_path)
     source = sqlite3.connect(":memory:")
@@ -86,13 +108,15 @@ def test_search_tied_timestamp_uses_native_public_id_order(tmp_path):
         )
     projection = "(" + run11_projection("codex_session_search_index") + ")"
     source.execute("update codex_session_search_index set updated_at='2000-01-01 00:00:00'")
-    assert [row[0] for row in source.execute(
-        "select id from codex_session_search_index order by updated_at desc")] == [1, 2]
+    assert source.execute(
+        "select id,session_id,title,updated_at from codex_session_search_index order by id"
+    ).fetchall() == [
+        (1, "one", "same", "2000-01-01 00:00:00"),
+        (2, "two", "same", "2000-01-01 00:00:00"),
+    ]
     with store._connect() as db:
         db.execute("update runs set updated_at='2000-01-01 00:00:00' "
                    "where record_type='codex_session_search_index'")
-        assert [row[0] for row in db.execute(
-            f"select id from {projection} order by updated_at desc")] == [2, 1]
         assert [row[0] for row in db.execute(
             f"select id from {projection} order by updated_at desc,id asc")] == [1, 2]
     source.close()

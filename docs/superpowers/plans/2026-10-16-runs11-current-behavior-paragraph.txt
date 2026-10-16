@@ -1,0 +1,25 @@
+Current Store/Email/Workbench constructors and the paired Store20/Email52 release
+select Runs11 in this development branch. The three remaining native families
+(search session metadata, classifier runtime samples and setup events) now share
+`runs` with the original eight kinds. The schema preserves all62 original stored
+columns and adds only19 genuine source fields. Public source IDs use independent
+current counters; original-eight physical IDs and attempted-allocation reservations
+survive inverse. Historical Runs8/Workbench/Config factories retain their exact
+source roles; current creation and recognition require one Runs11 layout.
+
+The paired release captures finite source declarations without a row snapshot,
+folds Runs11 after Config/State/Tasks and confirmation retirement, and restores
+mapped Runs8 before Config inverse. Both directions read current facts and
+counters in the existing caller-owned transaction. Current startup stops creating
+the three native tables and persistent title FTS/shadows. Inverse recreates the
+original source declarations and rebuilds derived title FTS from restored metadata.
+Search still reads native trajectory files with the existing transient corpus,
+RAM FTS and vector behavior. Classifier sample retention remains global at2,048;
+its retention query uses the existing sample-only partial index so unrelated Runs
+kinds do not increase its scan work. Setup status/timestamps and public APIs retain
+their original contracts. Explicit missing-object repair preserves current waters.
+
+The selected development candidate has51 ordinary tables. This remains an
+intermediate step toward ten core tables plus the Email migration ledger. Native
+CLI/fake-provider/UI acceptance, final consolidation and production publication
+remain separate program gates; development selection does not change production.

@@ -2,8 +2,8 @@
   "base_commit": "c14cb181d",
   "selection": "unselected docs-only proposal",
   "files": {
-    "2026-10-16-runs11-store-callers-proposal.patch": "c72becc6e949eb0094cb14f9cc3548a6652b3db3c66b04bdea6053380ef36f33",
-    "2026-10-16-runs11-store-callers-proposal-tests.py": "164b8551e16d900464c924821921749bec8ee6ed1e6905f740c08ea9926ba5b3"
+    "2026-10-16-runs11-store-callers-proposal.patch": "1b0a146175be282682783778072ef2ab95bcc30d5ab7a2c3c9cadfc7d527addf",
+    "2026-10-16-runs11-store-callers-proposal-tests.py": "c364ba39bf5dfbc5330b441f42989dee44d58caacd97bf95af0af5e58942beec"
   },
   "ast_functions": {
     "store.py": {
@@ -26,13 +26,15 @@
     }
   },
   "tests": {
-    "isolated_copied_app": "4 passed in 7.05s",
-    "source_cwd_baseline_red": "4 failed because current methods address retired tables after pure migration",
+    "isolated_copied_app": "5 passed in 8.15s after native tie assertion correction",
+    "source_cwd_baseline_red": "5 failed because current methods address retired tables after pure migration",
     "compile": "pass",
     "ruff": "pass with copied repo pyproject",
     "patch_apply_check": "pass",
     "patch_reverse_check": "pass",
-    "patch_replay_byte_cmp": "pass"
+    "patch_replay_byte_cmp": "pass on revised canonical patch",
+    "explain_metadata_update": "SEARCH runs USING INDEX idx_runs_public_id; no SCAN runs",
+    "native_tie": "native source ID/session/title/timestamp facts explicitly ordered by id; explicit target/public ID order [1,2]; no unqualified source or target planner order assertion"
   },
   "integration_boundaries": [
     "current Store54 constructor and Email sample declaration still require root selection",

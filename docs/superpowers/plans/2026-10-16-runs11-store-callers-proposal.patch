@@ -9,7 +9,7 @@
  
  from app.task_storage import (
      task_id_expression, RETIRED_TASK_TABLES,
-@@ -24313,28 +24315,26 @@
+@@ -24313,28 +24315,27 @@
          source_type: str,
          source_id: str,
          title: str,
@@ -44,14 +44,15 @@
 -                    "update codex_session_search_index set source_type=?,source_id=?,title=?,updated_at=current_timestamp where id=?",
 -                    (source_type,source_id,title,row_id),
 +                    "update runs set source_type=?,source_id=?,title=?,updated_at=current_timestamp "
-+                    "where record_type='codex_session_search_index' and legacy_key=?",
-+                    (source_type, source_id, title, str(row["id"])),
++                    "where record_type='codex_session_search_index' "
++                    "and cast(legacy_key as integer)=?",
++                    (source_type, source_id, title, int(row["id"])),
                  )
 -            db.execute("insert into codex_session_search_fts(rowid,title) values(?,?)", (row_id,title))
              # Native-derived corpus is assembled only for an in-memory search.
  
      def search_codex_sessions(
-@@ -24347,12 +24347,13 @@
+@@ -24347,12 +24348,13 @@
      ) -> list[CodexSessionSearchResult]:
          from app.native_standalone import latest_standalone_ref
  
@@ -68,7 +69,7 @@
                  """
              ).fetchall()
              source_ids = [str(row["source_id"]) for row in rows
-@@ -29580,32 +29581,23 @@
+@@ -29580,32 +29582,23 @@
          stderr_excerpt: str = "",
      ) -> int:
          with self._connect() as db:
@@ -118,7 +119,7 @@
  
      def list_setup_wizard_events(
          self,
-@@ -29614,6 +29606,7 @@
+@@ -29614,6 +29607,7 @@
          action_id: str | None = None,
          limit: int = 20,
      ) -> list[dict[str, str | int]]:
@@ -126,7 +127,7 @@
          with self._connect() as db:
              args: list[str | int] = []
              conditions: list[str] = []
-@@ -29629,7 +29622,7 @@
+@@ -29629,7 +29623,7 @@
                  f"""
                  select id, step_id, action_id, status, summary, evidence_json,
                         stdout_excerpt, stderr_excerpt, started_at, finished_at
