@@ -35,9 +35,9 @@ No app changes, target DDL, source table retirement, schema version, migration, 
 
 ## Task 1: Commit the native state behavior oracle
 
-- [ ] **Step 1: Claim the exact test and own documentation appendix before editing.** Read the canonical shared policy and repository claims. Preserve all other files/hunks. Source fixtures and captured metadata are not editable implementation shortcuts.
+- [x] **Step 1: Claim the exact test and own documentation appendix before editing.** Read the canonical shared policy and repository claims. Preserve all other files/hunks. Source fixtures and captured metadata are not editable implementation shortcuts.
 
-- [ ] **Step 2: Create the complete test file below.** Every field comes from captured metadata; test values are synthetic. Existing source fixture reconstruction creates its original captured declarations, rather than current app target tables.
+- [x] **Step 2: Create the complete test file below.** Every field comes from captured metadata; test values are synthetic. Existing source fixture reconstruction creates its original captured declarations, rather than current app target tables.
 
 ```python
 """Native SQLite source contracts for the approved sixteen state families."""
@@ -270,7 +270,7 @@ def test_native_org_lookup_indexes_allow_duplicate_names_and_open_ids(native):
     )
 ```
 
-- [ ] **Step 3: Run the new oracle and immutable metadata reconstruction.** Use the installed project interpreter and an owned temporary pytest root:
+- [x] **Step 3: Run the new oracle and immutable metadata reconstruction.** Use the installed project interpreter and an owned temporary pytest root:
 
 ```python
 from pathlib import Path
@@ -295,7 +295,7 @@ assert not Path(folder).exists()
 
 Expected: the new file172 passes plus the existing six metadata cases,178 total. If native declarations disagree, report the exact source behavior; do not change captured DDL or strengthen constraints to match this proposal.
 
-- [ ] **Step 4: Prove the oracle detects meaningful source mutations.** Run this complete negative-control script with the same interpreter after the test file exists. The fixture monkeypatch changes only disposable in-memory source SQL; the original column metadata stays unchanged. Each selected mutant must produce exactly two intended failing cases, one per captured variant.
+- [x] **Step 4: Prove the oracle detects meaningful source mutations.** Run this complete negative-control script with the same interpreter after the test file exists. The fixture monkeypatch changes only disposable in-memory source SQL; the original column metadata stays unchanged. Each selected mutant must produce exactly two intended failing cases, one per captured variant.
 
 ```python
 from pathlib import Path
@@ -348,7 +348,7 @@ with tempfile.TemporaryDirectory(prefix="state-source-negative-", dir="/tmp") as
 assert not Path(folder).exists()
 ```
 
-- [ ] **Step 5: Run scoped syntax, Ruff and diff checks.** No full repository test run.
+- [x] **Step 5: Run scoped syntax, Ruff and diff checks.** No full repository test run.
 
 ```sh
 /Users/derek/.cache/uv/archive-v0/1vqK0HG0A7DbkHHlOjztN/bin/ruff check tests/test_state_source_contract.py
@@ -356,7 +356,7 @@ PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/tas
 git diff --check
 ```
 
-- [ ] **Step 6: Append concise validation and commit only the owned test/docs/claim.** Record exact tests, negative controls and cleanup. Explicitly state native-source-only acceptance and that target state, caller cutover, migration and inverse remain open.
+- [x] **Step 6: Append concise validation and commit only the owned test/docs/claim.** Record exact tests, negative controls and cleanup. Explicitly state native-source-only acceptance and that target state, caller cutover, migration and inverse remain open.
 
 ```sh
 git add tests/test_state_source_contract.py docs/database-redesign-config-state-source-preparation.md docs/agent-claims.md
