@@ -453,12 +453,16 @@ class OaRevertHandler(OaDecisionHandler):
             created = self._event_time(created_value)
             if created is None or created > observed_at:
                 continue
-            exact_interval_match = instant <= created < next_event
-            same_second_match = False
-            if self._second_precision_timestamp(created_value):
+            second_precision = self._second_precision_timestamp(created_value)
+            if second_precision:
                 second_start = created.replace(microsecond=0)
                 second_end = second_start + timedelta(seconds=1)
                 event_second = int(instant.timestamp())
+                interval_bucket_match = (
+                    second_start >= instant
+                    and second_end <= next_event
+                    and second_end > dispatch_started
+                )
                 source_events_in_second = [
                     value for value in event_times if int(value.timestamp()) == event_second
                 ]
@@ -474,7 +478,10 @@ class OaRevertHandler(OaDecisionHandler):
                     and second_start <= accepted_at
                     and second_end > dispatch_started
                 )
-            if exact_interval_match or same_second_match:
+                destination_time_matches = interval_bucket_match or same_second_match
+            else:
+                destination_time_matches = instant <= created < next_event
+            if destination_time_matches:
                 destinations.append(str(task["taskid"]))
         if not destinations:
             return unresolved

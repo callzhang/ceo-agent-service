@@ -479,6 +479,39 @@ def test_precise_destination_timestamp_uses_exact_interval_with_same_second_foll
     assert source.calls == []
 
 
+def test_second_truncated_destination_bucket_overlapping_next_event_is_uncertain(provider_read_clock):
+    source = Source()
+    source.returned = True
+    source.records = [
+        {"operation_type": "REDIRECT_PROCESS", "userid": "principal",
+         "date": "2026-10-15 19:21:33", "remark": "Need exact handover facts"},
+        {"operation_type": "EXECUTE_TASK_NORMAL", "userid": "handover-owner",
+         "date": "2026-10-15 19:21:34", "remark": ""},
+    ]
+    source.destination["create_time"] = "2026-10-15 19:21:34"
+    source.read_oa_approval_records = lambda process_id: {
+        "success": True,
+        "result": {"operationRecords": [
+            {"operationType": "REDIRECT_PROCESS", "userId": "principal",
+             "operationTime": 1792063293204},
+            {"operationType": "EXECUTE_TASK_NORMAL", "userId": "handover-owner",
+             "operationTime": 1792063294500},
+        ]},
+    }
+    proof = acceptance()
+    proof["dispatch_started_at"] = "2026-10-15T11:21:32.307564Z"
+    proof["accepted_at"] = "2026-10-15T11:21:34.900000Z"
+    proof["response_received_at"] = proof["accepted_at"]
+    provider_read_clock.current = datetime.fromisoformat("2026-10-15T11:22:00+00:00")
+    candidate = attempt("uncertain", proof)
+    candidate["action_attempt"]["created_at"] = proof["dispatch_started_at"]
+
+    outcome = OaRevertHandler(source).reconcile(action(), action_key="key", candidate=candidate)
+
+    assert outcome.status == "uncertain"
+    assert source.calls == []
+
+
 @pytest.mark.parametrize("field", ["userid", "remark", "date", "operation_type"])
 def test_incomplete_potential_return_does_not_prove_uniqueness(field):
     source = Source()
