@@ -2178,8 +2178,9 @@ Attempt detail and History attention prioritize the current failed task delivery
 History list status for a failed Attempt follows its owning AgentRun's stable
 reply-task identity when that task's DingTalk trigger key has since changed.
 Current terminal task state is projected without rewriting the Attempt or its
-execution audit. A task marked `external_action_uncertain` remains `uncertain`
-and is never projected as a successful terminal outcome.
+execution audit. A current candidate execution with an unresolved `uncertain`
+receipt remains `uncertain` even if its task closed; an independently resolved
+Attempt retains its recorded resolution state.
 
 
 ### 原始触发、当前来源和立项财务口径（2026-10-14）

@@ -473,3 +473,91 @@ def test_failed_history_projects_terminal_status_through_stable_run_task_id(tmp_
     assert failed_rows == []
     assert uncertain_total == 1
     assert [(row.source_id, row.status) for row in uncertain_rows] == [(uncertain_attempt_id, "uncertain")]
+
+
+def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-uncertain-execution.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="history-uncertain-execution",
+        conversation_title="Uncertain execution",
+        single_chat=False,
+        trigger_message_id="old-trigger",
+        trigger_create_time="2026-10-15 00:00:00",
+        trigger_sender="sender",
+        trigger_text="approved OA action",
+        execution_generation="generation-1",
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
+            ("old-trigger",),
+        ).fetchone()[0]
+        consumer = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "consumer",
+            "status": "completed",
+        })
+        audit = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "audit",
+            "parent_id": consumer.lastrowid,
+            "status": "completed",
+        })
+        candidate = insert_action(db, "review_candidates", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "consumer_run_id": consumer.lastrowid,
+            "stage_index": 0,
+            "proposal_revision": 0,
+            "candidate_digest": "candidate-digest",
+            "candidate_json": '{"outcome":"proposal","proposal":{"actions":[]}}',
+        })
+        review = insert_action(db, "candidate_reviews", {
+            "candidate_id": candidate.lastrowid,
+            "audit_run_id": audit.lastrowid,
+            "decision": "approve",
+            "candidate_digest": "candidate-digest",
+            "result_json": '{"outcome":"approve"}',
+        })
+        execution = insert_action(db, "candidate_executions", {
+            "candidate_id": candidate.lastrowid,
+            "review_id": review.lastrowid,
+            "status": "uncertain",
+            "result_json": '{"reason":"receipt pending"}',
+        })
+        attempt_id = insert_action(db, "reply_attempts", {
+            "conversation_id": "history-uncertain-execution",
+            "conversation_title": "Uncertain execution",
+            "trigger_message_id": "old-trigger",
+            "trigger_sender": "sender",
+            "trigger_text": "approved OA action",
+            "action": "agent_run",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+            "send_error": "external_action_uncertain",
+            "resolved_at": "2026-10-16 00:00:00",
+            "resolution": "Business follow-up closed; original external receipt remains unverified.",
+            "agent_run_id": audit.lastrowid,
+        }).lastrowid
+        db.execute(
+            "update tasks set status='done', trigger_message_id=?, "
+            "updated_at='2026-10-16 00:00:00' where id=?",
+            ("new-trigger", task_id),
+        )
+
+    uncertain_total, uncertain_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("uncertain",), source_tables=("reply_attempts",)
+    )
+    done_total, done_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("done",), source_tables=("reply_attempts",)
+    )
+
+    assert execution.lastrowid
+    assert uncertain_total == 1
+    assert [(row.source_id, row.status) for row in uncertain_rows] == [(attempt_id, "uncertain")]
+    assert done_total == 0
+    assert done_rows == []
+    # History is a projection; the underlying Attempt audit row remains failed.
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"

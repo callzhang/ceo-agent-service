@@ -787,8 +787,16 @@ def build_attempt_detail(
         if reply_task is not None and str(attempt.channel or "") == "wechat"
         else None
     )
+    current_execution = (
+        store.get_candidate_execution(current_reviewed["id"])
+        if current_reviewed is not None else None
+    )
     projected_status = project_attempt_status(
-        attempt, reply_task, current_agent_runs, delivery=wechat_delivery
+        attempt,
+        reply_task,
+        current_agent_runs,
+        delivery=wechat_delivery,
+        current_execution_status=str((current_execution or {}).get("status") or ""),
     )
     if current_needs_human_decision is not None and reply_task is not None:
         if reply_task.status == "needs_human" and current_reviewed["selection_id"] is None:
