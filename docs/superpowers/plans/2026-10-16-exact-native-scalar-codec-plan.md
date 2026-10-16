@@ -303,7 +303,7 @@ The scoped behavior paragraph for both architecture and runtime documents is:
 > The unpublished native-source Email/Business/Provider/Configs/Skill/Sync storage encodes finite REAL values as an exact binary significand and exponent and decodes them with SQLite's built-in `pow`, preserving native TEXT/INTEGER affinity results. SQLite JSON, `unhex` and math functions are required. Published Reply keeps its existing declaration and scalar format, and frozen source fingerprints remain unchanged; native-source inverse consumes current decoded facts. This does not select State or publish a deployment.
 
 - [x] Update scoped behavior paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`, append concise source-preparation evidence, and commit only claimed files. State the explicit built-in math dependency, unchanged published Reply format and source hashes, unpublished status, and no production execution. Record actual test counts/timing, not predicted counts.
-- [ ] Obtain independent SPEC, then fresh QUALITY. Root then runs owned frozen-source copied-data forward/current-write/inverse proof. This helper change does not select State or complete the10+ledger goal.
+- [x] Obtain independent SPEC, then fresh QUALITY. Root then runs owned frozen-source copied-data forward/current-write/inverse proof. This helper change does not select State or complete the10+ledger goal.
 
 ## Root self-review
 
