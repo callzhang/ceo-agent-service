@@ -221,8 +221,8 @@ def test_bulk_requires_transaction_and_nonempty_fields():
 ## Verification and remaining work
 
 - [x] Root complete executable proposal: missing API causes collection RED; corrected75 new cases plus342 adjacent pass417 in18.22s, Ruff passes, own /tmp TemporaryDirectory removed and absence verified.
-- [ ] Implement exact function/import/new75 cases and scoped behavior docs in docs/architecture.md and docs/runtime-mechanism.md; new API remains unselected.
-- [ ] Focused417 suite, Ruff/compile/plain diff, exact canonical byte comparison, all existing storage-function ASTs and State/source declarations unchanged.
+- [x] Implement exact function/import/new75 cases and scoped behavior docs in docs/architecture.md and docs/runtime-mechanism.md; new API remains unselected.
+- [x] Focused417 suite, Ruff/compile/plain diff, exact canonical byte comparison, all existing storage-function ASTs and State/source declarations unchanged.
 - [ ] Fresh SPEC then fresh QUALITY.
 - [ ] Prepare complete Store lifecycle/recovery and Email cursor caller patches; integrate the entire current State closure with constructors/manifests/version/progress/publication atomically.
 - [ ] Complete combined copied-data/current-fact inverse/genuine-old-code/cold/native-CLI/name-set acceptance before selecting/deploying.

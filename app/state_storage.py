@@ -1,6 +1,7 @@
 """Caller-transactional storage for the unselected fifteen-kind State table."""
 from contextlib import closing
 from dataclasses import dataclass
+import json
 import sqlite3
 
 from app.action_storage import (
@@ -184,3 +185,29 @@ def upsert_state(db, kind, values, updates, *, insert_json=None,
         sql += " where " + where_sql
     return db.execute(sql, (str(identity), payload, *insert_parameters,
                             *update_parameters, *where_parameters)).rowcount
+
+
+def update_state_rows(db, kind, values, *, where_sql="", parameters=(), replace=False):
+    """One native UPDATE for source-field predicates; caller owns transaction."""
+    _check(kind, values)
+    if not values:
+        raise ValueError("State bulk UPDATE requires fields")
+    expressions = {}
+    bindings = []
+    for field, value in values.items():
+        if (replace and field in STATE_NOT_NULL[kind]
+                and field in STATE_DEFAULTS[kind] and _source_bound_null(value)):
+            expressions[field] = "json_quote(" + STATE_DEFAULTS[kind][field] + ")"
+        else:
+            expressions[field] = "?"
+            bindings.append(json.dumps(
+                _encoded_native_sqlite_value(value), ensure_ascii=False,
+                allow_nan=False, separators=(",", ":"),
+            ))
+    _lock(db)
+    sql = "update " + ("or replace " if replace else "") + "state set payload_json="
+    sql += _json_assignments("state.payload_json", expressions)
+    sql += " where record_type=?"
+    if where_sql:
+        sql += " and (" + where_sql + ")"
+    return db.execute(sql, (*bindings, kind, *parameters)).rowcount
