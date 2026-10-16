@@ -2281,3 +2281,11 @@ list must be empty when project is null. A Task may not support an assessment fo
 selected Project. Validation predicates, output schema, and correction budget are
 unchanged. Regression coverage exercises the correction prompt and valid removal
 of only the mismatched membership.
+
+Rejected Task Agent outputs with child-field validation errors also receive
+relationship diagnostics from a typed projection of the existing Project/Task
+relationship fields. The projection reuses native null/default semantics and the
+same envelope validator; it returns diagnostic strings only and cannot be adopted
+as a candidate. Malformed relationship syntax supplies no inferred relationship
+errors. Supporting membership violations are reported together. Full candidate
+validation, the native output schema, and the one-correction budget are unchanged.

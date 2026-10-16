@@ -752,6 +752,10 @@ def select_task_decision_candidate(
                     f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
                     for error in exc.errors()[:TASK_DECISION_PROBLEM_LIMIT]
                 ]
+                from app.task_result_diagnostics import task_envelope_problems
+
+                if any(error["loc"] for error in exc.errors()):
+                    problems = (problems + task_envelope_problems(candidate))[:TASK_DECISION_PROBLEM_LIMIT]
     return None, None, problems
 
 

@@ -175,3 +175,53 @@ def test_native_project_link_evidence_describes_its_existing_dependency():
     description = next(option["description"] for option in field["anyOf"] if "description" in option)
     assert "project is null" in description
     assert "empty" in description
+
+
+def test_correction_reports_field_and_envelope_project_errors_together():
+    from app.task_agent import _task_result_validation_repair_prompt
+
+    payload = _supporting_task_envelope(None)
+    payload["task_decisions"][0]["action"] = "create_task"
+    payload["task_decisions"][0]["formal_basis"] = None
+    prompt = _task_result_validation_repair_prompt(json.dumps(payload))
+    assert "formal Task creation requires formal_basis" in prompt
+    assert "new supporting Task requires a Project selector" in prompt
+    assert "task_decisions[0].project is null" in prompt
+
+
+def test_rejected_result_reports_every_independent_support_membership():
+    from copy import deepcopy
+    from app.task_agent import select_task_decision_candidate
+
+    payload = _supporting_task_envelope(None)
+    task = deepcopy(payload["task_decisions"][0])
+    task.update(action="create_task", formal_basis=None)
+    payload["task_decisions"].append(task)
+    payload["project_assessments"][0]["decision_indexes"] = [0, 1]
+    decision, original, problems = select_task_decision_candidate(json.dumps(payload))
+    assert decision is None and original is None
+    joined = "\n".join(problems)
+    assert "formal Task creation requires formal_basis" in joined
+    assert "task_decisions[0].project is null" in joined
+    assert "task_decisions[1].project is null" in joined
+
+
+def test_relationship_diagnostics_do_not_guess_malformed_selectors():
+    from app.task_agent import select_task_decision_candidate
+
+    payload = _supporting_task_envelope({"anchor_id": "not-an-id"})
+    decision, original, problems = select_task_decision_candidate(json.dumps(payload))
+    assert decision is None and original is None
+    assert any("project.anchor_id" in problem for problem in problems)
+    assert not any("assessment selects" in problem for problem in problems)
+
+
+def test_relationship_diagnostics_keep_native_null_default_semantics():
+    from app.task_agent import select_task_decision_candidate
+
+    payload = _supporting_task_envelope(None)
+    payload["task_decisions"][0].update(action="create_task", formal_basis=None)
+    payload["todo_changes"] = None
+    decision, original, problems = select_task_decision_candidate(json.dumps(payload))
+    assert decision is None and original is None
+    assert any("task_decisions[0].project is null" in problem for problem in problems)

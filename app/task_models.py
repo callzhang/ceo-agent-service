@@ -1039,6 +1039,7 @@ class TaskAgentDecision(StrictTaskModel):
                     )
                 )
 
+        support_problems: list[str] = []
         covered: set[tuple[str, int | str]] = set()
         covered_titles: set[str] = set()
         for assessment_index, assessment in enumerate(self.project_assessments):
@@ -1066,12 +1067,13 @@ class TaskAgentDecision(StrictTaskModel):
                 )
             for index in assessment.decision_indexes:
                 if index >= len(self.task_decisions):
-                    raise ValueError(
+                    support_problems.append(
                         "project assessment decision index is out of bounds"
                     )
+                    continue
                 task = self.task_decisions[index]
                 if task.action == "skip":
-                    raise ValueError(
+                    support_problems.append(
                         "project assessment cannot reference a skip decision"
                     )
                 if (
@@ -1079,7 +1081,7 @@ class TaskAgentDecision(StrictTaskModel):
                     and task.project is None
                     and task.action in {"record_candidate", "create_task"}
                 ):
-                    raise ValueError(
+                    support_problems.append(
                         "new supporting Task requires a Project selector: "
                         f"project_assessments[{assessment_index}].decision_indexes "
                         f"references task_decisions[{index}].project is null, "
@@ -1092,7 +1094,7 @@ class TaskAgentDecision(StrictTaskModel):
                     )
                     != key
                 ):
-                    raise ValueError(
+                    support_problems.append(
                         "supporting Task selector must match the assessment Project: "
                         f"project_assessments[{assessment_index}].decision_indexes "
                         f"references task_decisions[{index}].project="
@@ -1108,6 +1110,8 @@ class TaskAgentDecision(StrictTaskModel):
                         "attention proposal and assessment must use the same assessment_basis"
                     )
 
+        if support_problems:
+            raise ValueError("; ".join(support_problems))
         if required_projects - covered:
             raise ValueError(
                 "every relevant structured Project requires exactly one project assessment"
