@@ -24,8 +24,8 @@ Source metadata SHA256: 44f386b8d35acb23af0ef8597963ac9a67094a153f78dce02f61ba52
 
 - [x] Root complete code, independent frozen source fixture/defaults, regression and disposable preflight before app edits.
 - [x] Root final component suite599pass29.43s (274source-target+325declaration), plus2new work-summary business-leaf tests pass0.22s. All owned temporary trees removed. Full applied run must include all601cases. Earlier preparation failures were test fixture identity collisions/using an undeclared input field, and a repeated decoder placeholder in a new codec test; these were corrected against native controls before transfer. No application code was selected.
-- [ ] Claim exact2new app/test paths and own bounded doc/claim paths before editing.
-- [ ] Copy the exact complete adjacent code; assert hashes before copy:
+- [x] Claim exact2new app/test paths and own bounded doc/claim paths before editing.
+- [x] Copy the exact complete adjacent code; assert hashes before copy:
 
 ```python
 from pathlib import Path
@@ -44,7 +44,7 @@ The code contains Task8InsertParts(columns,values,parameters), Task8SetParts(sql
 
 ### Task 2: applied focused proof
 
-- [ ] Run exact pinned applied full component/declaration preflight:
+- [x] Run exact pinned applied full component/declaration preflight:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python docs/superpowers/plans/2026-10-16-task8-parts-preflight.py --applied --with-declarations
@@ -58,7 +58,7 @@ Coverage: all8complete/minimal insert fields, source clocks and nullable default
 
 ### Task 3: truthful documentation and scoped commit
 
-- [ ] Append exactly this paragraph to docs/database-redesign-tasks20-field-map-20261016.md and docs/superpowers/plans/2026-10-11-database-redesign-program.md:
+- [x] Append exactly this paragraph to docs/database-redesign-tasks20-field-map-20261016.md and docs/superpowers/plans/2026-10-11-database-redesign-program.md:
 
 ```text
 Unselected existing8 Tasks native SQL parts: app/task8_storage.py compiles finite INSERT/SET/meetingRETURNING fragments and exposes explicit connection-local exact scalar codec registration, preserving native statement and caller transaction ownership.601focused cases (276frozen actual/fresh source-target +325declaration) pass, including native floating arithmetic, CTE/FROM/UPSERT, physical input/version snapshots, ignored/UPSERT allocator water and business-leaf copying. No current caller/constructor/selector/migration/source retirement/production activation occurs. Complete conversion must register the codec at both existing Store and Email _open_connection methods, translate116mutation sites plus direct readers and14RETURNING contracts, then perform copy/current-fact inverse/predecessor/native/UI/final11 acceptance.
