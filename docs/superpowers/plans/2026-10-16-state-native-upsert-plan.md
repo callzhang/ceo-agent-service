@@ -511,9 +511,9 @@ Stage only owned doc hunks; commit `Preserve native State UPSERT candidate and e
 
 ## Task 4: Independent review before caller conversion
 
-- [ ] **Step 1:** Fresh SPEC verifies native INSERT-candidate validation, source-PK conflict target/identity, NULL/default and one-statement expressions, exact JSON leaf selection, constraints and caller transactions.
-- [ ] **Step 2:** Fresh QUALITY only after SPEC passes checks simplicity, hidden policy/schema changes and regression strength.
-- [ ] **Step 3:** Root records bounded acceptance and continues atomic State current callers/constructors/version/updater/publication conversion; combined actual-copy/genuine-old-code/native fake-outbound/CI/final-ten proof remains required.
+- [x] **Step 1:** Fresh SPEC verifies native INSERT-candidate validation, source-PK conflict target/identity, NULL/default and one-statement expressions, exact JSON leaf selection, constraints and caller transactions. PASS107 in1.33s plus116 source/default/zero-ROWID/NULL-before-CASE checks and exact REAL/parameter/guard/rollback probes;365 adjacent cases were not rerun by this reviewer.
+- [x] **Step 2:** Fresh QUALITY only after SPEC passes checks simplicity, hidden policy/schema changes and regression strength. PASS107 in1.91s plus independent parameter/guard/native-fact and raw encoded REAL-leaf probes; original9 bodies unchanged.
+- [x] **Step 3:** Root records bounded acceptance in ../specs/2026-10-16-state-upsert-acceptance.json and continues atomic State current callers/constructors/version/updater/publication conversion. Implementation temp cleanup is explicitly pending direct user authorization after auto-review denied rm-rf; no bypass/retry. Combined actual-copy/genuine-old-code/native fake-outbound/CI/final-ten proof remains required.
 
 ## Self-review
 

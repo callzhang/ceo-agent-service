@@ -1,0 +1,111 @@
+{
+  "kind": "unselected-state-native-upsert-independent-acceptance",
+  "date": "2026-10-16",
+  "candidate_commit": "0d24f0fa",
+  "baseline": "95f33392",
+  "files_sha256": {
+    "app/state_storage.py": "2c960b4824f1b49f4b88ffdbaa786ffb7ec3531883188722591d05f4eba18d64",
+    "tests/test_state_upsert.py": "1f6b5b27ef609d93bc353e8414dbe201531d704f96e7a579f83345cdae3d8f10",
+    "reviewed_plan": "efe73e21ea421dae94bab420378d6ba3bb8898639caefa0c40ca62714ff0aaf7"
+  },
+  "scope": {
+    "new_functions": 3,
+    "existing_function_bodies_unchanged": 9,
+    "declaration_unchanged": true,
+    "source_capture_unchanged": true,
+    "pure_release_unchanged": true,
+    "current_callers_selected": false
+  },
+  "source_counterexample": "Exact original setup-wizard INSERT ON CONFLICT with manual_confirmed_by=NULL fails the INSERT NOT NULL constraint, even if conflict CASE would preserve old confirmer or update guard is false. Locked read/direct UPDATE succeeds and is therefore not faithful.",
+  "mechanism": "Native SQLite UPSERT targets the existing per-kind source-PK partial index, preserves legacy_key on conflict, evaluates omitted defaults/explicit CASE/update clocks in one final INSERT, and assigns encoded JSON leaves without reserializing decoded REAL values. Caller owns active transaction; no UDF/parser/view/schema/policy added.",
+  "interpreter": {
+    "python": "3.13.12",
+    "sqlite": "3.50.4"
+  },
+  "root_proposal": {
+    "new_cases": 107,
+    "seconds": 1.28,
+    "ruff": "PASS",
+    "owned_temp_removed": true
+  },
+  "implementation": {
+    "red": "missing state_json_field import",
+    "new_cases": 107,
+    "adjacent_cases": 365,
+    "total_passed": 472,
+    "seconds": 17.97,
+    "ruff_compile_canonical_ast9_diff": "PASS"
+  },
+  "spec": {
+    "verdict": "PASS",
+    "new_cases": 107,
+    "seconds": 1.33,
+    "adjacent_365_rerun": false,
+    "additional_source_default_zero_rowid_null_before_case_checks": 116,
+    "extra_encoded_real_parameter_order_guard_rollback": "PASS",
+    "no_disk_artifacts_created": true
+  },
+  "quality": {
+    "verdict": "PASS",
+    "new_cases": 107,
+    "seconds": 1.91,
+    "additional_parameter_guard_native_facts_and_raw_real_leaf": "PASS",
+    "allocator_covering_index": "idx_state_source_rowid",
+    "owned_temp_removed": true
+  },
+  "implementation_cleanup": {
+    "status": "pending_user_authorization",
+    "path": "/private/tmp/state-upsert-impl.694bXO",
+    "root_verified_exists": true,
+    "files": 474,
+    "bytes": 3728744,
+    "top_level_entries": [
+      "pytest"
+    ],
+    "blocked_action": "rm -rf /tmp/state-upsert-impl.694bXO",
+    "reason": "Automatic approval review rejected deletion because approval was required while AskForApproval was Never.",
+    "retried_or_bypassed": false,
+    "user_asked_via_async": true
+  },
+  "source_navigation": {
+    "graphify_code_files": 10,
+    "words": 166711,
+    "ast_nodes": 1882,
+    "ast_edges": 5798,
+    "temporary_graph_removed": true,
+    "source_verified_after_graph": true
+  },
+  "caller_closure_navigation": {
+    "literal_sql_candidate_modules": 27,
+    "literal_sql_calls": 224,
+    "scope": "AST navigation only, includes historical source helpers/DDL and false positives; concatenated/dynamic SQL still requires explicit source verification, not claimed exhaustive current caller count"
+  },
+  "publication_research": {
+    "minimal_owner": "Paired release binds actual ExistingSchemaUpgradeStateStore source/current explicitly; generic updater protocol unchanged. Stable Email ledger determines committed role before rollback validation, and original binding is restored only after inverse commits.",
+    "critical_postcommit_failure": "Child _paired_initializer commits release.apply then constructs Store/Email; publication may raise after commit. Failed inverse leaves current role so needs_manual progress remains writable.",
+    "entrypoints": [
+      "app/deploy.py:279",
+      "app/repository_updater.py:753",
+      "app/cli.py:5225"
+    ],
+    "first_cutover": "python -m app.deploy from updated development checkout loads new parent code before production FF.",
+    "old_ui_limit": "Old production UI updater child imports predecessor progress-store class before FF; target migration subprocess does not replace that parent class. First-cutover old UI support is unproved and must not be claimed."
+  },
+  "boundaries": {
+    "current_callers": false,
+    "constructors": false,
+    "version_readers": false,
+    "updater_binding": false,
+    "paired_publication": false,
+    "actual_copy_for_new_upsert": false,
+    "latest_ci": false,
+    "native_cli": false,
+    "production": false,
+    "main_or_push": false,
+    "last_accepted_combined_copy_ordinary": 82,
+    "future_integrated_state_expectation": 67,
+    "final_goal": "10 core tables plus one migration ledger",
+    "goal_complete": false
+  },
+  "next": "Complete concrete Store DAO/lifecycle, Email cursor, dispatcher and other direct caller patches, then atomic constructor/current-manifest/version/updater/publication conversion and combined copy/genuine predecessor acceptance."
+}
