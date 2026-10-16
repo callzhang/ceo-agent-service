@@ -590,7 +590,10 @@ def test_history_skipped_attempt_matches_detail_only_when_bound_run_is_latest(tm
     assert skipped_rows == []
 
 
-def test_history_projects_attempt_without_run_from_current_message_task(tmp_path):
+@pytest.mark.parametrize("legacy_status", ["completed", "commented", "recovered"])
+def test_history_projects_attempt_without_run_from_current_message_task(
+    tmp_path, legacy_status
+):
     store = AutoReplyStore(tmp_path / "history-unbound-message-task.sqlite3")
     store.enqueue_reply_task(
         conversation_id="history-unbound-message-task",
@@ -616,23 +619,24 @@ def test_history_projects_attempt_without_run_from_current_message_task(tmp_path
             "action": "agent_run",
             "sensitivity_kind": "general",
             "oa_process_instance_id": "process-instance",
-            "send_status": "completed",
+            "send_status": legacy_status,
+            "agent_run_id": 999999,
         })
         db.execute("update tasks set status='done' where id=?", (task_id,))
 
     done_total, done_rows = store.list_operation_logs_with_count(
         limit=20, statuses=("done",), source_tables=("reply_attempts",)
     )
-    completed_total, completed_rows = store.list_operation_logs_with_count(
-        limit=20, statuses=("completed",), source_tables=("reply_attempts",)
+    legacy_total, legacy_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=(legacy_status,), source_tables=("reply_attempts",)
     )
 
     assert done_total == 1
     assert [(row.source_id, row.status) for row in done_rows] == [
         (attempt.lastrowid, "done")
     ]
-    assert completed_total == 0
-    assert completed_rows == []
+    assert legacy_total == 0
+    assert legacy_rows == []
 
 
 def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(tmp_path):

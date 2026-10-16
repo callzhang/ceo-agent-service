@@ -25,7 +25,7 @@ message keys only within that request. Evidence is in
 
 OA Reply Attempt History status and status filters use the owning task's
 current execution generation, matching Attempt detail; OA Attempts without a
-bound run resolve the task by channel, conversation and trigger message
+resolvable bound run resolve the task by channel, conversation and trigger message
 identity. The action field retains the historical operation label. Current
 unresolved System Execution uncertainty continues to override task closure; the
 projection does not modify the Attempt, candidate, or execution receipt.
