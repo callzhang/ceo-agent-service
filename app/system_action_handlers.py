@@ -443,7 +443,14 @@ class OaRevertHandler(OaDecisionHandler):
         # redirect is the sole event in that second and the bucket overlaps
         # the original dispatch/acceptance interval. All identity, target,
         # actor, remark, and exact event-boundary checks above remain required.
-        same_second_follow_up = int(next_event.timestamp()) == int(instant.timestamp())
+        same_second_follow_up = (
+            int(next_event.timestamp()) == int(instant.timestamp())
+            or any(
+                event_time > instant
+                and int(event_time.timestamp()) == int(instant.timestamp())
+                for _, _, event_time in precise_events
+            )
+        )
         if same_second_follow_up:
             return unresolved
         destinations = []
