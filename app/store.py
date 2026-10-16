@@ -30715,7 +30715,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             (reply_attempts.action='oa_approval'
              or coalesce(reply_attempts.oa_process_instance_id, '')<>'')
             and reply_attempts.send_status in (
-                'completed', 'commented', 'decision_selected', 'failed', 'recovered', 'skipped'
+                'blocked', 'completed', 'commented', 'decision_selected', 'failed',
+                'recovered', 'skipped'
             )
         )"""
         query = f"""
@@ -30940,6 +30941,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                               and projected_task.status in ('pending', 'processing', 'running')
                             limit 1
                         )
+                        -- With no owning task, keep the Attempt's own failure
+                        -- or block status. The generic supersession rule can
+                        -- call an old row `recovered`, but Attempt detail has
+                        -- no current task generation to project in this case.
+                        when {oa_status_projection} and send_status in ('blocked', 'failed')
+                            then send_status
                         -- Candidate completion is independent of delivery.
                         -- Only the latest delivery for this object and its
                         -- owning task generation supplies its send outcome.

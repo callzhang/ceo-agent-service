@@ -28,7 +28,8 @@ current execution generation, matching Attempt detail; OA Attempts without a
 resolvable bound run resolve the task by channel, conversation and trigger message
 identity. The action field retains the historical operation label. Current
 legacy failed Attempt labels are also reconciled to the matching task's current
-terminal status. Current unresolved System Execution uncertainty continues to
+terminal status, and a failed or blocked Attempt with no owning task retains
+its own status. Current unresolved System Execution uncertainty continues to
 override task closure; the projection does not modify the Attempt, candidate,
 or execution receipt.
 
