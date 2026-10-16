@@ -1,0 +1,17 @@
+# Runs11 current behavior documentation and selection manifest SPEC
+
+**Status: behavior documentation SPEC PASS after the closure patch; existing four-patch manifest mechanics PASS.** This review covers the prospective behavior patches and selection manifest only. It does not select application code or validate the root's in-flight final-hash actual-copy run. The root will append the fifth documentation patch and refresh the manifest's two document after-hashes once that run finishes.
+
+## Manifest receipt
+
+I verified behavior patch SHA-256 `9f18f8518a31443e2c0fb0a50b36c3d10b13225c536e254f31d00305e8791a0d`. In an owned `TemporaryDirectory`, I copied the 11 existing target files, verified every `before_sha256`, applied all four patches in manifest order with `git apply --check` and `git apply`, copied the three canonical test files, and verified every `after_sha256`. The manifest contains exactly 15 file entries; all 15 before/after identities matched the actual ordered artifacts. The temporary copy was removed. The manifest's `base_commit` names the code base `c30532f8d`; current HEAD `043956fe2` is the later docs-only artifact commit, and its target file bytes still matched the manifest before hashes.
+
+The patch order and file set are coherent: Store caller, revised Email caller, corrected current-integration patch, then the two behavior documents. Three new test paths are copied from canonical files with the expected hashes. The manifest itself says prospective/unselected, lists current51 as intermediate and final11 separately, and marks `production_changed` false.
+
+## Behavior text
+
+The new top sections in both `docs/architecture.md` and `docs/runtime-mechanism.md` accurately describe current Runs11 construction, native eight-kind source factories, the three retired source tables and derived title FTS/shadows, current counters and missing-object repair. They keep sample retention global at 2,048 and name the existing sample-only partial index. They state that development selection is intermediate and does not change production or complete final11/native CLI/provider/UI acceptance.
+
+The deeper `Paired Store/Email schema release` and Config paragraphs had omitted the Runs11 step and left the mapped Runs8 predicate ambiguous. The separate closure patch SHA-256 `4a885948f2f42fbb52b37f4723dada7e559fd75607b4f1cb5a6a5bb4db050860` resolves that gap in both documents. It labels `configs_schema_is_current` as the historical Config component's mapped Runs8 predicate and `current_configs_schema_is_current` as the Config/action-content plus exact Runs11 selector. The coordinator now lists Runs11 source-profile metadata, conversion after empty confirmation retirement, and inverse Runs11 restoration between State and Config inverse. This matches the reviewed patch call order. It also narrows the preparation statement to declarations and required allocator-presence bits rather than suggesting frozen allocator values.
+
+I applied the original behavior patch followed by the closure patch to an owned disposable copy of both documents. Both `git apply --check` calls passed; the resulting SHA-256 values are `ad49178e0b9cef3174b0533d01d1521164142aabc8dbda5d67f9f8f165e4d22c` for `architecture.md` and `9483f7ef1943333e2229f98f9ad8ffc7c044af26cc157cecbae5d4591fb9ec9c` for `runtime-mechanism.md`. The root should use these only after confirming its refreshed manifest against the eventual ordered selection; the live-bound four-patch manifest remains deliberately unchanged during the final copied-source run.

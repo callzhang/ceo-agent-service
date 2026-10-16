@@ -1,5 +1,5 @@
 {
-  "status": "prospective; unselected; final-hash copied-source and mechanical applied reviews required",
+  "status": "accepted canonical after final runtime-hash actual copy and behavior SPEC/QUALITY; mechanical installation and APPLIED reviews pending",
   "base_commit": "c30532f8de9aa211a04000f7c94bed9ad8568aa8",
   "patch_order": [
     {
@@ -17,6 +17,10 @@
     {
       "path": "docs/superpowers/plans/2026-10-16-runs11-current-behavior-proposal.patch",
       "sha256": "9f18f8518a31443e2c0fb0a50b36c3d10b13225c536e254f31d00305e8791a0d"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-runs11-current-behavior-closure.patch",
+      "sha256": "4a885948f2f42fbb52b37f4723dada7e559fd75607b4f1cb5a6a5bb4db050860"
     }
   ],
   "new_test_canonicals": {
@@ -63,11 +67,11 @@
     },
     "docs/architecture.md": {
       "before_sha256": "7e7362ad7ba1c23b59aed1913ca3f0498a501aad194d82f5dc542405857c82a6",
-      "after_sha256": "aaf20b7b6694c6fdf93da56468fe4ffa1df19d852051e91d8a624e78f183fc46"
+      "after_sha256": "ad49178e0b9cef3174b0533d01d1521164142aabc8dbda5d67f9f8f165e4d22c"
     },
     "docs/runtime-mechanism.md": {
       "before_sha256": "6eb756d63f8a5e8d138e1014910a8f53436ee0a0222e4e8cc11fbffb6d3dd5bb",
-      "after_sha256": "3d33289be0c0756892a4b9b1519af33c67c32588d56eb01437b5048cc2d15bb5"
+      "after_sha256": "9483f7ef1943333e2229f98f9ad8ffc7c044af26cc157cecbae5d4591fb9ec9c"
     },
     "tests/test_runs11_current_schema.py": {
       "before_sha256": null,
@@ -88,5 +92,8 @@
   },
   "ordinary_tables_after_selection": 51,
   "final_target_ordinary_tables": 11,
-  "production_changed": false
+  "production_changed": false,
+  "copy_input_manifest_sha256": "c45c31cfdfdb8d41ce1b93e9ebf8e69764c763d91e41e1c9227e927ec240cfd8",
+  "runtime_copy_receipt_sha256": "5a98e8ca1d6373ea0e5e9480f327b0d4763b4bf09c5962babfeebc4fd7a120f4",
+  "post_copy_change": "Only the two behavior documents changed through the fifth, reviewed closure patch. All nine runtime after-hashes exactly match the actual-copy receipt; all test after-hashes are unchanged."
 }

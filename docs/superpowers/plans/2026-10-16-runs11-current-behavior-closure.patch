@@ -1,0 +1,93 @@
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -55,9 +55,11 @@
+ existing action rows, physical IDs, storage classes and allocator waters
+ without a Python action-row image. The inverse reconstructs native declarations
+ from metadata and reads current target facts, including later config, schedule,
+-run, Skill receipt and non-Skill action writes. The final declaration predicate
+-checks the mapped runs, selected 31-kind actions and absence of all nineteen
+-retired tables. The local unpublished Store20/Email52 candidate now selects it
++run, Skill receipt and non-Skill action writes. The historical Config-component predicate
++`configs_schema_is_current` requires mapped Runs8, selected 31-kind actions and
++absence of all nineteen retired tables for that component's forward/inverse.
++The current selector `current_configs_schema_is_current` combines the unchanged
++Config/action content predicate with the exact Runs11 declaration. The local unpublished Store20/Email52 candidate now selects it
+ inside the same paired release, after Email, Business and Provider conversion.
+ Preflight rejects inbound FKs, external view/trigger SQL references, and TEMP
+ name shadows of tables changed in either direction before schema DDL begins.
+@@ -2501,16 +2503,20 @@
+ The selected candidate coordinator in app/action_email_schema_release.py
+ prepares the exact Store19/Email51 source and publishes Store20/Email52.
+ Preparation records the original Store marker and complete Email ledger,
+-native declarations/allocators and existing FK findings in one read snapshot.
+-It carries Email, Business, Provider, Configs/Skill/mapped-runs, State and Tasks20
+-schema metadata without a business-row snapshot.
+-
+-Forward converts those components in one FK-off transaction, with State after
+-Configs, then Tasks20 before the shared Store/Email marker timestamp. Readback validates
++native declarations, required allocator-presence bits and existing FK findings
++in one read snapshot.
++It carries Email, Business, Provider, Configs/Skill/mapped-Runs8, State, Tasks20,
++retired empty Workbench confirmation declarations and Runs11 source-profile
++metadata without a business-row snapshot.
++
++Forward converts Email, Business, Provider, Configs, State and Tasks20 in the
++existing FK-off transaction, retires the empty confirmation table, then folds
++Runs11 before writing the shared Store/Email marker timestamp. Readback validates
+ the complete current declarations, translated dependencies, retired names,
+-markers and unchanged FK findings. Inverse restores Tasks20 first, then State and the
+-existing Configs/Business/Email/Provider sequence, original Store timestamp and
+-complete Email ledger from current facts and allocator waters. A failed
++markers and unchanged FK findings. Inverse recreates the empty confirmation
++schema, restores Tasks20 and State, restores mapped Runs8 from current Runs11
++facts, then restores Configs/Business/Email/Provider, the original Store timestamp
++and complete Email ledger from current facts and allocator waters. A failed
+ transaction rolls back its DDL, markers and data together. The genuine cold
+ initializer and constructors are selected; actual-copy, latest predecessor,
+ native CLI and deployment acceptance remain separate from code selection.
+--- a/docs/runtime-mechanism.md
++++ b/docs/runtime-mechanism.md
+@@ -52,8 +52,11 @@
+ FK-off transaction, never commit and never persist a row snapshot. Existing
+ action facts use SQLite TEMP staging and preserve physical IDs, values, storage
+ classes and sequence waters; inverse restores current facts written after
+-forward conversion. The final predicate requires exact configs, schedules,
+-Skill-extended actions, mapped runs and absence of nineteen native names.
++forward conversion. The historical Config-component predicate
++`configs_schema_is_current` requires exact configs, schedules, Skill-extended
++actions, mapped Runs8 and absence of nineteen native names for that component's
++forward/inverse. The current selector `current_configs_schema_is_current`
++combines the unchanged Config/action content predicate with exact Runs11.
+ Store20/Email52 selects this conversion in the paired release after Email, Business and Provider and before State.
+ Both directions preflight external FK and SQL dependencies plus case-insensitive
+ TEMP shadows of changed table names before DDL. Complete forward sources are
+@@ -3362,16 +3365,20 @@
+ The selected candidate coordinator in app/action_email_schema_release.py
+ prepares the exact Store19/Email51 source and publishes Store20/Email52.
+ Preparation records the original Store marker and complete Email ledger,
+-native declarations/allocators and existing FK findings in one read snapshot.
+-It carries Email, Business, Provider, Configs/Skill/mapped-runs, State and Tasks20
+-schema metadata without a business-row snapshot.
+-
+-Forward converts those components in one FK-off transaction, with State after
+-Configs, then Tasks20 before the shared Store/Email marker timestamp. Readback validates
++native declarations, required allocator-presence bits and existing FK findings
++in one read snapshot.
++It carries Email, Business, Provider, Configs/Skill/mapped-Runs8, State, Tasks20,
++retired empty Workbench confirmation declarations and Runs11 source-profile
++metadata without a business-row snapshot.
++
++Forward converts Email, Business, Provider, Configs, State and Tasks20 in the
++existing FK-off transaction, retires the empty confirmation table, then folds
++Runs11 before writing the shared Store/Email marker timestamp. Readback validates
+ the complete current declarations, translated dependencies, retired names,
+-markers and unchanged FK findings. Inverse restores Tasks20 first, then State and the
+-existing Configs/Business/Email/Provider sequence, original Store timestamp and
+-complete Email ledger from current facts and allocator waters. A failed
++markers and unchanged FK findings. Inverse recreates the empty confirmation
++schema, restores Tasks20 and State, restores mapped Runs8 from current Runs11
++facts, then restores Configs/Business/Email/Provider, the original Store timestamp
++and complete Email ledger from current facts and allocator waters. A failed
+ transaction rolls back its DDL, markers and data together. The genuine cold
+ initializer and constructors are selected; actual-copy, latest predecessor,
+ native CLI and deployment acceptance remain separate from code selection.

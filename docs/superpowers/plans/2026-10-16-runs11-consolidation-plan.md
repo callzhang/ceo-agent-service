@@ -148,3 +148,26 @@ patch context and the verifier then corrected its metadata key fromruns toruns11
 neither attempt changed application or source data. The
 application still selects54 and production remains44ee; the final11-table goal
 and the program's native CLI/UI/performance/CI/publication gates remain open.
+
+## Accepted final runtime copied-source proof
+
+The final integration runtime hashbcc16aab passed the complete real paired
+116→51→116→51 protocol in590.162s. All original62 Runs fields and the three
+source families retain values, types and public IDs. Native old-eight write
+362317 after preparation, target old-eight physical365091, target setup23 and
+sample5639, then genuine44ee predecessor setup24/sample5640 all survive the
+appropriate inverse/reforward checks. State, cursor and full typed WeChat facts
+also survive;109 other restored source families have unchanged complete digests.
+Original declarations, current native counters, original Store timestamp and
+full Email ledger are restored. The one original FK finding runs190042→tasks is
+unchanged; source SHA970a is unchanged and both owned candidate/data directories
+were removed automatically.
+
+The receipt `2026-10-16-runs11-coupled-copy-evidence.json` binds all nine runtime
+after-hashes to the15-file selection manifest. A fifth, docs-only closure patch
+updates deeper paired-release sections and clarifies historical Config Runs8
+versus current Config/action+Runs11 checks; it passed SPEC/QUALITY. Only the two
+document after-hashes differ from the source-copy input manifest, whose SHA is
+retained. Runtime and test hashes remain exact. Application selection and fresh
+APPLIED review follow; final11/native CLI/UI/performance/CI/publication remain
+open. This receipt has no native Agent CLI/provider/outbound/production claim.
