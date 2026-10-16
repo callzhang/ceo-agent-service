@@ -1,0 +1,1000 @@
+{
+  "date": "2026-10-16",
+  "scope": "Bounded static literal SQL State closure inventory; no runtime classification by text and no application mutation",
+  "source_app_head": "38fee3ba",
+  "literal_source_groups": 109,
+  "excluded_already_mapped": [
+    "app/store.py70methodplusconstructor proposals",
+    "app/email_store.py9methodplusconstructor proposals",
+    "app/state_definitions.py"
+  ],
+  "limits": "Literal Constant/JoinedStr source groups only; dynamic SQL and current callpaths still require exact source verification. Classification is a continuation map, not migration/publication proof.",
+  "additional_current_paths_not_in_previous_short_inventory": [
+    "app/repository_updater.py.in_flight_work dispatcher source",
+    "app/deploy_maintenance.py.check_maintenance dispatcher source",
+    "app/reply_task_deferral.py._snapshot dispatcher source"
+  ],
+  "groups": [
+    {
+      "file": "app/workbench_schema_release.py",
+      "scope": "WorkbenchSchemaRelease.verify_loaded",
+      "line": 46,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/workbench_schema_release.py",
+      "scope": "WorkbenchSchemaRelease.rollback",
+      "line": 61,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/workbench_schema_release.py",
+      "scope": "WorkbenchSchemaRelease.rollback",
+      "line": 76,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/scheduled_config_storage.py",
+      "scope": "publication_scheduled_source",
+      "line": 57,
+      "names": [
+        "service_state"
+      ],
+      "classification": "current publication entrypoint with explicit historical source branches; current marker and complete declaration require State conversion, archived release class methods remain native"
+    },
+    {
+      "file": "app/action_receipt_schema_release.py",
+      "scope": "publication_receipt_sources",
+      "line": 30,
+      "names": [
+        "service_state"
+      ],
+      "classification": "current publication entrypoint with explicit historical source branches; current marker and complete declaration require State conversion, archived release class methods remain native"
+    },
+    {
+      "file": "app/action_receipt_schema_release.py",
+      "scope": "ActionReceiptSchemaRelease.verify_loaded",
+      "line": 63,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_receipt_schema_release.py",
+      "scope": "ActionReceiptSchemaRelease.rollback",
+      "line": 71,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_receipt_schema_release.py",
+      "scope": "ActionReceiptSchemaRelease.rollback",
+      "line": 85,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_receipt_schema_release.py",
+      "scope": "prepare_action_receipt_schema_release",
+      "line": 107,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_delivery_schema_release.py",
+      "scope": "publication_delivery_sources",
+      "line": 31,
+      "names": [
+        "service_state"
+      ],
+      "classification": "current publication entrypoint with explicit historical source branches; current marker and complete declaration require State conversion, archived release class methods remain native"
+    },
+    {
+      "file": "app/action_delivery_schema_release.py",
+      "scope": "ActionDeliverySchemaRelease.verify_loaded",
+      "line": 63,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_delivery_schema_release.py",
+      "scope": "ActionDeliverySchemaRelease.rollback",
+      "line": 71,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_delivery_schema_release.py",
+      "scope": "ActionDeliverySchemaRelease.rollback",
+      "line": 86,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_delivery_schema_release.py",
+      "scope": "prepare_action_delivery_schema_release",
+      "line": 109,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_postfix_schema_release.py",
+      "scope": "publication_postfix_sources",
+      "line": 31,
+      "names": [
+        "service_state"
+      ],
+      "classification": "current publication entrypoint with explicit historical source branches; current marker and complete declaration require State conversion, archived release class methods remain native"
+    },
+    {
+      "file": "app/action_postfix_schema_release.py",
+      "scope": "ActionPostfixSchemaRelease.verify_loaded",
+      "line": 60,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_postfix_schema_release.py",
+      "scope": "ActionPostfixSchemaRelease.rollback",
+      "line": 68,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_postfix_schema_release.py",
+      "scope": "ActionPostfixSchemaRelease.rollback",
+      "line": 82,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_postfix_schema_release.py",
+      "scope": "prepare_action_postfix_schema_release",
+      "line": 104,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "scope": "require_current_email_pair",
+      "line": 180,
+      "names": [
+        "service_state"
+      ],
+      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "scope": "_markers",
+      "line": 209,
+      "names": [
+        "service_state"
+      ],
+      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "scope": "ActionEmailSchemaRelease.apply",
+      "line": 383,
+      "names": [
+        "service_state"
+      ],
+      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "scope": "ActionEmailSchemaRelease.rollback",
+      "line": 417,
+      "names": [
+        "service_state"
+      ],
+      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+    },
+    {
+      "file": "app/audit_web.py",
+      "scope": "_email_worker_health_snapshot",
+      "line": 2932,
+      "names": [
+        "service_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/audit_web.py",
+      "scope": "_queue_attention_rows",
+      "line": 3441,
+      "names": [
+        "daily_scan_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/action_reply_storage.py",
+      "scope": "capture_reply_source",
+      "line": 69,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/processing_reaction.py",
+      "scope": "ProcessingReaction.finish",
+      "line": 85,
+      "names": [
+        "service_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/processing_reaction.py",
+      "scope": "ProcessingReaction.sync",
+      "line": 94,
+      "names": [
+        "service_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/email_schema_release.py",
+      "scope": "EmailUnsubscribeCancellationSchemaRelease.rollback",
+      "line": 184,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/email_schema_release.py",
+      "scope": "EmailUnsubscribeCancellationSchemaRelease.rollback",
+      "line": 186,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/repository_updater.py",
+      "scope": "ExistingSchemaUpgradeStateStore.set_service_state",
+      "line": 98,
+      "names": [
+        "service_state"
+      ],
+      "classification": "explicit native/current progress DAO already implemented; entrypoint binding still required"
+    },
+    {
+      "file": "app/repository_updater.py",
+      "scope": "in_flight_work",
+      "line": 370,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "publication/version/quiescence source-current closure required"
+    },
+    {
+      "file": "app/task_storage.py",
+      "scope": "migrate_task_schema",
+      "line": 907,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/task_storage.py",
+      "scope": "migrate_task_schema",
+      "line": 911,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "scope": "publication_task_sources",
+      "line": 33,
+      "names": [
+        "service_state"
+      ],
+      "classification": "current publication entrypoint with explicit historical source branches; current marker and complete declaration require State conversion, archived release class methods remain native"
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "scope": "publication_meeting_sources",
+      "line": 72,
+      "names": [
+        "service_state"
+      ],
+      "classification": "current publication entrypoint with explicit historical source branches; current marker and complete declaration require State conversion, archived release class methods remain native"
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "scope": "TaskSchemaRelease.verify_loaded",
+      "line": 151,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "scope": "TaskSchemaRelease.rollback",
+      "line": 170,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "scope": "TaskSchemaRelease.rollback",
+      "line": 184,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_reply_schema_release.py",
+      "scope": "ActionReplySchemaRelease.verify_loaded",
+      "line": 44,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_reply_schema_release.py",
+      "scope": "ActionReplySchemaRelease.rollback",
+      "line": 57,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_reply_schema_release.py",
+      "scope": "ActionReplySchemaRelease.rollback",
+      "line": 70,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_reply_schema_release.py",
+      "scope": "prepare_action_reply_schema_release",
+      "line": 91,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "ScheduledTaskQueueAdapter.metrics",
+      "line": 124,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "ScheduledTaskQueueAdapter.claim.fetch_page",
+      "line": 184,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "ScheduledTaskQueueAdapter.claim",
+      "line": 234,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "ReplyQueueAdapter.metrics",
+      "line": 405,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "ReplyQueueAdapter.metrics",
+      "line": 417,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "ReplyQueueAdapter.metrics",
+      "line": 425,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "ReplyQueueAdapter.metrics",
+      "line": 441,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "ReplyQueueAdapter.claim.fetch_page",
+      "line": 486,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "MeetingQueueAdapter.metrics",
+      "line": 637,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "MeetingQueueAdapter.metrics",
+      "line": 650,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "MeetingQueueAdapter.metrics",
+      "line": 658,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "MeetingQueueAdapter.metrics",
+      "line": 677,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "MeetingQueueAdapter.claim.fetch_page",
+      "line": 740,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "OkrReviewQueueAdapter.metrics",
+      "line": 860,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "OkrReviewQueueAdapter.metrics",
+      "line": 870,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "OkrReviewQueueAdapter.metrics",
+      "line": 878,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "OkrReviewQueueAdapter.metrics",
+      "line": 891,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "OkrReviewQueueAdapter.claim.fetch_page",
+      "line": 931,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "WorkSummaryQueueAdapter.metrics",
+      "line": 1038,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "WorkSummaryQueueAdapter.metrics",
+      "line": 1050,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "WorkSummaryQueueAdapter.metrics",
+      "line": 1058,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "WorkSummaryQueueAdapter.metrics",
+      "line": 1074,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "WorkSummaryQueueAdapter.claim.fetch_page",
+      "line": 1116,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "TaskTodoSyncOutboxQueueAdapter.metrics",
+      "line": 1232,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "TaskTodoSyncOutboxQueueAdapter.metrics",
+      "line": 1242,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "TaskTodoSyncOutboxQueueAdapter.metrics",
+      "line": 1250,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "TaskTodoSyncOutboxQueueAdapter.metrics",
+      "line": 1264,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "TaskTodoSyncOutboxQueueAdapter.claim",
+      "line": 1311,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "TaskTodoSyncOutboxQueueAdapter.claim.fetch_page",
+      "line": 1342,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "_acquire_lease",
+      "line": 1797,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "_acquire_lease",
+      "line": 1805,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "_release_lease",
+      "line": 1892,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "_renew_lease_in_db",
+      "line": 1935,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "_assert_ledger_current_in_db",
+      "line": 1976,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "_complete_ledger_in_db",
+      "line": 2016,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "_complete_ledger_in_db",
+      "line": 2031,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "_let_go_of_lease",
+      "line": 2055,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "scope": "_record_ledger_error",
+      "line": 2076,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "accepted unselected dispatcher proposal"
+    },
+    {
+      "file": "app/quality_gate.py",
+      "scope": "_check_scan_health",
+      "line": 966,
+      "names": [
+        "daily_scan_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/quality_gate.py",
+      "scope": "_check_scan_health",
+      "line": 970,
+      "names": [
+        "daily_scan_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/quality_gate.py",
+      "scope": "_check_scan_health",
+      "line": 976,
+      "names": [
+        "daily_scan_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/quality_gate.py",
+      "scope": "_check_scan_health",
+      "line": 986,
+      "names": [
+        "wechat_read_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/quality_gate.py",
+      "scope": "_check_scheduler_health",
+      "line": 1056,
+      "names": [
+        "service_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/quality_gate.py",
+      "scope": "_check_runtime_route_pauses",
+      "line": 1105,
+      "names": [
+        "runtime_route_pauses"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/quality_gate.py",
+      "scope": "_has_active_codex_capacity_pause",
+      "line": 1132,
+      "names": [
+        "service_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/action_schema_release.py",
+      "scope": "publication_candidate_source",
+      "line": 27,
+      "names": [
+        "service_state"
+      ],
+      "classification": "current publication entrypoint with explicit historical source branches; current marker and complete declaration require State conversion, archived release class methods remain native"
+    },
+    {
+      "file": "app/action_schema_release.py",
+      "scope": "ActionSchemaRelease.verify_loaded",
+      "line": 62,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_schema_release.py",
+      "scope": "ActionSchemaRelease.rollback",
+      "line": 70,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_schema_release.py",
+      "scope": "ActionSchemaRelease.rollback",
+      "line": 83,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/action_schema_release.py",
+      "scope": "prepare_action_schema_release",
+      "line": 105,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/store_schema_release.py",
+      "scope": "prepare_store_schema_release",
+      "line": 69,
+      "names": [
+        "service_state"
+      ],
+      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+    },
+    {
+      "file": "app/store_schema_release.py",
+      "scope": "prepare_store_schema_release",
+      "line": 73,
+      "names": [
+        "service_state"
+      ],
+      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+    },
+    {
+      "file": "app/store_schema_release.py",
+      "scope": "prepare_database_schema_release",
+      "line": 132,
+      "names": [
+        "service_state"
+      ],
+      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "scope": "_snapshot",
+      "line": 172,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/deploy_maintenance.py",
+      "scope": "check_maintenance",
+      "line": 97,
+      "names": [
+        "dispatcher_claim_leases"
+      ],
+      "classification": "publication/version/quiescence source-current closure required"
+    },
+    {
+      "file": "app/email_current_schema.py",
+      "scope": "",
+      "line": 68,
+      "names": [
+        "email_scan_cursors"
+      ],
+      "classification": "archived native source declaration; current factory exclusion in accepted constructor proposal"
+    },
+    {
+      "file": "app/email_current_schema.py",
+      "scope": "",
+      "line": 251,
+      "names": [
+        "email_historical_traversals"
+      ],
+      "classification": "archived native source declaration; current factory exclusion in accepted constructor proposal"
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "scope": "_validate_source",
+      "line": 529,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/run_schema_release.py",
+      "scope": "RunSchemaRelease.verify_loaded",
+      "line": 53,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/run_schema_release.py",
+      "scope": "RunSchemaRelease.rollback",
+      "line": 71,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/run_schema_release.py",
+      "scope": "RunSchemaRelease.rollback",
+      "line": 82,
+      "names": [
+        "service_state"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/email_publication_sources.py",
+      "scope": "_markers",
+      "line": 22,
+      "names": [
+        "service_state"
+      ],
+      "classification": "current publication entrypoint with explicit historical source branches; current marker and complete declaration require State conversion, archived release class methods remain native"
+    },
+    {
+      "file": "app/state_schema_release.py",
+      "scope": "_eligible",
+      "line": 49,
+      "names": [
+        "corpus_sources"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/state_schema_release.py",
+      "scope": "_eligible",
+      "line": 52,
+      "names": [
+        "conversations"
+      ],
+      "classification": "native historical source/release/inverse helper; retain native semantics unless exact current callpath proves otherwise"
+    },
+    {
+      "file": "app/rule_question_retirement.py",
+      "scope": "_retire_in_connection",
+      "line": 94,
+      "names": [
+        "service_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    },
+    {
+      "file": "app/rule_question_retirement.py",
+      "scope": "_retire_in_connection",
+      "line": 116,
+      "names": [
+        "service_state"
+      ],
+      "classification": "unselected current direct caller proposal in preparation"
+    }
+  ]
+}
