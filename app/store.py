@@ -30715,7 +30715,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             (reply_attempts.action='oa_approval'
              or coalesce(reply_attempts.oa_process_instance_id, '')<>'')
             and reply_attempts.send_status in (
-                'completed', 'commented', 'decision_selected', 'recovered', 'skipped'
+                'completed', 'commented', 'decision_selected', 'failed', 'recovered', 'skipped'
             )
         )"""
         query = f"""
@@ -30796,6 +30796,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                                   where current_candidate.task_id=uncertain_task.id
                                     and current_candidate.execution_generation=uncertain_task.execution_generation
                               )
+                        ) then 'uncertain'
+                        -- A failed legacy OA Attempt can point to a task whose
+                        -- current execution is still awaiting an external
+                        -- receipt. Detail resolves this from the task even
+                        -- when the historical run link is missing or stale.
+                        -- Preserve that uncertainty before projecting the
+                        -- task's terminal failure below.
+                        when {oa_status_projection} and send_status='failed' and exists (
+                            select 1
+                            from ({REPLY_TASK_CURRENT_SQL}) as uncertain_message_task
+                            where uncertain_message_task.channel=reply_attempts.channel
+                              and uncertain_message_task.conversation_id=reply_attempts.conversation_id
+                              and uncertain_message_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and uncertain_message_task.status='failed'
+                              and uncertain_message_task.error='external_action_uncertain'
                         ) then 'uncertain'
                         when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
                         -- The list and Attempt detail share the current task
