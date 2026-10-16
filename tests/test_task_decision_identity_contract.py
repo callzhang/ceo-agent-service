@@ -158,3 +158,20 @@ def test_project_support_mismatch_locates_both_sides_in_correction_prompt():
     accepted = TaskAgentDecision.model_validate(payload)
     assert accepted.task_decisions[0].project.anchor_id == 1
     assert accepted.project_assessments[1].anchor_id == 2
+
+
+def test_missing_support_selector_locates_assessment_and_task_in_correction():
+    from app.task_agent import _task_result_validation_repair_prompt
+
+    payload = _supporting_task_envelope(None)
+    prompt = _task_result_validation_repair_prompt(json.dumps(payload))
+    assert "project_assessments[0].decision_indexes" in prompt
+    assert "task_decisions[0].project is null" in prompt
+    assert "('anchor', 1)" in prompt
+
+
+def test_native_project_link_evidence_describes_its_existing_dependency():
+    field = task_agent_output_schema()["$defs"]["TaskDecision"]["properties"]["project_link_evidence"]
+    description = next(option["description"] for option in field["anyOf"] if "description" in option)
+    assert "project is null" in description
+    assert "empty" in description

@@ -668,7 +668,7 @@ class TaskDecision(StrictTaskModel):
     )
     project_link_evidence: list[SourceCitation] = Field(
         default_factory=list,
-        description="Original evidence linking this Task to the selected Project. Reuse an unchanged confirmed existing link without manufacturing a Task update.",
+        description="Original evidence linking this Task to the selected Project. When project is null, this list must be empty; evidence alone does not select or register a Project. Reuse an unchanged confirmed existing link without manufacturing a Task update.",
     )
     suggestion: TaskSuggestion | None = Field(
         default=None,
@@ -1079,7 +1079,12 @@ class TaskAgentDecision(StrictTaskModel):
                     and task.project is None
                     and task.action in {"record_candidate", "create_task"}
                 ):
-                    raise ValueError("new supporting Task requires a Project selector")
+                    raise ValueError(
+                        "new supporting Task requires a Project selector: "
+                        f"project_assessments[{assessment_index}].decision_indexes "
+                        f"references task_decisions[{index}].project is null, "
+                        f"but this assessment selects {key!r}"
+                    )
                 if (
                     task.project is not None
                     and project_key(

@@ -3176,8 +3176,10 @@ Attention list, summary and count readers follow a historical Attempt's original
 原生进程退出与输出采集（2026-10-15）：子进程退出不代表 stdout/stderr 管道已经读完。Process runner 在既有进程组终止之后以非阻塞方式读取已到达的剩余字节，继续使用相同 UTF-8 解码及逐行回调，再刷新无换行尾行。如此 thread.started 会话定位和最终回答不会因先读到 stderr 而丢失；无效结果仍按原合同失败并保留已观察的原生证据。超时、路由、结果校验、外部动作及回执策略不变，不重放历史退订或清除执行标记。回归和验收见 docs/405078-process-output-validation.md。
 
 Task Agent's existing cross-Project supporting-Task validation reports the exact
-assessment index, Task decision index, and both canonical Project selectors to
-the existing correction turn. A Task may not support an assessment for a different
+assessment index, Task decision index, and the canonical Project selectors to
+the existing correction turn, including a missing selector and its required Project.
+The native project_link_evidence description states its existing dependency: the
+list must be empty when project is null. A Task may not support an assessment for a different
 selected Project. Validation predicates, output schema, and correction budget are
 unchanged. Regression coverage exercises the correction prompt and valid removal
 of only the mismatched membership.

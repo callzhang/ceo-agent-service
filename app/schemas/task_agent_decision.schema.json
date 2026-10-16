@@ -1159,7 +1159,7 @@
         "project_link_evidence": {
           "anyOf": [
             {
-              "description": "Original evidence linking this Task to the selected Project. Reuse an unchanged confirmed existing link without manufacturing a Task update.",
+              "description": "Original evidence linking this Task to the selected Project. When project is null, this list must be empty; evidence alone does not select or register a Project. Reuse an unchanged confirmed existing link without manufacturing a Task update.",
               "items": {
                 "$ref": "#/$defs/SourceCitation"
               },
