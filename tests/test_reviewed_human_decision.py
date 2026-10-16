@@ -239,6 +239,22 @@ def test_pre_gate_selected_execution_remains_readable_after_success(tmp_path):
     assert handler.calls == 1
 
 
+def test_pre_gate_unqualified_current_human_result_is_not_actionable(tmp_path):
+    store, _task, _candidate, _review, attempt_id = _approved_question(
+        tmp_path / "historical-needs-human.sqlite3", historical_scores=True
+    )
+
+    status, detail = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert detail["status"]["raw"] != "needs_human"
+    assert detail["status"]["requires_decision"] is False
+    assert detail["decision_options"] == []
+    # Keep the previously stored candidate available as historical evidence;
+    # it simply cannot re-enter the current human-action projection.
+    assert detail["human_decision"]["reason"] == "Only Derek can choose this instance's reply"
+
+
 def test_supplement_missing_execution_source_does_not_change_choice(tmp_path):
     store, task, candidate, review, attempt_id = _approved_question(tmp_path / "missing.sqlite3")
     with store._connect() as db:

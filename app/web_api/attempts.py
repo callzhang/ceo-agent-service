@@ -603,10 +603,13 @@ def _human_decision_payload(reviewed: dict[str, Any] | None) -> dict[str, Any] |
     """Show persisted reviewed context, including historical answered questions."""
     if reviewed is None or reviewed["decision"] != "approve":
         return None
-    from app.decision_quality import parse_stored_needs_human_decision
+    from app.agent_contracts import parse_persisted_consumer_result
 
-    decision = parse_stored_needs_human_decision(reviewed["candidate_json"])
-    if decision is None:
+    try:
+        decision = parse_persisted_consumer_result(reviewed["candidate_json"])
+    except (TypeError, ValueError):
+        return None
+    if decision.outcome != "needs_human":
         return None
     return {
         "reason": normalize_display_value(decision.needs_human_reason),
@@ -731,6 +734,13 @@ def build_attempt_detail(
     )
     if current_reviewed is not None and current_reviewed["audit_run_id"] != attempt.agent_run_id:
         current_reviewed = None
+    current_needs_human_decision = None
+    if current_reviewed is not None:
+        from app.decision_quality import parse_stored_needs_human_decision
+
+        current_needs_human_decision = parse_stored_needs_human_decision(
+            current_reviewed["candidate_json"]
+        )
     decision_reviewed = current_reviewed or history_reviewed
     # Some historical/manual rerun Attempts have no agent_run_id.  In that
     # case the Attempt key still identifies the owning task, so load its runs
@@ -780,7 +790,7 @@ def build_attempt_detail(
     projected_status = project_attempt_status(
         attempt, reply_task, current_agent_runs, delivery=wechat_delivery
     )
-    if current_reviewed is not None and reply_task is not None:
+    if current_needs_human_decision is not None and reply_task is not None:
         if reply_task.status == "needs_human" and current_reviewed["selection_id"] is None:
             projected_status = "needs_human"
         elif current_reviewed["selection_id"] is not None and reply_task.status in ("pending", "processing"):
@@ -848,14 +858,12 @@ def build_attempt_detail(
         attempt.send_status == "needs_human"
         and reply_task is not None and reply_task.status == "needs_human"
         and current_reviewed is not None and current_reviewed["selection_id"] is None
-        and json.loads(current_reviewed["candidate_json"]).get("outcome") == "needs_human"
+        and current_needs_human_decision is not None
     )
     if attempt.send_status == "needs_human":
         requires_decision = bool(decision_actionable)
     if decision_actionable:
-        from app.decision_quality import parse_stored_needs_human_decision
-
-        decision = parse_stored_needs_human_decision(current_reviewed["candidate_json"])
+        decision = current_needs_human_decision
         for option in decision.decision_options if decision is not None else ():
             decision_options.append(
                 {
