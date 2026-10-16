@@ -334,7 +334,7 @@ def migrate_followup_sync_schema(db: sqlite3.Connection, source: dict) -> dict:
                     raise ValueError("unsupported business follow-up parent")
                 parent_ref = parent[0]
             db.execute("insert into main.actions(record_type,legacy_key,payload_json,sync_draft_action_id) "
-                       "values(?,?,?,?)", (kind, str(public_id), storage._reply_payload(values), parent_ref))
+                       "values(?,?,?,?)", (kind, str(public_id), storage._native_payload(values), parent_ref))
         if _projection(db, kind, source["source_variant"]) != (columns, rows, expected_types):
             raise ValueError(f"{kind} migrated facts differ")
         _set_sequence(db, "actions:" + kind, source["sequences"][kind])

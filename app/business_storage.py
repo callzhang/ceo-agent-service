@@ -5,7 +5,7 @@ import json
 import sqlite3
 
 from app.action_storage import (
-    _encoded_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full,
+    _encoded_native_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full,
     _source_bound_null,
 )
 from app.business_definitions import (
@@ -31,7 +31,7 @@ def _check_values(kind, values):
     if kind not in BUSINESS_FIELDS or set(values) - set(BUSINESS_FIELDS[kind]):
         raise ValueError("unsupported Business source fields")
     for value in values.values():
-        _encoded_sqlite_value(value)
+        _encoded_native_sqlite_value(value)
 
 
 def _lock(db):
@@ -62,7 +62,7 @@ def _complete_values(db, kind, supplied):
 
 
 def _stored_values(db, kind, values):
-    payload = json.dumps({f: _encoded_sqlite_value(values[f]) for f in business_payload_fields(kind)},
+    payload = json.dumps({f: _encoded_native_sqlite_value(values[f]) for f in business_payload_fields(kind)},
                          ensure_ascii=False, allow_nan=False, separators=(",", ":"))
     physical = {ref[1]: None for ref in BUSINESS_REFERENCES.values()}
     if kind in BUSINESS_REFERENCES:

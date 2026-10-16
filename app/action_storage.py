@@ -25,7 +25,7 @@ from app.action_email_definitions import (
     EMAIL_AUTOINCREMENT_TYPES, EMAIL_COMPOSITE_KEYS, EMAIL_DEFAULTS,
     EMAIL_FIELDS, EMAIL_ROWID_TYPES, EMAIL_TYPES_ORDER,
     email_action_projection as email_action_projection,
-    email_schema_parts,
+    _encoded_value_check, email_schema_parts,
 )
 
 
@@ -296,7 +296,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     old_kinds = kinds
     if include_email:
         kinds += EMAIL_TYPES_ORDER
-        email_generated, email_checks, email_fks, email_indexes, email_triggers = email_schema_parts(_reply_value_check)
+        email_generated, email_checks, email_fks, email_indexes, email_triggers = email_schema_parts(
+            lambda field: _encoded_value_check("payload_json", "$." + field))
     if include_followup_sync:
         kinds += SYNC_TYPES_ORDER
     if include_skill_config_receipts:
@@ -881,6 +882,24 @@ def _encoded_sqlite_value(value):
     raise sqlite3.ProgrammingError("unsupported SQLite source value")
 
 
+def _encoded_native_sqlite_value(value):
+    """Preserve finite REAL bits for the unpublished native-source kinds."""
+    if isinstance(value, float) and math.isfinite(value):
+        numerator, denominator = value.as_integer_ratio()
+        shift = max(0, abs(numerator).bit_length() - 53)
+        significand = numerator >> shift
+        exponent = shift - (denominator.bit_length() - 1)
+        if value == 0.0:
+            significand, exponent = math.copysign(0.0, value), 0
+        return {"t": "real", "m": significand, "e": exponent}
+    return _encoded_sqlite_value(value)
+
+
+def _native_payload(values):
+    return json.dumps({field: _encoded_native_sqlite_value(value)
+                       for field, value in values.items()},
+                      ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
 def _reply_payload(values):
     return json.dumps({field: _encoded_sqlite_value(value) for field, value in values.items()},
                       ensure_ascii=False, allow_nan=False, separators=(",", ":"))
@@ -940,7 +959,7 @@ def _email_payload(db, kind, values):
         else:
             default = EMAIL_DEFAULTS[kind].get(field)
             data[field] = db.execute("select " + default).fetchone()[0] if default is not None else None
-    return _reply_payload(data)
+    return _native_payload(data)
 
 
 def _email_rowid_next(db, kind):
@@ -982,7 +1001,7 @@ def _insert_email_action(db, kind, values, *, source_rowid=_EMAIL_ROWID_UNSET, i
         identity = _email_auto_next(db, kind) if _source_bound_null(values.get("id")) else _native_integer_primary_key(values["id"])
     else:
         identity = tuple(values.get(field) for field in EMAIL_COMPOSITE_KEYS[kind])
-    key = (json.dumps([_encoded_sqlite_value(value) for value in identity], ensure_ascii=False,
+    key = (json.dumps([_encoded_native_sqlite_value(value) for value in identity], ensure_ascii=False,
                       allow_nan=False, separators=(",", ":")) if kind in EMAIL_COMPOSITE_KEYS else str(identity))
     returning = (",".join("email_" + field for field in EMAIL_COMPOSITE_KEYS[kind])
                  if kind in EMAIL_COMPOSITE_KEYS else "legacy_key")
@@ -1057,12 +1076,12 @@ def _update_email_action(db, kind, identity, values, *, new_source_rowid=_EMAIL_
                              _email_identity(kind, identity)[1]).fetchone()
         pair = tuple(values.get(field, current[index]) for index, field in enumerate(EMAIL_COMPOSITE_KEYS[kind]))
         assignments.append("legacy_key=?")
-        args.append(json.dumps([_encoded_sqlite_value(value) for value in pair], ensure_ascii=False,
+        args.append(json.dumps([_encoded_native_sqlite_value(value) for value in pair], ensure_ascii=False,
                                allow_nan=False, separators=(",", ":")))
     for field, value in values.items():
         if (field == "id" and kind in EMAIL_AUTOINCREMENT_TYPES) or field in EMAIL_COMPOSITE_KEYS.get(kind, ()):
             continue
-        paths.extend(("$." + field, json.dumps(_encoded_sqlite_value(value), ensure_ascii=False,
+        paths.extend(("$." + field, json.dumps(_encoded_native_sqlite_value(value), ensure_ascii=False,
                                                allow_nan=False, separators=(",", ":"))))
     if paths:
         assignments.append("payload_json=json_set(payload_json," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")")
@@ -1106,7 +1125,7 @@ def _sync_payload(db, kind, values):
     missing = tuple(field for field in SYNC_FIELDS[kind] if field in defaults and field not in values)
     evaluated = (dict(zip(missing, db.execute("select " + ",".join(defaults[field] for field in missing)).fetchone(), strict=True))
                  if missing else {})
-    return _reply_payload({
+    return _native_payload({
         field: values[field] if field in values else evaluated.get(field)
         for field in SYNC_FIELDS[kind]
         if field != "id" and not (kind == "business_task_follow_up_send_attempts" and field == "draft_id")
@@ -1178,7 +1197,7 @@ def update_sync_action(db: sqlite3.Connection, kind: str, public_id, values: dic
         for field, value in values.items():
             if field == "id" or kind == "business_task_follow_up_send_attempts" and field == "draft_id":
                 continue
-            paths.extend(("$." + field, json.dumps(_encoded_sqlite_value(value), ensure_ascii=False,
+            paths.extend(("$." + field, json.dumps(_encoded_native_sqlite_value(value), ensure_ascii=False,
                                                    allow_nan=False, separators=(",", ":"))))
         if paths:
             assignments.append("payload_json=json_set(payload_json," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")")

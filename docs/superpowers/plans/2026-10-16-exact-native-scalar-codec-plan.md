@@ -14,8 +14,8 @@ Worktree: `/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-ag
 
 ## Task 1: Native scalar codec and complete writer closure
 
-- [ ] Claim the exact files and own documentation hunks. No actual database, provider, native CLI, network, production, main, push or deploy. Read `docs/architecture.md` and `docs/runtime-mechanism.md` before app changes.
-- [ ] Create `tests/test_native_scalar_codec.py` with the complete tests below. Run the Configs regression alone before app changes and preserve its semantic failure evidence.
+- [x] Claim the exact files and own documentation hunks. No actual database, provider, native CLI, network, production, main, push or deploy. Read `docs/architecture.md` and `docs/runtime-mechanism.md` before app changes.
+- [x] Create `tests/test_native_scalar_codec.py` with the complete tests below. Run the Configs regression alone before app changes and preserve its semantic failure evidence.
 
 ```python
 """Lossless unpublished native-source scalars; published Reply is separate."""
@@ -115,7 +115,7 @@ def test_malformed_finite_real_tags_are_refused(tag):
 
 Run with `PYTHONDONTWRITEBYTECODE=1`, `-p no:cacheprovider`, owned temporary `--basetemp` removed afterward. Initial `-k configs_native_real` must fail on value mismatch, not an import error.
 
-- [ ] Add the following helpers to `app/action_storage.py` immediately before `_reply_payload`. Leave the existing `_encoded_sqlite_value` and `_reply_payload` bodies unchanged.
+- [x] Add the following helpers to `app/action_storage.py` immediately before `_reply_payload`. Leave the existing `_encoded_sqlite_value` and `_reply_payload` bodies unchanged.
 
 ```python
 def _encoded_native_sqlite_value(value):
@@ -137,7 +137,7 @@ def _native_payload(values):
                       ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 ```
 
-- [ ] Replace only the shared decoder and check in `app/action_email_definitions.py` with these complete bodies. Existing scalar/BLOB/nonfinite representation remains valid. The REAL tag is a finite source scalar representation, not a new business field.
+- [x] Replace only the shared decoder and check in `app/action_email_definitions.py` with these complete bodies. Existing scalar/BLOB/nonfinite representation remains valid. The REAL tag is a finite source scalar representation, not a new business field.
 
 ```python
 def _encoded_value(document, path):
@@ -172,7 +172,7 @@ def _encoded_value_check(document, path):
             f"and ({blob} or {nonfinite} or {finite})),0) else 0 end")
 ```
 
-- [ ] Make the entire native writer closure exact with this complete edit script. It deliberately excludes published Reply operations. Review the resulting diff before tests; do not change frozen source hashes.
+- [x] Make the entire native writer closure exact with this complete edit script. It deliberately excludes published Reply operations. Review the resulting diff before tests; do not change frozen source hashes.
 
 ```python
 from pathlib import Path
@@ -216,7 +216,7 @@ for filename in ("action_email_storage.py", "action_followup_sync_storage.py"):
                     .replace("storage._reply_payload", "storage._native_payload"))
 ```
 
-- [ ] Regenerate **only** `app/provider_state_schema_release.py:TARGET_FINGERPRINT` from the new canonical Provider declaration. All source hashes and the published Reply factory stay unchanged.
+- [x] Regenerate **only** `app/provider_state_schema_release.py:TARGET_FINGERPRINT` from the new canonical Provider declaration. All source hashes and the published Reply factory stay unchanged.
 
 ```python
 from pathlib import Path
@@ -239,7 +239,7 @@ p.write_text(text.replace('TARGET_FINGERPRINT = "' + TARGET_FINGERPRINT + '"',
 
 ## Task 2: Forward/current-write/inverse acceptance
 
-- [ ] Add a paired regression to `tests/test_native_scalar_codec.py`, reusing the existing parametrized source fixture. This complete test binds both source variants, exact schema inverse, native Email/Provider/Configs copy and current-write inverse. It preserves unrelated published Reply behavior. Place the two imports with the module imports at the top of the file, then append the test function.
+- [x] Add a paired regression to `tests/test_native_scalar_codec.py`, reusing the existing parametrized source fixture. This complete test binds both source variants, exact schema inverse, native Email/Provider/Configs copy and current-write inverse. It preserves unrelated published Reply behavior. Place the two imports with the module imports at the top of the file, then append the test function.
 
 ```python
 from tests.test_email_action_schema_release import source as source, _prepare
@@ -250,40 +250,44 @@ def test_native_reals_survive_paired_forward_current_writes_and_inverse(source):
     first = 2.2101102838387424e-85
     second = -first
     with closing(sqlite3.connect(source)) as db:
-        db.execute("update email_actions set attempt_count=?", (first,))
+        db.execute("update email_action_plans set confidence=?", (first,))
         db.execute("insert into wechat_reply_scopes(account_id,target_type,target_id,"
                    "display_name,trigger_mode,enabled) values('synthetic','direct','target','test','all',?)",
                    (first,))
         db.execute("insert into email_provider_observations(account_id,stable_message_identity,"
-                   "state,provider_folder_id,important,observed_at) "
-                   "values('synthetic','message','available','inbox',?,'time')", (first,))
+                   "state,provider_folder_id,important,important_signals_json,observed_at) "
+                   "values('synthetic','message','available','inbox',1,?,'time')", (first,))
+        source_provider_signal = db.execute("select important_signals_json from email_provider_observations "
+                                          "where account_id='synthetic'").fetchone()[0]
         original_schema = db.execute("select type,name,tbl_name,sql from sqlite_schema "
                                      "where sql is not null order by type,name").fetchall()
         db.commit()
     release = _prepare(source)
     release.apply()
     with closing(sqlite3.connect(source)) as db:
-        assert db.execute("select email_attempt_count,typeof(email_attempt_count) from actions "
-                          "where record_type='email_actions'").fetchone() == (first, "real")
-        assert db.execute("select important,typeof(important) from provider_state "
-                          "where account_id='synthetic'").fetchone() == (first, "real")
+        assert db.execute("select email_confidence,typeof(email_confidence) from actions "
+                          "where record_type='email_action_plans'").fetchone() == (first, "real")
+        assert db.execute("select important_signals_json,typeof(important_signals_json) from provider_state "
+                          "where account_id='synthetic'").fetchone() == (source_provider_signal, "text")
         assert db.execute("select enabled,typeof(enabled) from (" +
             CONFIG_PROJECTIONS["wechat_reply_scopes"] + ")").fetchone() == (first, "real")
         db.execute("begin immediate")
         identity = db.execute("select cast(legacy_key as integer) from actions "
-                              "where record_type='email_actions'").fetchone()[0]
-        storage.update_email_action(db, "email_actions", identity, {"attempt_count": first * 3})
+                              "where record_type='email_action_plans'").fetchone()[0]
+        storage.update_email_action(db, "email_action_plans", identity, {"confidence": first * 3})
         key = db.execute("select cast(legacy_key as integer) from configs "
                          "where record_type='wechat_reply_scopes'").fetchone()[0]
         assert update_config(db, "wechat_reply_scopes", key, {"enabled": second}) == 1
-        assert update_important_signals(db, "synthetic", "message", second, "[]")
+        assert update_important_signals(db, "synthetic", "message", 1, second)
         db.commit()
     release.rollback()
     with closing(sqlite3.connect(source)) as db:
-        assert db.execute("select attempt_count,typeof(attempt_count) from email_actions").fetchone() == (first * 3, "real")
+        assert db.execute("select confidence,typeof(confidence) from email_action_plans").fetchone() == (first * 3, "real")
         assert db.execute("select enabled,typeof(enabled) from wechat_reply_scopes").fetchone() == (second, "real")
-        assert db.execute("select important,typeof(important) from email_provider_observations "
-                          "where account_id='synthetic'").fetchone() == (second, "real")
+        expected_provider_signal = db.execute("select cast(? as text)", (second,)).fetchone()[0]
+        assert db.execute("select important_signals_json,typeof(important_signals_json),important "
+                          "from email_provider_observations where account_id='synthetic'").fetchone() == (
+                              expected_provider_signal, "text", 1)
         assert db.execute("select type,name,tbl_name,sql from sqlite_schema "
                           "where sql is not null order by type,name").fetchall() == original_schema
         assert db.execute("pragma quick_check").fetchone() == ("ok",)
@@ -291,14 +295,14 @@ def test_native_reals_survive_paired_forward_current_writes_and_inverse(source):
     release.rollback()
 ```
 
-- [ ] Run this exact focused matrix with the recorded interpreter and owned pytest root: `tests/test_native_scalar_codec.py tests/test_email_action_migration.py tests/test_email_action_schema_release.py tests/test_provider_state_schema_release.py tests/test_configs_schema_transfer.py tests/test_reply_attempt_action_storage.py`. Preserve original source-only fixtures and captured hashes. Existing Reply declaration/source hash and current-fact inverse cases must pass unchanged.
-- [ ] Add coverage for existing BLOB/nonfinite/NaN/boolean source values by running `tests/test_email_action_writes.py tests/test_business_storage.py tests/test_business_schema_release.py tests/test_provider_state_storage.py tests/test_configs_storage.py tests/test_configs_target_integrated.py tests/test_followup_sync_action_writes.py tests/test_followup_sync_action_migration.py tests/test_followup_sync_action_inverse.py`. These focused files cover separate raw/public/direct-update paths. No full suite.
-- [ ] Ruff only changed Python files, compile them without pycache, and run diff check. Run a negative control reverting the exact encoder's finite branch to scalar output in a process-local monkeypatch; the Configs reproducer must fail again. Restore no files because the mutant is process-local.
+- [x] Run this exact focused matrix with the recorded interpreter and owned pytest root: `tests/test_native_scalar_codec.py tests/test_email_action_migration.py tests/test_email_action_schema_release.py tests/test_provider_state_schema_release.py tests/test_configs_schema_transfer.py tests/test_reply_attempt_action_storage.py`. Preserve original source-only fixtures and captured hashes. Existing Reply declaration/source hash and current-fact inverse cases must pass unchanged.
+- [x] Add coverage for existing BLOB/nonfinite/NaN/boolean source values by running `tests/test_email_action_writes.py tests/test_business_storage.py tests/test_business_schema_release.py tests/test_provider_state_storage.py tests/test_configs_storage.py tests/test_configs_target_integrated.py tests/test_followup_sync_action_writes.py tests/test_followup_sync_action_migration.py tests/test_followup_sync_action_inverse.py`. These focused files cover separate raw/public/direct-update paths. No full suite.
+- [x] Ruff only changed Python files, compile them without pycache, and run diff check. Run a negative control reverting the exact encoder's finite branch to scalar output in a process-local monkeypatch; the Configs reproducer must fail again. Restore no files because the mutant is process-local.
 The scoped behavior paragraph for both architecture and runtime documents is:
 
 > The unpublished native-source Email/Business/Provider/Configs/Skill/Sync storage encodes finite REAL values as an exact binary significand and exponent and decodes them with SQLite's built-in `pow`, preserving native TEXT/INTEGER affinity results. SQLite JSON, `unhex` and math functions are required. Published Reply keeps its existing declaration and scalar format, and frozen source fingerprints remain unchanged; native-source inverse consumes current decoded facts. This does not select State or publish a deployment.
 
-- [ ] Update scoped behavior paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`, append concise source-preparation evidence, and commit only claimed files. State the explicit built-in math dependency, unchanged published Reply format and source hashes, unpublished status, and no production execution. Record actual test counts/timing, not predicted counts.
+- [x] Update scoped behavior paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`, append concise source-preparation evidence, and commit only claimed files. State the explicit built-in math dependency, unchanged published Reply format and source hashes, unpublished status, and no production execution. Record actual test counts/timing, not predicted counts.
 - [ ] Obtain independent SPEC, then fresh QUALITY. Root then runs owned frozen-source copied-data forward/current-write/inverse proof. This helper change does not select State or complete the10+ledger goal.
 
 ## Root self-review
@@ -307,3 +311,5 @@ The minimal repro and exact candidate are independently evidenced. Complete call
 
 
 Root proposal validation: all six Python blocks compile. The complete proposed test module extracted to an owned temporary directory produces exactly4 intended Configs value-mismatch failures/13 deselected in0.33s on the unchanged candidate. Failures cover both original variants and numeric REAL/TEXT formatting. The temporary directory was removed and absence verified. No app or repository test file was changed by this preflight.
+
+Implementation note: The original paired sample chose `email_actions.attempt_count` and Provider `important` for tiny REAL values. Their existing attempt-count drift trigger and 0/1 CHECK correctly reject those values before the codec is exercised. The executable paired sample above instead uses valid Email plan `confidence` and Provider JSON-valid `important_signals_json`; it keeps actual/fresh forward, current-write, exact inverse, schema, and quick-check assertions.

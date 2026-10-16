@@ -371,10 +371,10 @@ def _insert_email_raw(db, kind, columns, row):
         key = str(values.pop("id"))
     else:
         identity = tuple(values.pop(field) for field in EMAIL_COMPOSITE_KEYS[kind])
-        key = json.dumps([storage._encoded_sqlite_value(value) for value in identity],
+        key = json.dumps([storage._encoded_native_sqlite_value(value) for value in identity],
                          ensure_ascii=False, allow_nan=False, separators=(",", ":"))
     db.execute("insert into main.actions(record_type,legacy_key,payload_json) values(?,?,?)",
-               (kind, key, storage._reply_payload(values)))
+               (kind, key, storage._native_payload(values)))
 
 
 def migrate_email_action_schema(db: sqlite3.Connection) -> dict:

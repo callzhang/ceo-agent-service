@@ -598,6 +598,8 @@ def _encoded_value(document, path):
     tag = f"json_extract({document},'{path}.t')"
     return (f"case when json_type({document},'{path}')='object' then "
             f"case {tag} when 'blob' then unhex(json_extract({document},'{path}.v')) "
+            f"when 'real' then json_extract({document},'{path}.m') "
+            f"* pow(2.0,json_extract({document},'{path}.e')) "
             "when 'inf' then 9e999 when '-inf' then -9e999 end "
             f"else json_extract({document},'{path}') end")
 
@@ -611,9 +613,17 @@ def _encoded_value_check(document, path):
             f"and length({blob_value})%2=0 and unhex({blob_value}) is not null "
             f"and json_remove({obj},'$.t','$.v')='{{}}')")
     nonfinite = f"({tag} in ('inf','-inf') and json_remove({obj},'$.t')='{{}}')"
+    mantissa = f"json_extract({document},'{path}.m')"
+    exponent = f"json_extract({document},'{path}.e')"
+    finite = (f"({tag}='real' and json_type({document},'{path}.e')='integer' "
+              f"and {exponent} between -1074 and 971 and "
+              f"((json_type({document},'{path}.m')='integer' and {mantissa} "
+              "between -9007199254740991 and 9007199254740991) or "
+              f"(json_type({document},'{path}.m')='real' and {mantissa}=0)) "
+              f"and json_remove({obj},'$.t','$.m','$.e')='{{}}')")
     return (f"case when {value_type} in ('null','text','integer','real','true','false') then 1 "
             f"when {value_type}='object' then coalesce((json_type({document},'{path}.t')='text' "
-            f"and ({blob} or {nonfinite})),0) else 0 end")
+            f"and ({blob} or {nonfinite} or {finite})),0) else 0 end")
 
 
 def email_schema_parts(reply_value_check):

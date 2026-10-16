@@ -6,7 +6,7 @@ import json
 import math
 import sqlite3
 
-from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full
+from app.action_storage import _encoded_native_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full
 from app.configs_definitions import (
     CONFIG_FIELDS, CONFIG_INDEX_DDL, CONFIG_TABLE_DDL, CONFIG_TRIGGER_DDL,
     AUTOINCREMENT_KINDS, CONFIG_REFS, DEFAULTS, NUMERIC_SCALAR_KINDS,
@@ -38,7 +38,7 @@ def _check(kind: str, values: dict) -> None:
     if kind not in CONFIG_FIELDS or set(values) - set(CONFIG_FIELDS[kind]):
         raise ValueError("unsupported Email config kind or source field")
     for value in values.values():
-        _encoded_sqlite_value(value)
+        _encoded_native_sqlite_value(value)
 
 
 def _lock(db: sqlite3.Connection) -> None:
@@ -67,7 +67,7 @@ def _integer_affinity(value):
 
 def _canonical_without_rowid_key(value) -> str:
     stored = _text_affinity(value)
-    return json.dumps([_encoded_sqlite_value(stored)], ensure_ascii=False,
+    return json.dumps([_encoded_native_sqlite_value(stored)], ensure_ascii=False,
                       allow_nan=False, separators=(",", ":"))
 
 
@@ -150,7 +150,7 @@ def _parent_id(db: sqlite3.Connection, kind: str, public_key) -> int:
 def _stored(db: sqlite3.Connection, kind: str, complete: dict,
             legacy_key: str) -> dict:
     payload = {
-        field: _encoded_sqlite_value(complete[field])
+        field: _encoded_native_sqlite_value(complete[field])
         for field in config_payload_fields(kind)
     }
     data = {

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import json
 import sqlite3
 
-from app.action_storage import _encoded_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full
+from app.action_storage import _encoded_native_sqlite_value, _native_integer_primary_key, _raise_autoincrement_full
 from app.action_skill_config_definitions import SKILL_RECEIPT_KINDS
 
 @dataclass(frozen=True)
@@ -105,7 +105,7 @@ def insert_skill_receipt(db: sqlite3.Connection, kind: str, values: dict,
             raise ValueError("source load body is not byte-exactly reconstructable")
     sql = ("insert into actions(record_type,legacy_key,payload_json," + ref_col +
            ") values(?,?,?,?)")
-    encoded = {field: _encoded_sqlite_value(value) for field, value in payload.items()}
+    encoded = {field: _encoded_native_sqlite_value(value) for field, value in payload.items()}
     db.execute(sql, (kind, str(identity), json.dumps(encoded, ensure_ascii=False,
                separators=(",", ":")), ref))
     return identity

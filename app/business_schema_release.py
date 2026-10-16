@@ -7,7 +7,7 @@ import sqlite3
 
 from app.action_reply_storage import _fingerprint, _source_declaration
 from app.action_email_storage import _quote, _sequence, _set_sequence
-from app.action_storage import _encoded_sqlite_value
+from app.action_storage import _encoded_native_sqlite_value
 from app.business_definitions import (
     BUSINESS_COMMON, BUSINESS_FIELDS, BUSINESS_FRESH_FIELDS,
     BUSINESS_REFERENCES,
@@ -272,7 +272,7 @@ def _insert_business_parents(db: sqlite3.Connection, parents: dict, physical: di
                 if row[field] is not None:
                     refs[column] = physical[(parent_kind, row[field])]
             payload = json.dumps(
-                {field: _encoded_sqlite_value(row[field])
+                {field: _encoded_native_sqlite_value(row[field])
                  for field in business_payload_fields(kind)},
                 ensure_ascii=False, allow_nan=False, separators=(",", ":"),
             )

@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 import json
 import sqlite3
 
-from app.action_storage import _encoded_sqlite_value
+from app.action_storage import _encoded_native_sqlite_value
 from app.provider_state_definitions import (
     GENERATION_FIELDS, GENERATION_PROJECTION, OBSERVATION_FIELDS,
     OBSERVATION_PROJECTION, PAYLOAD_FIELDS, PROVIDER_STATE_DDL,
@@ -33,7 +33,7 @@ def _json(value):
 
 
 def _payload(values):
-    return _json({field: _encoded_sqlite_value(values.get(field)) for field in PAYLOAD_FIELDS})
+    return _json({field: _encoded_native_sqlite_value(values.get(field)) for field in PAYLOAD_FIELDS})
 
 
 def _observation_bind(values, *, complete=False):
@@ -209,7 +209,7 @@ def update_important_signals(
         "'$.important',json(?),'$.important_signals_json',json(?)) "
         "WHERE record_type='observation' AND account_id=? "
         "AND stable_message_identity=? AND state='available'",
-        (_json(_encoded_sqlite_value(important)),
-         _json(_encoded_sqlite_value(important_signals_json)),
+        (_json(_encoded_native_sqlite_value(important)),
+         _json(_encoded_native_sqlite_value(important_signals_json)),
          account_id, stable_message_identity),
     ).rowcount == 1
