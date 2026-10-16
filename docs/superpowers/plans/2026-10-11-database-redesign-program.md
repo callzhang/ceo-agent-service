@@ -1,5 +1,11 @@
 # Database Redesign Program
 
+## Remaining physical closure audit, 2026-10-16
+
+Query-only frozen970a metadata confirms116 ordinary source tables. The accepted intermediate retirement set removes38 native tables and adds4 target tables, deriving82 ordinary names consistent with the accepted cold-copy count. Seven final core names exist; `state`, `emails` and `provenance` do not yet exist. Exactly74 other old-name ordinary tables and the Email migration ledger still remain. This is a derived exact name set, not a new applied-copy or production measurement; final acceptance must compare actual names and separately verify virtual/shadow FTS removal.
+
+The remaining74 break down by approved disposition:30 to actions,16 to state,12 to tasks,8 to business,2 to emails,2 to runs,1 to provenance,1 legacy-link identity/FK closure, and2 explicitly retired independent structures (`codex_session_search_index`, `workbench_confirmations`). Their complete names, original source set and exact retirement arithmetic are in `../specs/2026-10-16-database-redesign-remaining-tables.json`. The design section4 retirement instructions take precedence over those two CSV rows retaining the old table name as a label. State16-to1 is only the next physical step; it does not finish the remaining action/business/email/task/source/ledger work.
+
 ## Latest state source closure, 2026-10-16
 
 The next physical consolidation is state16-to1. Read-only caller closure covers all sixteen families, including current version/publication readers and deployment progress that span schema publication. Existing literal actual91/fresh87 fields are unchanged; source-only evidence and the complete executable-oracle plan are recorded in `../specs/2026-10-16-state-native-behavior-preflight.json` and `2026-10-16-state-source-contract-plan.md`. The committed source oracle at50fbd70a now passes sequential independent SPEC and QUALITY:178 tests each, plus three two-failure mutants in SPEC. Metadata receipt is `../specs/2026-10-16-state-source-oracle-acceptance.json`. No target state schema, retention or retirement is selected by that evidence. An independently confirmed finite-REAL encoding gap must be corrected on the unpublished native-source paths before reusing the codec for State; the published Reply format remains bound to its predecessor contract.
