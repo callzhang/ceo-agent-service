@@ -2243,6 +2243,12 @@ recursively walking the historical session trees. This does not alter persisted
 business results or audit evidence. The
 History chart projects lifecycle status only for reply
 attempts in the requested time window, avoiding a full-history status scan.
+For failed Attempts, the History status projection also follows the owning
+AgentRun's stable reply-task ID when the OA scanner has changed the task's
+trigger key. Status filters and counts use that projected state; stored Attempt
+and execution records are unchanged. A current candidate execution with an
+unresolved uncertain receipt remains `uncertain`, even if the task closed;
+independently resolved Attempts retain their resolution projection.
 The later-terminal Attempt predicate uses a materialized maximum public ID per
 channel/message key inside the status expression; key-only pagination does not
 evaluate that expression. Each chart uses one read snapshot and reads a failed

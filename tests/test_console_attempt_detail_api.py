@@ -145,6 +145,67 @@ def test_runtime_payload_uses_batch_runtime_attempt_lookup(tmp_path: Path, monke
     assert batch_calls == [[run.id]]
 
 
+def test_attempt_detail_does_not_promote_current_uncertain_execution_to_done(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "uncertain-current-execution.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    candidate_body = {"outcome": "proposal", "proposal": {"actions": []}}
+    store.complete_agent_run(consumer.id, candidate_body, owner="consumer")
+    candidate = store.persist_review_candidate(task, consumer, candidate_body)
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="uncertain-projection-audit",
+        owner="audit",
+    ).run
+    audit_body = {"outcome": "approve", "candidate_digest": candidate["candidate_digest"]}
+    store.complete_agent_run(audit.id, audit_body, owner="audit")
+    review = store.record_candidate_review(candidate["id"], audit.id, audit_body)
+    execution = store.claim_candidate_execution(candidate["id"], review["id"], "executor", 60)
+    store.finish_candidate_execution(
+        execution["id"], "executor", "uncertain",
+        {"summary": "Provider receipt is pending", "error": {"code": "external_action_uncertain"}},
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender="Avery",
+        trigger_text="Publish the reviewed update.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {
+            "agent_run_id": audit.id,
+            "send_error": "external_action_uncertain",
+            "resolved_at": "2026-10-16 00:00:00",
+            "resolution": "Business follow-up closed; original external receipt remains unverified.",
+        })
+        db.execute("update tasks set status='done' where id=?", (task.id,))
+
+    status, payload = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert payload["status"]["raw"] == "uncertain"
+    assert payload["system_execution"]["status"] == "uncertain"
+    assert next(item["value"] for item in payload["metadata"] if item["label"] == "send status") == "uncertain"
+
+
 def test_linked_consumer_run_falls_back_to_latest_consumer_sibling():
     audit = type("Run", (), {"id": 3, "role": "audit", "parent_agent_run_id": None})()
     old = type("Run", (), {"id": 1, "role": "consumer", "turn_attempt": 0, "proposal_revision": 0})()

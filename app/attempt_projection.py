@@ -23,7 +23,12 @@ def current_wechat_delivery_matches(attempt: Any, task: Any, delivery: Any) -> b
 
 
 def project_attempt_status(
-    attempt: Any, task: Any, runs: list[Any], *, delivery: Any = None
+    attempt: Any,
+    task: Any,
+    runs: list[Any],
+    *,
+    delivery: Any = None,
+    current_execution_status: str = "",
 ) -> str:
     """Return the current state for an Attempt without rewriting history.
 
@@ -35,6 +40,11 @@ def project_attempt_status(
     fallback = str(getattr(attempt, "send_status", "") or "").strip() or "failed"
     if fallback == "needs_human" and str(getattr(attempt, "resolved_at", "") or "").strip():
         return "skipped"
+    if (
+        current_execution_status == "uncertain"
+        and fallback != "skipped"
+    ):
+        return "uncertain"
     if task is None:
         return fallback
     task_status = str(getattr(task, "status", "") or "").strip()

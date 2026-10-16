@@ -195,6 +195,7 @@ from app.action_storage import (
     validated_reply_variant,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
+    CANDIDATE_EXECUTION_SQL,
     REVIEW_CANDIDATE_SQL,
     EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
@@ -30366,6 +30367,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and attempts.attempt_send_status='failed'
                   and latest.latest_attempt_id=cast(attempts.legacy_key as integer)
                   and task.status not in ('done', 'skipped', 'needs_human')
+                  and coalesce(task.error, '')<>'external_action_uncertain'
+                  and not exists (
+                      select 1
+                      from ({CANDIDATE_REVIEW_SQL}) as uncertain_review
+                      join ({REVIEW_CANDIDATE_SQL}) as uncertain_candidate
+                        on uncertain_candidate.id=uncertain_review.candidate_id
+                      join ({CANDIDATE_EXECUTION_SQL}) as uncertain_execution
+                        on uncertain_execution.candidate_id=uncertain_candidate.id
+                      where uncertain_review.audit_run_id=agent_run.id
+                        and uncertain_candidate.task_id=task.id
+                        and uncertain_candidate.execution_generation=task.execution_generation
+                        and uncertain_execution.status='uncertain'
+                        and uncertain_candidate.id=(
+                            select max(current_candidate.id)
+                            from ({REVIEW_CANDIDATE_SQL}) as current_candidate
+                            where current_candidate.task_id=task.id
+                              and current_candidate.execution_generation=task.execution_generation
+                        )
+                  )
                   and coalesce(attempts.attempt_resolved_at, '')=''
                   and not exists (
                       select 1 from terminal_tasks as terminal_task
@@ -30745,6 +30765,31 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     'Reply' as category,
                     action as action,
                     case
+                        -- Current unresolved System Execution uncertainty
+                        -- outranks a terminal task status. Resolved attempts
+                        -- keep their existing resolution projection.
+                        when send_status<>'skipped' and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as uncertain_attempt_run
+                            join ({CANDIDATE_REVIEW_SQL}) as uncertain_review
+                              on uncertain_review.audit_run_id=uncertain_attempt_run.id
+                            join ({REVIEW_CANDIDATE_SQL}) as uncertain_candidate
+                              on uncertain_candidate.id=uncertain_review.candidate_id
+                            join ({REPLY_TASK_CURRENT_SQL}) as uncertain_task
+                              on uncertain_task.id=uncertain_candidate.task_id
+                             and uncertain_task.execution_generation=uncertain_candidate.execution_generation
+                            join ({CANDIDATE_EXECUTION_SQL}) as uncertain_execution
+                              on uncertain_execution.candidate_id=uncertain_candidate.id
+                            where uncertain_attempt_run.id=reply_attempts.agent_run_id
+                              and uncertain_task.execution_generation=uncertain_attempt_run.execution_generation
+                              and uncertain_execution.status='uncertain'
+                              and uncertain_candidate.id=(
+                                  select max(current_candidate.id)
+                                  from ({REVIEW_CANDIDATE_SQL}) as current_candidate
+                                  where current_candidate.task_id=uncertain_task.id
+                                    and current_candidate.execution_generation=uncertain_task.execution_generation
+                              )
+                        ) then 'uncertain'
                         when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
                         -- Candidate completion is independent of delivery.
                         -- Only the latest delivery for this object and its
@@ -30765,6 +30810,35 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                                     and current_delivery.execution_generation=delivery_task.execution_generation
                               )
                         ) then 'failed'
+                        -- Attempt detail follows the stable AgentRun task ID.
+                        -- The current task's DingTalk trigger key can change
+                        -- during OA scanning, so terminal state must not be
+                        -- inferred only from the historical message key.
+                        when send_status='failed' and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                              on bound_current_task.id=bound_attempt_run.reply_task_id
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                              and coalesce(bound_current_task.error, '')='external_action_uncertain'
+                        ) then 'uncertain'
+                        when send_status='failed' and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                              on bound_current_task.id=bound_attempt_run.reply_task_id
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                              and bound_current_task.status in ('done', 'skipped', 'needs_human')
+                              and coalesce(bound_current_task.error, '')<>'external_action_uncertain'
+                        ) then (
+                            select bound_current_task.status
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                              on bound_current_task.id=bound_attempt_run.reply_task_id
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                              and coalesce(bound_current_task.error, '')<>'external_action_uncertain'
+                            limit 1
+                        )
                         -- A failed attempt whose own task was handed to Derek
                         -- reads `needs_human`, not `recovered`. The task and
                         -- the attempt are two projections of one piece of
