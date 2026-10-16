@@ -50,6 +50,17 @@ with TemporaryDirectory(prefix="ceo-task12-insert-expression-", dir="/tmp") as o
                 cwd=ROOT,
             )
         )
+    if "--before-preinsert-repair" in sys.argv:
+        (temporary / "app/task12_storage.py").write_bytes(
+            subprocess.check_output(
+                [
+                    "git",
+                    "show",
+                    "72a8b8154aaf8aba2aedfefb1fd13995c0e6f9f1:app/task12_storage.py",
+                ],
+                cwd=ROOT,
+            )
+        )
     (temporary / "docs").symlink_to(ROOT / "docs", target_is_directory=True)
     (temporary / "data/config").mkdir(parents=True)
     for name in ("skill-features.json", "mcp-tool-effects.json"):
@@ -93,6 +104,7 @@ with TemporaryDirectory(prefix="ceo-task12-insert-expression-", dir="/tmp") as o
                         "--applied",
                         "--with-declarations",
                         "--before-default-repair",
+                        "--before-preinsert-repair",
                     )
                 ],
             ]

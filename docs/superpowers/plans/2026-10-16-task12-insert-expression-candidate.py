@@ -281,6 +281,12 @@ def task12_insert_parts(
         raise ValueError(
             "native Tasks INSERT expression requires nonidentity payload fields"
         )
+    # Existing source AUTO allocators inspect bound inputs before final SQL.
+    # Actual native INSERT expressions occur only in the non-AUTO item family.
+    if expressions and kind in TASK12_AUTOINCREMENT_KINDS:
+        raise ValueError(
+            "native Tasks INSERT expressions require a non-AUTOINCREMENT source"
+        )
     if set(values) & set(expressions):
         raise ValueError("native Tasks INSERT field supplied twice")
     mode = _mode(ignore, replace)
