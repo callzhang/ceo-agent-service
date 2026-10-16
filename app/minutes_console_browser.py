@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+import subprocess
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -313,14 +314,20 @@ def signed_in_console(profile_dir: Path | None = None, *, org: str = ""):
             page = context.new_page()
             page.goto(HISTORY_URL, wait_until="domcontentloaded", timeout=45_000)
             page.wait_for_timeout(_CONSOLE_SETTLE_MS)
-            if LOGIN_HOST in page.url:
-                _pick_organisation(page, wanted)
-            if MINUTES_CONSOLE_HOST not in page.url:
-                raise MinutesBrowserSessionExpired(
-                    "the copy of Derek's Chrome cookies no longer carries a "
-                    f"DingTalk login (stopped at {page.url[:120]}); open "
-                    "DingTalk in Chrome and let `sync-chrome-cookies` run"
+            try:
+                if LOGIN_HOST in page.url:
+                    _pick_organisation(page, wanted)
+                if MINUTES_CONSOLE_HOST not in page.url:
+                    raise MinutesBrowserSessionExpired(
+                        "the copy of Derek's Chrome cookies no longer carries a "
+                        f"DingTalk login (stopped at {page.url[:120]}); open "
+                        "DingTalk in Chrome and let `sync-chrome-cookies` run"
+                    )
+            except MinutesBrowserSessionExpired:
+                subprocess.run(
+                    ["/usr/bin/open", "-a", "Google Chrome", HISTORY_URL], check=True,
                 )
+                raise
             yield PlaywrightMinutesConsole(page)
         finally:
             context.close()
