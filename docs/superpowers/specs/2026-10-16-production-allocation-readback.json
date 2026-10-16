@@ -40,5 +40,90 @@
     "Filesystem WAL/SHM sizes may change during service writes.",
     "dbstat reports allocated pages of individual table/index objects, not a new migration or exact future reclaim estimate.",
     "This is not a new full row/retention-policy audit."
-  ]
+  ],
+  "latest_readonly_confirmation": {
+    "recorded_utc": "2026-10-16T19:09:56.152589+00:00",
+    "production_head": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+    "read_only": true,
+    "ordinary_table_count": 116,
+    "database_file_bytes": 493961216,
+    "wal_file_bytes": 4173592,
+    "freelist_pages": 2,
+    "page_size": 4096,
+    "top_table_and_index_allocations": [
+      {
+        "table": "runs",
+        "table_bytes": 78118912,
+        "index_bytes": 50130944,
+        "total_bytes": 128249856
+      },
+      {
+        "table": "actions",
+        "table_bytes": 81883136,
+        "index_bytes": 11259904,
+        "total_bytes": 93143040
+      },
+      {
+        "table": "tasks",
+        "table_bytes": 44380160,
+        "index_bytes": 6307840,
+        "total_bytes": 50688000
+      },
+      {
+        "table": "email_classifications",
+        "table_bytes": 36859904,
+        "index_bytes": 3305472,
+        "total_bytes": 40165376
+      },
+      {
+        "table": "email_messages",
+        "table_bytes": 34316288,
+        "index_bytes": 1568768,
+        "total_bytes": 35885056
+      },
+      {
+        "table": "email_provider_observations",
+        "table_bytes": 13336576,
+        "index_bytes": 11657216,
+        "total_bytes": 24993792
+      },
+      {
+        "table": "email_action_plans",
+        "table_bytes": 13930496,
+        "index_bytes": 1302528,
+        "total_bytes": 15233024
+      },
+      {
+        "table": "email_actions",
+        "table_bytes": 9154560,
+        "index_bytes": 4849664,
+        "total_bytes": 14004224
+      },
+      {
+        "table": "work_updates",
+        "table_bytes": 12115968,
+        "index_bytes": 249856,
+        "total_bytes": 12365824
+      },
+      {
+        "table": "follow_up_drafts",
+        "table_bytes": 10596352,
+        "index_bytes": 610304,
+        "total_bytes": 11206656
+      },
+      {
+        "table": "errors",
+        "table_bytes": 7593984,
+        "index_bytes": 966656,
+        "total_bytes": 8560640
+      },
+      {
+        "table": "business_source_documents",
+        "table_bytes": 7188480,
+        "index_bytes": 24576,
+        "total_bytes": 7213056
+      }
+    ],
+    "limit": "Read-only size/allocation confirmation only; no new body/retention audit. File and WAL sizes change during writes; dbstat allocates logical snapshot pages. Last proved isolated migration67 ordinary tables is a separate DB, not production or final11."
+  }
 }
