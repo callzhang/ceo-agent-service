@@ -918,3 +918,36 @@ external views and triggers that refer to any retired source table or either
 target table being dropped on inverse; and MAIN/TEMP name shadows before any
 schema change. The SQL dependency check reuses the existing SQLite schema-only
 rename parser. Both directions still leave transaction rollback to the caller.
+
+
+### Full unselected config coordinator: independent review and frozen-copy proof
+
+The preflight fix `a9b66a45` passed independent SPEC and fresh QUALITY reviews,
+each with 35 focused tests and additional in-memory probes. The combined
+frozen-copy receipt is
+`superpowers/specs/2026-10-15-configs-full-schema-actual.json`.
+It applies the existing Email, Business and Provider conversions, then the
+config coordinator against the genuine `actual_email52` declaration.
+All 18 native families (6,823 rows) and the empty observation table retire;
+configs/schedules and the two Skill receipt kinds replace them. The intermediate
+candidate has 82 ordinary tables under `PRAGMA table_list` excluding virtual,
+shadow and SQLite internal tables; this is not the final ten-table target or a
+production count.
+
+The first config inverse exactly restores native rows/storage classes, source
+DDL, independent allocator waters and all 61,310 retained action / 231,340 run
+rows. A second forward followed by copy-only writes verifies seven additions
+on config inverse: schedule, configuration version, run, ordinary action and
+Skill export/success/failure receipts. Retained counts become 61,311 and
+231,341. The subsequent whole Email/Business/Provider inverse restores the
+initial main schema and unchanged markers; quick_check is ok and the sole
+pre-existing runs-to-tasks FK finding remains unchanged. New-fact checks occur
+after config inverse; this proof does not claim prior-code constructor or
+current-caller verification after the whole inverse.
+
+The run completed in 137.278 seconds. The immutable source file hash is
+unchanged, and both the disposable copied database and proof workspace were
+removed with absence verified. No provider, native CLI, runtime selection,
+version activation, real send, push, merge or deployment occurred. The next
+work is current callers, fresh initialization and paired release integration;
+this helper acceptance does not finish the complete redesign.
