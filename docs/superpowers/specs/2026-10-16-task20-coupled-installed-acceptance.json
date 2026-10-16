@@ -1,0 +1,54 @@
+{
+  "recorded_utc": "2026-10-16T21:12:35.372568+00:00",
+  "status": "selected_tasks20_core_and_copy_proof_pass_remaining_acceptance_open",
+  "commit": "e2956024772d03fa4e8ce8b6ff8bc3bf0a208f9f",
+  "base": "fc7ee263732b0bf8c1a5d833e6e9b818dac9e2f1",
+  "manifest_sha256": "9f9967cadfe395c24e91cee63591eb08aaac03acc5550a03e1e6641f2cc6d0d8",
+  "writer": {
+    "exact_manifest_files": 39,
+    "extra_claim_rows": 1,
+    "core_cases": 1384,
+    "core_seconds": 85.99,
+    "public_cases": 42,
+    "public_seconds": 31.59,
+    "ruff_python_files": 37
+  },
+  "fresh_applied_spec": {
+    "cases": 11,
+    "seconds": 12.5,
+    "independent_reconstruction_exact_files": 39,
+    "constructor_orders_and_uncached_cold_reopens": 3,
+    "ordinary_tables": 55,
+    "typed_task_kinds": 20,
+    "folded_native_tables_absent": 12,
+    "findings": []
+  },
+  "fresh_applied_quality": {
+    "cases": 126,
+    "seconds": 4.32,
+    "all_manifest_and_historical_factory_pins_match": true,
+    "findings": []
+  },
+  "installed_actual_copy": {
+    "receipt": "docs/superpowers/specs/2026-10-16-task20-installed-actual-copy.json",
+    "seconds": 251.438,
+    "source_target_inverse_reforward_counts": [
+      116,
+      55,
+      116,
+      55
+    ],
+    "typed_native_after_prepare_target_and_predecessor_tasks_retained": true,
+    "unaffected_original_tables": 113,
+    "all_original_witness_family_rows_preserved": true,
+    "source_declarations_markers_full_ledger_and_fk_baseline_preserved": true,
+    "original_source_hash_unchanged": true,
+    "owned_temps_removed": true
+  },
+  "remaining": [
+    "61 unchanged native-literal feedback fixture owners /183 sites and other impacted fixtures/source roles need explicit conversion; no whole-suite green claim",
+    "Remaining55\u219211 storage consolidation and provenance/retention verification",
+    "Real native CLI with fake outbound, UI/performance/CI and final human-approved production publication"
+  ],
+  "production": "No main merge/push/DB write/restart/deploy. Genuine predecessor44ee956d read-only archive; ordinary production count last measured116 remains separate from55copy."
+}
