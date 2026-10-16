@@ -28,7 +28,14 @@ lines and session `01a14238-69c1-7350-a7e3-bc8a397803aa`. Its 13-line original n
 record contains zero tool calls. The first synthetic setup failed before CLI
 launch because the isolated tree had no service MCP manifest; using the existing
 production manifest completed the check. No original business page was used.
-Production publication and readback are not yet claimed.
+Formal quiet deployment completed: `5dc2a9e6 -> e6b2047c`. Production HEAD and
+runner contents match the tested commit; launchd PID 95511 and listener PID 95516
+returned healthy `/healthz`. Console Attention meta.total and expanded records
+both remain 11 (10 failed, one needs_human); failed History returns 12 records.
+Workers and queues were read back. System quality remains degraded by the existing
+source-scanner error; this deployment does not claim that separate failure fixed.
+Task status, execution marker digest, and original runtime evidence fields match
+the pre-deploy baseline; no unsubscribe success receipt exists.
 
 Historical task405078 and runtime363868 are not rewritten. No original unsubscribe
 entry is opened, no provider operation is repeated, and no execution marker is
