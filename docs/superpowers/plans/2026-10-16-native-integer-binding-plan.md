@@ -113,8 +113,8 @@ def test_invalid_integer_lease_candidate_preserves_outer_work(pair, integer, num
 ## Executable verification and integration boundary
 
 - [x] Root native source reproduction and complete test-process proposal preflight: new28 cases yield16fail/12pass before correction; after correction new28 plus314 adjacent cases yield342pass in17.25s. Ruff passes; own /tmp TemporaryDirectory automatically removed and absence verified.
-- [ ] Implement exact function/new28 cases; run the same focused342 matrix, Ruff and plain diff check. Canonical code equality and every other module AST must remain unchanged.
-- [ ] Add scoped behavior paragraphs to docs/architecture.md and docs/runtime-mechanism.md in the implementation commit; mark shared correction only, no State runtime activation.
+- [x] Implement exact function/new28 cases; run the same focused342 matrix, Ruff and plain diff check. Canonical code equality and every other module AST must remain unchanged.
+- [x] Add scoped behavior paragraphs to docs/architecture.md and docs/runtime-mechanism.md in the implementation commit; mark shared correction only, no State runtime activation.
 - [ ] Fresh independent SPEC, then fresh QUALITY.
 - [ ] After acceptance, remove the redundant db.execute("select ?", (generation,)) from the unselected dispatcher proposal only; source-native overflow now comes from shared codec before writer lock. Re-review the exact dispatcher proposal and regenerate its artifact hashes.
 - [ ] Continue complete atomic State caller/constructor/version/progress/publication closure and full copied-data/genuine-old-code/native-CLI evidence before selecting the release.

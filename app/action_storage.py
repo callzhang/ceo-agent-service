@@ -868,6 +868,11 @@ def _native_integer_primary_key(value, *, update=False):
 def _encoded_sqlite_value(value):
     if isinstance(value, (bytes, bytearray, memoryview)):
         return {"t": "blob", "v": bytes(value).hex()}
+    if isinstance(value, int):
+        # sqlite3 binds the underlying PyLong, ignoring subclass conversions.
+        if not -(2**63) <= int.__int__(value) < 2**63:
+            raise OverflowError("Python int too large to convert to SQLite INTEGER")
+        return value
     if isinstance(value, float) and math.isnan(value):
         # sqlite3 binds NaN as NULL before the source table applies NOT NULL.
         return None
@@ -875,9 +880,7 @@ def _encoded_sqlite_value(value):
         return {"t": "inf"}
     if value == float("-inf"):
         return {"t": "-inf"}
-    if type(value) is int and not -(2**63) <= value < 2**63:
-        raise OverflowError("Python int too large to convert to SQLite INTEGER")
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, float)):
         return value
     raise sqlite3.ProgrammingError("unsupported SQLite source value")
 
