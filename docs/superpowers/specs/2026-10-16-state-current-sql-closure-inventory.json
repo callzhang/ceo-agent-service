@@ -859,7 +859,7 @@
       "names": [
         "service_state"
       ],
-      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+      "classification": "native historical Store release helper; existing target20/52 prepare_database_schema_release branch bypasses it, preserve archived transitions"
     },
     {
       "file": "app/store_schema_release.py",
@@ -868,7 +868,7 @@
       "names": [
         "service_state"
       ],
-      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+      "classification": "native historical Store release helper; existing target20/52 prepare_database_schema_release branch bypasses it, preserve archived transitions"
     },
     {
       "file": "app/store_schema_release.py",
@@ -877,7 +877,7 @@
       "names": [
         "service_state"
       ],
-      "classification": "paired coordinator source/current role must be verified individually; preparation/source capture native, current verification and target rollback State; not categorically historical"
+      "classification": "existing target20/52 route already reaches State-aware constructor guard after reviewed constructor proposal; source19/51 remains paired preparation; no extra Store coordinator edit currently justified"
     },
     {
       "file": "app/reply_task_deferral.py",

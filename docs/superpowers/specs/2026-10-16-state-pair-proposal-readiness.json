@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-16",
+  "status": "accepted_unselected_paired_state_proposal",
+  "base_commit": "362b77ca88f88019504a916930d0ec2d9288d4e6",
+  "patches": {
+    "2026-10-16-state-pair-proposal.patch": "98244c0e6e899dba59aa9de4c5f3c94790d8caa083ed4f93e6c17c1fa5a9bde0",
+    "2026-10-16-state-pair-test-proposal.patch": "1f8e6b1446fc72b1ba1f4525eb4fdaac3c2eba849df4af567fba533058d65d9e"
+  },
+  "coordinator_base_sha256": "10119b5f9745b9c579d4cb9b40b5ae0dc794238b4ff071dca2ae05671eb2dd89",
+  "coordinator_candidate_sha256": "c72b22ab4471a39567607b6842b50bc480aa03e37b8a888bc248170f1aa94f10",
+  "test_candidate_sha256": "bc52a38e7caa6f36ec6f451da59070545b3dc64d039506cd611447301f6b142e",
+  "scope": {
+    "existing_functions_changed": 7,
+    "new_functions": 0,
+    "dataclass_fields_changed": 0,
+    "version_constants_changed": 0,
+    "pure_state_module_changed": false,
+    "cold_subprocess_function_changed": false
+  },
+  "root": {
+    "red": "4 expected failures in8.48s on original coordinator: missing State target and missing State metadata",
+    "green": "32 passed149.95s exact durable six-patch harness",
+    "earlier_corrected_prototype": "28 passed117.70s",
+    "discarded_result": "20 passed2 fixture transaction failures; corrected explicit BEGIN before State target tamper"
+  },
+  "spec": {
+    "status": "PASS",
+    "tests": "32 passed132.75s",
+    "source": "Exact seven-function AST changes; unrelated API/dataclass/constants/cold functions/native State module unchanged"
+  },
+  "quality": {
+    "status": "PASS",
+    "tests": "32 passed132.11s +10 confined adversarial cases51.41s",
+    "additional_evidence": [
+      "Fresh Python _paired_initializer using actual JSON stdin; final Store/Email openers stubbed only",
+      "BLOB original Store and both Email ledger timestamps preserved through cold apply and inverse",
+      "State source ROWID-9/0 and BLOB facts added after prepare survive cold apply/inverse/reforward",
+      "Current marker rewritten to original source marker rejected without database image changes",
+      "Atomic failures after first forward marker, genuine target verification and first inverse marker"
+    ]
+  },
+  "contracts": [
+    "Prepared inverse metadata contains schema declarations only, never State row snapshots",
+    "State forward runs after Configs and before shared Store/Email marker timestamp in existing transaction",
+    "Current markers require exact State, never retry native source",
+    "State inverse runs first; current facts and source identity/types restored before original native markers/ledger"
+  ],
+  "boundary": "No current runtime activation. Full constructor and consumer integration, progress binding, actual-copy/current-fact inverse, genuine current predecessor cold reads/writes, native Codex CLI with fake outbound, UI, final10 core+ledger and deployment remain open.",
+  "cleanup": "All owned root/SPEC/QUALITY TemporaryDirectories removed; frozen actual source untouched."
+}
