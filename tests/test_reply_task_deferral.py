@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from app.action_storage import insert_action
+from app.state_storage import insert_state
 
 from app.run_storage import AGENT_RUN_SQL, insert_run
 from app.task_storage import REPLY_TASK_SQL
@@ -215,8 +216,11 @@ def test_expired_dispatcher_lease_with_live_pid_is_still_owned(tmp_path):
 
     path, task_id, _backup = ready(tmp_path)
     with sqlite3.connect(path) as db:
-        db.execute("""insert into dispatcher_claim_leases(adapter_name,source_id,owner,owner_pid,lease_expires_at)
-            values ('reply',?,?,?,'2026-10-05 11:00:00')""", (str(task_id), 'worker', os.getpid()))
+        db.execute("begin")
+        insert_state(db, "dispatcher_claim_leases", {
+            "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
+            "owner_pid": os.getpid(), "lease_expires_at": "2026-10-05 11:00:00",
+        })
     assert 'active_dispatcher_owner' in preview_deferral(path, task_id, now=NOW)['blockers']
 
 
@@ -294,7 +298,10 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
 @pytest.mark.parametrize(('statement', 'values'), [
     ("update runs set lease_owner='worker', lease_expires_at='2026-10-05 13:00:00' where record_type='agent_runs'", ()),
     ("update runs set lease_owner='worker', lease_expires_at='2026-10-05T13:00:00Z' where record_type='agent_runs'", ()),
-    ("insert into dispatcher_claim_leases(adapter_name,source_id,owner,lease_expires_at) values ('reply',?,'worker','2026-10-05 13:00:00')", ('TASK',)),
+    (lambda db, values: (db.execute("begin"), insert_state(db, "dispatcher_claim_leases", {
+        "adapter_name": "reply", "source_id": values[0], "owner": "worker",
+        "lease_expires_at": "2026-10-05 13:00:00",
+    })), ('TASK',)),
     (lambda db, values=(): insert_run(
         db, 'agent_runtime_attempts', {
             'parent_id': values[0],
@@ -382,16 +389,23 @@ def test_backup_must_be_separate_intact_and_exact(tmp_path):
     "update tasks set input_version=input_version+1",
     "update tasks set available_at='2026-10-05 15:00:00'",
     "update runs set structured_error_json='changed' where record_type='agent_runs'",
-    "insert into dispatcher_claim_leases(adapter_name,source_id,owner,lease_expires_at) values ('reply','TASK','worker','2026-10-05 13:00:00')",
+    lambda db, task_id: insert_state(db, "dispatcher_claim_leases", {
+        "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
+        "lease_expires_at": "2026-10-05 13:00:00",
+    }),
 ])
 def test_resume_refuses_intervening_change(tmp_path, change):
     path, task_id, backup = ready(tmp_path)
     receipt = apply_ready(path, task_id, backup)
-    statement = change.replace('TASK', str(task_id))
     with sqlite3.connect(path) as db:
-        db.execute(statement + (" where record_type='reply_tasks' and id=?" if statement.startswith('update tasks') else
-                                (' and task_id=?' if statement.startswith("update runs ") else '')),
-                   ((task_id,) if statement.startswith('update ') else ()))
+        db.execute("begin")
+        if callable(change):
+            change(db, task_id)
+        else:
+            statement = change.replace('TASK', str(task_id))
+            db.execute(statement + (" where record_type='reply_tasks' and id=?" if statement.startswith('update tasks') else
+                                    (' and task_id=?' if statement.startswith("update runs ") else '')),
+                       ((task_id,) if statement.startswith('update ') else ()))
     with pytest.raises(ValueError):
         resume_deferral(path, task_id, receipt_id=receipt['id'], request_id='resume-one', now=NOW)
     with sqlite3.connect(path) as db:
@@ -404,9 +418,10 @@ def test_dispatcher_claim_committed_before_deferral_lock_wins(tmp_path):
         claiming.execute('begin immediate')
         with ThreadPoolExecutor(max_workers=1) as pool:
             deferred = pool.submit(apply_ready, path, task_id, backup)
-            claiming.execute("""insert into dispatcher_claim_leases
-                (adapter_name,source_id,owner,lease_expires_at)
-                values ('reply',?,'worker','2026-10-05 13:00:00')""", (str(task_id),))
+            insert_state(claiming, "dispatcher_claim_leases", {
+                "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
+                "lease_expires_at": "2026-10-05 13:00:00",
+            })
             claiming.commit()
             with pytest.raises(ValueError, match='deferral blocked'):
                 deferred.result(timeout=5)

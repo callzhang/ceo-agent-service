@@ -71,6 +71,9 @@ from app.email_category_config import (
 from app.action_email_storage import finite_target_external_sql
 from app.action_email_schema_release import require_current_email_pair
 from app.provider_state_schema_release import provider_state_schema_is_current
+from app.state_definitions import STATE_FIELDS, state_projection
+from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
+from app.state_schema_release import state_schema_is_current
 from app.provider_state_definitions import FRESH_OBSERVATION_FIELDS
 from app.provider_state_storage import (
     mark_authoritative_missing, mark_inactive_accounts, mark_unavailable_folder,
@@ -6963,6 +6966,8 @@ class EmailStore:
     @classmethod
     def _validate_schema_shape(cls, db: sqlite3.Connection) -> None:
         try:
+            if not state_schema_is_current(db):
+                raise EmailPersistenceCorruption("required State declaration is missing or malformed")
             if not provider_state_schema_is_current(db):
                 raise EmailPersistenceCorruption("required provider-state declaration is missing or malformed")
             table_rows = {
@@ -6975,7 +6980,7 @@ class EmailStore:
             # Historical maps remain the source contract. Current validation
             # retains the original nonaction coverage and validates actions
             # against the exact accepted finite manifest separately.
-            retired_config_tables = {*CONFIG_FIELDS, "email_training_snapshot_observations"}
+            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, "email_training_snapshot_observations"}
             required_tables = {
                 table: columns
                 for table, columns in _REQUIRED_TABLE_COLUMNS.items()
@@ -8713,10 +8718,7 @@ class EmailStore:
         ):
             raise ValueError("cursor_last_seen_uid must be a non-negative integer")
         current = db.execute(
-            """
-            select uidvalidity, last_seen_uid from email_scan_cursors
-            where account_id=? and folder=?
-            """,
+            '\n            select uidvalidity, last_seen_uid from (' + state_projection('email_scan_cursors') + ')\n            where account_id=? and folder=?\n            ',
             (account_id, folder),
         ).fetchone()
         if current is None:
@@ -8724,22 +8726,11 @@ class EmailStore:
                 raise EmailCursorConflict(
                     f"cursor generation expected {expected_uidvalidity}, but no cursor exists"
                 )
-            db.execute(
-                """
-                insert into email_scan_cursors (
-                    account_id, folder, uidvalidity, last_seen_uid,
-                    last_success_at, last_error
-                ) values (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    account_id,
-                    folder,
-                    uidvalidity,
-                    last_seen_uid,
-                    last_success_at,
-                    last_error,
-                ),
-            )
+            insert_state(db, "email_scan_cursors", {
+                    "account_id": account_id, "folder": folder,
+                    "uidvalidity": uidvalidity, "last_seen_uid": last_seen_uid,
+                    "last_success_at": last_success_at, "last_error": last_error,
+                })
             return
         current_uidvalidity = int(current["uidvalidity"])
         if (
@@ -8751,21 +8742,15 @@ class EmailStore:
                 f"found {current_uidvalidity}"
             )
         if current_uidvalidity == uidvalidity:
-            db.execute(
-                """
-                update email_scan_cursors
-                set last_seen_uid=max(last_seen_uid, ?),
-                    last_success_at=?, last_error=?
-                where account_id=? and folder=? and uidvalidity=?
-                """,
-                (
-                    last_seen_uid,
-                    last_success_at,
-                    last_error,
-                    account_id,
-                    folder,
-                    uidvalidity,
-                ),
+            update_state_rows(
+                db, "email_scan_cursors",
+                {"last_success_at": last_success_at, "last_error": last_error},
+                update_json={"last_seen_uid":
+                    "case when state.last_seen_uid>=? then " +
+                    state_json_field("last_seen_uid", "state") + " else json_quote(?) end"},
+                update_parameters=(last_seen_uid, last_seen_uid),
+                where_sql="account_id=? and folder=? and uidvalidity=?",
+                parameters=(account_id, folder, uidvalidity),
             )
             return
         if expected_uidvalidity is None:
@@ -8773,22 +8758,13 @@ class EmailStore:
                 "cursor generation change requires expected_cursor_uidvalidity; "
                 f"current generation is {current_uidvalidity}"
             )
-        updated = db.execute(
-            """
-            update email_scan_cursors
-            set uidvalidity=?, last_seen_uid=?, last_success_at=?, last_error=?
-            where account_id=? and folder=? and uidvalidity=?
-            """,
-            (
-                uidvalidity,
-                last_seen_uid,
-                last_success_at,
-                last_error,
-                account_id,
-                folder,
-                expected_uidvalidity,
-            ),
-        ).rowcount
+        updated = update_state_rows(
+            db, "email_scan_cursors",
+            {"uidvalidity": uidvalidity, "last_seen_uid": last_seen_uid,
+             "last_success_at": last_success_at, "last_error": last_error},
+            where_sql="account_id=? and folder=? and uidvalidity=?",
+            parameters=(account_id, folder, expected_uidvalidity),
+        )
         if updated != 1:
             raise EmailCursorConflict(
                 f"cursor generation changed while replacing {expected_uidvalidity}"
@@ -8980,10 +8956,7 @@ class EmailStore:
                 expected_uidvalidity=expected_cursor_uidvalidity,
             )
             row = db.execute(
-                """
-                select * from email_scan_cursors
-                where account_id=? and folder=?
-                """,
+                '\n                select * from (' + state_projection('email_scan_cursors') + ')\n                where account_id=? and folder=?\n                ',
                 (account_id, folder),
             ).fetchone()
         assert row is not None
@@ -9066,8 +9039,7 @@ class EmailStore:
     ) -> dict[str, Any]:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_historical_traversals "
-                "where account_id=? and folder=? and model_id=?",
+                'select * from (' + state_projection('email_historical_traversals') + ') where account_id=? and folder=? and model_id=?',
                 (account_id, folder, model_id),
             ).fetchone()
         return {
@@ -9126,20 +9098,20 @@ class EmailStore:
                         now,
                     ),
                 )
-            db.execute(
-                """
-                insert into email_historical_traversals (
-                    account_id, folder, model_id, uidvalidity, last_seen_uid, updated_at
-                ) values (?, ?, ?, ?, ?, ?)
-                on conflict(account_id, folder, model_id) do update set
-                    uidvalidity=excluded.uidvalidity,
-                    last_seen_uid=case
-                        when email_historical_traversals.uidvalidity=excluded.uidvalidity
-                        then max(email_historical_traversals.last_seen_uid, excluded.last_seen_uid)
-                        else excluded.last_seen_uid end,
-                    updated_at=excluded.updated_at
-                """,
-                (account_id, folder, model_id, uidvalidity, last_seen_uid, now),
+            upsert_state(
+                db, "email_historical_traversals",
+                {"account_id": account_id, "folder": folder, "model_id": model_id,
+                 "uidvalidity": uidvalidity, "last_seen_uid": last_seen_uid,
+                 "updated_at": now},
+                {
+                    "uidvalidity": state_json_field("uidvalidity"),
+                    "last_seen_uid":
+                        "case when state.uidvalidity=excluded.uidvalidity and "
+                        "state.last_seen_uid>=excluded.last_seen_uid then " +
+                        state_json_field("last_seen_uid", "state") +
+                        " else " + state_json_field("last_seen_uid") + " end",
+                    "updated_at": state_json_field("updated_at"),
+                },
             )
 
     def list_historical_candidates(
@@ -9371,7 +9343,7 @@ class EmailStore:
     def get_scan_cursor(self, account_id: str, folder: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_scan_cursors where account_id=? and folder=?",
+                'select * from (' + state_projection('email_scan_cursors') + ') where account_id=? and folder=?',
                 (account_id, folder),
             ).fetchone()
         return None if row is None else dict(row)
@@ -9401,7 +9373,7 @@ class EmailStore:
                 expected_uidvalidity=expected_uidvalidity,
             )
             row = db.execute(
-                "select * from email_scan_cursors where account_id=? and folder=?",
+                'select * from (' + state_projection('email_scan_cursors') + ') where account_id=? and folder=?',
                 (account_id, folder),
             ).fetchone()
         assert row is not None
@@ -14757,8 +14729,7 @@ class EmailStore:
         try:
             with self._connect() as db:
                 rows = db.execute(
-                    "select value from service_state "
-                    "where key like 'email_model_scan_progress:%'"
+                    'select value from (' + state_projection('service_state') + ") where key like 'email_model_scan_progress:%'"
                 ).fetchall()
         except sqlite3.Error:
             return None
@@ -15165,7 +15136,7 @@ class EmailStore:
                     select cursors.account_id, cursors.folder,
                            cursors.last_seen_uid, cursors.last_success_at,
                            cursors.last_error, accounts.display_name
-                    from email_scan_cursors as cursors
+                    from ({state_projection('email_scan_cursors')}) as cursors
                     left join ({config_projection('email_accounts')}) as accounts
                       on accounts.account_id=cursors.account_id
                     order by cursors.account_id, cursors.folder
@@ -16883,7 +16854,7 @@ class EmailStore:
         if task["status"] != "failed" or task["locked_at"]:
             raise EmailActionPlanConflict("unsubscribe cancellation task is active or terminal")
         if db.execute(
-            "select 1 from service_state where key=?",
+            'select 1 from (' + state_projection('service_state') + ') where key=?',
             (f"email_unsubscribe_execution_pending:v1:{expected_action_identity}",),
         ).fetchone():
             raise EmailActionPlanConflict("unsubscribe execution requires reconciliation")
@@ -16902,7 +16873,7 @@ class EmailStore:
         if source is None:
             raise EmailActionPlanConflict("unsubscribe cancellation source changed")
         if (db.execute(f'select 1 from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?', (task_id,)).fetchone()
-                or db.execute("select 1 from dispatcher_claim_leases where adapter_name in ('reply','scheduled_execution') and source_id=? and owner<>'' and coalesce(terminal_at,'')=''", (str(task_id),)).fetchone()
+                or db.execute('select 1 from (' + state_projection('dispatcher_claim_leases') + ") where adapter_name in ('reply','scheduled_execution') and source_id=? and owner<>'' and coalesce(terminal_at,'')=''", (str(task_id),)).fetchone()
                 or db.execute(f"select 1 from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?", (expected_action_identity,)).fetchone()
                 or db.execute(f"select 1 from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) where action_identity=?", (expected_action_identity,)).fetchone()
                 or db.execute(f"select 1 from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?", (expected_action_identity,)).fetchone()):

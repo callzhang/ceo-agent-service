@@ -11,6 +11,7 @@ import sys
 import pytest
 
 from app.email_store import EmailStore, EmailPersistenceCorruption
+from app.state_schema_release import capture_state_source, migrate_state_schema
 from app.configs_schema_transfer import SOURCE_TABLES, capture_config_declarations, copy_config_rows
 from app.configs_schema_release import _rebuild_actions, configs_schema_is_current
 from app.configs_run_schema import map_runs_to_configs
@@ -85,6 +86,8 @@ def _current_target(pair):
         db.execute(
             "insert into email_schema_migrations(version,applied_at) values(52,'synthetic-current-fixture')"
         )
+        state_metadata = capture_state_source(db)
+        migrate_state_schema(db, state_metadata)
         db.commit()
     return pair
 

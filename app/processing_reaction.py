@@ -1,5 +1,6 @@
 """Service-owned temporary DingTalk progress reactions."""
 from __future__ import annotations
+from app.state_definitions import state_projection
 
 import hashlib
 import json
@@ -82,7 +83,7 @@ class ProcessingReaction:
                                                             **state['template'])
                 self._require_success(result)
                 with self.store._connect() as db:
-                    db.execute('delete from service_state where key=?', (key,))
+                    db.execute("delete from state where record_type='service_state' and key=?", (key,))
         except Exception:
             logger.warning('Could not remove processing reaction for %s', message_id, exc_info=True)
 
@@ -91,7 +92,7 @@ class ProcessingReaction:
         try:
             with _LOCK:
                 with self.store._connect() as db:
-                    rows = db.execute('select value from service_state where key like ?',
+                    rows = db.execute('select value from (' + state_projection('service_state') + ') where key like ?',
                                       (SOURCE_PREFIX + '%',)).fetchall()
                 for row in rows:
                     state = json.loads(row['value'])

@@ -1,4 +1,6 @@
 """Explicitly retire one obsolete task-class question; never decide its business."""
+from app.state_definitions import state_projection
+from app.state_storage import insert_state
 
 from app.task_storage import REPLY_TASK_SQL
 import argparse
@@ -91,7 +93,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
         raise ValueError("technical failures cannot be retired as rule questions")
     digest = hashlib.sha256(native_result.encode()).hexdigest()
     key = f"rule_question_retirement:{attempt_id}"
-    saved = db.execute("select value from service_state where key=?", (key,)).fetchone()
+    saved = db.execute('select value from (' + state_projection('service_state') + ') where key=?', (key,)).fetchone()
     if row["resolved_at"]:
         if saved is None:
             raise ValueError("attempt already resolved without this retirement receipt")
@@ -113,8 +115,8 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
         )
         update_action(db, "reply_attempts", attempt_id,
                       {"resolved_at": receipt["resolved_at"], "resolution": resolution})
-        db.execute("insert into service_state(key,value) values (?,?)",
-                   (key, json.dumps(receipt, ensure_ascii=False, sort_keys=True)))
+        insert_state(db, "service_state",
+                     {"key": key, "value": json.dumps(receipt, ensure_ascii=False, sort_keys=True)})
     return receipt
 
 

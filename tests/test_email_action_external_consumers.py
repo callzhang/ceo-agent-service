@@ -108,6 +108,7 @@ def test_complete_status_and_maintenance_paths_accept_current_target(tmp_path):
 
 
 def test_generic_publication_readers_accept_store_only_target(tmp_path):
+    from app.action_postfix_schema_release import publication_postfix_sources
     from app.action_delivery_schema_release import publication_delivery_sources
     from app.action_receipt_schema_release import publication_receipt_sources
     from app.action_schema_release import publication_candidate_source
@@ -121,7 +122,7 @@ def test_generic_publication_readers_accept_store_only_target(tmp_path):
         assert db.execute(f"select count(*) from ({publication_meeting_sources(db)[0]})").fetchone() == (0,)
         assert db.execute(f"select count(*) from ({publication_candidate_source(db)})").fetchone() == (0,)
         assert db.execute(f"select count(*) from ({publication_scheduled_source(db)})").fetchone() == (0,)
-        for sources in (publication_receipt_sources(db), publication_delivery_sources(db)):
+        for sources in (publication_receipt_sources(db), publication_delivery_sources(db), publication_postfix_sources(db)):
             assert all(db.execute(f"select count(*) from ({sql})").fetchone() == (0,)
                        for sql in sources.values())
 

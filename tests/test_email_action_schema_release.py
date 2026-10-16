@@ -23,6 +23,10 @@ from tests.test_provider_state_source import declarations as provider_declaratio
 from app.provider_state_schema_release import capture_provider_state_source
 from app.provider_state_storage import insert_observation, insert_folder_generation
 from app.provider_state_schema_release import provider_state_schema_is_current
+from app.state_schema_release import (SOURCE_TABLES as STATE_SOURCE_TABLES,
+    capture_state_source, state_schema_is_current)
+from app.state_definitions import state_projection
+from app.state_storage import insert_state, update_state_rows
 from app.run_storage import create_run_schema
 from app.configs_schema_transfer import SOURCE_TABLES as CONFIG_SOURCE_TABLES
 from tests.configs_source_fixtures import capture as config_capture
@@ -83,7 +87,17 @@ def source(tmp_path, request):
                 if index["sql"] is not None:
                     db.execute(index["sql"])
         create_current_email_migration_ledger(db)
-        db.execute("create table service_state(key text primary key,value text not null,updated_at text not null)")
+        state_tables = config_capture()[config_variant]["tables"]
+        for kind in STATE_SOURCE_TABLES:
+            db.execute(f'drop table if exists "{kind}"')
+        for kind in STATE_SOURCE_TABLES:
+            db.execute(state_tables[kind]["sql"])
+        for kind in STATE_SOURCE_TABLES:
+            for index in reversed(state_tables[kind]["indexes"]):
+                if index["sql"] is not None:
+                    db.execute(index["sql"])
+            for trigger in state_tables[kind]["triggers"]:
+                db.execute(trigger["sql"])
         db.execute("insert into service_state values('store_schema_version',?,?)", ORIGINAL_STORE)
         db.executemany("insert into email_schema_migrations values(?,?)", ORIGINAL_LEDGER)
         db.execute("create table unrelated_parent(id integer primary key)")
@@ -159,8 +173,10 @@ def _prepare(path):
 
 
 def _markers(db):
+    current = db.execute("select 1 from main.sqlite_schema where name='state' collate nocase").fetchone() is not None
+    source = state_projection("service_state") if current else "select * from main.service_state"
     return (
-        db.execute("select value,updated_at from service_state where key='store_schema_version'").fetchone(),
+        db.execute(f"select value,updated_at from ({source}) where key='store_schema_version'").fetchone(),
         tuple(db.execute("select version,applied_at from email_schema_migrations order by version")),
     )
 
@@ -184,8 +200,11 @@ def test_paired_publication_contains_email_and_business(source_with_business):
     release.apply()
     with closing(sqlite3.connect(source_with_business)) as db:
         assert db.execute(
-            "select value from service_state where key='store_schema_version'"
+            f"select value from ({state_projection('service_state')}) where key='store_schema_version'"
         ).fetchone() == (TARGET_STORE,)
+        assert state_schema_is_current(db)
+        assert not any(db.execute("select 1 from main.sqlite_schema where name=?", (kind,)).fetchone()
+                       for kind in STATE_SOURCE_TABLES)
         assert db.execute(
             "select max(version) from email_schema_migrations"
         ).fetchone() == (TARGET_EMAIL,)
@@ -464,6 +483,7 @@ def test_prepare_is_readonly_and_captures_exact_pair_schema_aliases_and_ledger(s
         expected["business"] = capture_business_source(db)
         expected["provider"] = capture_provider_state_source(db)
         expected["configs"] = release_module._project_config_source(db, expected["action_variant"])
+        expected["state"] = capture_state_source(db)
         assert release.source_schema == expected
     assert release.source_fk == (("unrelated_child", 1, "unrelated_parent", 0),)
     assert _fingerprint(source) == before
@@ -652,7 +672,7 @@ def test_publication_failure_rolls_back_ddl_markers_and_all_source_facts(source,
         class InterruptedConnection(sqlite3.Connection):
             def execute(self, sql, parameters=()):
                 if stage == "after_first_marker" and sql.lower().startswith("insert into main.email_schema_migrations"):
-                    assert self.execute("select value from service_state where key='store_schema_version'").fetchone() == (TARGET_STORE,)
+                    assert self.execute(f"select value from ({state_projection('service_state')}) where key='store_schema_version'").fetchone() == (TARGET_STORE,)
                     fail()
                 return super().execute(sql, parameters)
 
@@ -680,7 +700,9 @@ def test_unsupported_current_inverse_preserves_entire_database(source, damage):
     release.apply()
     with closing(sqlite3.connect(source)) as db:
         if damage == "store":
-            db.execute("update service_state set value='unverified' where key='store_schema_version'")
+            db.execute("begin")
+            update_state_rows(db, "service_state", {"value": "unverified"},
+                              where_sql="key='store_schema_version'")
         elif damage == "ledger":
             db.execute("update email_schema_migrations set applied_at='changed' where version=1")
         elif damage == "action_declaration":
@@ -952,3 +974,114 @@ def test_inverse_failure_after_first_source_marker_preserves_target(source, monk
     with pytest.raises(RuntimeError, match="injected inverse marker"):
         release.rollback()
     assert _fingerprint(source) == before
+
+
+def test_state_forward_failure_restores_complete_source(monkeypatch, source):
+    release = _prepare(source)
+    before = _database_image(source)
+    convert = release_module.migrate_state_schema
+
+    def fail_after_state(db, metadata):
+        convert(db, metadata)
+        raise RuntimeError("State forward injection")
+
+    monkeypatch.setattr(release_module, "migrate_state_schema", fail_after_state)
+    with pytest.raises(RuntimeError, match="State forward injection"):
+        release.apply()
+    assert _database_image(source) == before
+
+
+def test_state_inverse_failure_restores_complete_target(monkeypatch, source):
+    release = _prepare(source)
+    release.apply()
+    before = _database_image(source)
+    inverse = release_module.restore_state_schema
+
+    def fail_after_state(db, metadata):
+        inverse(db, metadata)
+        raise RuntimeError("State inverse injection")
+
+    monkeypatch.setattr(release_module, "restore_state_schema", fail_after_state)
+    with pytest.raises(RuntimeError, match="State inverse injection"):
+        release.rollback()
+    assert _database_image(source) == before
+
+
+def test_current_state_facts_survive_inverse_old_write_and_reforward(source):
+    release = _prepare(source)
+    release.apply()
+    with closing(sqlite3.connect(source)) as db:
+        db.execute("begin immediate")
+        insert_state(db, "seen_messages", {
+            "message_id": "current", "conversation_id": "c", "seen_at": b"\x00\xffcurrent",
+        }, source_rowid=0)
+        insert_state(db, "service_state", {
+            "key": "current-fact", "value": b"\x00\xffvalue", "updated_at": "current",
+        }, source_rowid=-7)
+        db.commit()
+    release.rollback()
+    with closing(sqlite3.connect(source)) as db:
+        assert db.execute("select rowid,message_id,seen_at,typeof(seen_at) "
+                          "from seen_messages").fetchall() == [(0, "current", b"\x00\xffcurrent", "blob")]
+        assert db.execute("select rowid,key,value,typeof(value) from service_state "
+                          "where key='current-fact'").fetchall() == [(-7, "current-fact", b"\x00\xffvalue", "blob")]
+        db.execute("insert into seen_messages(rowid,message_id,conversation_id,seen_at) "
+                   "values(-8,'old-write','old','old-time')")
+        db.execute("insert into service_state(rowid,key,value,updated_at) "
+                   "values(0,'old-write','old-value','old-time')")
+        db.commit()
+    release.apply()
+    with closing(sqlite3.connect(source)) as db:
+        assert state_schema_is_current(db)
+        assert db.execute(f"select rowid,message_id,seen_at,typeof(seen_at) from "
+                          f"({state_projection('seen_messages', include_rowid=True)}) order by rowid").fetchall() == [
+            (-8, "old-write", "old-time", "text"), (0, "current", b"\x00\xffcurrent", "blob")]
+        assert db.execute(f"select rowid,key,value,typeof(value) from "
+                          f"({state_projection('service_state', include_rowid=True)}) "
+                          "where key in ('current-fact','old-write') order by rowid").fetchall() == [
+            (-7, "current-fact", b"\x00\xffvalue", "blob"), (0, "old-write", "old-value", "text")]
+
+
+def test_state_marker_blob_timestamp_and_pipe_payload_round_trip(monkeypatch, source):
+    stamp = b"\x00\xfforiginal-timestamp"
+    with closing(sqlite3.connect(source)) as db:
+        db.execute("update service_state set updated_at=? where key='store_schema_version'", (stamp,))
+        db.commit()
+    release = _prepare(source)
+    payloads = []
+
+    def capture(arguments, **options):
+        payloads.append(json.loads(options["input"]))
+
+    monkeypatch.setattr(release_module.subprocess, "run", capture)
+    release_module._migrate_pair(release)
+    assert payloads[0]["original_version"][1] == {"t": "blob", "v": stamp.hex()}
+    assert payloads[0]["source_schema"]["state"] == release.source_schema["state"]
+    release.apply()
+    release.rollback()
+    with closing(sqlite3.connect(source)) as db:
+        assert db.execute("select value,updated_at,typeof(updated_at) from service_state "
+                          "where key='store_schema_version'").fetchone() == (
+            ORIGINAL_STORE[0], stamp, "blob")
+    release.apply()
+    release.verify_loaded()
+
+
+@pytest.mark.parametrize("current", (False, True))
+def test_paired_state_declaration_drift_refuses_without_mutation(source, current):
+    release = _prepare(source)
+    if current:
+        release.apply()
+    with closing(sqlite3.connect(source)) as db:
+        if current:
+            db.execute("drop index idx_state_dispatcher_expiry")
+        else:
+            db.execute("create index unknown_seen_state_source on seen_messages(seen_at)")
+        db.commit()
+    before = _database_image(source)
+    with pytest.raises(ValueError):
+        if current:
+            release.rollback()
+        else:
+            release.apply()
+    assert _database_image(source) == before

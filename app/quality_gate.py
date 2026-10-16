@@ -8,6 +8,7 @@ table as a failed check rather than silently dropping a queue from coverage.
 """
 
 from __future__ import annotations
+from app.state_definitions import state_projection
 from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 
 import json
@@ -134,7 +135,7 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks"}
+        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
@@ -866,7 +867,7 @@ def _check_external_delivery_queues(
         ),
     ):
         source_sql = (
-            f"({reply_action_projection('memory_write_events', validated_reply_variant(db, include_email=True))})"
+            f"({reply_action_projection('memory_write_events', validated_reply_variant(db, include_email=True, include_skill_config_receipts=True))})"
             if source == "memory_write_events" else source
         )
         if source == "work_todo_dingtalk_links":
@@ -963,27 +964,21 @@ def _check_scan_health(
     attention: list[QualityIssue],
 ) -> None:
     _add(violations, source="daily_scan_state", code="last_error", count=_count(
-        db, "select count(*) from daily_scan_state where trim(last_error) != ''"
+        db, 'select count(*) from (' + state_projection('daily_scan_state') + ") where trim(last_error) != ''"
     ), severity="error", detail="source scanner reports an unresolved error")
     _add(attention, source="daily_scan_state", code="pagination_deferred", count=_count(
         db,
-        """select count(*) from daily_scan_state
-           where scanner_name='ai_minutes'
-             and coalesce(json_extract(cursor_json, '$.pagination_deferred'), 0) = 1""",
+        'select count(*) from (' + state_projection('daily_scan_state') + ")\n           where scanner_name='ai_minutes'\n             and coalesce(json_extract(cursor_json, '$.pagination_deferred'), 0) = 1",
     ), severity="info", detail="AI minutes first page completed; a later page will retry")
     _add(attention, source="daily_scan_state", code="oa_detail_read", count=_count(
         db,
-        """select count(*) from daily_scan_state
-           where scanner_name='oa_pending'
-             and json_array_length(
-                 coalesce(json_extract(cursor_json, '$.read_failure_process_instance_ids'), '[]')
-             ) > 0""",
+        'select count(*) from (' + state_projection('daily_scan_state') + ")\n           where scanner_name='oa_pending'\n             and json_array_length(\n                 coalesce(json_extract(cursor_json, '$.read_failure_process_instance_ids'), '[]')\n             ) > 0",
     ), severity="info", detail="some OA approval details need a later read")
     # A disabled reader only blocks quality when it has work to process. This
     # avoids treating an intentionally unconfigured channel as an outage.
     blocked_reader = _count(
         db,
-        "select count(*) from wechat_read_state where lower(capability_status) not in ('ready','')",
+        'select count(*) from (' + state_projection('wechat_read_state') + ") where lower(capability_status) not in ('ready','')",
     )
     active_wechat = _count(
         db, f"select count(*) from ({REPLY_TASK_SQL}) where lower(channel)='wechat' and lower(status) in ('pending','processing')"
@@ -1053,7 +1048,7 @@ def _check_scheduler_health(
     violations: list[QualityIssue],
 ) -> None:
     row = db.execute(
-        "select value from service_state where key=?",
+        'select value from (' + state_projection('service_state') + ') where key=?',
         (f"{SERVICE_HEALTH_STATE_PREFIX}agent-cron-scheduler",),
     ).fetchone()
     if row is None:
@@ -1103,7 +1098,7 @@ def _check_runtime_route_pauses(
     count = _count(
         db,
         f"""select count(*)
-           from runtime_route_pauses paused
+           from ({state_projection('runtime_route_pauses')}) paused
            where datetime(paused.retry_at) > datetime(?)
              and exists (
                 select 1
@@ -1129,7 +1124,7 @@ def _has_active_codex_capacity_pause(
     now: datetime,
 ) -> bool:
     row = db.execute(
-        "select value from service_state where key='codex_capacity_pause'"
+        'select value from (' + state_projection('service_state') + ") where key='codex_capacity_pause'"
     ).fetchone()
     if row is None:
         return False

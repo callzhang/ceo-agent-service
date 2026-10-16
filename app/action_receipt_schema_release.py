@@ -1,4 +1,5 @@
 """Paired Store15 -> Store16 publication of independent action receipts."""
+from app.state_publication_sources import publication_store_version
 
 from contextlib import closing
 from dataclasses import dataclass
@@ -27,8 +28,7 @@ VERSION_KEY = "store_schema_version"
 
 def publication_receipt_sources(db):
     """The exact previous/target declarations used only in the deploy window."""
-    marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
-    version = marker[0] if marker else None
+    version = publication_store_version(db, current_version="2026-10-14.1")
     if version == SOURCE_ACTION_RECEIPT_VERSION:
         capture_action_receipt_schema(db)
         return {kind: f"select * from {kind}" for kind in RECEIPT_ACTION_TYPES}
@@ -40,7 +40,7 @@ def publication_receipt_sources(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in RECEIPT_ACTION_TYPES}
     if version == "2026-10-13.5" and reply_schema_is_current(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in RECEIPT_ACTION_TYPES}
-    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True):
+    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True):
         return {kind: ACTION_PROJECTIONS[kind] for kind in RECEIPT_ACTION_TYPES}
     raise ValueError("unknown or mixed receipt publication source schema")
 

@@ -424,10 +424,11 @@ def create_current_email_non_action_schema(db: sqlite3.Connection) -> None:
 def create_current_email_runtime_schema(db: sqlite3.Connection) -> None:
     """Install Email-owned retained tables for a fresh current config target."""
     from app.configs_definitions import CONFIG_FIELDS
+    from app.state_definitions import STATE_FIELDS
     from app.email_store import _REQUIRED_TRIGGER_SQL, _REQUIRED_TRIGGER_TABLES
     from app.provider_state_storage import create_provider_state_schema
 
-    retired = {*CONFIG_FIELDS, "email_training_snapshot_observations"}
+    retired = {*CONFIG_FIELDS, *STATE_FIELDS, "email_training_snapshot_observations"}
     create_current_email_classifications(db)
     for name, sql in _CURRENT_TABLE_SQL:
         if name not in retired:

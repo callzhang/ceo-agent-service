@@ -1,17 +1,15 @@
 # CEO Agent Service Architecture
 
-The unselected `state_schema_release` module captures exact actual or fresh
-declarations for sixteen native State families, then migrates fifteen retained
-kinds into one `state` table under a caller-owned FK-off transaction. It checks
-the four unused conversation columns still hold their observed defaults and
-the unused corpus table is empty before DDL. Forward verifies source identities,
-values and SQLite storage classes; inverse reconstructs original declarations
-from metadata and restores current State facts after intervening writes. The
-caller owns rollback; the module never commits or stores source row bodies.
-Current constructors, callers, version markers and publication do not select
-this release. The last copied candidate still has 82 ordinary tables; the
-expected 67-table integrated State cutover and final ten-plus-ledger goal remain
-open.
+The paired State release captures exact actual/fresh declarations for sixteen
+native State families and migrates fifteen retained kinds into one state table
+inside the caller-owned FK-off transaction. Source eligibility checks precede
+DDL; forward verifies identities, values and SQLite storage classes. Inverse
+reconstructs original declarations from metadata and restores current facts,
+including intervening writes. Helpers never commit or store source row bodies.
+Store20/Email52 constructors, runtime callers, marker readers and the paired
+coordinator now select State in this branch. Production deployment and the
+remaining consolidation to ten core tables plus the Email ledger require their
+separate acceptance; see the database redesign program and validation receipts.
 
 The `configs_schema_release` coordinator composes the reviewed
 eighteen-family row transfer with the retained-runs FK translator. In one
@@ -2463,29 +2461,28 @@ Claude/Friday single-message bridges serialize the complete output schema as com
 Existing current-Project citation validation reports both the expected immutable WorkItem source_ref and the received reference when they differ. The existing repair path receives those known values. Validation conditions, result contract, repair budget, routing and permissions remain unchanged; no additional prompt rule is added. Verification is documented in docs/native-input-evidence-release-validation.md.
 
 
-### Unselected Email13 paired transaction preparation
+### Paired Store/Email schema release
 
-`app/action_email_schema_release.py` now provides a pure, unselected paired
-transaction protocol for the exact Store19 (`2026-10-13.5`)/Email51 source.
-Preparation captures both the Store value/timestamp and the complete Email
-version/timestamp ledger, thirteen-family and old sixteen-action declarations,
-native allocator metadata, and the existing FK findings in one read snapshot.
-The caller must explicitly supply a target pair; no future version is allocated
-and no active selector or constructor calls this module.
+The selected candidate coordinator in app/action_email_schema_release.py
+prepares the exact Store19/Email51 source and publishes Store20/Email52.
+Preparation records the original Store marker and complete Email ledger,
+native declarations/allocators and existing FK findings in one read snapshot.
+It carries Email, Business, Provider, Configs/Skill/mapped-runs and State schema
+metadata without a business-row snapshot.
 
-Its local `publish()` converts current source facts and writes both supplied
-markers in the same transaction. Readback checks the complete twenty-nine-type
-actions declaration, absence of the retired thirteen tables, all thirteen
-translated external triggers, both markers, ledger and unchanged FK baseline.
-Rollback reconstructs the original declarations from current target facts and
-allocator waters, restoring the exact original Store timestamp and complete
-Email ledger. It never restores an old database or a backup of business rows.
-Exceptions before commit roll back DDL, both markers and business writes as one
-transaction. This is Task4A preparation only: current constructors, validators,
-DAO, Store19/Email51 markers and default sixteen-action plus thirteen-table
-layout remain selected. Genuine target default constructors, the paired
-subprocess, final coupled activation and Task5/6 acceptance remain open.
+Forward converts those components in one FK-off transaction, with State after
+Configs and before the shared Store/Email marker timestamp. Readback validates
+the complete current declarations, translated dependencies, retired names,
+markers and unchanged FK findings. Inverse restores State first, then the
+existing Configs/Business/Email/Provider sequence, original Store timestamp and
+complete Email ledger from current facts and allocator waters. A failed
+transaction rolls back its DDL, markers and data together. The genuine cold
+initializer and constructors are selected; actual-copy, latest predecessor,
+native CLI and deployment acceptance remain separate from code selection.
 
+The following group4 development notes are historical milestones. Their WIP
+and former Store19/Email51 default statements describe those recorded steps;
+the current branch contract is the selected Store20/Email52 coordinator above.
 
 ### Email13 group4B partial DAO integration
 
@@ -2809,23 +2806,26 @@ Consumer and Audit both persist a new Codex session selected by the existing run
 Attention list, summary and count readers follow a historical Attempt's original AgentRun task ID when the OA scanner has since changed the trigger message key. A current bound task in done/skipped no longer appears as an unresolved historical Attempt. Same-generation failed tasks remain visible, valid reviewed human decisions keep their independent projection, and the historical Attempt/run/receipt records are unchanged.
 
 
-### Exact native-source scalar representation (unpublished)
+### Native-source scalar representation and State runtime
 
-The unpublished native-source Email/Business/Provider/Configs/Skill/Sync storage encodes finite REAL values as an exact binary significand and exponent and decodes them with SQLite's built-in `pow`, preserving native TEXT/INTEGER affinity results. Scalar binding reads float and string subclasses through their base implementations and obtains bytes through the buffer protocol, matching the underlying value bound by sqlite3 rather than overridden conversion methods. Non-C-contiguous buffers raise the same `BufferError` as native binding. SQLite JSON, `unhex` and math functions are required. Published Reply keeps its existing declaration and scalar format, and frozen source fingerprints remain unchanged; native-source inverse consumes current decoded facts. Current State callers, constructors and releases remain unselected; this does not publish a deployment.
+Native-source Email/Business/Provider/Configs/Skill/Sync and State storage encode finite REAL values as an exact binary significand and exponent and decode them with SQLite's built-in pow, preserving native TEXT/INTEGER affinity results. Scalar binding reads float and string subclasses through their base implementations and bytes through the buffer protocol, matching sqlite3's underlying bound value. Non-C-contiguous buffers retain native BufferError behavior. The shared encoder validates the underlying integer against SQLite's signed 64-bit range before serialization. Published Reply retains its existing scalar format; frozen source fingerprints remain unchanged.
 
-The shared scalar encoder checks every `int` instance against SQLite's signed 64-bit binder range using the underlying integer value, including subclasses with overridden conversion or comparison methods. Out-of-range values raise SQLite's `OverflowError` before a candidate State write; legal integers and booleans retain their existing JSON representation. Published Reply's format and all current caller paths are unchanged. This correction does not select State or activate a release.
+Store20/Email52 uses one State table for fifteen retained native state kinds. Fresh Store-first and Email-first construction creates this declaration; current callers use the existing State projections and transaction-owned write primitives. The paired release retires sixteen native State tables, including the eligible empty corpus source table. Original unused conversation fields are retired only when their existing source eligibility check permits it. Archived native factories and historical release source contracts remain unchanged.
 
-The unselected State foundation defines one native-parity declaration and point-write interface for fifteen retained state kinds. Writes require a caller-owned transaction; these helpers do not commit or roll back the caller's work. Point INSERT defaults, including caller-bound NULL/NaN values replaced under OR REPLACE, are evaluated in the final INSERT; point UPDATE OR REPLACE defaults are likewise evaluated in the final UPDATE. The guarded source-row read remains under the writer lock, while default expressions execute only in the write statement. Current callers and schema releases still select their existing paths, so this declaration has not retired source tables or changed live task behavior. The bulk UPDATE helper also accepts trusted encoded-JSON SQL expressions and their bindings, applying them in the final guarded statement; this preserves native statement-clock behavior and evaluates OR REPLACE defaults once per affected row requiring a default; SQLite CURRENT_TIMESTAMP keeps its statement-stable value. No current caller selects these extensions.
+State INSERT, point UPDATE, UPSERT and bulk UPDATE keep caller-owned transactions and do not commit or roll back earlier caller work. Omitted defaults and OR REPLACE substitutions for supplied NULL/NaN on defaulted NOT NULL fields execute inside the final write statement. Nullable NULL and defaultless NOT NULL failures retain native behavior. Bulk updates preserve one-statement affected-row counts, ABORT behavior, original-row expressions and untouched encoded leaves. SQLite CURRENT_TIMESTAMP remains statement-stable.
 
-The two nonunique State indexes for organization name and open DingTalk ID use the original source ROWID as their final key. This preserves native encounter order when equal lookup keys have different source and physical State row IDs, including an explicit low ROWID after the maximum signed ROWID. The unselected State target declaration check sorts index records by name and omits only SQLite's index enumeration `seq`; index SQL, ordered columns, uniqueness, origin, partial predicates, table columns, foreign keys and triggers remain exact. Source metadata, source fingerprints, and physical State DDL are unchanged. No current caller, constructor, or release selects this behavior.
+State UPSERT uses the existing source-key partial unique index in one INSERT. Original INSERT-candidate constraints run before a conflict update, including explicit NULL on a required wizard confirmer, even when an update guard is false. Matched rows keep their source identity and change only selected payload leaves. No failed SQL operation retries a different storage layout.
 
-The unselected State storage candidate also has a native source-key UPSERT primitive. Its single INSERT evaluates omitted defaults and caller-supplied encoded JSON expressions before the conflict update, so an invalid INSERT candidate fails the original constraint even when the update would preserve the old value or its guard is false. A matched row keeps its source identity; only explicitly selected payload leaves change, retaining their exact encoded scalar representation. SQLite clock expressions run in that statement. Current State callers, constructors, schema version, updater entry points and coordinator do not select this primitive; runtime behavior is unchanged.
+Organization name and open DingTalk ID indexes use the original source ROWID as the final key, preserving equal-key encounter order independently of State physical IDs. Current declaration checking sorts index records by name and omits only SQLite's index enumeration seq; SQL, ordered columns, uniqueness, origin, partial predicates, foreign keys and triggers remain exact. Source declarations and physical State DDL are unchanged. Current constructors retain only the existing two dispatcher-index repairs and reject unsupported namespace collisions before changing journal mode or DDL.
 
-The candidate also exposes a set-based State update for original-field predicates. It issues one SQLite UPDATE scoped to one source kind, changes only supplied encoded JSON leaves and returns SQLite's matched-row count. Plain UPDATE keeps statement ABORT behavior; OR REPLACE applies an original SQL default to supplied NULL or NaN only for a NOT NULL field with that default, with clocks evaluated in the final statement. The caller owns the transaction, including rollback of its earlier work. This prerequisite is not selected by current callers or a release.
+Current session, conversation, lock, route, wizard, scan/history cursor, reaction, health and deferral callers use State. Dispatcher ownership, generation, terminal/expiry predicates, cancellation fences and task eligibility retain their existing business rules. Empty dispatcher probes remain read-only; positive claims recheck inside the existing writer transaction.
 
-The repository upgrade progress DAO now has explicit source and current State schema bindings. Its default source binding keeps the existing `service_state` SQL; a caller may bind current State to read the projected service-state fact and write it through the State UPSERT inside the existing immediate transaction. A failed SQL operation does not switch bindings. The upgrade entry points and publication do not yet select the current binding, so this is an unselected prerequisite for the paired State release.
+Publication readers choose the native historical source or exact current State marker explicitly. A malformed current declaration never retries native. The seven generic current publication selectors require the complete current Actions/Skill receipt declaration; Email availability and action publication retain their existing Store/Email marker-pair contract. Store-only current databases do not advertise an Email runtime.
 
-For `OR REPLACE` point writes, an explicit SQLite NULL on an original NOT NULL field with a default receives that original default before payload encoding, matching native source behavior. Nullable fields and NOT NULL fields without defaults retain their original NULL behavior; a failed guarded update does not evaluate a default.
+Paired forward migration captures State declarations only, converts State after Configs and writes the Store marker and Email ledger with the same existing timestamp in the original atomic transaction. Target verification reads the current State marker. Inverse restores State first from current facts, then preserves the existing Configs/Business/Email/Provider inverse sequence and original native marker/ledger restoration. It does not restore State rows from an earlier snapshot.
+
+Upgrade progress selects the committed schema at DAO construction and immediately before native DAO progress writes. One read-only snapshot observes the retained Email ledger first: positive native versions through source51 select native service_state and target52 selects State; malformed or unsupported future ledger versions remain visible errors. Without a ledger version, Store-only State requires its exact current Store marker; missing paths and empty databases remain source without creating files or tables. Explicit getters/setters keep their original transactions and bounded lock/busy retry and do not reselect after SQL failure. Generic protocol stores are unchanged. Progress after a child commit or inverse follows the actual committed role, including a commit that becomes durable before an exception is reported.
+
 听记管理页认证失效（2026-10-15）：组织选择或登录校验抛出 MinutesBrowserSessionExpired 时，服务使用 macOS open 在本人普通 Google Chrome 中打开听记 history 登录页。原命令仍保留失败，不把打开页面当成认证成功；后台浏览器照常关闭。本人完成登录后的既有 cookie 同步与正式重试流程不变。听记管理浏览器使用 Chrome 原生 `--restore-last-session` 恢复每日副本中的 session cookies，避免 Chrome 默认启动删除仍有效的后台 access cookie；首次使用新 profile 时先启动并关闭一次空白 Chrome，随后重新注入副本再正式启动，因为 Chrome 对新 profile 忽略该参数。启动后关闭恢复的旧标签，退出前把仍打开的页面导航到 about:blank，避免后续启动累积标签或重载旧听记 URL。该设置仅用于听记管理 profile，不改变 cookie 到期时间、权限申请规则或退订浏览器。
 
 原生进程退出与输出采集（2026-10-15）：子进程退出不代表 stdout/stderr 管道已经读完。Process runner 在既有进程组终止之后以非阻塞方式读取已到达的剩余字节，继续使用相同 UTF-8 解码及逐行回调，再刷新无换行尾行。如此 thread.started 会话定位和最终回答不会因先读到 stderr 而丢失；无效结果仍按原合同失败并保留已观察的原生证据。超时、路由、结果校验、外部动作及回执策略不变，不重放历史退订或清除执行标记。回归和验收见 docs/405078-process-output-validation.md。
@@ -2847,4 +2847,4 @@ as a candidate. Malformed relationship syntax supplies no inferred relationship
 errors. Supporting membership violations are reported together. Full candidate
 validation, the native output schema, and the one-correction budget are unchanged.
 
-Reply declaration selectors accept an explicit optional Skill configuration receipt scaffold and forward it to the existing complete-shape recognizer. The default remains false for historical callers; current callers and schema publication/release remain unselected.
+Reply declaration selectors accept an explicit optional Skill configuration receipt scaffold and forward it to the existing complete-shape recognizer. The default remains false for historical callers; current State Memory and generic publication readers select the complete current declaration.

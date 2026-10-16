@@ -1,4 +1,5 @@
 """Exact 11.2 -> 11.3 paired task-schema publication and business-write inverse."""
+from app.state_publication_sources import publication_store_version
 
 from app.action_storage import action_schema_is_current, reply_schema_is_current
 
@@ -29,10 +30,7 @@ VERSION_KEY = "store_schema_version"
 
 def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
     """Read the exact 11.2 source or 11.3 target during the deploy quiet wait."""
-    version = db.execute(
-        "select value from service_state where key=?", (VERSION_KEY,)
-    ).fetchone()
-    version = version[0] if version is not None else None
+    version = publication_store_version(db, current_version="2026-10-14.1")
     tables = {
         row[0] for row in db.execute("select name from sqlite_master where type='table'")
     }
@@ -59,7 +57,7 @@ def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
             REPLY_TASK_SQL,
             "select status from tasks where record_type='work_summary_inputs'",
         )
-    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True)
+    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True)
             and {"tasks", "runs"} <= tables
             and not (old | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
         return REPLY_TASK_SQL, "select status from tasks where record_type='work_summary_inputs'"
@@ -68,10 +66,7 @@ def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
 
 def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
     """Read Meeting from the exact old source or combined current layout."""
-    version = db.execute(
-        "select value from service_state where key=?", (VERSION_KEY,)
-    ).fetchone()
-    version = version[0] if version is not None else None
+    version = publication_store_version(db, current_version="2026-10-14.1")
     tables = {
         row[0] for row in db.execute("select name from sqlite_master where type='table'")
     }
@@ -94,7 +89,7 @@ def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
         ).intersection(tables)
     ):
         return MEETING_JOB_SQL, MEETING_RUN_SQL
-    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True)
+    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True)
             and {"tasks", "runs"} <= tables
             and not (set(RETIRED_TASK_TABLES) | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
         return MEETING_JOB_SQL, MEETING_RUN_SQL

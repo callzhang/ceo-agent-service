@@ -21,6 +21,10 @@ from app.action_email_storage import (
     restore_email_action_schema,
 )
 from app.action_storage import action_schema_is_current, _encoded_sqlite_value
+from app.state_definitions import state_projection
+from app.state_schema_release import (capture_state_source, migrate_state_schema,
+    restore_state_schema, state_schema_is_current)
+from app.state_storage import update_state_rows
 from app import action_storage
 from app.business_schema_release import (
     business_inverse_metadata,
@@ -51,6 +55,10 @@ from app.configs_schema_transfer import (
     _target_declarations as _config_target_declarations,
 )
 from app.run_storage import create_run_schema
+from app.state_storage import create_state_schema
+from app.state_schema_release import (
+    SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES,
+)
 
 
 SOURCE_STORE_VERSION = "2026-10-13.5"
@@ -131,6 +139,40 @@ def _current_table_with_known_missing_objects(
                     for name, item in actual_triggers.items()))
 
 
+CURRENT_STATE_REPAIRABLE_INDEXES = frozenset({
+    "idx_state_dispatcher_terminal", "idx_state_dispatcher_expiry",
+})
+
+
+@lru_cache(maxsize=1)
+def _canonical_state_declaration():
+    with closing(sqlite3.connect(":memory:")) as reference:
+        create_state_schema(reference)
+        return _source_declaration(reference, "state")
+
+
+def state_current_or_known_dispatcher_index_repair(db: sqlite3.Connection) -> bool:
+    """Exact State target, allowing only the existing two lease-index repairs."""
+    if state_schema_is_current(db):
+        return True
+    names = (*STATE_SOURCE_TABLES, "state", *STATE_TARGET_INDEXES)
+    if db.execute(
+        "select 1 from temp.sqlite_schema where name collate nocase in ("
+        + ",".join("?" for _ in names) + ") limit 1", names,
+    ).fetchone() is not None:
+        return False
+    if db.execute(
+        "select 1 from main.sqlite_schema where name collate nocase in ("
+        + ",".join("?" for _ in STATE_SOURCE_TABLES) + ") limit 1",
+        STATE_SOURCE_TABLES,
+    ).fetchone() is not None:
+        return False
+    return _current_table_with_known_missing_objects(
+        db, _source_declaration(db, "state"), _canonical_state_declaration(),
+        indexes=CURRENT_STATE_REPAIRABLE_INDEXES,
+    )
+
+
 def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, action_variant: str) -> bool:
     """Exact target, allowing only Store's known missing Skill guard repair."""
     if configs_schema_is_current(db, action_variant=action_variant):
@@ -177,9 +219,14 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
         names = {row[0] for row in db.execute(
             "select name from main.sqlite_schema where type in ('table','view')"
         )}
-        marker = db.execute("select value from main.service_state where key=?", (VERSION_KEY,)).fetchone() if "service_state" in tables else None
-        store = marker[0] if marker is not None else None
         email = db.execute("select coalesce(max(version),0) from main.email_schema_migrations").fetchone()[0] if "email_schema_migrations" in tables else None
+        if email == SOURCE_EMAIL_VERSION:
+            marker = db.execute("select value from main.service_state where key=?", (VERSION_KEY,)).fetchone() if "service_state" in tables else None
+        elif "state" in tables:
+            marker = db.execute(f"select value from ({state_projection('service_state')}) where key=?", (VERSION_KEY,)).fetchone()
+        else:
+            marker = None
+        store = marker[0] if marker is not None else None
         if (store, email) == (SOURCE_STORE_VERSION, SOURCE_EMAIL_VERSION):
             raise sqlite3.IntegrityError("Store19/Email51 requires the paired schema release before target constructors")
         from app.email_current_schema import _CURRENT_TABLE_SQL
@@ -190,23 +237,26 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
             return
         if store == store_version:
             if email == email_version:
-                if provider_state_schema_is_current(db) and any(
+                if state_current_or_known_dispatcher_index_repair(db) and provider_state_schema_is_current(db) and any(
                     configs_current_or_known_skill_guard_repair(db, action_variant=variant)
                     for variant in ('actual_no_memory_fk', 'fresh_memory_fk')
                 ):
                     return
                 raise sqlite3.IntegrityError("malformed current provider/config declaration")
             if email is None and not (email_tables - {"email_classifications"}).intersection(names):
-                if any(configs_current_or_known_skill_guard_repair(db, action_variant=variant)
+                if state_current_or_known_dispatcher_index_repair(db) and any(configs_current_or_known_skill_guard_repair(db, action_variant=variant)
                        for variant in ('actual_no_memory_fk', 'fresh_memory_fk')):
                     return  # Complete Store-first, before Email's fresh transaction.
                 raise sqlite3.IntegrityError("malformed current Store-first config declaration")
         raise sqlite3.IntegrityError("unsupported or mixed Store/Email source schema")
 
 
-def _markers(db):
+def _markers(db, *, current=False):
+    if current and not state_schema_is_current(db):
+        raise ValueError("Email paired State target declaration mismatch")
+    source = state_projection("service_state") if current else "select * from main.service_state"
     version = db.execute(
-        "select value,updated_at from main.service_state where key=?", (VERSION_KEY,)
+        f"select value,updated_at from ({source}) where key=?", (VERSION_KEY,)
     ).fetchone()
     versions = tuple(db.execute(
         "select version,applied_at from main.email_schema_migrations order by version"
@@ -226,6 +276,7 @@ def _inverse_metadata(source):
         "business": business_inverse_metadata(source["business"]),
         "provider": source["provider"],
         "configs": source["configs"],
+        "state": source["state"],
     }
 
 
@@ -314,12 +365,13 @@ class ActionEmailSchemaRelease:
         current["business"] = capture_business_source(db)
         current["provider"] = capture_provider_state_source(db)
         current["configs"] = _project_config_source(db, current["action_variant"])
+        current["state"] = capture_state_source(db)
         if _inverse_metadata(current) != _inverse_metadata(self.source_schema):
             raise ValueError("paired Email/Business source declaration changed")
         self._verify_integrity(db)
 
     def _verify_target(self, db):
-        marker, versions = _markers(db)
+        marker, versions = _markers(db, current=True)
         if marker is None or marker[0] != self.target_store_version or \
                 versions[:-1] != self.versions or not versions or \
                 versions[-1] != (self.target_email_version, marker[1]):
@@ -378,11 +430,11 @@ class ActionEmailSchemaRelease:
                 if config_inverse != self.source_schema["configs"]:
                     raise ValueError("Config captured inverse declaration mismatch")
                 migrate_config_schema(db, config_inverse)
+                migrate_state_schema(db, self.source_schema["state"])
                 now = datetime.now(timezone.utc).isoformat()
-                db.execute(
-                    "update main.service_state set value=?,updated_at=? where key=?",
-                    (self.target_store_version, now, VERSION_KEY),
-                )
+                update_state_rows(db, "service_state",
+                    {"value": self.target_store_version, "updated_at": now},
+                    where_sql="key=?", parameters=(VERSION_KEY,))
                 db.execute(
                     "insert into main.email_schema_migrations(version,applied_at) values(?,?)",
                     (self.target_email_version, now),
@@ -404,11 +456,15 @@ class ActionEmailSchemaRelease:
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
             try:
-                if _markers(db) == (self.original_version, self.versions):
+                current = db.execute(
+                    "select 1 from main.sqlite_schema where name='state' collate nocase"
+                ).fetchone() is not None
+                if not current:
                     self._verify_source(db)
                     db.commit()
                     return
                 self._verify_target(db)
+                restore_state_schema(db, self.source_schema["state"])
                 restore_config_schema(db, self.source_schema["configs"])
                 restore_business_schema(db, self.source_schema["business"])
                 restore_email_action_schema(db, email_inverse_metadata(self.source_schema))
@@ -476,6 +532,7 @@ def prepare_action_email_schema_release(
         source["business"] = capture_business_source(db)
         source["provider"] = capture_provider_state_source(db)
         source["configs"] = _project_config_source(db, source["action_variant"])
+        source["state"] = capture_state_source(db)
         release = ActionEmailSchemaRelease(
             root, path, version, versions, source, _foreign_keys(db),
             target_store_version, target_email_version,

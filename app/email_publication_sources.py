@@ -1,4 +1,5 @@
 """Finite Email action sources for current readers and deployment quiet checks."""
+from app.state_publication_sources import publication_store_version
 
 import sqlite3
 
@@ -15,13 +16,8 @@ def _markers(db: sqlite3.Connection) -> tuple[str | None, int | None]:
     tables = {
         row[0] for row in db.execute("select name from sqlite_schema where type='table'")
     }
-    store = None
+    store = publication_store_version(db, current_version=TARGET_STORE_VERSION)
     email = None
-    if "service_state" in tables:
-        row = db.execute(
-            "select value from service_state where key='store_schema_version'"
-        ).fetchone()
-        store = row[0] if row else None
     if "email_schema_migrations" in tables:
         email = db.execute(
             "select max(version) from email_schema_migrations"

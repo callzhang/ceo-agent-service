@@ -1,3 +1,4 @@
+from app.state_definitions import state_projection
 from app.run_storage import SCHEDULED_RUN_SQL
 
 from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
@@ -2919,7 +2920,7 @@ def _email_unsubscribe_task_queue_snapshot(
 def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
     rows = []
     with store._connect() as db:
-        if not _sqlite_table_exists(db, "service_state"):
+        if not _sqlite_table_exists(db, "state"):
             return {
                 "status": "unavailable",
                 "updated_at": "",
@@ -2929,12 +2930,7 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
                 "checks": [],
             }
         rows = db.execute(
-            """
-            select key, value, updated_at
-            from service_state
-            where key like 'email_worker_health:%'
-            order by key
-            """
+            '\n            select key, value, updated_at\n            from (' + state_projection('service_state') + ")\n            where key like 'email_worker_health:%'\n            order by key\n            "
         ).fetchall()
     parsed_rows: list[tuple[str, dict[str, object], str]] = []
     safe_integer_fields = {
@@ -3242,7 +3238,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _memory_write_queue_snapshot(db: sqlite3.Connection, name: str) -> dict[str, object]:
-    source = reply_action_projection("memory_write_events", validated_reply_variant(db, include_email=True))
+    source = reply_action_projection("memory_write_events", validated_reply_variant(db, include_email=True, include_skill_config_receipts=True))
     rows = db.execute(
         f"select lower(coalesce(status,'')) as status,count(*) as count "
         f"from ({source}) group by lower(coalesce(status,'')) order by status"
@@ -3438,8 +3434,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     pending_oa_rows: list[dict[str, str]] = []
     with store._connect() as db:
         state = db.execute(
-            "select cursor_json,last_success_at,last_error from daily_scan_state where scanner_name='oa_pending'"
-        ).fetchone() if _sqlite_table_exists(db, "daily_scan_state") else None
+            'select cursor_json,last_success_at,last_error from (' + state_projection('daily_scan_state') + ") where scanner_name='oa_pending'"
+        ).fetchone() if _sqlite_table_exists(db, "state") else None
         pending_keys = json.loads(state["cursor_json"]).get(
             "pending_business_object_keys", []
         ) if state is not None else []

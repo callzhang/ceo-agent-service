@@ -15,6 +15,7 @@ import pytest
 
 import app.email_store as email_store_module
 from app.store import REPLY_TASK_CURRENT_SQL
+from app.state_definitions import state_projection
 from tests.email_schema_fixtures import (
     restore_action_plan_snapshot_column,
     restore_schema48_action_plan_snapshots,  # noqa: F401 - historical fixture import retained
@@ -7333,7 +7334,7 @@ def test_atomic_scan_persistence_rolls_back_message_plan_actions_and_cursor(
     assert len(_fetchall(database, "select * from email_classifications")) == 0
     assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 0
     assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 0
-    assert len(_fetchall(database, "select * from email_scan_cursors")) == 0
+    assert len(_fetchall(database, "select * from (" + state_projection("email_scan_cursors") + ")")) == 0
 
 
 def test_corrupt_stored_json_is_reported_as_domain_corruption(tmp_path: Path):

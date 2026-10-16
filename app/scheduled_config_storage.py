@@ -1,4 +1,5 @@
 """One immutable configuration body shared by scheduled trigger records."""
+from app.state_publication_sources import publication_store_version
 
 import json
 import sqlite3
@@ -53,10 +54,7 @@ def publication_scheduled_source(db: sqlite3.Connection) -> str:
     from app.run_storage import SCHEDULED_RUN_SQL
     from app.action_storage import action_schema_is_current, reply_schema_is_current
 
-    row = db.execute(
-        "select value from service_state where key='store_schema_version'"
-    ).fetchone()
-    version = row[0] if row is not None else None
+    version = publication_store_version(db, current_version="2026-10-14.1")
     tables = {
         row[0]
         for row in db.execute("select name from sqlite_master where type='table'")
@@ -73,7 +71,7 @@ def publication_scheduled_source(db: sqlite3.Connection) -> str:
         }.intersection(tables)
     ):
         return SCHEDULED_RUN_SQL
-    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True)
+    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True)
             and {"tasks", "runs"} <= tables
             and not {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}.intersection(tables)):
         return SCHEDULED_RUN_SQL

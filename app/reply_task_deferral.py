@@ -5,6 +5,7 @@ never constructs AutoReplyStore and cannot initialize or migrate a database.
 """
 
 from __future__ import annotations
+from app.state_definitions import state_projection
 from app.task_storage import REPLY_TASK_SQL
 
 import argparse
@@ -169,7 +170,7 @@ def _snapshot(
         where t.business_object_key=? and a.first_effect_started_at<>'' limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('runtime_effect_started')
-    claims = db.execute("select * from dispatcher_claim_leases where source_id=? and adapter_name in ('reply','scheduled_execution')", (str(task_id),)).fetchall()
+    claims = db.execute('select * from (' + state_projection('dispatcher_claim_leases') + ") where source_id=? and adapter_name in ('reply','scheduled_execution')", (str(task_id),)).fetchall()
     for claim in claims:
         if claim['owner'] and (_lease_active(claim['lease_expires_at'], now)
                                or _pid_alive(claim['owner_pid'])):

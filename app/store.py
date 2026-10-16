@@ -61,11 +61,12 @@ from app.action_email_schema_release import (
     CURRENT_CONFIG_REPAIRABLE_INDEXES,
     CURRENT_SCHEDULE_REPAIRABLE_INDEXES,
     configs_current_or_known_skill_guard_repair,
+    CURRENT_STATE_REPAIRABLE_INDEXES, state_current_or_known_dispatcher_index_repair,
 )
 from app.email_publication_sources import current_email_actions_available
 from app.run_storage import (
     SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
-    create_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
+    create_run_schema, install_run_child_guards, insert_run,
 )
 
 from app.task_storage import (
@@ -93,6 +94,9 @@ from app.agent_cron.models import (
     parse_utc_datetime,
 )
 from app.business_identity import oa_identifiers_from_url, reply_business_object_key
+from app.state_definitions import STATE_INDEX_DDL, state_projection
+from app.state_schema_release import SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES, state_schema_is_current
+from app.state_storage import create_state_schema, insert_state, state_json_field, update_state_rows, upsert_state
 from app.business_definitions import BUSINESS_PROJECTIONS, BUSINESS_TASK_LIST_PROJECTION
 from app.business_storage import create_business_schema, insert_business, update_business
 from app.business_schema_release import business_schema_is_current
@@ -212,7 +216,6 @@ from app.work_summary_payload import (
 from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
-from app.action_reply_storage import migrate_action_reply_schema
 
 from app.action_storage import (
     _current_objects as action_schema_objects,
@@ -371,6 +374,7 @@ create index if not exists idx_task_memory_write_events_lease
 
 STORE_SCHEMA_REQUIRED_TABLES = (
     "actions",
+    "state",
     "meeting_alignment_delivery_claims",
     "task_memory_write_events",
     "feedback_processing_batches",
@@ -379,7 +383,6 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_transitions",
     "task_todo_sync_outbox",
     "runs",
-    "conversation_runtime_sessions",
     "wechat_memory_import_jobs",
     "meeting_memory_write_events",
     "business_object_tasks",
@@ -387,11 +390,9 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "oa_notification_events",
     "follow_up_send_attempts",
     "todo_evidence_candidates",
-    "runtime_route_pauses",
     "workbench_attachments",
     "workbench_artifacts",
     "workbench_confirmations",
-    "dispatcher_claim_leases",
     "feedback_iteration_decisions",
     "feedback_iteration_decision_items",
     "business",
@@ -456,8 +457,6 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_scheduled_task_runs_claim",
     "idx_scheduled_task_runs_latest",
     "idx_scheduled_task_runs_reply_execution",
-    "idx_dispatcher_claim_leases_expiry",
-    "idx_dispatcher_claim_leases_terminal",
     "idx_meeting_memory_write_events_lease",
     "idx_task_memory_write_events_lease",
     "idx_feedback_iteration_decisions_batch",
@@ -497,6 +496,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_legacy_links_task",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
+    *STATE_SOURCE_TABLES,
     "business_tasks",
     "business_projects",
     "business_anchors",
@@ -607,11 +607,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "project_candidate_id", "attention_item_id", "work_project_id",
         "work_todo_id", "work_update_id", "created_at",
     ),
-    "dispatcher_claim_leases": (
-        "terminal_at",
-        "last_error",
-        "owner_pid",
-    ),
     "feedback_processing_items": ("current_round_id",),
     "feedback_processing_rounds": (
         "backlog_evidence_json",
@@ -630,7 +625,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "lease_expires_at",
         "result_schema_id",
     ),
-    "conversation_runtime_sessions": ("contract_hash",),
     "wechat_memory_import_jobs": (
         "import_run_id",
         "account_id",
@@ -1901,7 +1895,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return False
         try:
             with self._connect() as db:
-                healthy = self._feedback_processing_round_guard_state_is_valid(db) and business_schema_is_current(db) and any(
+                healthy = state_schema_is_current(db) and self._feedback_processing_round_guard_state_is_valid(db) and business_schema_is_current(db) and any(
                     configs_schema_is_current(db, action_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
@@ -2494,6 +2488,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and task_schema_is_current(db, include_workbench=True)
             and workbench_schema_is_current(db, mapped_runs=True)
             and business_schema_is_current(db)
+            and state_schema_is_current(db)
             and any(configs_schema_is_current(db, action_variant=variant)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
@@ -2531,7 +2526,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         raise RuntimeError("schema manifest check retry loop exhausted")
 
     def _schema_is_current(self) -> bool:
-        # A fresh database has no service_state table yet. This probe is an
+        # A fresh database has no State table yet. This probe is an
         # expected pre-initialization miss, so keep it off the normal
         # connection path that annotates every SQLite error as an operational
         # failure.
@@ -2539,7 +2534,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         try:
             with connection:
                 row = connection.execute(
-                    "select value from service_state where key=?",
+                    f"select value from ({state_projection('service_state')}) where key=?",
                     (STORE_SCHEMA_VERSION_KEY,),
                 ).fetchone()
                 return bool(
@@ -2726,10 +2721,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             connection.close()
 
     def _initialize(self) -> None:
+        fresh = self._require_supported_store_bootstrap_source()
         with self._connect() as db:
-            fresh = db.execute(
-                "select 1 from sqlite_schema where type='table' and name='service_state'"
-            ).fetchone() is None
+            if fresh:
+                create_state_schema(db)
+            else:
+                for sql in STATE_INDEX_DDL:
+                    name = sql.split(" on state(", 1)[0].split()[-1].strip('"')
+                    if name in CURRENT_STATE_REPAIRABLE_INDEXES and db.execute(
+                        "select 1 from sqlite_schema where type='index' and name=?",
+                        (name,),
+                    ).fetchone() is None:
+                        db.execute(sql)
             db.execute("pragma foreign_keys=off")
             reply_variant = (
                 _reply_variant_for(db)
@@ -2745,38 +2748,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 create_business_schema(db)
             db.executescript(
                 """
-                create table if not exists conversations (
-                    conversation_id text primary key,
-                    title text not null,
-                    single_chat integer not null,
-                    codex_session_id text,
-                    codex_session_contract_hash text not null default ''
-                );
-                create table if not exists dispatcher_claim_leases (
-                    adapter_name text not null,
-                    source_id text not null,
-                    owner text not null default '',
-                    owner_pid integer not null default 0,
-                    generation integer not null default 0 check(generation >= 0),
-                    lease_expires_at text not null default '',
-                    terminal_at text not null default '',
-                    last_error text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    primary key(adapter_name, source_id)
-                );
-                create index if not exists idx_dispatcher_claim_leases_expiry
-                    on dispatcher_claim_leases(
-                        adapter_name, lease_expires_at, source_id
-                    );
-                create index if not exists idx_dispatcher_claim_leases_terminal
-                    on dispatcher_claim_leases(terminal_at)
-                    where terminal_at<>'';
-                create table if not exists seen_messages (
-                    message_id text primary key,
-                    conversation_id text not null,
-                    seen_at text not null default current_timestamp
-                );
+                
+                
+                
+                
+                
                 create table if not exists feedback_events (
                     key text primary key,
                     feedback_token text not null,
@@ -2976,34 +2952,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     updated_at text not null default current_timestamp,
                     foreign key(reply_task_id) references tasks(id)
                 );
-                create table if not exists conversation_runtime_sessions (
-                    conversation_id text not null,
-                    route_name text not null,
-                    session_id text not null,
-                    contract_hash text not null default '',
-                    updated_at text not null default current_timestamp,
-                    primary key(conversation_id, route_name)
-                );
-                create table if not exists runtime_route_pauses (
-                    route_name text primary key,
-                    failure_code text not null,
-                    retry_at text not null,
-                    opened_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create table if not exists wechat_read_state (
-                    account_id text primary key,
-                    account_dir text not null,
-                    db_dir text not null,
-                    app_version text not null,
-                    self_user_id text not null default '',
-                    capability_status text not null default 'blocked',
-                    capability_reason text not null default '',
-                    watermark_sent_at text not null default '',
-                    watermark_message_id text not null default '',
-                    last_scan_at text not null default '',
-                    updated_at text not null default current_timestamp
-                );
+                
+                
+                
                 create table if not exists wechat_deliveries (
                     id integer primary key autoincrement,
                     reply_task_id integer not null,
@@ -3067,50 +3018,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     claim_token text not null,
                     foreign key(job_id) references tasks(id) on delete cascade
                 );
-                create table if not exists corpus_sources (
-                    source_key text primary key,
-                    last_collected_at text
-                );
-                create table if not exists org_user_profiles (
-                    user_id text primary key,
-                    name text not null default '',
-                    title text not null default '',
-                    open_dingtalk_id text,
-                    manager_user_id text,
-                    manager_name text not null default '',
-                    department_ids_json text not null,
-                    department_names_json text not null default '[]',
-                    org_labels_json text not null default '[]',
-                    has_subordinate integer,
-                    fetched_at text not null default current_timestamp
-                );
-                create index if not exists idx_org_user_profiles_open_dingtalk_id
-                    on org_user_profiles(open_dingtalk_id);
-                create index if not exists idx_org_user_profiles_name
-                    on org_user_profiles(name);
-                create table if not exists org_cache_metadata (
-                    key text primary key,
-                    value_json text not null,
-                    updated_at text not null default current_timestamp
-                );
-                create table if not exists service_state (
-                    key text primary key,
-                    value text not null,
-                    updated_at text not null default current_timestamp
-                );
-                create table if not exists channel_login_reservations (
-                    channel text primary key,
-                    reservation_owner text not null,
-                    reserved_at text not null
-                );
-                create table if not exists setup_wizard_steps (
-                    step_id text primary key,
-                    status text not null,
-                    summary text not null default '',
-                    manual_confirmed_at text not null default '',
-                    manual_confirmed_by text not null default '',
-                    updated_at text not null default current_timestamp
-                );
+                
+                
+                
+                
+                
+                
+                
+                
                 create table if not exists setup_wizard_events (
                     id integer primary key autoincrement,
                     step_id text not null,
@@ -3125,11 +3040,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 );
                 create index if not exists idx_setup_wizard_events_step
                     on setup_wizard_events(step_id, id);
-                create table if not exists codex_session_locks (
-                    conversation_id text primary key,
-                    owner text not null,
-                    locked_at text not null default current_timestamp
-                );
+                
                 create table if not exists okr_review_items (
                     id integer primary key autoincrement,
                     request_id integer not null,
@@ -3687,13 +3598,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on follow_up_send_attempts(draft_id, draft_revision, id);
                 create index if not exists idx_follow_up_send_attempts_reconciliation
                     on follow_up_send_attempts(state, lease_until, id);
-                create table if not exists daily_scan_state (
-                    scanner_name text primary key,
-                    last_success_at text not null default '',
-                    cursor_json text not null default '{}',
-                    last_error text not null default '',
-                    updated_at text not null default current_timestamp
-                );
+                
                 """
             )
             attention_columns = {
@@ -3949,15 +3854,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
             )
 
-            conversation_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(conversations)").fetchall()
-            }
-            if "codex_session_contract_hash" not in conversation_columns:
-                db.execute(
-                    "alter table conversations add column "
-                    "codex_session_contract_hash text not null default ''"
-                )
+            
+            
 
             error_columns = {
                 row["name"]
@@ -3969,22 +3867,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ):
                 if column not in error_columns:
                     db.execute(f"alter table errors add column {column} {definition}")
-            dispatcher_lease_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(dispatcher_claim_leases)"
-                ).fetchall()
-            }
-            for column, definition in (
-                ("terminal_at", "text not null default ''"),
-                ("last_error", "text not null default ''"),
-                ("owner_pid", "integer not null default 0"),
-            ):
-                if column not in dispatcher_lease_columns:
-                    db.execute(
-                        f"alter table dispatcher_claim_leases "
-                        f"add column {column} {definition}"
-                    )
+            
+            
             work_todo_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(work_todos)").fetchall()
@@ -4184,21 +4068,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "create index if not exists idx_task_todo_sync_outbox_due "
                     "on task_todo_sync_outbox(status, lease_expires_at, id)"
                 )
-            org_user_profile_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
-            }
-            for column, definition in (
-                ("title", "text not null default ''"),
-                ("manager_name", "text not null default ''"),
-                ("department_names_json", "text not null default '[]'"),
-                ("org_labels_json", "text not null default '[]'"),
-                ("has_subordinate", "integer"),
-            ):
-                if column not in org_user_profile_columns:
-                    db.execute(
-                        f"alter table org_user_profiles add column {column} {definition}"
-                    )
+            
+            
             wechat_memory_columns = {
                 row["name"] for row in db.execute(
                     "pragma table_info(wechat_memory_candidates)"
@@ -4287,28 +4158,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             if fresh:
                 map_runs_to_configs(db)
-            runtime_session_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(conversation_runtime_sessions)"
-                ).fetchall()
-            }
-            if "contract_hash" not in runtime_session_columns:
-                db.execute(
-                    "alter table conversation_runtime_sessions add column "
-                    "contract_hash text not null default ''"
-                )
-            db.execute(
-                """
-                insert or ignore into conversation_runtime_sessions (
-                    conversation_id, route_name, session_id, contract_hash
-                )
-                select conversation_id, 'codex_oauth', codex_session_id,
-                       coalesce(codex_session_contract_hash, '')
-                from conversations
-                where codex_session_id is not null and codex_session_id <> ''
-                """
-            )
+            
+            
+            
             reply_source = f"({REPLY_TASK_CURRENT_SQL})"
             legacy_ready_deliveries = db.execute(
                 f"""
@@ -4347,17 +4199,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             install_task_child_guards(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
                 raise FeedbackProcessingSchemaIntegrityError(FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR)
-            db.execute(
-                "insert into service_state(key,value,updated_at) values(?,?,current_timestamp) "
-                "on conflict(key) do update set value=excluded.value,updated_at=current_timestamp",
-                (STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION),
+            upsert_state(
+                db, "service_state",
+                {"key": STORE_SCHEMA_VERSION_KEY, "value": STORE_SCHEMA_VERSION},
+                {"value": state_json_field("value"), "updated_at": "json_quote(current_timestamp)"},
             )
 
     @staticmethod
     def _migrate_project_attention_evidence(db: sqlite3.Connection) -> None:
         """Carry proven original sources to Project evidence once, without changing history."""
         marker = "business_project_attention_evidence_migrated"
-        if db.execute("select 1 from service_state where key=?", (marker,)).fetchone() is not None:
+        if db.execute(f"select 1 from ({state_projection('service_state')}) where key=?", (marker,)).fetchone() is not None:
             return
         rows = db.execute(
             "select distinct project.id as project_id, signal.id as signal_id, signal.source_type "
@@ -4375,7 +4227,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "on conflict(project_id, signal_id) do nothing",
                     (row["project_id"], row["signal_id"]),
                 )
-        db.execute("insert into service_state(key, value) values (?, '1')", (marker,))
+        insert_state(db, "service_state", {"key": marker, "value": "1"})
 
     def prepare_meeting_alignment_message(
         self, *, delivery_key: str, body: str, original_text: str,
@@ -4392,7 +4244,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             {"kind": target_kind, "id": target_id.strip()}, sort_keys=True
         )
         with self._immediate_write_transaction() as db:
-            target = db.execute("select value from service_state where key=?", (state_key,)).fetchone()
+            target = db.execute(f"select value from ({state_projection('service_state')}) where key=?", (state_key,)).fetchone()
             prepared = db.execute(
                 f"select 1 from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (key,)
             ).fetchone()
@@ -4407,7 +4259,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 original_text=original_text, feedback_base_url=feedback_base_url,
             )
             if target is None:
-                db.execute("insert into service_state(key,value) values (?,?)", (state_key, target_json))
+                insert_state(db, 'service_state', {'key': state_key, 'value': target_json})
             return message
 
     def verify_meeting_alignment_target(self, delivery_key: str, *, target_kind: str, target_id: str) -> None:
@@ -7450,7 +7302,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (run_id, owner, now_text),
             ).fetchone()
             claim = db.execute(
-                "select 1 from dispatcher_claim_leases where adapter_name='scheduled' "
+                f"select 1 from ({state_projection('dispatcher_claim_leases')}) where adapter_name='scheduled' "
                 "and source_id=? and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
                 (str(run_id), owner, claim_generation, now_text),
             ).fetchone()
@@ -7480,14 +7332,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             if cursor.rowcount != 1:
                 raise ValueError("scheduled task dispatch claim changed")
-            ledger = db.execute(
-                "update dispatcher_claim_leases set owner='', lease_expires_at='', "
-                "terminal_at=?, last_error='', updated_at=? where adapter_name='scheduled' "
-                "and source_id=? and owner=? and generation=? and lease_expires_at>? "
-                "and terminal_at=''",
-                (now_text, now_text, str(run.id), owner, claim_generation, now_text),
+            ledger = update_state_rows(
+                db, 'dispatcher_claim_leases',
+                {'owner': '', 'lease_expires_at': '', 'terminal_at': now_text,
+                 'last_error': '', 'updated_at': now_text},
+                where_sql="adapter_name='scheduled' and source_id=? and owner=? "
+                          "and generation=? and lease_expires_at>? and terminal_at=''",
+                parameters=(str(run.id), owner, claim_generation, now_text),
             )
-            if ledger.rowcount != 1:
+            if ledger != 1:
                 raise ValueError("scheduled dispatcher ledger claim changed")
             linked = db.execute(
                 f"select {self._scheduled_task_run_columns()} from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
@@ -7775,7 +7628,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         placeholders = ",".join("?" for _ in keys)
         with self._connect() as db:
             rows = db.execute(
-                f"select key, value from service_state where key in ({placeholders})",
+                f"select key, value from ({state_projection('service_state')}) where key in ({placeholders})",
                 keys,
             ).fetchall()
         snapshots: dict[str, RuntimeCapabilitySnapshot] = {}
@@ -7809,7 +7662,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         placeholders = ",".join("?" for _ in keys)
         with self._connect() as db:
             rows = db.execute(
-                f"select key, value from service_state where key in ({placeholders})",
+                f"select key, value from ({state_projection('service_state')}) where key in ({placeholders})",
                 keys,
             ).fetchall()
         snapshots: dict[str, RuntimeCapabilitySnapshot] = {}
@@ -8433,7 +8286,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             db.execute("drop table if exists universal_action_executions")
             db.execute("drop table if exists universal_plan_executions")
             db.execute("drop index if exists idx_reply_attempts_universal_execution")
-            db.execute("delete from service_state where key = 'dws_auth_backup'")
+            db.execute("delete from state where record_type='service_state' and key='dws_auth_backup'")
         except Exception:
             db.rollback()
             raise
@@ -8636,16 +8489,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
 
 
-    def _require_supported_store_bootstrap_source(self) -> None:
+    def _require_supported_store_bootstrap_source(self) -> bool:
         """Allow fresh bootstrap or the existing repair path for a valid current core."""
         db = self._open_connection()
         try:
+            state_names = (*STATE_SOURCE_TABLES, "state", *STATE_TARGET_INDEXES)
+            if db.execute(
+                "select 1 from temp.sqlite_schema where name collate nocase in ("
+                + ",".join("?" for _ in state_names) + ") limit 1", state_names,
+            ).fetchone() is not None:
+                raise sqlite3.IntegrityError("unsupported State TEMP name collision")
             tables = {row[0] for row in db.execute("select name from sqlite_master where type='table'")}
             marker = (
-                db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-                if "service_state" in tables else None
+                db.execute(f"select value from ({state_projection('service_state')}) where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
+                if "state" in tables else None
             )
-            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
+            store_tables = {"state", *STATE_SOURCE_TABLES, *STATE_TARGET_INDEXES, "tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
                             *CONFIG_SOURCE_TABLES, "email_training_snapshot_observations", "configs", "schedules",
                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)),
                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True)),
@@ -8678,9 +8537,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 # Other known retired runtime tables retain their prior repair.
                 and not set(REPLY_ACTION_TYPES).intersection(tables)
                 and business_schema_is_current(db)
+                and state_current_or_known_dispatcher_index_repair(db)
             )
             if current_core_with_known_repairs:
-                return
+                return False
             collision = db.execute(
                 "select 1 from sqlite_master where name collate nocase in ("
                 + ','.join('?' for _ in store_tables) + ") limit 1",
@@ -8691,32 +8551,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "unsupported or malformed Store source schema; expected a fresh Store, "
                     "or the current 2026-10-14.1 schema"
                 )
-        finally:
-            db.close()
-
-    def _migrate_known_task_schema(self) -> bool:
-        """Migrate the explicit preceding release before fresh schema bootstrap."""
-        db = self._open_connection()
-        try:
-            if db.execute("select 1 from sqlite_master where name='service_state'").fetchone() is None:
-                return False
-            marker = db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-            if marker is None or marker[0] != "2026-10-13.4":
-                return False
-            db.execute("pragma foreign_keys=off")
-            db.execute("begin immediate")
-            if not (run_schema_is_current(db, include_task_runs=True, include_workbench=True)
-                    and task_schema_is_current(db, include_workbench=True)
-                    and workbench_schema_is_current(db)):
-                raise sqlite3.IntegrityError("invalid preceding Store core schema")
-            migrate_action_reply_schema(db)
-            if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
-                raise RuntimeError("typed task migration manifest differs")
-            db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
-            db.commit()
             return True
         finally:
             db.close()
+
+    
 
 
 
@@ -8938,7 +8777,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).fetchone() is not None:
             return False
         if db.execute(
-            """select 1 from dispatcher_claim_leases where source_id=?
+            f"""select 1 from ({state_projection('dispatcher_claim_leases')}) where source_id=?
                and adapter_name in ('reply','scheduled_execution') and terminal_at=''
                and owner<>'' limit 1""",
             (str(task_id),),
@@ -10753,8 +10592,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "runtime operation parent does not exist or is not running"
                 )
             if db.execute(
-                """
-                select 1 from runtime_route_pauses
+                f"""
+                select 1 from ({state_projection('runtime_route_pauses')})
                 where route_name=? and retry_at>?
                 """,
                 (route_name, now_text),
@@ -12834,14 +12673,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     (int(row["id"]), str(row["execution_generation"])),
                 )
                 if cursor.rowcount == 1:
-                    db.execute(
-                        """
-                        update dispatcher_claim_leases
-                        set owner='', lease_expires_at='', updated_at=current_timestamp
-                        where adapter_name='reply' and source_id=?
-                          and owner<>'' and lease_expires_at<=current_timestamp
-                        """,
-                        (str(row["id"]),),
+                    update_state_rows(
+                        db, 'dispatcher_claim_leases',
+                        {'owner': '', 'lease_expires_at': ''},
+                        update_json={'updated_at': 'json_quote(current_timestamp)'},
+                        where_sql="adapter_name='reply' and source_id=? "
+                                  "and owner<>'' and lease_expires_at<=current_timestamp",
+                        parameters=(str(row["id"]),),
                     )
                     recovered.append(self._reply_task_from_row(row))
             return recovered
@@ -13001,7 +12839,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if cursor.rowcount != 1:
                     continue
                 db.execute(
-                    "delete from codex_session_locks where conversation_id=?",
+                    "delete from state where record_type='codex_session_locks' and conversation_id=?",
                     (row["conversation_id"],),
                 )
                 updated = db.execute(
@@ -13153,7 +12991,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     (reason.strip(), now_text, task_id, generation),
                 )
                 db.execute(
-                    "delete from codex_session_locks where conversation_id=?",
+                    "delete from state where record_type='codex_session_locks' and conversation_id=?",
                     (str(row["conversation_id"]),),
                 )
                 self._compact_settled_reply_task_input(db, task_id)
@@ -13225,7 +13063,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if cursor.rowcount != 1:
                     continue
                 db.execute(
-                    "delete from codex_session_locks where conversation_id=?",
+                    "delete from state where record_type='codex_session_locks' and conversation_id=?",
                     (row["conversation_id"],),
                 )
                 updated = db.execute(
@@ -13320,7 +13158,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     or task["input_version"] != input_version
                     or hashlib.sha256(self._reply_task_from_row(task).trigger_message_json.encode("utf-8")).hexdigest() != input_digest):
                 raise AgentRunLeaseLostError("unsubscribe execution identity changed")
-            if db.execute("select 1 from service_state where key=?", (key,)).fetchone():
+            if db.execute(f"select 1 from ({state_projection('service_state')}) where key=?", (key,)).fetchone():
                 raise ValueError("unsubscribe execution requires reconciliation")
             receipt = db.execute(f"select effect_digest,outcome from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=?", (action_identity,)).fetchone()
             if receipt is not None and (
@@ -13337,7 +13175,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "input_digest": input_digest, "owner_pid": os.getpid(),
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }, sort_keys=True)
-            db.execute("insert into service_state(key,value) values (?,?)", (key, value))
+            insert_state(db, 'service_state', {'key': key, 'value': value})
             return value
 
     def settle_direct_email_unsubscribe_execution(self, action_identity: str, execution_record: str) -> None:
@@ -13346,7 +13184,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if db.execute(f"select 1 from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=?", (action_identity,)).fetchone() is None:
                 raise ValueError("unsubscribe terminal receipt is unavailable")
             db.execute(
-                "delete from service_state where key=? and value=?",
+                "delete from state where record_type='service_state' and key=? and value=?",
                 (f"email_unsubscribe_execution_pending:v1:{action_identity}", execution_record),
             )
 
@@ -14225,7 +14063,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         now_text = now.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with self._immediate_write_transaction() as db:
             current_claim = db.execute(
-                "select 1 from dispatcher_claim_leases "
+                f"select 1 from ({state_projection('dispatcher_claim_leases')}) "
                 "where adapter_name='scheduled_execution' and source_id=? "
                 "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
                 (str(task_id), dispatcher_owner, dispatcher_generation, now_text),
@@ -14256,17 +14094,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "and execution_generation=?",
                 (task_id, expected_execution_generation),
             )
-            ledger = db.execute(
-                "update dispatcher_claim_leases set owner='', lease_expires_at='', "
-                "terminal_at=?, last_error='', updated_at=? "
-                "where adapter_name='scheduled_execution' and source_id=? "
-                "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
-                (
-                    now_text, now_text, str(task_id), dispatcher_owner,
-                    dispatcher_generation, now_text,
-                ),
+            ledger = update_state_rows(
+                db, 'dispatcher_claim_leases',
+                {'owner': '', 'lease_expires_at': '', 'terminal_at': now_text,
+                 'last_error': '', 'updated_at': now_text},
+                where_sql="adapter_name='scheduled_execution' and source_id=? "
+                          "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
+                parameters=(str(task_id), dispatcher_owner, dispatcher_generation, now_text),
             )
-            if ledger.rowcount != 1:
+            if ledger != 1:
                 raise ValueError("scheduled execution claim is no longer current")
             self._compact_settled_reply_task_input(db, task_id)
             return int(result.lastrowid)
@@ -14492,55 +14328,46 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         capability_reason: str = "", watermark_sent_at: str = "",
         watermark_message_id: str = "", last_scan_at: str = "",
     ) -> None:
-        with self._connect() as db:
-            db.execute(
-                """
-                insert into wechat_read_state (
-                    account_id, account_dir, db_dir, app_version, self_user_id,
-                    capability_status, capability_reason, watermark_sent_at,
-                    watermark_message_id, last_scan_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(account_id) do update set
-                    account_dir=excluded.account_dir, db_dir=excluded.db_dir,
-                    app_version=excluded.app_version,
-                    self_user_id=coalesce(
-                        nullif(excluded.self_user_id, ''),
-                        wechat_read_state.self_user_id
-                    ),
-                    capability_status=excluded.capability_status,
-                    capability_reason=excluded.capability_reason,
-                    watermark_sent_at=coalesce(
-                        nullif(excluded.watermark_sent_at, ''),
-                        wechat_read_state.watermark_sent_at
-                    ),
-                    watermark_message_id=coalesce(
-                        nullif(excluded.watermark_message_id, ''),
-                        wechat_read_state.watermark_message_id
-                    ),
-                    last_scan_at=coalesce(
-                        nullif(excluded.last_scan_at, ''),
-                        wechat_read_state.last_scan_at
-                    ),
-                    updated_at=current_timestamp
-                """,
-                (
-                    account_id, account_dir, db_dir, app_version, self_user_id,
-                    capability_status, capability_reason, watermark_sent_at,
-                    watermark_message_id, last_scan_at,
-                ),
+        values = {
+            "account_id": account_id, "account_dir": account_dir, "db_dir": db_dir,
+            "app_version": app_version, "self_user_id": self_user_id,
+            "capability_status": capability_status,
+            "capability_reason": capability_reason,
+            "watermark_sent_at": watermark_sent_at,
+            "watermark_message_id": watermark_message_id,
+            "last_scan_at": last_scan_at,
+        }
+        updates = {
+            field: state_json_field(field) for field in (
+                "account_dir", "db_dir", "app_version", "capability_status",
+                "capability_reason",
             )
+        }
+        for field in ("self_user_id", "watermark_sent_at",
+                      "watermark_message_id", "last_scan_at"):
+            updates[field] = (
+                f"case when nullif(excluded.{field}, '') is not null then " +
+                state_json_field(field) + " else " +
+                state_json_field(field, "state") + " end"
+            )
+        updates["updated_at"] = "json_quote(current_timestamp)"
+        with self._connect() as db:
+            db.execute("begin")
+            upsert_state(db, "wechat_read_state", values, updates)
 
     def get_wechat_read_state(self, account_id: str) -> dict[str, str] | None:
+        projection = "(" + state_projection("wechat_read_state") + ")"
         with self._connect() as db:
             row = db.execute(
-                "select * from wechat_read_state where account_id=?", (account_id,)
+                f"select * from {projection} where account_id=?", (account_id,)
             ).fetchone()
         return dict(row) if row is not None else None
 
     def list_wechat_read_states(self) -> list[dict[str, str]]:
+        projection = "(" + state_projection("wechat_read_state") + ")"
         with self._connect() as db:
             rows = db.execute(
-                "select * from wechat_read_state order by account_id"
+                f"select * from {projection} order by account_id"
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -17128,13 +16955,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if jobs:
                 job_ids = [job.id for job in jobs]
                 placeholders = ",".join("?" for _ in job_ids)
-                db.execute(
-                    "update dispatcher_claim_leases "
-                    "set owner='', owner_pid=0, lease_expires_at='', updated_at=? "
-                    "where adapter_name='meeting' and source_id in ("
-                    + placeholders
-                    + ")",
-                    [now_text, *[str(job_id) for job_id in job_ids]],
+                update_state_rows(
+                    db, 'dispatcher_claim_leases',
+                    {'owner': '', 'owner_pid': 0, 'lease_expires_at': '', 'updated_at': now_text},
+                    where_sql="adapter_name='meeting' and source_id in (" + placeholders + ")",
+                    parameters=tuple(str(job_id) for job_id in job_ids),
                 )
                 run_rows = db.execute(
                     f"select id from ({MEETING_RUN_SQL}) "
@@ -17213,7 +17038,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         where delivery.job_id=meeting_alignment_jobs.id
                       )
                       and not exists (
-                        select 1 from dispatcher_claim_leases claim
+                        select 1 from ({state_projection('dispatcher_claim_leases')}) claim
                         where claim.adapter_name='meeting'
                           and claim.source_id=meeting_alignment_jobs.legacy_key
                           and coalesce(claim.terminal_at,'')=''
@@ -17342,14 +17167,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             saved = db.execute(f"select provider_result_json from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
             if body is None or saved is None or body["final_body"] != prepared.final_body or json.loads(saved["provider_result_json"]) != receipt:
                 return False
-            target = db.execute("select value from service_state where key=?",
+            target = db.execute(f"select value from ({state_projection('service_state')}) where key=?",
                 (f"meeting_delivery_target:v1:dingtalk:{key}",)).fetchone()
             expected_target = {"kind": "group" if job.target_kind == "group" else "user", "id": job.target_id}
             if target is None or json.loads(target["value"]) != expected_target:
                 return False
             if db.execute(f"select 1 from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (f"{key}:sensitive",)).fetchone():
                 return False
-            if db.execute("select 1 from dispatcher_claim_leases where adapter_name='meeting' and source_id=? "
+            if db.execute(f"select 1 from ({state_projection('dispatcher_claim_leases')}) where adapter_name='meeting' and source_id=? "
                 "and coalesce(terminal_at,'')='' and julianday(lease_expires_at)>julianday('now')",
                 (str(job.id),)).fetchone():
                 return False
@@ -17732,10 +17557,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, processing_max_age_seconds: int | None = None
     ) -> list[OkrReviewRequest]:
         with self._immediate_write_transaction() as db:
+            lease_projection = "(" + state_projection("dispatcher_claim_leases") + ")"
+            lock_projection = "(" + state_projection("codex_session_locks") + ")"
             params: list[object] = []
             processing_clause = (
                 "request.status='processing' and not exists ("
-                "select 1 from dispatcher_claim_leases claim "
+                f"select 1 from {lease_projection} claim "
                 "where claim.adapter_name='okr_review' "
                 "and claim.source_id=cast(request.id as text) "
                 "and claim.owner<>'' and claim.terminal_at='' "
@@ -17759,7 +17586,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                        and request.error like 'codex session locked:%'
                        and not exists (
                            select 1
-                           from codex_session_locks
+                           from {lock_projection} as codex_session_locks
                            where codex_session_locks.conversation_id =
                                  request.conversation_id
                              and datetime(codex_session_locks.locked_at) >
@@ -17777,8 +17604,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             owner_placeholders = ",".join("?" for _ in owners)
             db.execute(
                 f"""
-                delete from codex_session_locks
-                where owner in ({owner_placeholders})
+                delete from state
+                where record_type='codex_session_locks' and owner in ({owner_placeholders})
                 """,
                 owners,
             )
@@ -17940,27 +17767,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         codex_session_id: str | None,
     ) -> None:
         with self._connect() as db:
-            db.execute(
-                """
-                insert into conversations (
-                    conversation_id, title, single_chat, codex_session_id
-                )
-                values (?, ?, ?, ?)
-                on conflict(conversation_id) do update set
-                    title=excluded.title,
-                    single_chat=excluded.single_chat,
-                    codex_session_id=coalesce(
-                        excluded.codex_session_id,
-                        conversations.codex_session_id
-                    )
-                """,
-                (conversation_id, title, int(single_chat), codex_session_id),
+            db.execute("begin")
+            upsert_state(
+                db, "conversations",
+                {"conversation_id": conversation_id, "title": title,
+                 "single_chat": int(single_chat), "codex_session_id": codex_session_id},
+                {"title": state_json_field("title"),
+                 "single_chat": state_json_field("single_chat"),
+                 "codex_session_id": (
+                     "case when excluded.codex_session_id is not null then " +
+                     state_json_field("codex_session_id") + " else " +
+                     state_json_field("codex_session_id", "state") + " end"
+                 )},
             )
 
     def get_codex_session_id(self, conversation_id: str) -> str | None:
+        projection = "(" + state_projection("conversations") + ")"
         with self._connect() as db:
             row = db.execute(
-                "select codex_session_id from conversations where conversation_id=?",
+                f"select codex_session_id from {projection} where conversation_id=?",
                 (conversation_id,),
             ).fetchone()
             return None if row is None else row["codex_session_id"]
@@ -17992,26 +17817,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         contract_hash: str,
         now_text: str,
     ) -> None:
-        db.execute(
-                """
-                insert into conversation_runtime_sessions (
-                    conversation_id, route_name, session_id, contract_hash, updated_at
-                ) values (?, ?, ?, ?, ?)
-                on conflict(conversation_id, route_name) do update set
-                    session_id=excluded.session_id,
-                    contract_hash=excluded.contract_hash,
-                    updated_at=excluded.updated_at
-                """,
-                (conversation_id, route_name, session_id, contract_hash, now_text),
+        upsert_state(
+            db, "conversation_runtime_sessions",
+            {"conversation_id": conversation_id, "route_name": route_name,
+             "session_id": session_id, "contract_hash": contract_hash,
+             "updated_at": now_text},
+            {field: state_json_field(field) for field in
+             ("session_id", "contract_hash", "updated_at")},
         )
         if route_name == "codex_oauth":
-            db.execute(
-                    """
-                    update conversations
-                    set codex_session_id=?, codex_session_contract_hash=?
-                    where conversation_id=?
-                    """,
-                    (session_id, contract_hash, conversation_id),
+            update_state_rows(
+                db, "conversations",
+                {"codex_session_id": session_id,
+                 "codex_session_contract_hash": contract_hash},
+                where_sql="conversation_id=?", parameters=(conversation_id,),
             )
 
     def get_conversation_runtime_session(
@@ -18021,19 +17840,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         *,
         required_contract_hash: str | None = None,
     ) -> str | None:
+        projection = "(" + state_projection("conversation_runtime_sessions") + ")"
         with self._connect() as db:
             if required_contract_hash is None:
                 row = db.execute(
-                    """
-                    select session_id from conversation_runtime_sessions
+                    f"""
+                    select session_id from {projection}
                     where conversation_id=? and route_name=?
                     """,
                     (conversation_id, route_name),
                 ).fetchone()
             else:
                 row = db.execute(
-                    """
-                    select session_id from conversation_runtime_sessions
+                    f"""
+                    select session_id from {projection}
                     where conversation_id=? and route_name=? and contract_hash=?
                     """,
                     (conversation_id, route_name, required_contract_hash.strip()),
@@ -18045,10 +17865,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         conversation_id: str,
         route_name: str,
     ) -> str | None:
+        projection = "(" + state_projection("conversation_runtime_sessions") + ")"
         with self._connect() as db:
             row = db.execute(
-                """
-                select contract_hash from conversation_runtime_sessions
+                f"""
+                select contract_hash from {projection}
                 where conversation_id=? and route_name=?
                 """,
                 (conversation_id, route_name),
@@ -18068,18 +17889,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._agent_run_write_transaction(None) as (db, _):
             cursor = db.execute(
-                "delete from conversation_runtime_sessions where conversation_id=?",
+                "delete from state where record_type='conversation_runtime_sessions' and conversation_id=?",
                 (conversation_id,),
             )
-            legacy = db.execute(
-                """
-                update conversations
-                set codex_session_id=null, codex_session_contract_hash=''
-                where conversation_id=? and codex_session_id is not null
-                """,
-                (conversation_id,),
+            legacy = update_state_rows(
+                db, "conversations",
+                {"codex_session_id": None, "codex_session_contract_hash": ""},
+                where_sql="conversation_id=? and codex_session_id is not null",
+                parameters=(conversation_id,),
             )
-            return max(cursor.rowcount, legacy.rowcount)
+            return max(cursor.rowcount, legacy)
 
     def clear_conversation_runtime_session_if_matches(
         self,
@@ -18109,24 +17928,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(None) as (db, _):
             cursor = db.execute(
                 f"""
-                delete from conversation_runtime_sessions
-                where conversation_id=? and route_name=?
+                delete from state
+                where record_type='conversation_runtime_sessions' and conversation_id=? and route_name=?
                   and session_id in ({placeholders})
                 """,
                 (conversation_id, route_name, *expected_session_ids),
             )
             cleared = cursor.rowcount
             if route_name == "codex_oauth":
-                legacy = db.execute(
-                    f"""
-                    update conversations
-                    set codex_session_id=null, codex_session_contract_hash=''
-                    where conversation_id=?
-                      and codex_session_id in ({placeholders})
-                    """,
-                    (conversation_id, *expected_session_ids),
+                legacy = update_state_rows(
+                    db, "conversations",
+                    {"codex_session_id": None, "codex_session_contract_hash": ""},
+                    where_sql=f"conversation_id=? and codex_session_id in ({placeholders})",
+                    parameters=(conversation_id, *expected_session_ids),
                 )
-                cleared = max(cleared, legacy.rowcount)
+                cleared = max(cleared, legacy)
             return cleared
 
     def open_runtime_route_pause(
@@ -18142,27 +17958,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not failure_code.replace("_", "").isalnum():
             raise ValueError("failure_code must be a typed code")
         _, retry_at_text = _utc_store_time(retry_at)
+        projection = "(" + state_projection("runtime_route_pauses") + ")"
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             existing = db.execute(
-                "select retry_at from runtime_route_pauses where route_name=?",
+                f"select retry_at from {projection} where route_name=?",
                 (route_name,),
             ).fetchone()
             if existing is not None and str(existing["retry_at"]) > now_text:
                 return False
             if existing is not None:
                 db.execute(
-                    "delete from runtime_route_pauses where route_name=? and retry_at<=?",
+                    "delete from state where record_type='runtime_route_pauses' and route_name=? and retry_at<=?",
                     (route_name, now_text),
                 )
-            cursor = db.execute(
-                """
-                insert into runtime_route_pauses (
-                    route_name, failure_code, retry_at, opened_at, updated_at
-                ) values (?, ?, ?, ?, ?)
-                """,
-                (route_name, failure_code, retry_at_text, now_text, now_text),
+            inserted = insert_state(
+                db, "runtime_route_pauses",
+                {"route_name": route_name, "failure_code": failure_code,
+                 "retry_at": retry_at_text, "opened_at": now_text,
+                 "updated_at": now_text},
             )
-            return cursor.rowcount == 1
+            return inserted.rowcount == 1
 
     def active_runtime_route_pause(
         self,
@@ -18171,10 +17986,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> str | None:
         route_name = self._require_runtime_attempt_text(route_name, field="route_name")
         _, now_text = _utc_store_time(now)
+        projection = "(" + state_projection("runtime_route_pauses") + ")"
         with self._agent_run_write_transaction(now) as (db, _):
             row = db.execute(
-                """
-                select failure_code, retry_at from runtime_route_pauses
+                f"""
+                select failure_code, retry_at from {projection}
                 where route_name=?
                 """,
                 (route_name,),
@@ -18183,7 +17999,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return None
             if str(row["retry_at"]) <= now_text:
                 db.execute(
-                    "delete from runtime_route_pauses where route_name=? and retry_at<=?",
+                    "delete from state where record_type='runtime_route_pauses' and route_name=? and retry_at<=?",
                     (route_name, now_text),
                 )
                 return None
@@ -18193,7 +18009,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         route_name = self._require_runtime_attempt_text(route_name, field="route_name")
         with self._agent_run_write_transaction(None) as (db, _):
             cursor = db.execute(
-                "delete from runtime_route_pauses where route_name=?", (route_name,)
+                "delete from state where record_type='runtime_route_pauses' and route_name=?", (route_name,)
             )
             return cursor.rowcount == 1
 
@@ -18243,24 +18059,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     ),
                 )
                 runs += 1
-            sessions = db.execute(
-                """
-                update or replace conversation_runtime_sessions
-                   set route_name=?
-                 where route_name=?
-                """,
-                (new_name, old_name),
-            ).rowcount
-            pauses = db.execute(
-                """
-                update or replace runtime_route_pauses
-                   set route_name=?, updated_at=?
-                 where route_name=?
-                """,
-                (new_name, now_text, old_name),
-            ).rowcount
+            sessions = update_state_rows(
+                db, "conversation_runtime_sessions", {"route_name": new_name},
+                where_sql="route_name=?", parameters=(old_name,), replace=True,
+            )
+            pauses = update_state_rows(
+                db, "runtime_route_pauses",
+                {"route_name": new_name, "updated_at": now_text},
+                where_sql="route_name=?", parameters=(old_name,), replace=True,
+            )
             capability = db.execute(
-                "select value from service_state where key=?", (old_key,)
+                f"select value from ({state_projection('service_state')}) where key=?",
+                (old_key,),
             ).fetchone()
             snapshots = 0
             if capability is not None:
@@ -18268,22 +18078,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 payload["snapshot"] = RuntimeCapabilitySnapshot.model_validate(
                     payload["snapshot"]
                 ).model_copy(update={"route_name": new_name}).model_dump(mode="json")
-                db.execute(
-                    """
-                    insert into service_state (key, value, updated_at)
-                    values (?, ?, current_timestamp)
-                    on conflict(key) do update set
-                        value=excluded.value,
-                        updated_at=current_timestamp
-                    """,
-                    (
-                        new_key,
-                        json.dumps(
-                            payload, ensure_ascii=False, sort_keys=True
-                        ),
-                    ),
+                upsert_state(
+                    db, "service_state",
+                    {"key": new_key,
+                     "value": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
+                    {"value": state_json_field("value"),
+                     "updated_at": "json_quote(current_timestamp)"},
+                    insert_json={"updated_at": "json_quote(current_timestamp)"},
                 )
-                db.execute("delete from service_state where key=?", (old_key,))
+                db.execute(
+                    "delete from state where record_type='service_state' and key=?",
+                    (old_key,),
+                )
                 snapshots = 1
         return {
             "scheduled_tasks": tasks,
@@ -18294,11 +18100,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         }
 
     def get_codex_session_contract_hash(self, conversation_id: str) -> str:
+        projection = "(" + state_projection("conversations") + ")"
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select codex_session_contract_hash
-                from conversations
+                from {projection}
                 where conversation_id=?
                 """,
                 (conversation_id,),
@@ -18313,32 +18120,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not contract_hash.strip():
             raise ValueError("contract_hash must be non-empty")
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
-            cursor = db.execute(
-                """
-                update conversations
-                set codex_session_contract_hash=?
-                where conversation_id=?
-                """,
-                (contract_hash, conversation_id),
+            changed = update_state_rows(
+                db, "conversations", {"codex_session_contract_hash": contract_hash},
+                where_sql="conversation_id=?", parameters=(conversation_id,),
             )
-            db.execute(
-                """
-                insert into conversation_runtime_sessions (
-                    conversation_id, route_name, session_id,
-                    contract_hash, updated_at
+            row = db.execute(
+                f"select conversation_id, codex_session_id from ({state_projection('conversations')}) "
+                "where conversation_id=? and codex_session_id is not null "
+                "and codex_session_id<>''",
+                (conversation_id,),
+            ).fetchone()
+            if row is not None:
+                upsert_state(
+                    db, "conversation_runtime_sessions",
+                    {"conversation_id": row["conversation_id"],
+                     "route_name": "codex_oauth", "session_id": row["codex_session_id"],
+                     "contract_hash": contract_hash, "updated_at": now_text},
+                    {field: state_json_field(field) for field in
+                     ("session_id", "contract_hash", "updated_at")},
                 )
-                select conversation_id, 'codex_oauth', codex_session_id, ?, ?
-                from conversations
-                where conversation_id=? and codex_session_id is not null
-                  and codex_session_id<>''
-                on conflict(conversation_id, route_name) do update set
-                    session_id=excluded.session_id,
-                    contract_hash=excluded.contract_hash,
-                    updated_at=excluded.updated_at
-                """,
-                (contract_hash, now_text, conversation_id),
-            )
-            return cursor.rowcount
+            return changed
 
     def acquire_codex_session_lock(self, conversation_id: str, owner: str) -> bool:
         if not conversation_id.strip():
@@ -18349,8 +18150,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             with self._connect() as db:
                 db.execute(
                     """
-                    delete from codex_session_locks
-                    where conversation_id=?
+                    delete from state
+                    where record_type='codex_session_locks' and conversation_id=?
                       and datetime(locked_at) <= datetime('now', ?)
                     """,
                     (
@@ -18358,17 +18159,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",
                     ),
                 )
-                cursor = db.execute(
-                    """
-                    insert or ignore into codex_session_locks (conversation_id, owner)
-                    values (?, ?)
-                    """,
-                    (conversation_id, owner),
+                inserted = insert_state(
+                    db, "codex_session_locks",
+                    {"conversation_id": conversation_id, "owner": owner},
+                    ignore=True,
                 )
-                if cursor.rowcount == 1:
+                if inserted.rowcount == 1:
                     return True
                 row = db.execute(
-                    "select owner from codex_session_locks where conversation_id=?",
+                    f"select owner from ({state_projection('codex_session_locks')}) "
+                    "where conversation_id=?",
                     (conversation_id,),
                 ).fetchone()
                 return row is not None and str(row["owner"]) == owner
@@ -18384,15 +18184,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             with self._connect() as db:
                 cursor = db.execute(
                     """
-                    delete from codex_session_locks
-                    where conversation_id=? and owner=?
+                    delete from state
+                    where record_type='codex_session_locks' and conversation_id=? and owner=?
                     """,
                     (conversation_id, owner),
                 )
                 if cursor.rowcount == 1:
                     return True
                 row = db.execute(
-                    "select 1 from codex_session_locks where conversation_id=?",
+                    f"select 1 from ({state_projection('codex_session_locks')}) where conversation_id=?",
                     (conversation_id,),
                 ).fetchone()
                 return row is None
@@ -18416,15 +18216,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).strftime("%Y-%m-%d %H:%M:%S")
         def renew() -> bool:
             with self._connect() as db:
-                cursor = db.execute(
-                    """
-                    update codex_session_locks
-                    set locked_at=?
-                    where conversation_id=? and owner=? and locked_at>?
-                    """,
-                    (now_text, conversation_id, owner, stale_before),
+                db.execute("begin")
+                changed = update_state_rows(
+                    db, "codex_session_locks", {"locked_at": now_text},
+                    where_sql="conversation_id=? and owner=? and locked_at>?",
+                    parameters=(conversation_id, owner, stale_before),
                 )
-                return cursor.rowcount == 1
+                return changed == 1
 
         return self._retry_codex_session_lock_operation(renew)
 
@@ -18772,26 +18570,23 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def reset_codex_sessions(self) -> int:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                update conversations
-                set codex_session_id=null, codex_session_contract_hash=''
-                where codex_session_id is not null and codex_session_id != ''
-                """
+            db.execute("begin")
+            changed = update_state_rows(
+                db, "conversations",
+                {"codex_session_id": None, "codex_session_contract_hash": ""},
+                where_sql="codex_session_id is not null and codex_session_id != ''",
             )
-            return cursor.rowcount
+            return changed
 
     def clear_codex_session(self, conversation_id: str) -> int:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                update conversations
-                set codex_session_id=null, codex_session_contract_hash=''
-                where conversation_id=?
-                """,
-                (conversation_id,),
+            db.execute("begin")
+            changed = update_state_rows(
+                db, "conversations",
+                {"codex_session_id": None, "codex_session_contract_hash": ""},
+                where_sql="conversation_id=?", parameters=(conversation_id,),
             )
-            return cursor.rowcount
+            return changed
 
     def clear_codex_session_if_matches(
         self,
@@ -18801,15 +18596,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not expected_session_id.strip():
             raise ValueError("expected_session_id must be non-empty")
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                update conversations
-                set codex_session_id=null, codex_session_contract_hash=''
-                where conversation_id=? and codex_session_id=?
-                """,
-                (conversation_id, expected_session_id),
+            db.execute("begin")
+            changed = update_state_rows(
+                db, "conversations",
+                {"codex_session_id": None, "codex_session_contract_hash": ""},
+                where_sql="conversation_id=? and codex_session_id=?",
+                parameters=(conversation_id, expected_session_id),
             )
-            return cursor.rowcount
+            return changed
 
     def clear_agent_run_session(
         self,
@@ -18840,11 +18634,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return cursor.rowcount
 
     def list_codex_conversations(self) -> list[ConversationRecord]:
+        projection = "(" + state_projection("conversations") + ")"
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select conversation_id, title, single_chat, codex_session_id
-                from conversations
+                from {projection}
                 where codex_session_id is not null and codex_session_id != ''
                 order by title, conversation_id
                 """
@@ -18864,6 +18659,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         since_utc: str,
         limit: int,
     ) -> list[ConversationRecord]:
+        seen_projection = "(" + state_projection("seen_messages") + ")"
+        conversation_projection = "(" + state_projection("conversations") + ")"
         with self._connect() as db:
             rows = db.execute(
                 f"""
@@ -18871,7 +18668,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     select conversation_id, max(activity_at) as latest_activity_at
                     from (
                         select conversation_id, seen_at as activity_at
-                        from seen_messages
+                        from {seen_projection}
                         union all
                         select conversation_id, created_at as activity_at
                         from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
@@ -18904,7 +18701,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         limit 1
                     ), '') as direct_open_dingtalk_id,
                     a.latest_activity_at
-                from conversations c
+                from {conversation_projection} c
                 join recent_activity a on a.conversation_id=c.conversation_id
                 where c.single_chat=1 and a.latest_activity_at >= ?
                 order by a.latest_activity_at desc
@@ -18925,11 +18722,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ]
 
     def get_conversation(self, conversation_id: str) -> ConversationRecord | None:
+        projection = "(" + state_projection("conversations") + ")"
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select conversation_id, title, single_chat, codex_session_id
-                from conversations
+                from {projection}
                 where conversation_id=?
                 """,
                 (conversation_id,),
@@ -18946,11 +18744,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def find_single_chat_conversation_by_title(
         self, title: str
     ) -> ConversationRecord | None:
+        projection = "(" + state_projection("conversations") + ")"
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select conversation_id, title, single_chat, codex_session_id
-                from conversations
+                from {projection}
                 where title=? and single_chat=1
                 order by conversation_id
                 limit 2
@@ -18968,11 +18767,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
 
     def find_conversation_by_title(self, title: str) -> ConversationRecord | None:
+        projection = "(" + state_projection("conversations") + ")"
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select conversation_id, title, single_chat, codex_session_id
-                from conversations
+                from {projection}
                 where title=?
                 order by single_chat, conversation_id
                 limit 2
@@ -18990,23 +18790,23 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
 
     def has_seen(self, message_id: str) -> bool:
+        projection = "(" + state_projection("seen_messages") + ")"
         with self._connect() as db:
             row = db.execute(
-                "select 1 from seen_messages where message_id=?",
+                f"select 1 from {projection} where message_id=?",
                 (message_id,),
             ).fetchone()
             return row is not None
 
     def mark_seen(self, message_id: str, conversation_id: str) -> bool:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                insert or ignore into seen_messages (message_id, conversation_id)
-                values (?, ?)
-                """,
-                (message_id, conversation_id),
+            db.execute("begin")
+            result = insert_state(
+                db, "seen_messages",
+                {"message_id": message_id, "conversation_id": conversation_id},
+                ignore=True,
             )
-            return cursor.rowcount == 1
+            return result.rowcount == 1
 
     def record_sent_reply(
         self,
@@ -28941,30 +28741,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         last_error: str = "",
     ) -> None:
         with self._connect() as db:
-            db.execute(
-                """
-                insert into daily_scan_state (
-                    scanner_name,
-                    last_success_at,
-                    cursor_json,
-                    last_error
-                )
-                values (?, ?, ?, ?)
-                on conflict(scanner_name) do update set
-                    last_success_at=excluded.last_success_at,
-                    cursor_json=excluded.cursor_json,
-                    last_error=excluded.last_error,
-                    updated_at=current_timestamp
-                """,
-                (scanner_name, last_success_at, cursor_json, last_error),
+            db.execute("begin")
+            upsert_state(
+                db, "daily_scan_state",
+                {"scanner_name": scanner_name, "last_success_at": last_success_at,
+                 "cursor_json": cursor_json, "last_error": last_error},
+                {"last_success_at": state_json_field("last_success_at"),
+                 "cursor_json": state_json_field("cursor_json"),
+                 "last_error": state_json_field("last_error"),
+                 "updated_at": "json_quote(current_timestamp)"},
             )
 
     def get_daily_scan_state(self, scanner_name: str) -> dict[str, str] | None:
+        projection = "(" + state_projection("daily_scan_state") + ")"
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select scanner_name, last_success_at, cursor_json, last_error
-                from daily_scan_state
+                from {projection}
                 where scanner_name=?
                 """,
                 (scanner_name,),
@@ -29308,7 +29102,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         key = f"{SERVICE_HEALTH_STATE_PREFIX}{normalized_component}"
         with self._immediate_write_transaction() as db:
             existing_row = db.execute(
-                "select value from service_state where key=?", (key,)
+                f"select value from ({state_projection('service_state')}) where key=?", (key,)
             ).fetchone()
             try:
                 existing = json.loads(str(existing_row["value"] or "")) if existing_row else {}
@@ -29333,21 +29127,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     else str(existing.get("latest_error_at") or "")
                 ),
             }
-            db.execute(
-                """insert into service_state (key, value, updated_at)
-                   values (?, ?, current_timestamp)
-                   on conflict(key) do update set
-                     value=excluded.value, updated_at=current_timestamp""",
-                (key, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+            upsert_state(
+                db, 'service_state',
+                {'key': key, 'value': json.dumps(payload, ensure_ascii=False, sort_keys=True)},
+                {'value': state_json_field('value'),
+                 'updated_at': 'json_quote(current_timestamp)'},
             )
 
     def list_service_health_components(self) -> list[dict[str, str]]:
         """Return the current health projection for each service component."""
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select key, value, updated_at
-                from service_state
+                from ({state_projection('service_state')})
                 where key like ?
                 order by key asc
                 """,
@@ -30636,15 +30429,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             try:
                 with self._connect() as db:
                     db.execute("begin immediate")
-                    db.execute(
-                        """
-                        insert into service_state (key, value, updated_at)
-                        values (?, ?, current_timestamp)
-                        on conflict(key) do update set
-                            value=excluded.value,
-                            updated_at=current_timestamp
-                        """,
-                        (key, value),
+                    upsert_state(
+                        db, "service_state", {"key": key, "value": value},
+                        {"value": state_json_field("value"),
+                         "updated_at": "json_quote(current_timestamp)"},
                     )
                 return
             except sqlite3.OperationalError as exc:
@@ -30673,7 +30461,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         expires_at = current + timedelta(seconds=lease_seconds)
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select value from service_state where key=?",
+                f"select value from ({state_projection('service_state')}) where key=?",
                 (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
             ).fetchone()
             active_owner, active_until = self._weekly_okr_report_run_lease(
@@ -30681,25 +30469,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             if active_owner and active_until is not None and active_until > current:
                 return False
-            db.execute(
-                """
-                insert into service_state (key, value, updated_at)
-                values (?, ?, current_timestamp)
-                on conflict(key) do update set
-                    value=excluded.value,
-                    updated_at=current_timestamp
-                """,
-                (
-                    WEEKLY_OKR_REPORT_RUN_STATE_KEY,
-                    json.dumps(
-                        {
-                            "owner": normalized_owner,
-                            "lease_expires_at": expires_at.isoformat(),
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                ),
+            upsert_state(
+                db, 'service_state',
+                {'key': WEEKLY_OKR_REPORT_RUN_STATE_KEY,
+                 'value': json.dumps(
+                     {'owner': normalized_owner, 'lease_expires_at': expires_at.isoformat()},
+                     ensure_ascii=False, sort_keys=True,
+                 )},
+                {'value': state_json_field('value'),
+                 'updated_at': 'json_quote(current_timestamp)'},
             )
             return True
 
@@ -30720,7 +30498,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         expires_at = current + timedelta(seconds=lease_seconds)
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select value from service_state where key=?",
+                f"select value from ({state_projection('service_state')}) where key=?",
                 (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
             ).fetchone()
             active_owner, active_until = self._weekly_okr_report_run_lease(
@@ -30732,23 +30510,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 or active_until <= current
             ):
                 return False
-            db.execute(
-                """
-                update service_state
-                set value=?, updated_at=current_timestamp
-                where key=?
-                """,
-                (
-                    json.dumps(
-                        {
-                            "owner": normalized_owner,
-                            "lease_expires_at": expires_at.isoformat(),
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                    WEEKLY_OKR_REPORT_RUN_STATE_KEY,
-                ),
+            update_state_rows(
+                db, 'service_state',
+                {'value': json.dumps(
+                    {'owner': normalized_owner, 'lease_expires_at': expires_at.isoformat()},
+                    ensure_ascii=False, sort_keys=True,
+                )},
+                update_json={'updated_at': 'json_quote(current_timestamp)'},
+                where_sql='key=?', parameters=(WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
             )
             return True
 
@@ -30759,7 +30528,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("weekly OKR report lease owner must be non-empty")
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select value from service_state where key=?",
+                f"select value from ({state_projection('service_state')}) where key=?",
                 (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
             ).fetchone()
             active_owner, _ = self._weekly_okr_report_run_lease(
@@ -30768,7 +30537,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if active_owner != normalized_owner:
                 return False
             db.execute(
-                "delete from service_state where key=?",
+                "delete from state where record_type='service_state' and key=?",
                 (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
             )
             return True
@@ -30826,7 +30595,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def clear_codex_capacity_pause(self) -> None:
         with self._connect() as db:
             db.execute(
-                "delete from service_state where key=?",
+                "delete from state where record_type='service_state' and key=?",
                 (CODEX_CAPACITY_PAUSE_STATE_KEY,),
             )
 
@@ -30840,7 +30609,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("codex capacity retry_at must be in the future")
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select value from service_state where key=?",
+                f"select value from ({state_projection('service_state')}) where key=?",
                 (CODEX_CAPACITY_PAUSE_STATE_KEY,),
             ).fetchone()
             active = False
@@ -30867,26 +30636,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     )
                 except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
                     failure_count = 1
-            db.execute(
-                """
-                insert into service_state (key, value, updated_at)
-                values (?, ?, current_timestamp)
-                on conflict(key) do update set
-                    value=excluded.value,
-                    updated_at=current_timestamp
-                """,
-                (
-                    CODEX_CAPACITY_PAUSE_STATE_KEY,
-                    json.dumps(
-                        {
-                            "reason_code": "workspace_credits_exhausted",
-                            "retry_at": retry_at,
-                            "failure_count": failure_count,
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                ),
+            upsert_state(
+                db, 'service_state',
+                {'key': CODEX_CAPACITY_PAUSE_STATE_KEY,
+                 'value': json.dumps(
+                     {'reason_code': 'workspace_credits_exhausted',
+                      'retry_at': retry_at, 'failure_count': failure_count},
+                     ensure_ascii=False, sort_keys=True,
+                 )},
+                {'value': state_json_field('value'),
+                 'updated_at': 'json_quote(current_timestamp)'},
             )
             return True
 
@@ -30903,14 +30662,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         key = f"channel_login_request:{channel}"
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select value from service_state where key=?",
+                f"select value from ({state_projection('service_state')}) where key=?",
                 (key,),
             ).fetchone()
             state = self._channel_login_state(row["value"] if row else None)
             reservation = db.execute(
-                """
+                f"""
                 select reservation_owner, reserved_at
-                from channel_login_reservations
+                from ({state_projection('channel_login_reservations')})
                 where channel=?
                 """,
                 (channel,),
@@ -30941,16 +30700,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "started_at": now_utc.isoformat(),
                 "checked_at": now_utc.isoformat(),
             }
-            db.execute(
-                """
-                insert into channel_login_reservations (
-                    channel, reservation_owner, reserved_at
-                ) values (?, ?, ?)
-                on conflict(channel) do update set
-                    reservation_owner=excluded.reservation_owner,
-                    reserved_at=excluded.reserved_at
-                """,
-                (channel, reservation_owner, now_utc.isoformat()),
+            upsert_state(
+                db, 'channel_login_reservations',
+                {'channel': channel, 'reservation_owner': reservation_owner,
+                 'reserved_at': now_utc.isoformat()},
+                {'reservation_owner': state_json_field('reservation_owner'),
+                 'reserved_at': state_json_field('reserved_at')},
             )
             self._set_service_state_in_transaction(db, key, reserved_state)
             return True, reserved_state
@@ -30965,9 +30720,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         key = f"channel_login_request:{channel}"
         with self._immediate_write_transaction() as db:
             reservation = db.execute(
-                """
+                f"""
                 select reservation_owner
-                from channel_login_reservations
+                from ({state_projection('channel_login_reservations')})
                 where channel=?
                 """,
                 (channel,),
@@ -30978,13 +30733,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ):
                 return False
             row = db.execute(
-                "select value from service_state where key=?",
+                f"select value from ({state_projection('service_state')}) where key=?",
                 (key,),
             ).fetchone()
             current = self._channel_login_state(row["value"] if row else None)
             self._set_service_state_in_transaction(db, key, {**current, **state})
             db.execute(
-                "delete from channel_login_reservations where channel=?",
+                "delete from state where record_type='channel_login_reservations' and channel=?",
                 (channel,),
             )
             return True
@@ -31033,21 +30788,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         safe_state = {
             field: value for field, value in state.items() if field in safe_fields
         }
-        db.execute(
-            """
-            insert into service_state (key, value, updated_at)
-            values (?, ?, current_timestamp)
-            on conflict(key) do update set
-                value=excluded.value,
-                updated_at=current_timestamp
-            """,
-            (key, json.dumps(safe_state, ensure_ascii=False, sort_keys=True)),
+        upsert_state(
+            db, 'service_state',
+            {'key': key, 'value': json.dumps(safe_state, ensure_ascii=False, sort_keys=True)},
+            {'value': state_json_field('value'),
+             'updated_at': 'json_quote(current_timestamp)'},
         )
 
     def get_service_state(self, key: str) -> str | None:
+        projection = "(" + state_projection("service_state") + ")"
         with self._connect() as db:
             row = db.execute(
-                "select value from service_state where key=?",
+                f"select value from {projection} where key=?",
                 (key,),
             ).fetchone()
             return None if row is None else row["value"]
@@ -31061,45 +30813,37 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         manual_confirmed_by: str = "",
     ) -> None:
         with self._connect() as db:
-            db.execute(
-                """
-                insert into setup_wizard_steps (
-                    step_id,
-                    status,
-                    summary,
-                    manual_confirmed_at,
-                    manual_confirmed_by
-                )
-                values (?, ?, ?, case when ? != '' then current_timestamp else '' end, ?)
-                on conflict(step_id) do update set
-                    status=excluded.status,
-                    summary=excluded.summary,
-                    manual_confirmed_at=case
-                        when excluded.manual_confirmed_by != '' then current_timestamp
-                        else setup_wizard_steps.manual_confirmed_at
-                    end,
-                    manual_confirmed_by=case
-                        when excluded.manual_confirmed_by != '' then excluded.manual_confirmed_by
-                        else setup_wizard_steps.manual_confirmed_by
-                    end,
-                    updated_at=current_timestamp
-                """,
-                (
-                    step_id,
-                    status,
-                    summary,
-                    manual_confirmed_by,
-                    manual_confirmed_by,
-                ),
+            db.execute("begin")
+            upsert_state(
+                db, "setup_wizard_steps",
+                {"step_id": step_id, "status": status, "summary": summary,
+                 "manual_confirmed_by": manual_confirmed_by},
+                {"status": state_json_field("status"),
+                 "summary": state_json_field("summary"),
+                 "manual_confirmed_at": (
+                     "case when excluded.manual_confirmed_by != '' "
+                     "then json_quote(current_timestamp) else " +
+                     state_json_field("manual_confirmed_at", "state") + " end"
+                 ),
+                 "manual_confirmed_by": (
+                     "case when excluded.manual_confirmed_by != '' then " +
+                     state_json_field("manual_confirmed_by") + " else " +
+                     state_json_field("manual_confirmed_by", "state") + " end"
+                 ),
+                 "updated_at": "json_quote(current_timestamp)"},
+                insert_json={"manual_confirmed_at":
+                             "json_quote(case when ? != '' then current_timestamp else '' end)"},
+                insert_parameters=(manual_confirmed_by,),
             )
 
     def get_setup_wizard_step(self, step_id: str) -> dict[str, str] | None:
+        projection = "(" + state_projection("setup_wizard_steps") + ")"
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select step_id, status, summary, manual_confirmed_at,
                        manual_confirmed_by, updated_at
-                from setup_wizard_steps
+                from {projection}
                 where step_id=?
                 """,
                 (step_id,),
@@ -31107,12 +30851,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return dict(row) if row is not None else None
 
     def list_setup_wizard_steps(self) -> list[dict[str, str]]:
+        projection = "(" + state_projection("setup_wizard_steps") + ")"
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select step_id, status, summary, manual_confirmed_at,
                        manual_confirmed_by, updated_at
-                from setup_wizard_steps
+                from {projection}
                 order by updated_at desc, step_id
                 """
             ).fetchall()
@@ -31203,53 +30948,28 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> None:
         department_names = department_names or set()
         org_labels = org_labels or []
+        values = {
+            "user_id": user_id, "name": name, "title": title,
+            "open_dingtalk_id": open_dingtalk_id,
+            "manager_user_id": manager_user_id, "manager_name": manager_name,
+            "department_ids_json": json.dumps(sorted(department_ids), ensure_ascii=False),
+            "department_names_json": json.dumps(sorted(department_names), ensure_ascii=False),
+            "org_labels_json": json.dumps(org_labels, ensure_ascii=False),
+            "has_subordinate": None if has_subordinate is None else int(has_subordinate),
+        }
         with self._connect() as db:
-            db.execute(
-                """
-                insert into org_user_profiles (
-                    user_id,
-                    name,
-                    title,
-                    open_dingtalk_id,
-                    manager_user_id,
-                    manager_name,
-                    department_ids_json,
-                    department_names_json,
-                    org_labels_json,
-                    has_subordinate,
-                    fetched_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
-                on conflict(user_id) do update set
-                    name=excluded.name,
-                    title=excluded.title,
-                    open_dingtalk_id=excluded.open_dingtalk_id,
-                    manager_user_id=excluded.manager_user_id,
-                    manager_name=excluded.manager_name,
-                    department_ids_json=excluded.department_ids_json,
-                    department_names_json=excluded.department_names_json,
-                    org_labels_json=excluded.org_labels_json,
-                    has_subordinate=excluded.has_subordinate,
-                    fetched_at=current_timestamp
-                """,
-                (
-                    user_id,
-                    name,
-                    title,
-                    open_dingtalk_id,
-                    manager_user_id,
-                    manager_name,
-                    json.dumps(sorted(department_ids), ensure_ascii=False),
-                    json.dumps(sorted(department_names), ensure_ascii=False),
-                    json.dumps(org_labels, ensure_ascii=False),
-                    None if has_subordinate is None else int(has_subordinate),
-                ),
+            db.execute("begin")
+            upsert_state(
+                db, "org_user_profiles", values,
+                {field: state_json_field(field) for field in values if field != "user_id"}
+                | {"fetched_at": "json_quote(current_timestamp)"},
             )
 
     def get_org_user_profile(self, user_id: str) -> OrgUserProfile | None:
+        projection = "(" + state_projection("org_user_profiles") + ")"
         with self._connect() as db:
             row = db.execute(
-                "select * from org_user_profiles where user_id=?",
+                f"select * from {projection} where user_id=?",
                 (user_id,),
             ).fetchone()
             return self._org_user_profile_from_row(row)
@@ -31257,10 +30977,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def find_org_user_by_open_dingtalk_id(
         self, open_dingtalk_id: str
     ) -> OrgUserProfile | None:
+        projection = "(" + state_projection("org_user_profiles") + ")"
         with self._connect() as db:
             row = db.execute(
-                """
-                select * from org_user_profiles
+                f"""
+                select * from {projection}
                 where open_dingtalk_id=?
                 """,
                 (open_dingtalk_id,),
@@ -31268,9 +30989,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return self._org_user_profile_from_row(row)
 
     def find_org_users_by_name(self, name: str) -> list[OrgUserProfile]:
+        projection = "(" + state_projection("org_user_profiles") + ")"
         with self._connect() as db:
             rows = db.execute(
-                "select * from org_user_profiles where name=? order by user_id",
+                f"select * from {projection} where name=? order by user_id",
                 (name,),
             ).fetchall()
             return [
@@ -31280,9 +31002,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ]
 
     def list_org_user_ids(self) -> list[str]:
+        projection = "(" + state_projection("org_user_profiles") + ")"
         with self._connect() as db:
             rows = db.execute(
-                "select user_id from org_user_profiles order by user_id"
+                f"select user_id from {projection} order by user_id"
             ).fetchall()
             return [row["user_id"] for row in rows]
 
@@ -31303,21 +31026,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def _set_metadata(self, key: str, value) -> None:
         with self._connect() as db:
-            db.execute(
-                """
-                insert into org_cache_metadata (key, value_json, updated_at)
-                values (?, ?, current_timestamp)
-                on conflict(key) do update set
-                    value_json=excluded.value_json,
-                    updated_at=current_timestamp
-                """,
-                (key, json.dumps(value, ensure_ascii=False)),
+            db.execute("begin")
+            upsert_state(
+                db, "org_cache_metadata",
+                {"key": key, "value_json": json.dumps(value, ensure_ascii=False)},
+                {"value_json": state_json_field("value_json"),
+                 "updated_at": "json_quote(current_timestamp)"},
             )
 
     def _get_metadata(self, key: str):
+        projection = "(" + state_projection("org_cache_metadata") + ")"
         with self._connect() as db:
             row = db.execute(
-                "select value_json from org_cache_metadata where key=?",
+                f"select value_json from {projection} where key=?",
                 (key,),
             ).fetchone()
             if row is None:

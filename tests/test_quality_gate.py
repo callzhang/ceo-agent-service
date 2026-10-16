@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from app.run_storage import insert_run
+from app.state_storage import insert_state
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, insert_action, update_action
 from app.task_storage import REPLY_TASK_SQL, insert_task
 from app.quality_gate import (
@@ -272,13 +273,12 @@ def test_quality_gate_covers_every_runtime_attempt_invariant_with_persisted_rows
 def test_quality_gate_treats_route_pause_as_warning_with_healthy_alternative(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into runtime_route_pauses
-               (route_name, failure_code, retry_at, opened_at, updated_at)
-               values ('codex_oauth', 'codex_login_required',
-                       '2026-08-07 02:00:00', '2026-08-07 00:00:00',
-                       '2026-08-07 00:00:00')"""
-        )
+        db.execute("begin")
+        insert_state(db, "runtime_route_pauses", {
+            "route_name": "codex_oauth", "failure_code": "codex_login_required",
+            "retry_at": "2026-08-07 02:00:00", "opened_at": "2026-08-07 00:00:00",
+            "updated_at": "2026-08-07 00:00:00",
+        })
         insert_run(
             db, 'agent_runtime_attempts', {
                 'workload_kind': 'task',

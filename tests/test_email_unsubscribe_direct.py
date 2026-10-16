@@ -1088,14 +1088,16 @@ def test_principal_cancellation_rejects_changed_or_active_identity(tmp_path, cha
 def test_cancellation_owner_check_uses_dispatcher_namespace(tmp_path, adapter):
     from app.email_browser_profile import EmailBrowserProfile
     from app.email_store import EmailActionPlanConflict
+    from app.state_storage import insert_state
 
     operation, task, email_store, _browser = _operation(tmp_path, [])
     operation.task_store.fail_reply_task(task.id, "failed", expected_execution_generation=task.execution_generation)
     with sqlite3.connect(tmp_path / "direct-unsubscribe.sqlite3") as db:
-        db.execute(
-            "insert into dispatcher_claim_leases(adapter_name,source_id,owner,lease_expires_at) values (?,?,?,?)",
-            (adapter, str(task.id), "owner", "2099-01-01T00:00:00Z"),
-        )
+        db.execute("begin")
+        insert_state(db, "dispatcher_claim_leases", {
+            "adapter_name": adapter, "source_id": str(task.id),
+            "owner": "owner", "lease_expires_at": "2099-01-01T00:00:00Z",
+        })
     args = dict(
         task_id=task.id, expected_action_identity=ACTION_IDENTITY,
         expected_execution_generation=task.execution_generation, expected_input_version=task.input_version,
