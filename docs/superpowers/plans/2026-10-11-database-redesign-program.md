@@ -1,5 +1,32 @@
 # Database Redesign Program
 
+## Latest local configs caller integration, 2026-10-16
+
+Commit `5c8aeb57` selects the complete configs coordinator in the existing
+unpublished Store `2026-10-14.1`/Email52 paired release. Fresh constructors and
+current Store, Email, schedule recovery, History and Skill callers now use
+typed configs, schedules, mapped runs and the two Skill receipt action kinds.
+This supersedes the unselected-caller boundary of the earlier evidence below;
+it does not select the independent follow-up/sync scaffold or publish a release.
+
+The implementer's focused verification reports 419 passing cases: paired
+release101, Email model controls89, Email public account/category/snapshot
+subset66, managed Skills41, managed runtime15, scheduled task store58,
+History20, scheduled recovery1 and runtime lineage28. Ruff, compilation and
+diff checks pass. Existing constructor repair behavior is retained for known
+Store-owned auxiliaries; the target metadata comparator ignores only SQLite
+index enumeration sequence numbers, including during current-fact inverse.
+An independent root read-only preparation against frozen source970a succeeds;
+this is neither application of the release nor cold constructor acceptance.
+
+Independent SPEC, subsequent fresh QUALITY and real copied-source cold
+publication/current writes/inverse/genuine old-code writes/reforward remain
+required. Other current test fixtures that issue native-table SQL still need
+separate closure; full CI has not run for this commit. The sixteen state
+families, remaining business/email/provenance consolidation and final retirement
+and publication gates remain open. Production has not been changed by this
+checkpoint; the complete destination is still ten core tables plus one ledger.
+
 ## Latest complete config storage and row transfer, 2026-10-15
 
 Commit `2de877ea` implements all fifteen config kinds, real schedules and two
