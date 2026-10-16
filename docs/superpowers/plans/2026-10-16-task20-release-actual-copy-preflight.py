@@ -6,12 +6,12 @@ Only aggregate metadata leaves the owned temporary directory.
 from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -20,9 +20,6 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT))
 SOURCE=Path('/private/tmp/ceo-business-combined-actual-u6i3ldg0/source.sqlite3')
 HERE=Path(__file__).parent
-spec=importlib.util.spec_from_file_location('task20_release_candidate',HERE/'2026-10-16-task20-release-candidate.py')
-release=importlib.util.module_from_spec(spec)
-spec.loader.exec_module(release)
 
 
 def digest(path):
@@ -42,20 +39,34 @@ def baseline(db):
     return sorted(tuple(row) for row in db.execute('pragma foreign_key_check'))
 
 
+def temp_allocator(db):
+    db.execute('create temp table unrelated_scratch(id integer primary key autoincrement)')
+    db.execute('insert into temp.unrelated_scratch default values')
+    db.executemany('insert into temp.sqlite_sequence(name,seq) values(?,?)',
+                   [('tasks',9000),('tasks:published',8000),('tasks:wechat_memory_import_jobs',7000)])
+    db.commit()
+    return list(db.execute('select name,seq from temp.sqlite_sequence order by name'))
+
+
 def main():
+    from app import task20_schema_release as release
     from app.task8_storage import register_task8_functions
     from app.task12_storage import update_task12
     started=time.monotonic()
     source_hash=digest(SOURCE)
     assert source_hash=='970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320'
-    owned=Path(tempfile.mkdtemp(prefix='task20-release-copy-',dir='/tmp')).resolve()
     report={'started_utc':datetime.now(timezone.utc).isoformat(),'scope':'unselected Tasks20 component on frozen nonempty source; no constructors/coupled markers/provider/native CLI/production',
-            'source_sha256':source_hash,'candidate_sha256':digest(HERE/'2026-10-16-task20-release-candidate.py')}
+            'source_sha256':source_hash,'candidate_sha256':digest(HERE/'2026-10-16-task20-release-candidate.py'),
+            'installed_inputs_sha256':{name:digest(ROOT/'app'/name) for name in ('task20_schema_release.py','task20_definitions.py','task12_storage.py')},
+            'worktree_head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()}
+    assert report['installed_inputs_sha256']['task20_schema_release.py']==report['candidate_sha256']
+    owned=Path(tempfile.mkdtemp(prefix='task20-release-copy-',dir='/tmp')).resolve()
     try:
         path=owned/'candidate.sqlite3'
         with closing(sqlite3.connect(SOURCE.as_uri()+'?mode=ro',uri=True)) as original, closing(sqlite3.connect(path,uri=True)) as db:
             original.backup(db)
             register_task8_functions(db)
+            temp=temp_allocator(db)
             names=ordinary(db)
             foreign_keys=baseline(db)
             original_schema=[tuple(row) for row in db.execute("select type,name,tbl_name,sql from sqlite_schema where name not like 'sqlite_%' order by type,name")]
@@ -69,10 +80,12 @@ def main():
             assert baseline(db)==foreign_keys
             assert len(ordinary(db))==len(names)-12
             report['target_ordinary_tables']=len(ordinary(db))
+            assert list(db.execute('select name,seq from temp.sqlite_sequence order by name'))==temp
             db.commit()
         # A new sqlite connection, deliberately not a current Store initializer.
         with closing(sqlite3.connect(path,uri=True)) as db:
             register_task8_functions(db)
+            temp=temp_allocator(db)
             release._target_shape(db,metadata)
             db.execute('begin immediate')
             report['inverse_counts']=release.restore_task20_schema(db,metadata)
@@ -81,6 +94,7 @@ def main():
             assert restored_schema==original_schema
             assert sorted(db.execute('select name,seq from sqlite_sequence'))==original_sequence
             assert ordinary(db)==names
+            assert list(db.execute('select name,seq from temp.sqlite_sequence order by name'))==temp
             assert baseline(db)==foreign_keys
             assert db.execute('pragma quick_check').fetchone()[0]=='ok'
             db.execute('attach database ? as original',(SOURCE.as_uri()+'?mode=ro',))
@@ -107,6 +121,8 @@ def main():
             assert baseline(db)==foreign_keys
             db.commit()
             report['current_fact_inverse_native_sql_reforward']=True
+            assert list(db.execute('select name,seq from temp.sqlite_sequence order by name'))==temp
+            report['unrelated_temp_auto_conflicting_counters_unchanged']=True
             report['quick_check']=db.execute('pragma quick_check').fetchone()[0]
             report['page_size']=db.execute('pragma page_size').fetchone()[0]
             report['page_count']=db.execute('pragma page_count').fetchone()[0]

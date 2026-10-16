@@ -1,8 +1,14 @@
 {
-  "started_utc": "2026-10-16T20:06:22.934656+00:00",
+  "started_utc": "2026-10-16T20:14:45.823911+00:00",
   "scope": "unselected Tasks20 component on frozen nonempty source; no constructors/coupled markers/provider/native CLI/production",
   "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
   "candidate_sha256": "90fab9be52f04e03d826587851d4ae893e1abb0a57145a6c1133c0ee140f2715",
+  "installed_inputs_sha256": {
+    "task20_schema_release.py": "90fab9be52f04e03d826587851d4ae893e1abb0a57145a6c1133c0ee140f2715",
+    "task20_definitions.py": "d3e84f6d3ce871bf01b85fb160b1cf13162ca73b2644e39e593edc0b0c258773",
+    "task12_storage.py": "592da58189962bee520ae87b3504742495f5132fc481902bc72c11aa4766cf0d"
+  },
+  "worktree_head": "dfbfc07bdfe580269a05ec165e48c7d3929e0ef1",
   "original_ordinary_tables": 116,
   "source_foreign_key_findings": [
     [
@@ -47,12 +53,13 @@
   },
   "inverse_all_original_tables_typed_equal": 116,
   "current_fact_inverse_native_sql_reforward": true,
+  "unrelated_temp_auto_conflicting_counters_unchanged": true,
   "quick_check": "ok",
   "page_size": 4096,
   "page_count": 123687,
   "freelist_count": 1770,
   "copy_file_bytes": 506621952,
   "source_unchanged": true,
-  "elapsed_seconds": 59.382,
+  "elapsed_seconds": 56.058,
   "owned_temp_removed": true
 }

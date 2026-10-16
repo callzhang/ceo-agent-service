@@ -32,7 +32,7 @@ Expected: 176 focused cases pass after both TEMP relation and allocator correcti
 
 ## Task 2: Nonempty component rehearsal
 
-- [ ] Run the exact owned-copy script below. It hash-verifies preserved source970a, copies it to a task-owned temporary directory, performs forward/cold SQLite reopen/inverse and exact original ordinary-family comparison, then current target write/inverse/native-source SQL write/reforward. Close every connection and clean the owned directory in `finally`.
+- [x] Refreshed installed-module proof56.058s with allthree hashes and unrelated TEMP counter witness; run the exact owned-copy script below. It hash-verifies preserved source970a, copies it to a task-owned temporary directory, performs forward/cold SQLite reopen/inverse and exact original ordinary-family comparison, then current target write/inverse/native-source SQL write/reforward. Close every connection and clean the owned directory in `finally`.
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 TASK20_COPY_REPORT=docs/superpowers/specs/2026-10-16-task20-release-actual-copy.json /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python -B docs/superpowers/plans/2026-10-16-task20-release-actual-copy-preflight.py
@@ -44,8 +44,8 @@ Expected source116ordinary becomes104 and inverse116. This standalone count diff
 
 - [x] Fresh bounded SPEC172/9.61s then prerequisite-expanded184/9.15s. Fresh bounded SPEC review of canonical component/regression, source fields and actual/fresh declarations. Resolve any actual mismatch in canonical code and test before application.
 - [x] Fresh QUALITY184/7.81s after SPEC; its prior silent TEMP sequence finding is resolved by exact four-statement qualification, with four supplemental roundtrips. Fresh bounded QUALITY review after SPEC passes, including meaningful source-preserving semantic mutants rather than setup failures. Do not let reviewers select application/callers/migration/production.
-- [ ] Mechanically copy the accepted exact canonical into `app/task20_schema_release.py`, add the accepted regression under `tests/` with only the documented module-import/path substitution, and verify exact hashes/AST scope. This is still unselected helper code.
-- [ ] Commit own code/test/docs hunks; record exact installed hashes and applied focused results. Fresh sequential SPEC then QUALITY recheck installed code as required by the execution skill.
+- [x] Exact unselected applicationdfbfc07bd, writer184/8.13s. Mechanically copy the accepted exact canonical into `app/task20_schema_release.py`, add the accepted regression under `tests/` with only the documented module-import/path substitution, and verify exact hashes/AST scope. This is still unselected helper code.
+- [x] Committed own code/test/docs hunks; applied fresh SPEC184/8.62s then QUALITY184/7.83s PASS. Installed hashes and copy limits recorded in ../specs/2026-10-16-task20-release-installed-acceptance.json.
 
 ## Task 4: Coupled runtime selection belongs to the parent plan
 

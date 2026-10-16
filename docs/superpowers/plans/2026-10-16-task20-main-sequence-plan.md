@@ -50,8 +50,8 @@ PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/tas
 Expected:184pass and `OWNED_TEMP_REMOVED True`. Preserve the old172/copy receipts as their original scoped evidence; new helper hashes must be recorded for new proofs.
 
 - [x] Fresh SPEC184/9.15s then fresh QUALITY184/7.81s accept exact prerequisite and component; four supplemental full actual/fresh TEMP counter roundtrips pass. Fresh independent SPEC then fresh QUALITY must accept these precise changes and complete component. Resolve findings canonically before application.
-- [ ] Mechanically copy both complete canonical files and the eight-case regression to the three exact destinations; verify byte hashes, only three changed function ASTs/four SQL literals, all signatures and generated declarations unchanged. Run the installed eight-case regression plus176 unselected canonical component cases.
-- [ ] Commit only own hunks with behavior documentation explaining this unselected helper correction. Repeat fresh installed review checks required by the execution skill.
+- [x] Exact unselected applicationdfbfc07bd transfers complete canonical helpers/component/tests. Mechanically copy both complete canonical files and the eight-case regression to the three exact destinations; verify byte hashes, only three changed function ASTs/four SQL literals, all signatures and generated declarations unchanged. Run the installed eight-case regression plus176 unselected canonical component cases.
+- [x] Committed own hunks and both behavior paragraphs; fresh installed SPEC184/8.62s then QUALITY184/7.83s PASS. Refreshed actual copy56.058s with installed hashes and conflicting TEMP counters PASS.
 
 After this prerequisite passes, refresh the frozen nonempty component proof with both exact corrected helper hashes and an unrelated TEMP AUTO witness. This remains separate from complete current constructor/caller/paired release selection. Do not turn184 tests or a standalone116→104→116 component copy into coupled55/final11, production, genuine archived predecessor or native CLI acceptance.
 
