@@ -2175,6 +2175,12 @@ Historical terminal Attempt or settlement projections cannot override a current 
 
 Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
 
+History list status for a failed Attempt follows its owning AgentRun's stable
+reply-task identity when that task's DingTalk trigger key has since changed.
+Current terminal task state is projected without rewriting the Attempt or its
+execution audit. A task marked `external_action_uncertain` remains `uncertain`
+and is never projected as a successful terminal outcome.
+
 
 ### 原始触发、当前来源和立项财务口径（2026-10-14）
 

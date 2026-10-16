@@ -30366,6 +30366,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and attempts.attempt_send_status='failed'
                   and latest.latest_attempt_id=cast(attempts.legacy_key as integer)
                   and task.status not in ('done', 'skipped', 'needs_human')
+                  and coalesce(task.error, '')<>'external_action_uncertain'
                   and coalesce(attempts.attempt_resolved_at, '')=''
                   and not exists (
                       select 1 from terminal_tasks as terminal_task
@@ -30765,6 +30766,35 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                                     and current_delivery.execution_generation=delivery_task.execution_generation
                               )
                         ) then 'failed'
+                        -- Attempt detail follows the stable AgentRun task ID.
+                        -- The current task's DingTalk trigger key can change
+                        -- during OA scanning, so terminal state must not be
+                        -- inferred only from the historical message key.
+                        when send_status='failed' and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                              on bound_current_task.id=bound_attempt_run.reply_task_id
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                              and coalesce(bound_current_task.error, '')='external_action_uncertain'
+                        ) then 'uncertain'
+                        when send_status='failed' and exists (
+                            select 1
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                              on bound_current_task.id=bound_attempt_run.reply_task_id
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                              and bound_current_task.status in ('done', 'skipped', 'needs_human')
+                              and coalesce(bound_current_task.error, '')<>'external_action_uncertain'
+                        ) then (
+                            select bound_current_task.status
+                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                              on bound_current_task.id=bound_attempt_run.reply_task_id
+                            where bound_attempt_run.id=reply_attempts.agent_run_id
+                              and coalesce(bound_current_task.error, '')<>'external_action_uncertain'
+                            limit 1
+                        )
                         -- A failed attempt whose own task was handed to Derek
                         -- reads `needs_human`, not `recovered`. The task and
                         -- the attempt are two projections of one piece of
