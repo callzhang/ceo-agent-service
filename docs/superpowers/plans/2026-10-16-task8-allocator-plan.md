@@ -37,12 +37,14 @@ Preflight: `docs/superpowers/plans/2026-10-16-task8-allocator-preflight.py`; it 
 
 ### Task 3: independent review then root acceptance
 
-- [ ] Fresh SPEC: source actual/fresh DDL authority; all8 automatic/IGNORE/UPSERT/ABORT/FULL, current/cursor transaction semantics, internal row and no schema install DML; source absence/zero/deleted-high, migration explicit negative reset, caller/savepoint rollback, mixed-history ambiguity.
-- [ ] Fresh QUALITY: meaningful controls kill missing tracking, incorrectly tracking all20, skipping ignored/UPSERT attempted allocation, MAX overflow, eager initializer commit, and lost explicit source-water reset. Compare valid native controls before mutations; own temp only and cleanup.
-- [ ] Root records exact reviewed hashes and scope. New trigger count31; prior30-trigger acceptance remains historical. This is allocator foundation only, not actual-copy migration or full inverse acceptance.
+- [x] Fresh SPEC: source actual/fresh DDL authority; all8 automatic/IGNORE/UPSERT/ABORT/FULL, current/cursor transaction semantics, internal row and no schema install DML; source absence/zero/deleted-high, migration explicit negative reset, caller/savepoint rollback, mixed-history ambiguity.
+- [x] Fresh QUALITY: meaningful controls kill missing tracking, incorrectly tracking all20, skipping ignored/UPSERT attempted allocation, MAX overflow, eager initializer commit, and lost explicit source-water reset. Compare valid native controls before mutations; own temp only and cleanup.
+- [x] Root records exact reviewed hashes and scope. New trigger count31; prior30-trigger acceptance remains historical. This is allocator foundation only, not actual-copy migration or full inverse acceptance.
 
 ## Remaining full cutover
 
 Initializer must be selected explicitly inside both complete paired migration and fresh constructor transaction, reset AFTER all bulk inserts. Inverse reads tasks:published with original metadata for absence/zero, and checks surviving old8 IDs against restored water. Current source-eight counter cannot simply copy global Tasks water after new12 writes. Complete all20 caller/construction/feedback endpoints first, then copy current writes/current-fact inverse/genuine predecessor writes/reforward. Native CLI fake outbound/UI/business result/receipt, all remaining families and final10core+Emailledger acceptance remain open. Last integrated copy67ordinary tables is not final11. No production publication without final human approval.
 
 QUALITY regression supplement: four actual/fresh cases persist earlier caller-write rollback and caller-savepoint survival across initializer. App SHA unchanged. Independent control4pass; commit-before-DML mutant4fail (persisted sentinel/no-such-savepoint), no setup failures. Final focused125 installed run/root commit below supersedes121-case regression hash; original961 full application proof remains unchanged-source evidence.
+
+Final accepted unselected component: applicationc4977a52c; regression-only followupaf7d533dd. Full unchanged application961 checks passed root/author/SPEC; final allocator125 passes root9.64s/QUALITY9.51s. Seven meaningful mutants killed; pure MAX-guard removal survivor is explicitly not a kill. Exact receipt ../specs/2026-10-16-task8-allocator-acceptance.json. No constructor/caller/migration selection or complete inverse is claimed.
