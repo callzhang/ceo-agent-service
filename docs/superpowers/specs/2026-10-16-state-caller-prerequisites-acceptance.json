@@ -67,7 +67,7 @@
   "proposals": {
     "store": {
       "path": "docs/superpowers/plans/2026-10-16-state-store-dao-proposal.patch",
-      "sha256": "114c71fbfe08e8b0c1875d0bbc53a347e88c5426c07c41875943dccfbb598dd4",
+      "sha256": "50b6d019225761995b922c59e5406d42445fbfbfb958a9f8232b224468a152c1",
       "changed_methods": 27,
       "signatures_unchanged": true,
       "author": {
@@ -79,11 +79,14 @@
         "reason": "Org source secondary-index ties followed source ROWID; State followed physical state.id. MAX-rowid random branch changes first result/open ID and nullable-user-ID equal-key name order.",
         "recheck_after_index_amendment": "SPEC validates all eight exact org DAO counterexamples now match native; full27method acceptance and runtime selection still pending."
       },
-      "selected": false
+      "selected": false,
+      "reviewed_context_patch_sha256": "114c71fbfe08e8b0c1875d0bbc53a347e88c5426c07c41875943dccfbb598dd4",
+      "format": "zero-context unified diff; apply with git apply --unidiff-zero",
+      "normalization": "Temporary application of reviewed and normalized patches produced byte-identical candidate source; no application file changed. Owned temporary directory automatically removed."
     },
     "dispatcher": {
       "path": "docs/superpowers/plans/2026-10-16-state-dispatcher-proposal.patch",
-      "sha256": "f598158d8d412cc7765f5d051347fd2b295bc1c8ac420c268437bff371371988",
+      "sha256": "fa491a1d49cda6ef438ff23d8abb1d7468a3c16075798429a96486a4d4a93aa0",
       "changed_existing_callables": 19,
       "class_methods": 12,
       "shared_functions": 7,
@@ -107,7 +110,10 @@
         "outer_transaction_and_sentinel_preserved": true,
         "all_test_databases_in_memory": true
       },
-      "selected": false
+      "selected": false,
+      "reviewed_context_patch_sha256": "f598158d8d412cc7765f5d051347fd2b295bc1c8ac420c268437bff371371988",
+      "format": "zero-context unified diff; apply with git apply --unidiff-zero",
+      "normalization": "Temporary application of reviewed and normalized patches produced byte-identical candidate source; no application file changed. Owned temporary directory automatically removed."
     }
   },
   "integration": {
@@ -133,5 +139,6 @@
     "reason": "Automatic approval review rejected rm -rf because deletion required approval while AskForApproval was Never.",
     "retried_or_bypassed": false,
     "question_already_pending": true
-  }
+  },
+  "artifact_normalization": "Commit29439047 initially committed ordinary unified-patch context blank lines that git diff --check flags as trailing whitespace. This follow-up uses zero-context executable diffs, preserves candidate source exactly and passes unsuppressed checks; application code is unchanged."
 }

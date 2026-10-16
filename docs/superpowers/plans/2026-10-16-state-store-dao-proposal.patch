@@ -1,18 +1,9 @@
 --- a/app/store.py
 +++ b/app/store.py
-@@ -94,6 +94,8 @@
- )
- from app.business_identity import oa_identifiers_from_url, reply_business_object_key
- from app.business_definitions import BUSINESS_PROJECTIONS, BUSINESS_TASK_LIST_PROJECTION
+@@ -96,0 +97,2 @@
 +from app.state_definitions import state_projection
 +from app.state_storage import insert_state, state_json_field, upsert_state
- from app.business_storage import create_business_schema, insert_business, update_business
- from app.business_schema_release import business_schema_is_current
- from app.codex_failure import (
-@@ -14491,55 +14493,46 @@
-         capability_reason: str = "", watermark_sent_at: str = "",
-         watermark_message_id: str = "", last_scan_at: str = "",
-     ) -> None:
+@@ -14494,37 +14496,26 @@
 -        with self._connect() as db:
 -            db.execute(
 -                """
@@ -76,29 +67,17 @@
 +        with self._connect() as db:
 +            db.execute("begin")
 +            upsert_state(db, "wechat_read_state", values, updates)
- 
-     def get_wechat_read_state(self, account_id: str) -> dict[str, str] | None:
+@@ -14532,0 +14524 @@
 +        projection = "(" + state_projection("wechat_read_state") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -14535 +14527 @@
 -                "select * from wechat_read_state where account_id=?", (account_id,)
 +                f"select * from {projection} where account_id=?", (account_id,)
-             ).fetchone()
-         return dict(row) if row is not None else None
- 
-     def list_wechat_read_states(self) -> list[dict[str, str]]:
+@@ -14539,0 +14532 @@
 +        projection = "(" + state_projection("wechat_read_state") + ")"
-         with self._connect() as db:
-             rows = db.execute(
+@@ -14542 +14535 @@
 -                "select * from wechat_read_state order by account_id"
 +                f"select * from {projection} order by account_id"
-             ).fetchall()
-         return [dict(row) for row in rows]
- 
-@@ -17939,27 +17932,25 @@
-         codex_session_id: str | None,
-     ) -> None:
-         with self._connect() as db:
+@@ -17942,15 +17935,12 @@
 -            db.execute(
 -                """
 -                insert into conversations (
@@ -126,134 +105,66 @@
 +                     state_json_field("codex_session_id") + " else " +
 +                     state_json_field("codex_session_id", "state") + " end"
 +                 )},
-             )
- 
-     def get_codex_session_id(self, conversation_id: str) -> str | None:
+@@ -17959,0 +17950 @@
 +        projection = "(" + state_projection("conversations") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -17962 +17953 @@
 -                "select codex_session_id from conversations where conversation_id=?",
 +                f"select codex_session_id from {projection} where conversation_id=?",
-                 (conversation_id,),
-             ).fetchone()
-             return None if row is None else row["codex_session_id"]
-@@ -18293,11 +18284,12 @@
-         }
- 
-     def get_codex_session_contract_hash(self, conversation_id: str) -> str:
+@@ -18295,0 +18287 @@
 +        projection = "(" + state_projection("conversations") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -18298 +18290 @@
 -                """
 +                f"""
-                 select codex_session_contract_hash
+@@ -18300 +18292 @@
 -                from conversations
 +                from {projection}
-                 where conversation_id=?
-                 """,
-                 (conversation_id,),
-@@ -18839,11 +18831,12 @@
-             return cursor.rowcount
- 
-     def list_codex_conversations(self) -> list[ConversationRecord]:
+@@ -18841,0 +18834 @@
 +        projection = "(" + state_projection("conversations") + ")"
-         with self._connect() as db:
-             rows = db.execute(
+@@ -18844 +18837 @@
 -                """
 +                f"""
-                 select conversation_id, title, single_chat, codex_session_id
+@@ -18846 +18839 @@
 -                from conversations
 +                from {projection}
-                 where codex_session_id is not null and codex_session_id != ''
-                 order by title, conversation_id
-                 """
-@@ -18863,6 +18856,8 @@
-         since_utc: str,
-         limit: int,
-     ) -> list[ConversationRecord]:
+@@ -18865,0 +18859,2 @@
 +        seen_projection = "(" + state_projection("seen_messages") + ")"
 +        conversation_projection = "(" + state_projection("conversations") + ")"
-         with self._connect() as db:
-             rows = db.execute(
-                 f"""
-@@ -18870,7 +18865,7 @@
-                     select conversation_id, max(activity_at) as latest_activity_at
-                     from (
-                         select conversation_id, seen_at as activity_at
+@@ -18873 +18868 @@
 -                        from seen_messages
 +                        from {seen_projection}
-                         union all
-                         select conversation_id, created_at as activity_at
-                         from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-@@ -18903,7 +18898,7 @@
-                         limit 1
-                     ), '') as direct_open_dingtalk_id,
-                     a.latest_activity_at
+@@ -18906 +18901 @@
 -                from conversations c
 +                from {conversation_projection} c
-                 join recent_activity a on a.conversation_id=c.conversation_id
-                 where c.single_chat=1 and a.latest_activity_at >= ?
-                 order by a.latest_activity_at desc
-@@ -18924,11 +18919,12 @@
-             ]
- 
-     def get_conversation(self, conversation_id: str) -> ConversationRecord | None:
+@@ -18926,0 +18922 @@
 +        projection = "(" + state_projection("conversations") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -18929 +18925 @@
 -                """
 +                f"""
-                 select conversation_id, title, single_chat, codex_session_id
+@@ -18931 +18927 @@
 -                from conversations
 +                from {projection}
-                 where conversation_id=?
-                 """,
-                 (conversation_id,),
-@@ -18945,11 +18941,12 @@
-     def find_single_chat_conversation_by_title(
-         self, title: str
-     ) -> ConversationRecord | None:
+@@ -18947,0 +18944 @@
 +        projection = "(" + state_projection("conversations") + ")"
-         with self._connect() as db:
-             rows = db.execute(
+@@ -18950 +18947 @@
 -                """
 +                f"""
-                 select conversation_id, title, single_chat, codex_session_id
+@@ -18952 +18949 @@
 -                from conversations
 +                from {projection}
-                 where title=? and single_chat=1
-                 order by conversation_id
-                 limit 2
-@@ -18967,11 +18964,12 @@
-             )
- 
-     def find_conversation_by_title(self, title: str) -> ConversationRecord | None:
+@@ -18969,0 +18967 @@
 +        projection = "(" + state_projection("conversations") + ")"
-         with self._connect() as db:
-             rows = db.execute(
+@@ -18972 +18970 @@
 -                """
 +                f"""
-                 select conversation_id, title, single_chat, codex_session_id
+@@ -18974 +18972 @@
 -                from conversations
 +                from {projection}
-                 where title=?
-                 order by single_chat, conversation_id
-                 limit 2
-@@ -18989,23 +18987,23 @@
-             )
- 
-     def has_seen(self, message_id: str) -> bool:
+@@ -18991,0 +18990 @@
 +        projection = "(" + state_projection("seen_messages") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -18994 +18993 @@
 -                "select 1 from seen_messages where message_id=?",
 +                f"select 1 from {projection} where message_id=?",
-                 (message_id,),
-             ).fetchone()
-             return row is not None
- 
-     def mark_seen(self, message_id: str, conversation_id: str) -> bool:
-         with self._connect() as db:
+@@ -19001,8 +19000,7 @@
 -            cursor = db.execute(
 -                """
 -                insert or ignore into seen_messages (message_id, conversation_id)
@@ -269,13 +180,7 @@
 +                ignore=True,
 +            )
 +            return result.rowcount == 1
- 
-     def record_sent_reply(
-         self,
-@@ -28940,30 +28938,24 @@
-         last_error: str = "",
-     ) -> None:
-         with self._connect() as db:
+@@ -28943,16 +28941,9 @@
 -            db.execute(
 -                """
 -                insert into daily_scan_state (
@@ -301,24 +206,15 @@
 +                 "cursor_json": state_json_field("cursor_json"),
 +                 "last_error": state_json_field("last_error"),
 +                 "updated_at": "json_quote(current_timestamp)"},
-             )
- 
-     def get_daily_scan_state(self, scanner_name: str) -> dict[str, str] | None:
+@@ -28961,0 +28953 @@
 +        projection = "(" + state_projection("daily_scan_state") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -28964 +28956 @@
 -                """
 +                f"""
-                 select scanner_name, last_success_at, cursor_json, last_error
+@@ -28966 +28958 @@
 -                from daily_scan_state
 +                from {projection}
-                 where scanner_name=?
-                 """,
-                 (scanner_name,),
-@@ -30592,15 +30584,10 @@
-             try:
-                 with self._connect() as db:
-                     db.execute("begin immediate")
+@@ -30595,9 +30587,4 @@
 -                    db.execute(
 -                        """
 -                        insert into service_state (key, value, updated_at)
@@ -332,25 +228,12 @@
 +                        db, "service_state", {"key": key, "value": value},
 +                        {"value": state_json_field("value"),
 +                         "updated_at": "json_quote(current_timestamp)"},
-                     )
-                 return
-             except sqlite3.OperationalError as exc:
-@@ -31001,9 +30988,10 @@
-         )
- 
-     def get_service_state(self, key: str) -> str | None:
+@@ -31003,0 +30991 @@
 +        projection = "(" + state_projection("service_state") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -31006 +30994 @@
 -                "select value from service_state where key=?",
 +                f"select value from {projection} where key=?",
-                 (key,),
-             ).fetchone()
-             return None if row is None else row["value"]
-@@ -31017,45 +31005,37 @@
-         manual_confirmed_by: str = "",
-     ) -> None:
-         with self._connect() as db:
+@@ -31020,30 +31008,21 @@
 -            db.execute(
 -                """
 -                insert into setup_wizard_steps (
@@ -402,41 +285,23 @@
 +                insert_json={"manual_confirmed_at":
 +                             "json_quote(case when ? != '' then current_timestamp else '' end)"},
 +                insert_parameters=(manual_confirmed_by,),
-             )
- 
-     def get_setup_wizard_step(self, step_id: str) -> dict[str, str] | None:
+@@ -31052,0 +31032 @@
 +        projection = "(" + state_projection("setup_wizard_steps") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -31055 +31035 @@
 -                """
 +                f"""
-                 select step_id, status, summary, manual_confirmed_at,
-                        manual_confirmed_by, updated_at
+@@ -31058 +31038 @@
 -                from setup_wizard_steps
 +                from {projection}
-                 where step_id=?
-                 """,
-                 (step_id,),
-@@ -31063,12 +31043,13 @@
-             return dict(row) if row is not None else None
- 
-     def list_setup_wizard_steps(self) -> list[dict[str, str]]:
+@@ -31065,0 +31046 @@
 +        projection = "(" + state_projection("setup_wizard_steps") + ")"
-         with self._connect() as db:
-             rows = db.execute(
+@@ -31068 +31049 @@
 -                """
 +                f"""
-                 select step_id, status, summary, manual_confirmed_at,
-                        manual_confirmed_by, updated_at
+@@ -31071 +31052 @@
 -                from setup_wizard_steps
 +                from {projection}
-                 order by updated_at desc, step_id
-                 """
-             ).fetchall()
-@@ -31159,53 +31140,28 @@
-     ) -> None:
-         department_names = department_names or set()
-         org_labels = org_labels or []
+@@ -31162,41 +31143,15 @@
 -        with self._connect() as db:
 -            db.execute(
 -                """
@@ -493,59 +358,29 @@
 +                db, "org_user_profiles", values,
 +                {field: state_json_field(field) for field in values if field != "user_id"}
 +                | {"fetched_at": "json_quote(current_timestamp)"},
-             )
- 
-     def get_org_user_profile(self, user_id: str) -> OrgUserProfile | None:
+@@ -31205,0 +31161 @@
 +        projection = "(" + state_projection("org_user_profiles") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -31208 +31164 @@
 -                "select * from org_user_profiles where user_id=?",
 +                f"select * from {projection} where user_id=?",
-                 (user_id,),
-             ).fetchone()
-             return self._org_user_profile_from_row(row)
-@@ -31213,10 +31169,11 @@
-     def find_org_user_by_open_dingtalk_id(
-         self, open_dingtalk_id: str
-     ) -> OrgUserProfile | None:
+@@ -31215,0 +31172 @@
 +        projection = "(" + state_projection("org_user_profiles") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -31218,2 +31175,2 @@
 -                """
 -                select * from org_user_profiles
 +                f"""
 +                select * from {projection}
-                 where open_dingtalk_id=?
-                 """,
-                 (open_dingtalk_id,),
-@@ -31224,9 +31181,10 @@
-             return self._org_user_profile_from_row(row)
- 
-     def find_org_users_by_name(self, name: str) -> list[OrgUserProfile]:
+@@ -31226,0 +31184 @@
 +        projection = "(" + state_projection("org_user_profiles") + ")"
-         with self._connect() as db:
-             rows = db.execute(
+@@ -31229 +31187 @@
 -                "select * from org_user_profiles where name=? order by user_id",
 +                f"select * from {projection} where name=? order by user_id",
-                 (name,),
-             ).fetchall()
-             return [
-@@ -31236,9 +31194,10 @@
-             ]
- 
-     def list_org_user_ids(self) -> list[str]:
+@@ -31238,0 +31197 @@
 +        projection = "(" + state_projection("org_user_profiles") + ")"
-         with self._connect() as db:
-             rows = db.execute(
+@@ -31241 +31200 @@
 -                "select user_id from org_user_profiles order by user_id"
 +                f"select user_id from {projection} order by user_id"
-             ).fetchall()
-             return [row["user_id"] for row in rows]
- 
-@@ -31259,21 +31218,19 @@
- 
-     def _set_metadata(self, key: str, value) -> None:
-         with self._connect() as db:
+@@ -31262,9 +31221,6 @@
 -            db.execute(
 -                """
 -                insert into org_cache_metadata (key, value_json, updated_at)
@@ -561,14 +396,8 @@
 +                {"key": key, "value_json": json.dumps(value, ensure_ascii=False)},
 +                {"value_json": state_json_field("value_json"),
 +                 "updated_at": "json_quote(current_timestamp)"},
-             )
- 
-     def _get_metadata(self, key: str):
+@@ -31273,0 +31230 @@
 +        projection = "(" + state_projection("org_cache_metadata") + ")"
-         with self._connect() as db:
-             row = db.execute(
+@@ -31276 +31233 @@
 -                "select value_json from org_cache_metadata where key=?",
 +                f"select value_json from {projection} where key=?",
-                 (key,),
-             ).fetchone()
-             if row is None:
