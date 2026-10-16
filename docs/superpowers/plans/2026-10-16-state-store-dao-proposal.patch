@@ -1,9 +1,9 @@
 --- a/app/store.py
 +++ b/app/store.py
-@@ -96,0 +97,2 @@
+@@ -95,0 +96,2 @@
 +from app.state_definitions import state_projection
 +from app.state_storage import insert_state, state_json_field, upsert_state
-@@ -14494,37 +14496,26 @@
+@@ -14495,37 +14497,26 @@
 -        with self._connect() as db:
 -            db.execute(
 -                """
@@ -67,17 +67,17 @@
 +        with self._connect() as db:
 +            db.execute("begin")
 +            upsert_state(db, "wechat_read_state", values, updates)
-@@ -14532,0 +14524 @@
+@@ -14533,0 +14525 @@
 +        projection = "(" + state_projection("wechat_read_state") + ")"
-@@ -14535 +14527 @@
+@@ -14536 +14528 @@
 -                "select * from wechat_read_state where account_id=?", (account_id,)
 +                f"select * from {projection} where account_id=?", (account_id,)
-@@ -14539,0 +14532 @@
+@@ -14540,0 +14533 @@
 +        projection = "(" + state_projection("wechat_read_state") + ")"
-@@ -14542 +14535 @@
+@@ -14543 +14536 @@
 -                "select * from wechat_read_state order by account_id"
 +                f"select * from {projection} order by account_id"
-@@ -17942,15 +17935,12 @@
+@@ -17943,15 +17936,12 @@
 -            db.execute(
 -                """
 -                insert into conversations (
@@ -105,66 +105,66 @@
 +                     state_json_field("codex_session_id") + " else " +
 +                     state_json_field("codex_session_id", "state") + " end"
 +                 )},
-@@ -17959,0 +17950 @@
+@@ -17960,0 +17951 @@
 +        projection = "(" + state_projection("conversations") + ")"
-@@ -17962 +17953 @@
+@@ -17963 +17954 @@
 -                "select codex_session_id from conversations where conversation_id=?",
 +                f"select codex_session_id from {projection} where conversation_id=?",
-@@ -18295,0 +18287 @@
+@@ -18296,0 +18288 @@
 +        projection = "(" + state_projection("conversations") + ")"
-@@ -18298 +18290 @@
+@@ -18299 +18291 @@
 -                """
 +                f"""
-@@ -18300 +18292 @@
+@@ -18301 +18293 @@
 -                from conversations
 +                from {projection}
-@@ -18841,0 +18834 @@
+@@ -18842,0 +18835 @@
 +        projection = "(" + state_projection("conversations") + ")"
-@@ -18844 +18837 @@
+@@ -18845 +18838 @@
 -                """
 +                f"""
-@@ -18846 +18839 @@
+@@ -18847 +18840 @@
 -                from conversations
 +                from {projection}
-@@ -18865,0 +18859,2 @@
+@@ -18866,0 +18860,2 @@
 +        seen_projection = "(" + state_projection("seen_messages") + ")"
 +        conversation_projection = "(" + state_projection("conversations") + ")"
-@@ -18873 +18868 @@
+@@ -18874 +18869 @@
 -                        from seen_messages
 +                        from {seen_projection}
-@@ -18906 +18901 @@
+@@ -18907 +18902 @@
 -                from conversations c
 +                from {conversation_projection} c
-@@ -18926,0 +18922 @@
+@@ -18927,0 +18923 @@
 +        projection = "(" + state_projection("conversations") + ")"
-@@ -18929 +18925 @@
+@@ -18930 +18926 @@
 -                """
 +                f"""
-@@ -18931 +18927 @@
+@@ -18932 +18928 @@
 -                from conversations
 +                from {projection}
-@@ -18947,0 +18944 @@
+@@ -18948,0 +18945 @@
 +        projection = "(" + state_projection("conversations") + ")"
-@@ -18950 +18947 @@
+@@ -18951 +18948 @@
 -                """
 +                f"""
-@@ -18952 +18949 @@
+@@ -18953 +18950 @@
 -                from conversations
 +                from {projection}
-@@ -18969,0 +18967 @@
+@@ -18970,0 +18968 @@
 +        projection = "(" + state_projection("conversations") + ")"
-@@ -18972 +18970 @@
+@@ -18973 +18971 @@
 -                """
 +                f"""
-@@ -18974 +18972 @@
+@@ -18975 +18973 @@
 -                from conversations
 +                from {projection}
-@@ -18991,0 +18990 @@
+@@ -18992,0 +18991 @@
 +        projection = "(" + state_projection("seen_messages") + ")"
-@@ -18994 +18993 @@
+@@ -18995 +18994 @@
 -                "select 1 from seen_messages where message_id=?",
 +                f"select 1 from {projection} where message_id=?",
-@@ -19001,8 +19000,7 @@
+@@ -19002,8 +19001,7 @@
 -            cursor = db.execute(
 -                """
 -                insert or ignore into seen_messages (message_id, conversation_id)
@@ -180,7 +180,7 @@
 +                ignore=True,
 +            )
 +            return result.rowcount == 1
-@@ -28943,16 +28941,9 @@
+@@ -28944,16 +28942,9 @@
 -            db.execute(
 -                """
 -                insert into daily_scan_state (
@@ -206,15 +206,15 @@
 +                 "cursor_json": state_json_field("cursor_json"),
 +                 "last_error": state_json_field("last_error"),
 +                 "updated_at": "json_quote(current_timestamp)"},
-@@ -28961,0 +28953 @@
+@@ -28962,0 +28954 @@
 +        projection = "(" + state_projection("daily_scan_state") + ")"
-@@ -28964 +28956 @@
+@@ -28965 +28957 @@
 -                """
 +                f"""
-@@ -28966 +28958 @@
+@@ -28967 +28959 @@
 -                from daily_scan_state
 +                from {projection}
-@@ -30595,9 +30587,4 @@
+@@ -30639,9 +30631,4 @@
 -                    db.execute(
 -                        """
 -                        insert into service_state (key, value, updated_at)
@@ -228,12 +228,12 @@
 +                        db, "service_state", {"key": key, "value": value},
 +                        {"value": state_json_field("value"),
 +                         "updated_at": "json_quote(current_timestamp)"},
-@@ -31003,0 +30991 @@
+@@ -31047,0 +31035 @@
 +        projection = "(" + state_projection("service_state") + ")"
-@@ -31006 +30994 @@
+@@ -31050 +31038 @@
 -                "select value from service_state where key=?",
 +                f"select value from {projection} where key=?",
-@@ -31020,30 +31008,21 @@
+@@ -31064,30 +31052,21 @@
 -            db.execute(
 -                """
 -                insert into setup_wizard_steps (
@@ -285,23 +285,23 @@
 +                insert_json={"manual_confirmed_at":
 +                             "json_quote(case when ? != '' then current_timestamp else '' end)"},
 +                insert_parameters=(manual_confirmed_by,),
-@@ -31052,0 +31032 @@
+@@ -31096,0 +31076 @@
 +        projection = "(" + state_projection("setup_wizard_steps") + ")"
-@@ -31055 +31035 @@
+@@ -31099 +31079 @@
 -                """
 +                f"""
-@@ -31058 +31038 @@
+@@ -31102 +31082 @@
 -                from setup_wizard_steps
 +                from {projection}
-@@ -31065,0 +31046 @@
+@@ -31109,0 +31090 @@
 +        projection = "(" + state_projection("setup_wizard_steps") + ")"
-@@ -31068 +31049 @@
+@@ -31112 +31093 @@
 -                """
 +                f"""
-@@ -31071 +31052 @@
+@@ -31115 +31096 @@
 -                from setup_wizard_steps
 +                from {projection}
-@@ -31162,41 +31143,15 @@
+@@ -31206,41 +31187,15 @@
 -        with self._connect() as db:
 -            db.execute(
 -                """
@@ -358,29 +358,29 @@
 +                db, "org_user_profiles", values,
 +                {field: state_json_field(field) for field in values if field != "user_id"}
 +                | {"fetched_at": "json_quote(current_timestamp)"},
-@@ -31205,0 +31161 @@
+@@ -31249,0 +31205 @@
 +        projection = "(" + state_projection("org_user_profiles") + ")"
-@@ -31208 +31164 @@
+@@ -31252 +31208 @@
 -                "select * from org_user_profiles where user_id=?",
 +                f"select * from {projection} where user_id=?",
-@@ -31215,0 +31172 @@
+@@ -31259,0 +31216 @@
 +        projection = "(" + state_projection("org_user_profiles") + ")"
-@@ -31218,2 +31175,2 @@
+@@ -31262,2 +31219,2 @@
 -                """
 -                select * from org_user_profiles
 +                f"""
 +                select * from {projection}
-@@ -31226,0 +31184 @@
+@@ -31270,0 +31228 @@
 +        projection = "(" + state_projection("org_user_profiles") + ")"
-@@ -31229 +31187 @@
+@@ -31273 +31231 @@
 -                "select * from org_user_profiles where name=? order by user_id",
 +                f"select * from {projection} where name=? order by user_id",
-@@ -31238,0 +31197 @@
+@@ -31282,0 +31241 @@
 +        projection = "(" + state_projection("org_user_profiles") + ")"
-@@ -31241 +31200 @@
+@@ -31285 +31244 @@
 -                "select user_id from org_user_profiles order by user_id"
 +                f"select user_id from {projection} order by user_id"
-@@ -31262,9 +31221,6 @@
+@@ -31306,9 +31265,6 @@
 -            db.execute(
 -                """
 -                insert into org_cache_metadata (key, value_json, updated_at)
@@ -396,8 +396,8 @@
 +                {"key": key, "value_json": json.dumps(value, ensure_ascii=False)},
 +                {"value_json": state_json_field("value_json"),
 +                 "updated_at": "json_quote(current_timestamp)"},
-@@ -31273,0 +31230 @@
+@@ -31317,0 +31274 @@
 +        projection = "(" + state_projection("org_cache_metadata") + ")"
-@@ -31276 +31233 @@
+@@ -31320 +31277 @@
 -                "select value_json from org_cache_metadata where key=?",
 +                f"select value_json from {projection} where key=?",
