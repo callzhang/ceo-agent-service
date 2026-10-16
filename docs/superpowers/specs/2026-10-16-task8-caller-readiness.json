@@ -46,5 +46,28 @@
       "nonempty migration/current-fact inverse/predecessor/reforward",
       "crash durability/concurrency/nativeCLI/UI/final11/production"
     ]
+  },
+  "dispatcher_summary_parent_rerun": {
+    "recorded_utc": "2026-10-16T19:42:16.770254+00:00",
+    "author_commit": "5b3e2a5beebe60f88159d6d8bbd88c1e82d1310f",
+    "script": "docs/superpowers/plans/2026-10-16-task20-dispatcher-summary-public-preflight.py",
+    "script_sha256": "a80bbd70007d467186b4909066668bbf009d5d78d965631be2ce6335c82019c4",
+    "equal_checkpoints": 122,
+    "differences": [],
+    "owned_temp_removed": true,
+    "public_method_routes": 28,
+    "scope": "Five actual dispatcher adapter classes plus original raw-connection summary compression routine. Full fresh original source, prepared EMPTY Tasks20 target and explicit initialization bypass.",
+    "verified": [
+      "OLD attempts/inputversion/physicalpointer assignments; existing channel override/liveness/expiry/backoff predicates",
+      "owner/generation/status CAS, native IGNORE rowcount0, Task UPDATE then lease ABORT transaction rollback",
+      "Only business payload_json leaf changes; outer structural JSON/siblings remain intact; compression CAS and batch commit/rollback",
+      "Competing writer actually locked; stale-leaf injection is an explicitly same-connection seam, not a concurrent committed change",
+      "Wrong outer-container CAS semantic mutant detected after successful native source/target controls"
+    ],
+    "unproved": [
+      "Other six external writer modules public methods",
+      "Cold target constructor/nonempty migration/current-fact inverse/predecessor/reforward",
+      "Real CLI/provider/UI/final11/production"
+    ]
   }
 }
