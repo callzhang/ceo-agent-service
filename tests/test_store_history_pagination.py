@@ -507,7 +507,8 @@ def test_history_projects_successful_legacy_attempt_status_from_current_task(
             "trigger_message_id": "trigger",
             "trigger_sender": "sender",
             "trigger_text": "approval action",
-            "action": "oa_approve",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-instance",
             "sensitivity_kind": "general",
             "send_status": legacy_status,
             "agent_run_id": run.lastrowid,
@@ -525,7 +526,7 @@ def test_history_projects_successful_legacy_attempt_status_from_current_task(
 
     assert done_total == 1
     assert [(row.source_id, row.status, row.action) for row in done_rows] == [
-        (attempt.lastrowid, "done", "oa_approve")
+        (attempt.lastrowid, "done", "agent_run")
     ]
     assert legacy_total == 0
     assert legacy_rows == []
@@ -568,6 +569,7 @@ def test_history_skipped_attempt_matches_detail_only_when_bound_run_is_latest(tm
             "trigger_text": "no action",
             "action": "agent_run",
             "sensitivity_kind": "general",
+            "oa_process_instance_id": "process-instance",
             "send_status": "skipped",
             "agent_run_id": bound_run.lastrowid,
         })
@@ -586,6 +588,51 @@ def test_history_skipped_attempt_matches_detail_only_when_bound_run_is_latest(tm
     ]
     assert skipped_total == 0
     assert skipped_rows == []
+
+
+def test_history_projects_attempt_without_run_from_current_message_task(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-unbound-message-task.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="history-unbound-message-task",
+        conversation_title="Bound by message",
+        single_chat=False,
+        trigger_message_id="trigger",
+        trigger_create_time="2026-10-15 00:00:00",
+        trigger_sender="sender",
+        trigger_text="approval result",
+        execution_generation="generation-1",
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
+            ("trigger",),
+        ).fetchone()[0]
+        attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "history-unbound-message-task",
+            "conversation_title": "Bound by message",
+            "trigger_message_id": "trigger",
+            "trigger_sender": "sender",
+            "trigger_text": "approval result",
+            "action": "agent_run",
+            "sensitivity_kind": "general",
+            "oa_process_instance_id": "process-instance",
+            "send_status": "completed",
+        })
+        db.execute("update tasks set status='done' where id=?", (task_id,))
+
+    done_total, done_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("done",), source_tables=("reply_attempts",)
+    )
+    completed_total, completed_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("completed",), source_tables=("reply_attempts",)
+    )
+
+    assert done_total == 1
+    assert [(row.source_id, row.status) for row in done_rows] == [
+        (attempt.lastrowid, "done")
+    ]
+    assert completed_total == 0
+    assert completed_rows == []
 
 
 def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(tmp_path):

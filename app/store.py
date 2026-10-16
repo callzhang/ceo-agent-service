@@ -30711,6 +30711,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
               and attempt_conversation_id=reply_attempts.conversation_id
               and attempt_trigger_message_id=reply_attempts.trigger_message_id
         )"""
+        oa_status_projection = """(
+            (reply_attempts.action='oa_approval'
+             or coalesce(reply_attempts.oa_process_instance_id, '')<>'')
+            and reply_attempts.send_status in (
+                'completed', 'commented', 'decision_selected', 'recovered', 'skipped'
+            )
+        )"""
         query = f"""
             select
                     'error:' || id as id,
@@ -30796,7 +30803,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         -- column as the historical operation label; do not
                         -- leave successful terminal task states as legacy
                         -- Attempt labels such as completed/commented.
-                        when exists (
+                        when {oa_status_projection} and exists (
                             select 1
                             from ({AGENT_RUN_SQL}) as projected_run
                             join ({REPLY_TASK_CURRENT_SQL}) as projected_task
@@ -30834,7 +30841,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                               and coalesce(projected_task.error, '')<>'external_action_uncertain'
                             limit 1
                         )
-                        when exists (
+                        when {oa_status_projection}
+                         and reply_attempts.agent_run_id is null and exists (
+                            select 1
+                            from ({REPLY_TASK_CURRENT_SQL}) as message_task
+                            where message_task.channel=reply_attempts.channel
+                              and message_task.conversation_id=reply_attempts.conversation_id
+                              and message_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and message_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(message_task.error, '')<>'external_action_uncertain'
+                        ) then (
+                            select message_task.status
+                            from ({REPLY_TASK_CURRENT_SQL}) as message_task
+                            where message_task.channel=reply_attempts.channel
+                              and message_task.conversation_id=reply_attempts.conversation_id
+                              and message_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and message_task.status in ('done', 'skipped', 'needs_human', 'failed')
+                              and coalesce(message_task.error, '')<>'external_action_uncertain'
+                            order by message_task.id desc
+                            limit 1
+                        )
+                        when {oa_status_projection} and exists (
                             select 1
                             from ({AGENT_RUN_SQL}) as projected_run
                             join ({REPLY_TASK_CURRENT_SQL}) as projected_task
@@ -30873,7 +30900,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                               and coalesce(projected_task.error, '')<>'external_action_uncertain'
                             limit 1
                         )
-                        when exists (
+                        when {oa_status_projection} and exists (
                             select 1
                             from ({AGENT_RUN_SQL}) as projected_run
                             join ({REPLY_TASK_CURRENT_SQL}) as projected_task
