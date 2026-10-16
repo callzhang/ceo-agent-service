@@ -47,6 +47,16 @@ def test_supplier_payment_tracker_status_is_not_customer_acceptance_evidence() -
         assert "count of prior returns" in text
 
 
+def test_supplier_payment_tracks_readability_per_attachment() -> None:
+    text = FINANCE_RULE_CARD_PATHS[0].read_text(encoding="utf-8")
+    assert "Per-attachment read ledger (supplier payment)" in text
+    assert "assess each submitted file independently" in text
+    assert "never generalize it to sibling files" in text
+    assert "without a separate failed read for each one" in text
+    assert "Keep the applicant's submitted set distinct from the subset the reviewer could read" in text
+    assert "resolve the discrepancy from the current per-file read" in text
+
+
 def test_reviewer_side_unreadable_returns_do_not_trigger_three_return_refusal() -> None:
     for path in OA_SKILL_PATHS:
         text = path.read_text(encoding="utf-8")
