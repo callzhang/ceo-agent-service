@@ -51,12 +51,12 @@ def test_reviewer_side_unreadable_returns_do_not_trigger_three_return_refusal() 
     for path in OA_SKILL_PATHS:
         text = path.read_text(encoding="utf-8")
         assert "因审阅端权限、解析、OCR 或客户端问题要求申请人补交的错误退回，不得计入拒绝次数" in text
-        assert "记录具体技术阻塞并保留当前待办" in text
-        assert "不得要求申请人重复提交同一文件" in text
-        assert "只有独立证据确认原文件确实缺失、空白、损坏或缺页" in text
-        assert "已提交材料因审阅端权限、下载、解析、OCR 或客户端能力读不到" in text
+        assert "记录具体阻塞并保持审批待处理" in text
+        assert "若附件已提交而障碍仅在我方权限或读取能力" in text
+        assert "只有独立证据确认源文件确实缺失、空白、损坏或缺页" in text
+        assert "已提交材料未读不等于申请人缺材料" in text
         assert "权限修复失败后的处理" in text
-        assert "协调文件所有者/管理员恢复当前审批执行账号的只读访问" in text
+        assert "协调文件所有者/管理员或审批负责人解决访问问题" in text
         assert "申请人可提供可读副本时优先退回补正" not in text
         assert "若正文无法取得且申请人能补正，优先退回" not in text
         assert "有经独立证据确认属于申请人可补正的真实材料缺口时" in text

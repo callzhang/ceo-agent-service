@@ -16,6 +16,18 @@ Beijing-calendar weeks.
 Read [report-contract.md](references/report-contract.md) and
 [dingtalk-runbook.md](references/dingtalk-runbook.md) completely before work.
 
+## Management Weekly Template and Disclosure
+
+When this report is prepared for the management weekly meeting or its shared
+company-health section, also read the confirmed rules in
+[management-weekly.md](../ceo-meeting-work/references/management-weekly.md).
+Keep each department's meeting report to 3–5 core metrics with short definitions
+beside each metric. Share one blank template, including finance; restrict real
+financial values by the actual report audience. Financial values do not belong
+in the all-management company-health section. The technical report schema and
+historical fixed-metric list do not authorize broader financial disclosure.
+Keep the existing revision-guarded publication and section-ownership contract.
+
 ## Required Inputs
 
 - **Service materials**: call the task-bound `agent_cli.weekly_report_materials`
