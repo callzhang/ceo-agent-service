@@ -109,7 +109,7 @@ def _round_before_full(value):
         source.execute(
             "create trigger validate_number before insert on number "
             "when typeof(new.value)<>'integer' or new.value<=0 begin "
-            "select raise(abort,'feedback round number must be a positive integer'); end"
+            "select raise(abort,'feedback_processing_round_number_must_be_positive'); end"
         )
         source.execute("insert into number values(?)", (value,))
 

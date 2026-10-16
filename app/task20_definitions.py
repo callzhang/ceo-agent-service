@@ -859,7 +859,7 @@ def _definitions():
             + " before "
             + event
             + " on tasks when old.record_type='feedback_iteration_decisions' begin "
-            "select raise(abort,'feedback iteration decision is immutable'); end"
+            "select raise(abort,'feedback iteration decisions are append-only'); end"
         )
     number = "new." + task20_column("feedback_processing_rounds", "round_number")
     for event, suffix in (("insert", "insert"), ("update of payload_json", "update")):
@@ -870,7 +870,7 @@ def _definitions():
             + event
             + " on tasks when new.record_type='feedback_processing_rounds' and "
             "(typeof(" + number + ")<>'integer' or " + number + "<=0) begin "
-            "select raise(abort,'feedback round number must be a positive integer'); end"
+            "select raise(abort,'feedback_processing_round_number_must_be_positive'); end"
         )
     for kind in TASK12_AUTOINCREMENT_KINDS:
         name = "tasks:" + kind

@@ -248,6 +248,7 @@ def test_round_before_full_error_precedence(db, target, value):
         with pytest.raises(sqlite3.IntegrityError) as error:
             operation()
         assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_TRIGGER
+        assert str(error.value) == "feedback_processing_round_number_must_be_positive"
     assert db.in_transaction and target.in_transaction
 
 
@@ -639,8 +640,10 @@ def test_native_immutable_decision_update_and_delete(db, target):
         ),
         lambda: delete_task12(target, "feedback_iteration_decisions", identity),
     ):
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(sqlite3.IntegrityError) as error:
             operation()
+        assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_TRIGGER
+        assert str(error.value) == "feedback iteration decisions are append-only"
     snapshot(db, target, "feedback_iteration_decisions")
 
 
@@ -856,3 +859,33 @@ def test_real_public_projection_supports_filter_and_order_suffix(db, target, fie
             type(expected[0][field]),
             expected[0][field],
         )
+
+
+@pytest.mark.parametrize("value", (None, 0, -1, "bad", 2.5))
+def test_round_regular_insert_update_preserve_native_error(db, target, value):
+    kind = "feedback_processing_rounds"
+    data = supplied(kind) | {"round_number": value}
+    for operation in (
+        lambda: insert(db, kind, supplied=data),
+        lambda: insert_task12(target, kind, data),
+    ):
+        with pytest.raises(sqlite3.IntegrityError) as error:
+            operation()
+        assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_TRIGGER
+        assert str(error.value) == "feedback_processing_round_number_must_be_positive"
+    assert db.in_transaction and target.in_transaction
+    good = supplied(kind)
+    identity = insert(db, kind, supplied=good).lastrowid
+    assert insert_task12(target, kind, good).lastrowid == identity
+    for operation in (
+        lambda: db.execute(
+            "update feedback_processing_rounds set round_number=? where id=?",
+            (value, identity),
+        ),
+        lambda: update_task12(target, kind, identity, {"round_number": value}),
+    ):
+        with pytest.raises(sqlite3.IntegrityError) as error:
+            operation()
+        assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_TRIGGER
+        assert str(error.value) == "feedback_processing_round_number_must_be_positive"
+    snapshot(db, target, kind)

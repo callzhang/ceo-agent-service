@@ -20,8 +20,8 @@ The adjacent2026-10-16-task12-native-errors.patch contains every changed applica
 
 - [x] Root wrote complete patch/preflight before app edits.
 - [x] RED on unchanged app with patched tests:22failed/217deselected in1.65s; OWNED_TEMP_REMOVED True.
-- [ ] Claim app/task20_definitions.py, app/task12_storage.py, tests/test_task12_storage.py and own row/this plan transfer boxes before applying.
-- [ ] Apply exact pinned patch:
+- [x] Claimed app/task20_definitions.py, app/task12_storage.py, tests/test_task12_storage.py and own row/this plan transfer boxes before applying.
+- [x] Applied exact pinned patch; app/test SHA256 values match the pinned result list:
 
 ```sh
 git apply --check docs/superpowers/plans/2026-10-16-task12-native-errors.patch
@@ -34,7 +34,7 @@ Patch SHA256: f4e968de6d851129100687d7ce5f11b3eb844da1f3f36f14524c38a7a2f03012. 
 - app/task12_storage.py: cf051a3067d5c956e9e5a9e7a441e382c8d172183147b452f7bff811ed726fc7
 - tests/test_task12_storage.py: 67e952047cc0ac1e2640edc7ae7db48c8a501fce34dad4fd66e9d42b58d32cdb
 
-- [ ] Run focused applied proof and style checks:
+- [x] Focused applied proof and style checks passed (564 cases; OWNED_TEMP_REMOVED True; Ruff and diff checks clean):
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python docs/superpowers/plans/2026-10-16-task12-native-errors-preflight.py --applied --with-declarations
