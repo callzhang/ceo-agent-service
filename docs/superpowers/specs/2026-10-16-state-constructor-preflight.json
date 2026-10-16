@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-16",
+  "scope": "read-only constructor source research and synthetic metadata preflight only",
+  "native_store_ddl_removals": {
+    "tables": 14,
+    "explicit_indexes": 4,
+    "email_owned_state_families_excluded_from_store_count": 2,
+    "exact_sql_statement_spans_verified": true
+  },
+  "existing_behavior_to_preserve": {
+    "source_test": "tests/test_dispatcher_ledger_retention.py::test_existing_schema_adds_terminal_index_without_changing_lease_rows",
+    "repairable_target_indexes": [
+      "idx_state_dispatcher_terminal",
+      "idx_state_dispatcher_expiry"
+    ],
+    "other_state_shape_mismatches": "Remain unsupported before constructor repair; do not add general self-healing."
+  },
+  "synthetic_recreation_probe": {
+    "only_in_memory": true,
+    "current_raw_target_hash": "327c94f68a9354f8766dfebb9ef7c85c9d03c2a4b27f95387eb88cc32fabc1f2",
+    "same_index_sql_dropped_and_recreated": "idx_state_dispatcher_terminal",
+    "current_predicate_rejects_recreated_identical_index": true,
+    "only_nonsemantic_index_enumeration_list_order_and_seq_changed": true,
+    "changed_seq_fields_by_index_identity": 4,
+    "normalization_proposal": "For target metadata only, drop each index's enumeration seq and sort index records by name. Preserve ordered index columns/seqno, SQL, uniqueness, origin, partial, table columns/FKs/triggers. Native source capture/fingerprints unchanged.",
+    "proposed_normalized_target_fingerprint": "f867c00d08bbf1cc66d479b25e471644944329485065e21cd30c18f571772c88",
+    "initial_probe_harness_correction": "Removing seq without sorting raw PRAGMA index_list order was insufficient; corrected identity-keyed comparison proves no other declaration difference."
+  },
+  "remaining_constructor_plan": [
+    "Fresh install complete State before existing _migrate_removed_runtime helper writes it; never infer freshness from retired service_state absence.",
+    "Remove14 native table DDL/4 indexes/4 ALTER blocks and legacy runtime-session synthesis.",
+    "Convert Store marker/manifest/cache/bootstrap helpers; preserve only existing two lease-index missing-object repair and reject wrong-owner name collisions.",
+    "Remove unused _migrate_known_task_schema after confirming no application callers; historical schema source modules remain native.",
+    "Email runtime factory excludes two State families; archived source factories and frozen native declarations remain intact.",
+    "Select complete Store/direct caller/version/progress/coordinator closure together, then copied whole forward/current-fact inverse/genuine current predecessor/native CLI proof."
+  ],
+  "application_changed": false,
+  "current_state_selected": false,
+  "production_changed": false
+}

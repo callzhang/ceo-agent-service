@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-16",
+  "scope": "Unselected four-file constructor proposal only; complete runtime caller/publication closure remains required",
+  "store_base_sha256": "b548e907d20eeb1edb02ab9555e13044cc7bf693f2d1ebef8f600abb1fb8d6c5",
+  "proposal_sha256": "fc301216366fc51c359f220527562c40b830b6e2c0514f153107f9e2bb951ea5",
+  "candidates": {
+    "app/store.py": "e6700e9b3a8d21d745b21406a4d57f7e858c7539d4bcbb96bb771dfae68e10cc",
+    "app/action_email_schema_release.py": "10119b5f9745b9c579d4cb9b40b5ae0dc794238b4ff071dca2ae05671eb2dd89",
+    "app/email_current_schema.py": "06f72a6196cbb7202d8c7a757874781efa978ce6d5e9a27290581af160f5a924",
+    "app/email_store.py": "9e02860962447adad7f62fcea9e74b2d9a1b244790b4dd02e95dba94c58d4e9d"
+  },
+  "root_disposable_preflight": {
+    "store_first": true,
+    "email_first": true,
+    "reopens": true,
+    "ordinary_tables_each": 67,
+    "all_noninternal_including_fts_shadow": 72,
+    "all_sixteen_native_state_source_names_absent": true,
+    "missing_dispatcher_terminal_index_repair_preserves_rows": true,
+    "source": "copied application code plus synthetic fresh databases only",
+    "existing_data_forward_or_inverse_proved": false
+  },
+  "native_state_ddl_removed": {
+    "store_tables": 14,
+    "store_indexes": 4,
+    "store_alter_blocks": 4,
+    "legacy_session_synthesis": true,
+    "email_tables": 2
+  },
+  "remaining": [
+    "Complete regression code for malformed/current/source role constructor boundaries before app edits",
+    "Independent SPEC then QUALITY of proposal",
+    "Current Email/direct consumer/version-reader closure",
+    "Paired release/progress binding activation",
+    "Whole actual-copy/current-fact inverse/genuine current production predecessor proof",
+    "Native CLI end-to-end fake outbound and UI verification",
+    "Remaining table families to final10+ledger"
+  ],
+  "current_constructor_selected": false,
+  "production_changed": false,
+  "dependency": "Mixed23 QUALITY identified insert_state/update_state statement-default clock defect; foundation correction required before accepting caller/constructor closure."
+}
