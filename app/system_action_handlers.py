@@ -1,7 +1,8 @@
 """Native, typed handlers for reviewed service-owned actions."""
 
 import json
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
 from app.agent_contracts import ProposedAction
@@ -296,6 +297,14 @@ class OaRevertHandler(OaDecisionHandler):
             return None
         return instant if instant.tzinfo is not None else instant.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
 
+    @staticmethod
+    def _second_precision_timestamp(value: object) -> bool:
+        """Whether DingTalk supplied a timestamp whose precision is one second."""
+        return isinstance(value, str) and re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})?",
+            value.strip(),
+        ) is not None
+
     def dispatch(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
         target_activity = action.target.get("target_activity_id")
         revert_action = action.payload.get("revert_action")
@@ -427,12 +436,53 @@ class OaRevertHandler(OaDecisionHandler):
         if event_times.count(instant) != 1:
             return unresolved
         next_event = min((value for value in event_times if value > instant), default=observed_at)
-        destinations = [str(task["taskid"]) for task in source["tasks"]
-            if isinstance(task, dict) and task.get("taskid") is not None
-            and str(task["taskid"]) != action.target["task_id"]
-            and task.get("activity_id") == action.target["target_activity_id"]
-            and (created := self._event_time(task.get("create_time"))) is not None
-            and instant <= created < next_event and created <= observed_at]
+        # DingTalk task create_time is often truncated to whole seconds while
+        # its operation record has milliseconds. A task created in the same
+        # second can therefore appear a few hundred milliseconds before the
+        # exact redirect event. Accept that same-second bucket only when the
+        # redirect is the sole event in that second and the bucket overlaps
+        # the original dispatch/acceptance interval. All identity, target,
+        # actor, remark, and exact event-boundary checks above remain required.
+        destinations = []
+        for task in source["tasks"]:
+            if (not isinstance(task, dict) or task.get("taskid") is None
+                or str(task["taskid"]) == action.target["task_id"]
+                or task.get("activity_id") != action.target["target_activity_id"]):
+                continue
+            created_value = task.get("create_time")
+            created = self._event_time(created_value)
+            if created is None or created > observed_at:
+                continue
+            second_precision = self._second_precision_timestamp(created_value)
+            if second_precision:
+                second_start = created.replace(microsecond=0)
+                second_end = second_start + timedelta(seconds=1)
+                event_second = int(instant.timestamp())
+                interval_bucket_match = (
+                    second_start >= instant
+                    and second_end <= next_event
+                    and second_end > dispatch_started
+                )
+                source_events_in_second = [
+                    value for value in event_times if int(value.timestamp()) == event_second
+                ]
+                precise_events_in_second = [
+                    value for _, _, value in precise_events if int(value.timestamp()) == event_second
+                ]
+                same_second_match = (
+                    int(created.timestamp()) == event_second
+                    and len(source_events_in_second) == 1
+                    and source_events_in_second[0] == instant
+                    and len(precise_events_in_second) == 1
+                    and precise_events_in_second[0] == instant
+                    and second_start <= accepted_at
+                    and second_end > dispatch_started
+                )
+                destination_time_matches = interval_bucket_match or same_second_match
+            else:
+                destination_time_matches = instant <= created < next_event
+            if destination_time_matches:
+                destinations.append(str(task["taskid"]))
         if not destinations:
             return unresolved
         return ActionOutcome("verified", {**prior, "process_instance_id": process_id,
