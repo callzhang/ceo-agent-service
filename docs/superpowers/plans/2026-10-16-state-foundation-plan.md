@@ -889,9 +889,9 @@ Stage only owned doc hunks after inspecting them; commit with message `Add nativ
 
 ## Task 3: Independent acceptance
 
-- [ ] **Step 1: Fresh SPEC review** checks all code against the frozen literal source and this scope, including affinity values/types, NULL/defaults, signed identities, source constraints, CAS/replace/transaction behavior and terminal index order/plan. Review may run synthetic tests only; do not edit implementation. Report blockers precisely; implementer resolves them before re-review.
-- [ ] **Step 2: Fresh QUALITY review after SPEC passes** checks simplicity, hidden behavior changes, source metadata integrity, native scalar use, transaction ownership and focused test strength. No caller/migration/production acceptance is inferred.
-- [ ] **Step 3: Root records bounded acceptance** and continues the separate source-transfer/current-fact inverse and atomic caller/publication closure. The accepted intermediate still has82 ordinary tables until State selection is actually implemented and copied-database verified; this foundation alone does not change that count.
+- [x] **Step 1: Fresh SPEC review** checks all code against the frozen literal source and this scope, including affinity values/types, NULL/defaults, signed identities, source constraints, CAS/replace/transaction behavior and terminal index order/plan. Initial default-substitution blocker corrected at b14198d; fresh re-review PASS336 in15.65s. Review is synthetic-only.
+- [x] **Step 2: Fresh QUALITY review after SPEC passes** checks simplicity, hidden behavior changes, source metadata integrity, native scalar use, transaction ownership and focused test strength. PASS336 in15.65s plus30 source-family comparisons,48 identity edges,42 scalar edges and a two-connection writer-lock/CAS probe. No caller/migration/production acceptance is inferred.
+- [x] **Step 3: Root records bounded acceptance** in ../specs/2026-10-16-state-foundation-acceptance.json and continues the separate source-transfer/current-fact inverse and atomic caller/publication closure. The accepted intermediate still has82 ordinary tables until State selection is actually implemented and copied-database verified; this foundation alone does not change that count.
 
 ## Self-review
 
