@@ -846,3 +846,31 @@ the existing captured-source fixture. All 148 selected cases passed in 45.18s;
 Ruff and diff checks pass, and the owned pytest parent is absent. A new actual
 copy proof is still needed; the old 736-second result belongs to the earlier
 Python-materialized module and is not evidence for this implementation.
+
+### SQLite-staged retained-runs frozen-source acceptance
+
+The first combined rerun was interrupted without a final receipt. On resume,
+its process handle was missing and no corresponding Python process or open
+copy handles remained. That stopped, task-owned candidate was inspected and
+removed; no success is inferred from its intermediate database files.
+
+A new owned copy then tested the exact canonical runs source directly. This
+bounded run does not repeat the independent Email/Business/Provider conversions;
+the full coordinator still needs combined release acceptance. All 231,340 runs
+and their 95 stored columns preserved their independent streaming typed-row
+digest and physical sequence. A raw local scheduled-run insert with FK on was
+retained by inverse, yielding 231,341 current rows and the updated allocator.
+All 41 native run objects were restored. The same pre-existing runs/tasks FK
+finding remained in source, forward and inverse. Quick check returned `ok`,
+TEMP staging was absent after each direction, the owned database directory was
+removed, and frozen source SHA remained unchanged.
+
+Forward took 2.930s and inverse 2.955s in this observation; the entire bounded
+proof took 15.562s. Peak resident-set usage reported by Darwin getrusage was
+60,047,360 bytes. This is not a controlled comparison with the earlier
+736-second combined proof or its vmmap physical-footprint metric: both scope
+and measurement differ. Exact executed hashes and stage times are recorded in
+`superpowers/specs/2026-10-15-configs-retained-runs-streaming-actual.json`.
+The reviewed prototype directory was removed by its author and absence checked.
+No runtime constructor or marker is selected, and native source parents remain;
+complete config migration, current callers and source retirement are next.
