@@ -61,7 +61,7 @@ Tasks12 native storage oracle: tests/test_tasks12_native_source.py freezes actua
 ```
 
 - [x] Commit only test, exact paragraphs, own claim row and implementation checkboxes. Root owns the other simultaneously uncommitted artifacts. No main merge/push/provider/production/deploy.
-- [ ] Fresh independent SPEC for exact bytes/scope/source oracle, then fresh QUALITY for negative controls/native identity/transaction coverage; resolve findings before root accepts.
+- [x] Fresh independent SPEC434/1.16s and QUALITY434/1.29s pass; QUALITY additionally runs24behavioral cases and catches3declaration mutants without metadata equality. Root accepts native source-storage scope only. Receipt: ../specs/2026-10-16-tasks12-native-oracle-acceptance.json.
 
 ### Completion boundary
 
