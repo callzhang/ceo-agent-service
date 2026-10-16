@@ -183,3 +183,15 @@ empty fresh FK check. Production readback still44ee; no main/push/deploy occurre
 Fresh APPLIED SPEC then QUALITY are still pending at this checkpoint. Remaining
 42 legacy families and final native CLI/fake-provider/UI/performance/CI release
 acceptance retain their full scope.
+
+Fresh APPLIED SPEC passed487 selected tests42.61s and APPLIED QUALITY passed32
+focused controls5.63s, with exact15 installed hashes and9 actual-copy runtime
+hashes. Broader tests initially yielded524pass/32fail in two unchanged fixture
+files using retired physical Tasks/State/sample storage. A separate test-only
+maintenance preserves65 quality tests/126 assertion ASTs and historical Email
+DDL oracle, replaces fixture writes with existing source-shaped helpers, and
+reads the current State projection/version. Baseline37pass/32fail becomes69pass;
+fresh fixture SPEC independently passed69/19.05s. Root's exact12-file regression
+now passes556/56.30s. Fixture QUALITY passed exact assertion/identity/transaction/hash controls;
+the separate test-only commit closes the broader fixture gate. Runtime hashes
+are unchanged and no repeated full database copy is required for test-only edits.

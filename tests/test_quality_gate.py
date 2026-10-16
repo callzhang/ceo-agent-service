@@ -3,9 +3,12 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from app.run_storage import insert_run
+from app.runs11_storage import insert_run11_fact
 from app.state_storage import insert_state
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, insert_action, update_action
-from app.task_storage import REPLY_TASK_SQL, insert_task
+from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.task12_storage import insert_task12
+from app.task20_definitions import task20_column, task20_projection
 from app.quality_gate import (
     add_channel_health,
     required_live_channels,
@@ -18,6 +21,23 @@ from app.store import AgentRole, AutoReplyStore
 
 
 NOW = datetime(2026, 8, 7, 1, 0, tzinfo=timezone.utc)
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+
+def _insert_task(db, kind, values):
+    parts = task8_insert_parts(kind, values)
+    return db.execute(
+        f"insert into tasks({parts.columns}) values({parts.values})",
+        parts.parameters,
+    )
+
+
+def _update_task(db, kind, values, where, parameters=()):
+    parts = task8_set_parts(kind, values)
+    return db.execute(
+        f"update tasks set {parts.sql} where record_type=? and {where}",
+        (*parts.parameters, kind, *parameters),
+    )
 
 
 def test_reply_quality_counts_do_not_read_business_payloads(tmp_path):
@@ -83,7 +103,7 @@ def _insert_needs_human_projection(store, *, monkeypatch, result, status="needs_
         task_id = db.execute(
             f"select id from ({REPLY_TASK_SQL}) where conversation_id='conversation' and trigger_message_id='message'"
         ).fetchone()[0]
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task_id,))
+        _update_task(db, 'reply_tasks', {'status': 'done'}, 'cast(legacy_key as integer)=?', (task_id,))
         # Preserve each authored result as a native assistant final, without
         # adopting it as an approved candidate. Pretty JSON is a native format.
         native = store.path.with_suffix('.native.jsonl')
@@ -118,10 +138,10 @@ def _insert_canonical_reply_task(db, **overrides):
     fields.update(overrides)
     parent = {key: value for key, value in fields.items()
               if key not in {"trigger_text", "trigger_message_json"}}
-    cursor = insert_task(db, 'reply_tasks', parent)
+    cursor = _insert_task(db, 'reply_tasks', parent)
     task_id = cursor.lastrowid
     snapshot = {key: fields[key] for key in ("channel", "conversation_id", "conversation_title", "single_chat", "trigger_message_id", "trigger_create_time", "trigger_sender", "trigger_text", "trigger_message_json", "business_object_key", "oa_url")}
-    input_id = insert_task(db, 'reply_task_inputs', {'parent_id': task_id, **snapshot}).lastrowid
+    input_id = _insert_task(db, 'reply_task_inputs', {'parent_id': task_id, **snapshot}).lastrowid
     db.execute("update tasks set current_input_id=? where id=?", (input_id, task_id))
     return cursor
 
@@ -310,10 +330,11 @@ def test_required_live_channels_skips_unused_lark_but_includes_referenced_lark(
     assert required_live_channels(store.path) == frozenset({"codex", "dingtalk"})
 
     with store._connect() as db:
-        db.execute(
-            """update tasks set trigger_message_json=?
-               where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and conversation_id='conversation')""",
-            ('{"link":"https://example.larksuite.com/docx/demo"}',),
+        _update_task(
+            db, 'reply_task_inputs',
+            {'trigger_message_json': '{"link":"https://example.larksuite.com/docx/demo"}'},
+            'id=(select current_input_id from tasks where record_type=\'reply_tasks\' '
+            f"and {task20_column('reply_tasks', 'conversation_id')}='conversation')",
         )
 
     assert required_live_channels(store.path) == frozenset(
@@ -327,18 +348,14 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
     stale = (NOW - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     _insert_reply_task(store, status="processing", updated_at=stale)
     with store._connect() as db:
-        insert_task(db, 'meeting_alignment_jobs', {'meeting_id': 'meeting', 'status': 'failed', 'error': '', 'updated_at': stale})
-        insert_task(db, 'work_summary_inputs', {'source_type': 'message', 'source_ref': 'work', 'payload_json': '{}', 'status': 'failed', 'updated_at': stale})
-        db.execute(
-            """insert into email_agent_classification_tasks (
-                   task_id, channel, stable_message_identity, status, input_json,
-                   error, updated_at
-               ) values (
-                   'email-classification:failed', 'email', 'account:inbox:1',
-                   'failed', '{}', 'invalid classification input', ?
-               )""",
-            (stale,),
-        )
+        _insert_task(db, 'meeting_alignment_jobs', {'meeting_id': 'meeting', 'status': 'failed', 'error': '', 'updated_at': stale})
+        _insert_task(db, 'work_summary_inputs', {'source_type': 'message', 'source_ref': 'work', 'payload_json': '{}', 'status': 'failed', 'updated_at': stale})
+        insert_task12(db, 'email_agent_classification_tasks', {
+            'task_id': 'email-classification:failed', 'channel': 'email',
+            'stable_message_identity': 'account:inbox:1', 'status': 'failed',
+            'input_json': '{}', 'error': 'invalid classification input',
+            'updated_at': stale,
+        })
         db.execute(
             """insert into errors (
                    conversation_id, message_id, kind, detail, created_at
@@ -379,7 +396,7 @@ def test_quality_gate_accepts_explicit_terminal_failures(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
         _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='conversation', conversation_title='group', single_chat=0, trigger_message_id='message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='sender', trigger_text='trigger', status='failed', error='image_dependency_unavailable')
-        insert_task(db, 'meeting_alignment_jobs', {
+        _insert_task(db, 'meeting_alignment_jobs', {
             'meeting_id': 'meeting', 'status': 'failed',
             'error': '{"kind":"meeting_agent","message":"runtime_execution_failed"}',
         })
@@ -626,8 +643,8 @@ def test_quality_gate_ignores_legacy_follow_up_drafts(tmp_path):
 def test_quality_gate_keeps_terminal_quarantine_and_discard_out_of_failures(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        insert_task(db, 'meeting_alignment_jobs', {'meeting_id': 'meeting', 'status': 'quarantined', 'error': 'delivery could not be verified'})
-        insert_task(db, 'okr_review_requests', {
+        _insert_task(db, 'meeting_alignment_jobs', {'meeting_id': 'meeting', 'status': 'quarantined', 'error': 'delivery could not be verified'})
+        _insert_task(db, 'okr_review_requests', {
             'conversation_id': 'conversation', 'conversation_title': 'group',
             'trigger_message_id': 'message', 'trigger_sender': 'sender',
             'trigger_text': 'trigger', 'period_label': '2026 Q3',
@@ -992,11 +1009,10 @@ def test_quality_gate_excludes_needs_human_from_historical_business_object_task(
     with store._connect() as db:
         historical_task = _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='work-notice', conversation_title='工作通知', single_chat=0, trigger_message_id='old-message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='OA审批', trigger_text='旧审批通知', business_object_key='oa:process:task', status='done')
         current_task = _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='oa-pending-scan', conversation_title='审批待办', single_chat=0, trigger_message_id='current-message', trigger_create_time='2026-08-07 00:30:00', trigger_sender='OA审批', trigger_text='当前审批任务', business_object_key='oa:process:task', status='done')
-        db.execute(
-            """insert into business_object_tasks (business_object_key, reply_task_id)
-            values ('oa:process:task', ?)""",
-            (current_task.lastrowid,),
-        )
+        insert_task12(db, 'business_object_tasks', {
+            'business_object_key': 'oa:process:task',
+            'reply_task_id': current_task.lastrowid,
+        })
         insert_action(db, "reply_attempts", {
             "channel": "dingtalk", "conversation_id": "work-notice",
             "conversation_title": "工作通知", "trigger_message_id": "old-message",
@@ -1195,7 +1211,7 @@ def test_quality_check_command_writes_state_and_returns_nonzero_for_violation(tm
 
     assert quality_check_command(WorkerSettings(db_path=db_path), state_file=state_path) == 0
     with AutoReplyStore(db_path)._connect() as db:
-        insert_task(db, 'work_summary_inputs', {'source_type': 'message', 'source_ref': 'failed', 'payload_json': '{}', 'status': 'failed'})
+        _insert_task(db, 'work_summary_inputs', {'source_type': 'message', 'source_ref': 'failed', 'payload_json': '{}', 'status': 'failed'})
 
     assert quality_check_command(WorkerSettings(db_path=db_path), state_file=state_path) == 2
 
@@ -1210,7 +1226,10 @@ def test_quality_required_channels_skips_inactive_optional_channel(tmp_path):
     assert _quality_required_channels(store.path) == {"dingtalk", "lark"}
 
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and channel='lark'")
+        _update_task(
+            db, 'reply_tasks', {'status': 'done'},
+            f"{task20_column('reply_tasks', 'channel')}='lark'",
+        )
 
     assert _quality_required_channels(store.path) == {"dingtalk"}
 
@@ -1353,14 +1372,13 @@ def test_missing_native_delivery_evidence_is_reported_as_coverage_not_success(tm
 
 
 def _runtime_sample(store, *, outcome, recorded_at, fallback_code=""):
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            """insert into email_classifier_runtime_samples (
-                   model_id, outcome, fallback_code, cache_hit, runtime_warm,
-                   queue_ms, http_ms, embedding_ms, head_ms, total_ms, recorded_at
-               ) values ('email-model-1', ?, ?, 1, 1, 0, 0, 0, 1.0, 1.0, ?)""",
-            (outcome, fallback_code, recorded_at),
-        )
+    with store._connect() as db:
+        insert_run11_fact(db, 'email_classifier_runtime_samples', {
+            'model_id': 'email-model-1', 'outcome': outcome,
+            'fallback_code': fallback_code, 'cache_hit': 1, 'runtime_warm': 1,
+            'queue_ms': 0, 'http_ms': 0, 'embedding_ms': 0,
+            'head_ms': 1.0, 'total_ms': 1.0, 'recorded_at': recorded_at,
+        })
 
 
 def test_an_email_model_that_raises_instead_of_deciding_is_a_violation(tmp_path):

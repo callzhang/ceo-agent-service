@@ -15,6 +15,8 @@ from app.email_current_schema import (
 )
 from tests.test_email_action_storage import _cases
 from app.store import AutoReplyStore
+from app.store import STORE_SCHEMA_VERSION
+from app.state_definitions import state_projection
 from app.provider_state_schema_release import provider_state_schema_is_current
 
 
@@ -99,8 +101,8 @@ def test_default_constructors_select_current_email_actions(tmp_path: Path) -> No
     EmailStore(path)
     with sqlite3.connect(path) as db:
         assert db.execute(
-            "select value from service_state where key='store_schema_version'"
-        ).fetchone() == ("2026-10-14.1",)
+            f"select value from ({state_projection('service_state')}) where key='store_schema_version'"
+        ).fetchone() == (STORE_SCHEMA_VERSION,)
         assert db.execute("select max(version) from email_schema_migrations").fetchone() == (52,)
         assert db.execute(
             "select 1 from sqlite_schema where type='table' and name='email_action_plans'"
