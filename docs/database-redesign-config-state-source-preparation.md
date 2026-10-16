@@ -1133,3 +1133,38 @@ The writer now asks SQLite to resolve a supplied NULL with the original default 
 Exact b14198d passes fresh SPEC re-review and then fresh QUALITY, each336 focused cases in15.65s. The original OR REPLACE NULL/NaN source-default counterexample is resolved without changing the declaration constraints. QUALITY also independently checks30 source-family metadata comparisons,48 insert/update identity edges,42 scalar edges and two-connection writer-lock/CAS behavior. Canonical blocks, compilation, Ruff and diff checks pass; review-owned temporary roots are removed and the candidate stays clean. Root independently fingerprints the synthetic one-table declaration as ae25aecef5d8e9a0615ca3c180bb018eb6412a36bb25e850692d7f050eb8e5ab; the source capture remains SHA604496766a335d63fe334a263bde8028cd53c6bc5311acb97a5ef48876ae2aff.
 
 Root query-only frozen970a preflight verifies the exact16-family actual fingerprint b7e149e432369018ba105f9e1ac12b052f38bfe245ee7e6d7b7b7b8b3ab9caa6 against literal source fixtures; fresh fingerprint is48e1608e66d2a35fdb467708e24fd6bef1f2f4ecd58e8a6e45c4af9fb6449a70. No inbound FK targets these families; corpus_sources has0 rows; all523 conversations hold integer0/NULL/NULL/NULL in the four unused fields. These are frozen-source eligibility facts, not production measurements or implemented retirement. Six existing field-map CSV rows still need an explicit guarded-retirement disposition before release. The new receipt superpowers/specs/2026-10-16-state-foundation-acceptance.json records the bounded acceptance. State remains unselected; source-bound transfer/current-fact inverse, atomic caller/publication closure and final10+ledger acceptance remain open. No actual copy selection, provider/native CLI/send, push/main merge or production action occurred.
+
+## Unselected State pure release implementation, 2026-10-16
+
+The complete test and application Python blocks in
+`superpowers/plans/2026-10-16-state-release-plan.md` were installed byte for
+byte as `tests/test_state_schema_release.py` and `app/state_schema_release.py`.
+Test-first collection exited 2 because `app.state_schema_release` did not yet
+exist. After the module was added, the exact focused four-file matrix passed
+365 cases in 17.12 seconds: 29 release, 147 accepted State foundation, 172
+literal source-contract and 17 native scalar codec cases. This used
+`PYTHONDONTWRITEBYTECODE=1`, `-p no:cacheprovider`, the installed Python
+3.13.12 interpreter at
+`/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python`,
+and task-owned `/tmp/state-release-impl.anp6h2` pytest storage. Ruff on both
+new Python files, in-memory compilation, canonical byte equality and diff
+checks passed. The owned pytest directory was removed and its absence verified.
+
+The pure forward capture binds exact original actual/fresh declarations and
+keeps no source row bodies in metadata. It verifies retained signed identities,
+values and SQLite storage classes while moving fifteen kinds from sixteen
+native families into one State table. It rechecks the four unused conversation
+fields and empty corpus immediately before migration, then retires only their
+approved six CSV dispositions. Inverse recreates original DDL and consumes
+current State facts, including later inserts, updates and deletes. Synthetic
+tests cover original declaration recovery, preflight refusal of unexpected
+facts and external dependencies, plus injected partial forward and inverse
+failures followed by caller rollback to the exact prior image.
+
+This module remains unselected and needs caller-owned FK-off transaction,
+rollback and publication integration. No actual source copy or production
+database was changed, and no current constructor, caller, schema marker,
+ledger, coordinator or repository updater selects it. The last actual copied
+candidate still has 82 ordinary tables; 67 is a future integrated cutover
+expectation. Final ten-plus-ledger acceptance remains open. Independent SPEC
+then QUALITY review follows this local implementation commit.

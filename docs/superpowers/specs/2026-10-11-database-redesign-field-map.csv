@@ -392,13 +392,13 @@ conversations,conversation_id,TEXT,0,1,state,state.payload.conversation_id,保�
 conversations,title,TEXT,1,0,state,state.title,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
 conversations,single_chat,INTEGER,1,0,state,state.payload.single_chat,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 conversations,codex_session_id,TEXT,0,0,state,state.payload.codex_session_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-conversations,in_handoff,INTEGER,1,0,state,state.payload.in_handoff,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-conversations,handoff_message_id,TEXT,0,0,state,state.payload.handoff_message_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-conversations,handoff_message_create_time,TEXT,0,0,state,state.payload.handoff_message_create_time,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-conversations,manual_clear_message_id,TEXT,0,0,state,state.payload.manual_clear_message_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
+conversations,in_handoff,INTEGER,1,0,state,取消,当前无读取方且冻结523行均为INTEGER 0；迁移前逐行复核默认值和类型；逆迁移按原DDL恢复默认0。
+conversations,handoff_message_id,TEXT,0,0,state,取消,当前无读取方且冻结523行均为NULL；迁移前拒绝任何非NULL值；逆迁移按原DDL恢复NULL。
+conversations,handoff_message_create_time,TEXT,0,0,state,取消,当前无读取方且冻结523行均为NULL；迁移前拒绝任何非NULL值；逆迁移按原DDL恢复NULL。
+conversations,manual_clear_message_id,TEXT,0,0,state,取消,当前无读取方且冻结523行均为NULL；迁移前拒绝任何非NULL值；逆迁移按原DDL恢复NULL。
 conversations,codex_session_contract_hash,TEXT,1,0,state,state.payload.codex_session_contract_hash,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-corpus_sources,source_key,TEXT,0,1,state,state.payload.source_key,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-corpus_sources,last_collected_at,TEXT,0,0,state,state.payload.last_collected_at,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
+corpus_sources,source_key,TEXT,0,1,state,取消,无运行读写方且冻结表为空；迁移前拒绝任何行；逆迁移按原DDL重建空表。
+corpus_sources,last_collected_at,TEXT,0,0,state,取消,无运行读写方且冻结表为空；迁移前拒绝任何行；逆迁移按原DDL重建空表。
 daily_scan_state,scanner_name,TEXT,0,1,state,state.payload.scanner_name,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 daily_scan_state,last_success_at,TEXT,1,0,state,state.payload.last_success_at,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 daily_scan_state,cursor_json,TEXT,1,0,state,state.payload.cursor_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。

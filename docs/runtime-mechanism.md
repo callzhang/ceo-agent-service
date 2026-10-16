@@ -1,5 +1,15 @@
 # Current Runtime Mechanism
 
+`app/state_schema_release.py` is an unselected pure migration and current-fact
+inverse for the sixteen native State families. The caller supplies an active
+foreign-key-off transaction and rolls it back on failure; these helpers never
+commit. Capture records exact original declarations without source row bodies.
+Before DDL, forward refuses changed empty/default retirement facts, mismatched
+source declarations, target objects or external dependencies. Inverse reads the
+current one-table State facts and restores the original declarations, including
+facts written or deleted since forward conversion. No current Store constructor,
+caller, marker reader or publication path invokes this module.
+
 An unselected pure-schema config release now composes the exact native
 eighteen-family copy, 29-to-31-kind Email action rebuild, mapped real `runs`
 FKs, and retirement of the eighteen old families plus the approved empty

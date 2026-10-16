@@ -28,7 +28,7 @@ The plan's complete code was extracted to an owned disposable overlay and passed
 - Create `tests/test_state_schema_release.py`.
 - Read-only: existing `tests/configs_source_fixtures.py`, immutable captured metadata, accepted State modules.
 
-- [ ] **Step 1: Write the complete test module.**
+- [x] **Step 1: Write the complete test module.**
 
 ```python
 """Synthetic source-bound State release and inverse before runtime selection."""
@@ -285,7 +285,7 @@ def test_inverse_external_reference_refused_before_ddl(native):
     assert image(db) == before
 ```
 
-- [ ] **Step 2: Verify missing-module RED before adding the release module.**
+- [x] **Step 2: Verify missing-module RED before adding the release module.**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_state_schema_release.py
@@ -296,7 +296,7 @@ Expected collection error: app.state_schema_release does not exist. Use owned /t
 
 **File:** Create `app/state_schema_release.py`.
 
-- [ ] **Step 1: Write this complete module.**
+- [x] **Step 1: Write this complete module.**
 
 ```python
 """Unselected, source-bound State migration and current-fact inverse.
@@ -464,7 +464,7 @@ def restore_state_schema(db, metadata):
     return counts
 ```
 
-- [ ] **Step 2: Run the exact focused matrix.**
+- [x] **Step 2: Run the exact focused matrix.**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_state_schema_release.py tests/test_state_storage.py tests/test_state_source_contract.py tests/test_native_scalar_codec.py
@@ -481,7 +481,7 @@ Expected29 release +147 foundation +172 source +17 codec =365 passing cases. Com
 - Own scoped State paragraphs `docs/architecture.md`, `docs/runtime-mechanism.md`.
 - Own claim and implementation checkboxes only.
 
-- [ ] **Step 1: Replace the six disposition rows with this exact CSV content.**
+- [x] **Step 1: Replace the six disposition rows with this exact CSV content.**
 
 ```csv
 conversations,in_handoff,INTEGER,1,0,state,取消,当前无读取方且冻结523行均为INTEGER 0；迁移前逐行复核默认值和类型；逆迁移按原DDL恢复默认0。
@@ -492,11 +492,11 @@ corpus_sources,source_key,TEXT,0,1,state,取消,无运行读写方且冻结表�
 corpus_sources,last_collected_at,TEXT,0,0,state,取消,无运行读写方且冻结表为空；迁移前拒绝任何行；逆迁移按原DDL重建空表。
 ```
 
-- [ ] **Step 2: Write verified scoped documentation.**
+- [x] **Step 2: Write verified scoped documentation.**
 
 Append actual RED/GREEN command evidence, interpreter, no-body metadata, original declaration/current-fact inverse, guarded retirements, injected-failure transaction rollback, canonical byte equality and cleanup in source-preparation. Add one scoped paragraph in each behavior document that pure State migration/inverse is unselected and caller-owned; no current constructor/caller/version/publication cutover yet. Preserve existing foundation and other accepted feature descriptions; do not call the copied82-table candidate67 or the final goal complete. Check off Task1/2/3 implementation items and update your claim.
 
-- [ ] **Step 3: Self-review and commit owned hunks.**
+- [x] **Step 3: Self-review and commit owned hunks.**
 
 ```bash
 git add app/state_schema_release.py tests/test_state_schema_release.py

@@ -1,5 +1,18 @@
 # CEO Agent Service Architecture
 
+The unselected `state_schema_release` module captures exact actual or fresh
+declarations for sixteen native State families, then migrates fifteen retained
+kinds into one `state` table under a caller-owned FK-off transaction. It checks
+the four unused conversation columns still hold their observed defaults and
+the unused corpus table is empty before DDL. Forward verifies source identities,
+values and SQLite storage classes; inverse reconstructs original declarations
+from metadata and restores current State facts after intervening writes. The
+caller owns rollback; the module never commits or stores source row bodies.
+Current constructors, callers, version markers and publication do not select
+this release. The last copied candidate still has 82 ordinary tables; the
+expected 67-table integrated State cutover and final ten-plus-ledger goal remain
+open.
+
 The `configs_schema_release` coordinator composes the reviewed
 eighteen-family row transfer with the retained-runs FK translator. In one
 caller-owned FK-off transaction it installs `configs` and `schedules`, rebuilds
