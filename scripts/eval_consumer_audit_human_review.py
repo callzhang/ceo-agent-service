@@ -12,7 +12,7 @@ import tempfile
 from scripts import eval_consumer_audit_business as business
 
 ROOT = business.ROOT
-MANIFEST = ROOT / 'evals/consumer_audit_human_review/v1.json'
+MANIFEST = ROOT / 'evals/consumer_audit_human_review/v3.json'
 
 
 def run_suite(root: Path, manifest: dict) -> dict:
@@ -24,7 +24,9 @@ def run_suite(root: Path, manifest: dict) -> dict:
     )
     cases = []
     for case in manifest['cases']:
-        subject = business.normalize_review_subject(root, case['consumer_result'])
+        subject = business.normalize_review_subject(
+            root, case['consumer_result'], persisted_evidence=True,
+        )
         if not subject['ok']:
             raise ValueError(f"invalid frozen subject: {case['id']}")
         audit = business.run_role(
