@@ -18,8 +18,8 @@
 The complete implementation and regression source are adjacent canonical artifacts, not pseudocode. Source bindings: field map2026-10-16-tasks20-field-map.json, Tasks12actual metadata SHA f4a7dca390f9a5b28865de73058e0ae66117fbea32280dfcbeeca67c64348f29, original published8factory exact DDL hash recorded there.
 
 - [x] Root prepares complete declaration/test source. Native target schema creates with7writable+268generated columns,51indices,22triggers. Preflight325pass9.47s; all new owned temporary code/DB removed. Ruff clean after formatting.
-- [ ] Claim exactly the two new app/test paths and bounded documentation before copying.
-- [ ] Transfer the complete source byte-for-byte:
+- [x] Claim exactly the two new app/test paths and bounded documentation before copying.
+- [x] Transfer the complete source byte-for-byte:
 
 ```python
 from pathlib import Path
@@ -42,7 +42,7 @@ Implementation contains the complete267source-field literal declarations (includ
 
 ### Task 2: applied verification
 
-- [ ] Run the durable preflight against the actual applied modules:
+- [x] Run the durable preflight against the actual applied modules:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python docs/superpowers/plans/2026-10-16-task20-definitions-preflight.py --applied
@@ -50,7 +50,7 @@ PYTHONDONTWRITEBYTECODE=1 /Users/derek/Projects/ceo-agent-service/.worktrees/tas
 
 Expected325pass and OWNED_TEMP_REMOVED True. The preflight copies app, original conftest, static config and test code into its owned /tmp directory, checks module ownership, and executes only synthetic memory SQLite writes. No actual database constructors/providers/native CLI/service controls are invoked.
 
-- [ ] Run Ruff, exact hashes and diff checks:
+- [x] Run Ruff, exact hashes and diff checks:
 
 ```sh
 /Users/derek/.cache/uv/archive-v0/1vqK0HG0A7DbkHHlOjztN/bin/ruff check --no-cache app/task20_definitions.py tests/test_task20_definitions.py
@@ -61,13 +61,13 @@ The325cases cover source field inventory and7stored-column shape; all20source-sh
 
 ### Task 3: exact bounded documentation and commit
 
-- [ ] Append exactly this paragraph to both named owned documents:
+- [x] Append exactly this paragraph to both named owned documents:
 
 ```text
 Unselected Tasks20 executable declaration: app/task20_definitions.py compiles20source kinds/267source fields into one Tasks table with7writable structural columns and constrained generated source getters. tests/test_task20_definitions.py passes325synthetic-memory cases including source-derived NOT NULL success controls, existing CHECKs/uniques, physical/public parent relationships, current mapping aliases/times, nullable/BLOB keys,3retained feedback FK endpoints and native decision REPLACE. No historical factory/default/constructor/currentcaller/allocator/migration/source retirement is selected by this addition; final10core+ledger remains open.
 ```
 
-- [ ] Commit only the2new app/test modules, own claim row, the two exact doc paragraphs and own implementation checkboxes. No main/push/production/deploy.
+- [x] Commit only the2new app/test modules, own claim row, the two exact doc paragraphs and own implementation checkboxes. No main/push/production/deploy.
 - [ ] Fresh independent SPEC verifies source field/constraint/identity/index/trigger coverage and unchanged selection boundaries; then fresh QUALITY checks meaningful negative controls and native edge behavior. Root resolves findings before accepting.
 
 ### Following execution gates (not completed by this declaration)

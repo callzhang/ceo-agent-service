@@ -55,3 +55,6 @@
 4. 副本上使用真实Codex CLI和对外发送替身覆盖创建、执行、审查退回/修订、失败恢复、业务结果和回执；再做受影响UI及最终普通表数验收。最后才进入已授权边界内的发布流程。
 
 当前这一步没有执行上述目标迁移或生产发布，67表的已选候选也尚未达到最终11张普通表。
+
+
+Unselected Tasks20 executable declaration: app/task20_definitions.py compiles20source kinds/267source fields into one Tasks table with7writable structural columns and constrained generated source getters. tests/test_task20_definitions.py passes325synthetic-memory cases including source-derived NOT NULL success controls, existing CHECKs/uniques, physical/public parent relationships, current mapping aliases/times, nullable/BLOB keys,3retained feedback FK endpoints and native decision REPLACE. No historical factory/default/constructor/currentcaller/allocator/migration/source retirement is selected by this addition; final10core+ledger remains open.
