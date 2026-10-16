@@ -24,14 +24,24 @@ production mutation, publication or schema/table-count reduction occurs here.
 
 ## Latest unselected configs storage and live readback, 2026-10-15
 
-Fresh sequential independent SPEC and QUALITY accept `dc15505d`'s seven Email
-config kinds/73 source fields and `9f695659`'s genuine published-fresh positive
-account mutation/cascade proof. Root separately passed 100 storage/source/
-metadata cases and the one archived constructor case. This is unselected
-`configs` storage: no default caller, migration, schema marker or production
-table changed. Eight config families/45 fields, schedules and the two Skill
-receipt conversions remain outside that local unit. The sixteen state families
-and bootstrap/deploy/dispatcher direct SQL dependencies are mapped, not converted.
+The full unselected config coordinator now has independent SPEC and fresh
+QUALITY acceptance at `a9b66a45` (35 focused tests each plus separate probes).
+The frozen actual-copy proof `ed36d7bb` applies Email/Business/Provider before
+retiring eighteen native config/schedule/Skill-receipt families and the empty
+training-observation table. Its first inverse restores all 6,823 source rows,
+native declarations, independent allocator waters, 61,310 retained actions and
+231,340 runs exactly. A second forward with seven new facts passes config
+inverse; the subsequent whole-sequence inverse restores the initial schema,
+unchanged markers and unchanged known FK finding. Source and copied-workspace
+cleanup checks pass. This is a pure copied-data helper proof, with no current
+caller, constructor, schema marker or production selection.
+
+The intermediate candidate's 82 ordinary tables exclude virtual, shadow and
+SQLite internal tables; this denominator differs from earlier sqlite_schema
+entry counts. It is not the final ten-core-table-plus-ledger target. Current
+DAO/fresh initialization/paired-release integration is the next implementation
+unit. The sixteen state families and bootstrap/deploy/dispatcher direct SQL
+dependencies remain mapped, not converted.
 
 At 2026-10-15 20:09 UTC, live query-only metadata still shows **121 tables**,
 **486,330,368 logical bytes**, Store `2026-10-13.5` and Email51. Production
@@ -50,8 +60,9 @@ exceptions are recorded in the config source preparation. Source oracle
 `ee350913` with reader correction `8021df4e` passed fresh sequential SPEC and
 QUALITY review; independent QUALITY ran four cases in 33.25 seconds in an
 owned temporary directory and verified its removal. Comment-only `842b61e3`
-required no rerun. This accepts source behavior only: no target compression,
-body retirement or receipt storage selection has occurred. The approved full target
+required no rerun. That earlier oracle accepts source behavior only; the later unselected copy
+proof above deduplicates Skill bodies on its disposable target. Current runtime
+receipt storage remains unchanged. The approved full target
 remains **ten core tables plus one ledger**; this work does not make legacy
 tables a permanent exception.
 
