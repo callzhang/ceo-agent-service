@@ -547,6 +547,14 @@ def build_task_agent_prompt(
         scheduled_payload.pop("skill_protocol", None)
         scheduled_payload.pop("skill_materials", None)
     work_item_json = json.dumps(work_item_payload, ensure_ascii=False, separators=(",", ":"))
+    transcript_limitation = (
+        "The meeting transcript was unavailable for this source. Use only the "
+        "explicit Todo and meeting-summary evidence that is present. Do not "
+        "infer an individual owner, commitment, or assignment from missing "
+        "transcript context; leave unsupported ownership unresolved."
+        if work_item.context.source_transcript_unavailable
+        else ""
+    )
     effective_current_time = (
         current_time.strip() or datetime.now(timezone.utc).isoformat()
     )
@@ -583,6 +591,7 @@ sessions and the native CLI manages compaction. Current source authority takes p
 
 Current Work Item JSON:
 {work_item_json}
+{transcript_limitation}
 Source body: current_work_item.document_id in the semantic context below;
 read its visible_ranges. Offsets are character ranges in that exact version,
 not a claim that an omitted middle or another version was read.

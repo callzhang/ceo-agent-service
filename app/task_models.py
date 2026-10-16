@@ -261,6 +261,7 @@ class WorkItemContext(BaseModel):
     participants: list[str] = Field(default_factory=list)
     source_conversation_kind: WorkItemSourceKind
     source_conversation_title: str = ""
+    source_transcript_unavailable: bool = False
 
 
 class WorkItemTaskSignals(BaseModel):
