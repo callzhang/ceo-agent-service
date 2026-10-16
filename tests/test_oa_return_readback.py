@@ -322,6 +322,67 @@ def test_ambiguous_millisecond_records_in_same_openapi_second_remain_uncertain()
     assert source.calls == []
 
 
+def test_second_truncated_destination_created_in_redirect_second_is_verified(provider_read_clock):
+    source = Source()
+    source.returned = True
+    source.records[0]["date"] = "2026-10-15 19:21:33"
+    source.destination["create_time"] = "2026-10-15 19:21:33"
+    source.read_oa_approval_records = lambda process_id: {
+        "success": True,
+        "result": {"operationRecords": [{
+            "operationType": "REDIRECT_PROCESS",
+            "userId": "principal",
+            "operationTime": 1792063293204,
+        }]},
+    }
+    proof = acceptance()
+    proof["dispatch_started_at"] = "2026-10-15T11:21:32.307564Z"
+    proof["accepted_at"] = "2026-10-15T11:21:33.480916Z"
+    proof["response_received_at"] = proof["accepted_at"]
+    provider_read_clock.current = datetime.fromisoformat("2026-10-15T11:22:00+00:00")
+    candidate = attempt("uncertain", proof)
+    candidate["action_attempt"]["created_at"] = proof["dispatch_started_at"]
+
+    outcome = OaRevertHandler(source).reconcile(action(), action_key="key", candidate=candidate)
+
+    assert outcome.status == "verified"
+    assert outcome.provider_result["destination_task_ids"] == ["destination"]
+    assert source.calls == []
+
+
+def test_second_truncated_destination_stays_uncertain_with_same_second_follow_up_event(provider_read_clock):
+    source = Source()
+    source.returned = True
+    source.records = [
+        {"operation_type": "REDIRECT_PROCESS", "userid": "principal",
+         "date": "2026-10-15 19:21:33", "remark": "Need exact handover facts"},
+        {"operation_type": "EXECUTE_TASK_NORMAL", "userid": "handover-owner",
+         "date": "2026-10-15 19:21:33", "remark": ""},
+    ]
+    source.destination["create_time"] = "2026-10-15 19:21:33"
+    source.read_oa_approval_records = lambda process_id: {
+        "success": True,
+        "result": {"operationRecords": [
+            {"operationType": "REDIRECT_PROCESS", "userId": "principal",
+             "operationTime": 1792063293204},
+            {"operationType": "EXECUTE_TASK_NORMAL", "userId": "handover-owner",
+             "operationTime": 1792063293800},
+        ]},
+    }
+    proof = acceptance()
+    proof["dispatch_started_at"] = "2026-10-15T11:21:32.307564Z"
+    proof["accepted_at"] = "2026-10-15T11:21:33.480916Z"
+    proof["response_received_at"] = proof["accepted_at"]
+    provider_read_clock.current = datetime.fromisoformat("2026-10-15T11:22:00+00:00")
+    candidate = attempt("uncertain", proof)
+    candidate["action_attempt"]["created_at"] = proof["dispatch_started_at"]
+
+    outcome = OaRevertHandler(source).reconcile(action(), action_key="key", candidate=candidate)
+
+    assert outcome.status == "uncertain"
+    assert source.calls == []
+
+
 @pytest.mark.parametrize("field", ["userid", "remark", "date", "operation_type"])
 def test_incomplete_potential_return_does_not_prove_uniqueness(field):
     source = Source()
