@@ -23,7 +23,7 @@ The preflight copies source/tests to an owned temporary directory, substitutes t
 - [x] Freeze actual three source SQL values expressions and owners without source row bodies.
 - [x] Complete candidate, regression and preflight before any application edit.
 - [x] Full candidate scoped preflight1053passed/64.50s, including42new cases; Ruff clean; owned temp removed. Initial fixture errors (invented weight field corrected to actual objective_weight, existing NOTNULL-to-CHECK extended code distinction) corrected before acceptance; no application defect asserted.
-- [ ] Mechanical exact-copy of the two canonical files, own claim and implementation checkboxes only; applied full scoped preflight and Ruff; commit.
+- [x] Mechanical exact-copy of the two canonical files, own claim and implementation checkboxes only; applied full scoped preflight and Ruff; commit.
 - [ ] Fresh SPEC: verify real source statements, native execution timing, lazy CASE/default suppression, scalar types, identity dependency representation and unchanged no-expression path; no runtime selection.
 - [ ] Fresh QUALITY after SPEC: meaningful mutation controls for eager evaluation, duplicate evaluation, exact scalar encoding and omitted expression/default; independent restored control. Do not count missing API or collection failures as semantic kills.
 - [ ] Root records acceptance and current integration boundary.

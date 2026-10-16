@@ -25,6 +25,7 @@ from app.task20_definitions import (
     TASK20_FIELDS,
     TASK20_NEW_KINDS,
     TASK20_PAYLOAD_FIELDS,
+    TASK20_PARENTS,
     task20_column,
     task20_projection_barrier,
     task20_source_projection,
@@ -179,7 +180,8 @@ def _auto_next(db, kind, values):
     return high + 1
 
 
-def _payload(db, kind, values, replace):
+def _payload(db, kind, values, replace, *, insert_sql=None):
+    expressions = {} if insert_sql is None else insert_sql
     required = {c[0] for c in TASK20_COLUMNS[kind] if c[2]}
     bound = {
         f: values[f]
@@ -195,8 +197,8 @@ def _payload(db, kind, values, replace):
     missing = {
         f: "json_quote(" + TASK20_DEFAULTS[kind].get(f, "null") + ")"
         for f in TASK20_PAYLOAD_FIELDS[kind]
-        if f not in bound
-    }
+        if f not in bound and f not in expressions
+    } | {field: "ceo_native_json(" + sql + ")" for field, sql in expressions.items()}
     expression = "?"
     if missing:
         expression = (
@@ -250,9 +252,28 @@ def _key_physical(db, kind, values, identity):
 
 
 def task12_insert_parts(
-    db, kind, values, *, source_rowid=_UNSET, ignore=False, replace=False
+    db,
+    kind,
+    values,
+    *,
+    source_rowid=_UNSET,
+    ignore=False,
+    replace=False,
+    insert_sql=None,
+    insert_parameters=(),
 ):
     _check(kind, values)
+    expressions = {} if insert_sql is None else insert_sql
+    dependencies = set(TASK12_PRIMARY_KEYS[kind])
+    parent = TASK20_PARENTS.get(kind)
+    if parent in TASK12_PRIMARY_KEYS:
+        dependencies.update(TASK12_PRIMARY_KEYS[parent])
+    if set(expressions) - (set(TASK20_PAYLOAD_FIELDS[kind]) - dependencies):
+        raise ValueError(
+            "native Tasks INSERT expression requires nonidentity payload fields"
+        )
+    if set(values) & set(expressions):
+        raise ValueError("native Tasks INSERT field supplied twice")
     mode = _mode(ignore, replace)
     if kind in TASK12_AUTOINCREMENT_KINDS and source_rowid is not _UNSET:
         raise ValueError("AUTOINCREMENT source id is supplied as id")
@@ -280,13 +301,20 @@ def task12_insert_parts(
         physical = existing[0] if existing else None
     if physical is None:
         physical = _physical_next(db)
-    expression, payload = _payload(db, kind, values, replace)
+    expression, payload = _payload(db, kind, values, replace, insert_sql=expressions)
     return Task12InsertParts(
         "insert "
         + mode
         + "into tasks(id,record_type,legacy_key,parent_id,payload_json) "
         "values(?,?,?,?," + expression + ")",
-        (physical, kind, str(identity), _parent(db, kind, values), payload),
+        (
+            physical,
+            kind,
+            str(identity),
+            _parent(db, kind, values),
+            payload,
+            *insert_parameters,
+        ),
         identity,
         physical,
     )
