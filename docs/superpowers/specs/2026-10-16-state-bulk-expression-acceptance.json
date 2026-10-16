@@ -1,0 +1,80 @@
+{
+  "date": "2026-10-16",
+  "scope": "unselected State bulk UPDATE encoded SQL-expression prerequisite",
+  "implementation": "6c06105c",
+  "documentation_correction": "ee25a8613e8d8890d5e5b2f2d622ffe3b1cd43f9",
+  "module_sha256": "a634f116a12c55ff41a78d7579d2a1c160bc56117253afcd150fd8d57f0fc865",
+  "test_sha256": "cd3c26ce855ae53f96d4dc4070ee2eb99570464859ba91dda144bd9b300d95dc",
+  "changed_existing_functions": 1,
+  "other_module_asts_unchanged": true,
+  "schema_and_source_declarations_unchanged": true,
+  "root": {
+    "red": 34,
+    "green": 420,
+    "seconds": 6.65,
+    "owned_temp_removed": true
+  },
+  "implementation_verification": {
+    "red": 34,
+    "green": 420,
+    "seconds": 7.16,
+    "ruff": true,
+    "diff_check": true,
+    "owned_temp_removed": true
+  },
+  "spec": {
+    "verdict": "PASS",
+    "tests": 34,
+    "seconds": 0.9,
+    "additional_actual_fresh_probe_groups": 4,
+    "exact_recovery_clock_guard_hit_miss": true,
+    "no_select_one_payload_mutation": true,
+    "docs_p2_resolved": "Default substitution per affected row needing it; builtin CURRENT_TIMESTAMP statement-stable."
+  },
+  "quality": {
+    "verdict": "PASS",
+    "tests": 34,
+    "seconds": 0.66,
+    "independent_scalar_cases": 5100,
+    "scalar_seconds": 19.627,
+    "fields": 85,
+    "variants": [
+      "actual",
+      "fresh"
+    ],
+    "modes": [
+      "plain",
+      "replace"
+    ],
+    "inputs": [
+      "NULL",
+      "NaN",
+      "true",
+      "0",
+      "-7",
+      "signed64 minimum",
+      "signed64 maximum",
+      "42.5 text",
+      "null text",
+      "Unicode with NUL",
+      "00ff BLOB",
+      "-2.2101102838387424e-85",
+      "negative zero",
+      "positive infinity",
+      "negative infinity"
+    ],
+    "native_constraint_failures": 444,
+    "original_row_simultaneous_assignments": true,
+    "third_row_abort_preserves_prior_caller_work": true,
+    "lazy_expression_and_default_evaluation": true,
+    "mixed_default_parameter_order": true,
+    "owned_temp_removed": true
+  },
+  "contract": "update_json requires trusted exact encoded-JSON SQL leaves, as upsert_state; naive json_quote is not a universal REAL/BLOB encoder.",
+  "runtime_selected": false,
+  "mixed_store_proposal": "Previously blocked timestamp preselection must be removed and independently reviewed; this prerequisite alone does not accept that proposal.",
+  "remaining_constructor_findings": [
+    "Preserve existing two dispatcher-index repair behavior during target constructor conversion; target index enumeration sequence must not become a false schema mismatch.",
+    "Historical-only Store migration helper has no app callers; explicitly retire it or keep it source-only, never introduce current runtime fallback."
+  ]
+}

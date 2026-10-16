@@ -177,5 +177,6 @@ def test_expression_validation_before_sql(pair, values, expressions):
 - [x] Apply exact function/tests, keep other ASTs and State/source declarations unchanged.
 - [x] Verify34RED then420GREEN using pinnedPython3.13.12/SQLite3.50.4; pytest -p no:cacheprovider --basetemp within an owned TemporaryDirectory(dir=/tmp), PYTHONDONTWRITEBYTECODE=1. Focused matrix: newtests, bulk_update, upsert, schema_release, storage, native_integer_binding. No full suite.
 - [x] Ruff check --no-cache, in-memory compile, byte/AST identity, diff check; update scoped architecture/runtime and source-preparation docs after tests; commit own files only.
-- [ ] Root obtains fresh independent SPEC then QUALITY. Do not activate any caller; replace the mixed-proposal clock workaround only after acceptance and rerun that proposal's differential review. Production/main/push/deploy, real DB/provider/nativeCLI and sends remain excluded.
+- [x] Root obtains fresh independent SPEC then QUALITY; exact ee25a861 accepted in ../specs/2026-10-16-state-bulk-expression-acceptance.json.
+- [ ] Do not activate any caller; replace the mixed-proposal clock workaround after this acceptance and rerun that proposal's differential review. Production/main/push/deploy, real DB/provider/nativeCLI and sends remain excluded.
 
