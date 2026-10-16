@@ -740,3 +740,40 @@ accepted this bounded decoupling. QUALITY verified the exact diff and the
 independent fragment composition; it did not repeat the67-case run. The test
 checks one representative follow-up kind absent in DDL; all nine absent kinds
 also follow from the reviewed conditional declaration assembly.
+
+### Config row transfer after the existing Email migration
+
+The paired Email13 conversion replaces six account-owned blocker triggers
+with their existing typed-action definitions. The eighteen retained config,
+schedule and receipt families therefore have a different exact declaration
+fingerprint after that conversion. The row engine now recognizes the actual
+and fresh variants of this real source state as well as the original sources;
+a partial mixture of old and translated blockers is rejected. Fresh projection
+order remains source-specific. This adds no runtime schema selection.
+
+The two added source-profile round trips failed on the previous engine. The
+updated eighteen transfer and thirty-five integrated cases pass (53 in 2.94s).
+On a new owned copy of the unchanged frozen 970a source, the existing Email,
+Business and Provider conversions ran first. Capture then selected
+`actual_email52`; all 6,823 rows across eighteen families and 146 source fields
+copied to installed in-memory targets and inversely restored with exact
+values/types/rowids and six allocator waters. Both quick checks returned `ok`.
+The owned copy was removed and its absence verified; the source SHA remained
+unchanged. The metadata-only receipt is
+`superpowers/specs/2026-10-15-configs-email52-row-transfer-actual.json`.
+
+This proves sequential row-engine composition after the existing migrations.
+The copied candidate still has 104 tables. It does not prove retained-runs FK
+translation, source-table retirement, current constructors/callers, paired
+markers or a complete current-fact release rollback. Those remain required
+before the final ten-core-plus-ledger schema can be selected.
+
+Independent SPEC review reproduced all four source hashes from the original
+declarations and existing six-trigger translation; all 62 partial combinations
+per base profile were rejected. Subsequent fresh QUALITY review found no
+blocker and verified all eleven executed module hashes. Its combined check had
+51 passes and two import failures in a minimal interpreter; precisely those
+two cases passed in the existing provisioned test environment. All 53 cases
+therefore passed across those bounded runs. All reviewer-owned temporary
+parents were removed and their absence checked. Ruff, syntax parsing and
+`git diff --check` also pass. This is acceptance of source binding only.

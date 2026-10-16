@@ -29,7 +29,12 @@ AUTO_KINDS = (*sorted(AUTOINCREMENT_KINDS), 'scheduled_tasks', *RECEIPT_FIELDS)
 SOURCE_HASHES = {
     'actual': '4705ccca6a2fe6eef6be550baa99008fe8cdb7c767a50646ba2e516382575bf6',
     'fresh': '877b819ec78de375db8fdd6093cf1bb627a88769b55688cebd9e9cb7d4d23389',
+    # Same native config fields after the existing Email13 migration translates
+    # six account-owned blockers to typed actions. No mixed trigger set matches.
+    'actual_email52': 'ae625fbb906925358c68e921c54eb047bfc574878bd2e8915b6bab0f76879bc3',
+    'fresh_email52': '915d992f75a788da33181b2702b751e3948a4b48c590d43462abd07920d87756',
 }
+FRESH_VARIANTS = ('fresh', 'fresh_email52')
 
 
 def _transaction(db, *, write=False):
@@ -125,7 +130,7 @@ def _row_signature(rows):
 
 def _target_rows(db, metadata):
     rows = {kind: [tuple(row) for row in db.execute(config_projection(
-        kind, fresh=metadata['variant'] == 'fresh', include_rowid=kind in ROWID_KINDS))]
+        kind, fresh=metadata['variant'] in FRESH_VARIANTS, include_rowid=kind in ROWID_KINDS))]
         for kind in CONFIG_FIELDS}
     schedule_fields = ','.join(map(_quote, _fields(metadata, 'scheduled_tasks')))
     rows['scheduled_tasks'] = [tuple(row) for row in db.execute(

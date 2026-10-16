@@ -15,6 +15,7 @@ from app.action_storage import create_action_schema, action_schema_is_current
 from app.configs_storage import create_configs_schema
 from app.schedules_storage import create_schedules_schema
 from app.email_classification_schema import create_current_email_classifications
+from app.action_email_storage import _target_external_sql
 from tests.configs_source_fixtures import ROOT, source_db, insert
 from tests.test_configs_storage import VALID, INSERT_ORDER
 from tests.test_configs_skill_storage import (
@@ -25,7 +26,9 @@ from tests.test_configs_target_integrated import target as target
 
 @contextmanager
 def native(variant):
-    with source_db(variant) as db:
+    base = {'actual': 'actual', 'fresh': 'fresh',
+            'actual_email52': 'actual', 'fresh_email52': 'fresh'}[variant]
+    with source_db(base) as db:
         receipt = json.loads((ROOT / 'docs/superpowers/specs/2026-10-15-configs-load-receipt-dedup-probe.json').read_text())
         for spec in receipt['actual_frozen_receipt_metadata'].values():
             for obj in spec['objects']:
@@ -34,7 +37,17 @@ def native(variant):
             for obj in spec['objects']:
                 if obj['type'] != 'table' and obj['sql']:
                     db.execute(obj['sql'])
+        if variant in ('actual_email52', 'fresh_email52'):
+            install_typed_account_blockers(db)
         yield db
+
+
+def install_typed_account_blockers(db):
+    names = {row[0] for row in db.execute("select name from sqlite_schema where type='trigger' and tbl_name='email_accounts'")}
+    for name, sql in _target_external_sql().items():
+        if name in names:
+            db.execute('drop trigger "'+name+'"')
+            db.execute(sql)
 
 
 def seed(db):
@@ -82,12 +95,13 @@ def facts(db, metadata):
     return result
 
 
-@pytest.mark.parametrize('variant', ('actual', 'fresh'))
+@pytest.mark.parametrize('variant', ('actual', 'fresh', 'actual_email52', 'fresh_email52'))
 def test_eighteen_families_roundtrip_current_facts_and_waters(target, variant):
     start_target(target)
     with native(variant) as source, native(variant) as restored:
         seed(source)
         metadata = capture_config_declarations(source)
+        assert metadata['variant'] == variant
         assert len(metadata['tables']) == 18
         assert sum(len(d['columns']) for d in metadata['tables'].values()) == 146
         assert 'rows' not in json.dumps(metadata)
@@ -251,3 +265,13 @@ def test_skill_receipt_transfer_needs_email_scaffold_without_followup_types(vari
         assert counts['runtime_skill_load_receipts'] == 1
         assert target.execute("select record_type from actions").fetchall() == [('runtime_skill_load_receipts',)]
         assert 'follow_up_drafts' not in target.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
+
+
+def test_partial_account_blocker_translation_is_not_a_supported_source():
+    with native('actual') as source:
+        name = 'trg_email_direct_action_blocks_account_delete'
+        source.execute('drop trigger '+name)
+        source.execute(_target_external_sql()[name])
+        source.execute('begin')
+        with pytest.raises(ValueError, match='declaration'):
+            capture_config_declarations(source)

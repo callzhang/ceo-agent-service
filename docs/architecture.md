@@ -20,6 +20,11 @@ mode. It does not install/drop schemas or change markers. The release still
 needs retained-child FK translation, source-table retirement and caller
 selection; the row engine alone cannot activate this schema.
 
+Source capture also recognizes the exact account-trigger declarations produced
+by the existing Email13 migration, for both actual and fresh sources. Copied
+sequential migration plus config row transfer/inverse is verified; constructors,
+retained-child FKs and final source-table retirement remain unselected.
+
 Skill receipts require the current Email action scaffold; the independent
 follow-up/sync kinds are optional. This removes an unneeded declaration
 dependency without selecting new runtime kinds or retiring their source tables.
