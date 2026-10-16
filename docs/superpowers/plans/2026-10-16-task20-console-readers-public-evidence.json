@@ -1,0 +1,2504 @@
+{
+  "scope": "actual console/quality/retirement methods, full synthetic fresh native source versus explicitly prepared EMPTY Tasks20 with12native sources removed; no actual-profile/nonempty migration/cold-target acceptance",
+  "patches": {
+    "2026-10-16-task8-store-caller-proposal.patch": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+    "2026-10-16-task12-store-misc-caller-proposal.patch": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4",
+    "2026-10-16-task12-feedback-caller-proposal.patch": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d",
+    "2026-10-16-task12-email-native-caller-proposal.patch": "610bd87fb49ee22fca098fdaf887ccf62bd37e5462a9a8d2945440057304b8cc",
+    "2026-10-16-task8-workbench-caller-proposal.patch": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26",
+    "2026-10-16-task12-workbench-children-caller-proposal.patch": "f9e64c543a9aec532184a99ee9832d691635bdbaf4dfade9c515e25e3f268cc7",
+    "2026-10-16-task20-console-readers-caller-proposal.patch": "a823ff570d1d8b6045f1289853831f7893531f78badc1281134bb80389f717df"
+  },
+  "source_files": {
+    "app/audit_web.py": "036f4f46259485c5e341cab8171071b732377d2cee685d90f41eceb8d4dc77e7",
+    "app/quality_gate.py": "c9888b13f4b4965a62793150d030cdbe3e85fe7ed8d45178ff9604eb9475da3f",
+    "app/rule_question_retirement.py": "e2bf5b4fd78dd40fd557480b3c6c6211f56eb6d40cebb209b582fdc58f3cac8e",
+    "app/task12_storage.py": "127311aa2ed303066fc3dd325a5642c0e61725a2d8db3b5bedfc218e804e013f",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/email_store.py": "c7f80cd9607cc0b1d500a698f341065e3b22f41b73a536f0ab3c8af88db5ecc9",
+    "app/email_task_adapter.py": "dce93db6266af53c5a846f8f59ef14807ef8c7ebd79840c4a83b0ea093448230",
+    "app/workbench/store.py": "4a3bb9287dfea1f2e13e31be5ff2a9ac536a458ac079f30ccb1519848870e18e",
+    "app/workbench/native_events.py": "627dea69c179821fc18e1e97e37c6c96615134719c0536986bc0fa6f23f6a761"
+  },
+  "clock": "2040-01-01 00:00:00",
+  "python": "/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python",
+  "fixture_seams": [
+    "AutoReplyStore target _ensure_initialized bypass only after empty template preparation",
+    "original Store/Email connection wrappers add accepted scalar registration and deterministic SQL clock/trace",
+    "one native-result function returns canonical synthetic obsolete-question result for a single asserted consumer run; no native provenance/read claim"
+  ],
+  "normalization": "only unspecified equal-update classification latest-error ties: selected value must belong actual max-timestamp eligible error set; raw choices retained separately. Explicit old-eight coordinates/fields/sourceROWIDs otherwise exact; physical new-kind IDs retained separately",
+  "bootstrap": {
+    "constructors": "ordinary full-fresh AutoReplyStore then EmailStore",
+    "counts": {
+      "tasks": 0,
+      "business_object_tasks": 0,
+      "email_agent_classification_tasks": 0,
+      "email_historical_candidates": 0,
+      "feedback_iteration_decisions": 0,
+      "feedback_processing_batches": 0,
+      "feedback_processing_items": 0,
+      "feedback_processing_rounds": 0,
+      "oa_notification_events": 0,
+      "okr_review_items": 0,
+      "wechat_memory_import_jobs": 0,
+      "workbench_artifacts": 0,
+      "workbench_attachments": 0
+    },
+    "source_fields": {
+      "business_object_tasks": [
+        "business_object_key",
+        "reply_task_id",
+        "created_at",
+        "updated_at"
+      ],
+      "email_agent_classification_tasks": [
+        "task_id",
+        "channel",
+        "stable_message_identity",
+        "status",
+        "owner",
+        "generation",
+        "attempt_count",
+        "lease_expires_at",
+        "available_at",
+        "input_json",
+        "result_json",
+        "error",
+        "created_at",
+        "updated_at"
+      ],
+      "email_historical_candidates": [
+        "account_id",
+        "folder",
+        "model_id",
+        "stable_message_identity",
+        "normalized_text",
+        "provider_message_json",
+        "uidvalidity",
+        "uid",
+        "state",
+        "reason",
+        "attempted_at",
+        "next_retry_at",
+        "updated_at"
+      ],
+      "feedback_iteration_decisions": [
+        "id",
+        "batch_id",
+        "workbench_task_id",
+        "workbench_turn_id",
+        "decision_json",
+        "created_at"
+      ],
+      "feedback_processing_batches": [
+        "batch_id",
+        "status",
+        "requested_count",
+        "created_at",
+        "updated_at",
+        "resolved_at"
+      ],
+      "feedback_processing_items": [
+        "feedback_key",
+        "current_round_id",
+        "batch_id",
+        "status",
+        "workbench_task_id",
+        "workbench_turn_id",
+        "attempt_id",
+        "agent_run_id",
+        "commit_sha",
+        "test_evidence_json",
+        "restart_evidence_json",
+        "health_evidence_json",
+        "note",
+        "resolved_at",
+        "created_at",
+        "updated_at"
+      ],
+      "feedback_processing_rounds": [
+        "id",
+        "feedback_key",
+        "round_number",
+        "batch_id",
+        "status",
+        "workbench_task_id",
+        "workbench_turn_id",
+        "attempt_id",
+        "agent_run_id",
+        "commit_sha",
+        "test_evidence_json",
+        "restart_evidence_json",
+        "health_evidence_json",
+        "backlog_evidence_json",
+        "scope_receipt_json",
+        "receipt_version",
+        "note",
+        "started_at",
+        "resolved_at",
+        "reopened_at",
+        "reopen_reason",
+        "created_at",
+        "updated_at"
+      ],
+      "oa_notification_events": [
+        "id",
+        "event_kind",
+        "requires_reply",
+        "process_instance_id",
+        "task_id",
+        "channel",
+        "conversation_id",
+        "conversation_title",
+        "trigger_message_id",
+        "trigger_create_time",
+        "trigger_sender",
+        "trigger_text",
+        "trigger_message_json",
+        "oa_url",
+        "status",
+        "claimed_attempt_id",
+        "result_attempt_id",
+        "last_error",
+        "created_at",
+        "updated_at",
+        "sent_at"
+      ],
+      "okr_review_items": [
+        "id",
+        "request_id",
+        "objective_title",
+        "objective_weight",
+        "kr_title",
+        "kr_weight",
+        "item_json",
+        "created_at"
+      ],
+      "wechat_memory_import_jobs": [
+        "id",
+        "import_run_id",
+        "account_id",
+        "status",
+        "error",
+        "created_at",
+        "finished_at",
+        "updated_at"
+      ],
+      "workbench_artifacts": [
+        "id",
+        "turn_id",
+        "label",
+        "path",
+        "media_type",
+        "created_at"
+      ],
+      "workbench_attachments": [
+        "id",
+        "task_id",
+        "client_request_id",
+        "filename",
+        "media_type",
+        "size_bytes",
+        "content_sha256",
+        "storage_path",
+        "created_at"
+      ]
+    },
+    "table_entries": 73,
+    "fk": []
+  },
+  "target_files": {
+    "app/audit_web.py": "d10a0995be2abaf7cd6163e0337f474933d724081353a9d806050ad65b2b9559",
+    "app/quality_gate.py": "0a198fff93ce894bf721c3a888b963bb15d694387fd4e538ff1ac85d6793340a",
+    "app/rule_question_retirement.py": "73d78b8e5c638ab7b5183d7f1a10146e2d5a371eb475cc23f6b3c037063b6561",
+    "app/task12_storage.py": "127311aa2ed303066fc3dd325a5642c0e61725a2d8db3b5bedfc218e804e013f",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "app/store.py": "13dbf3724919fbeac89b7d2aca895ca2651339b3fcb35a322e56ef10d108d55b",
+    "app/email_store.py": "f4554c4233c2a2ee29fd74dc30532164f27d06836d5481d836233f88b3a3a89e",
+    "app/email_task_adapter.py": "e47e1a967839b4fa22cd3e8c9f35ab174a223964802ca0501192db114afcf682",
+    "app/workbench/store.py": "b9027194eb4f9f277630935bf2d00a36792047f626e6b0242667d22a7de070db",
+    "app/workbench/native_events.py": "3d98295bfd230cb7c1b06b244b8bb6d86259146fa3b368e4157978b12100b58c"
+  },
+  "preparation": {
+    "fixture_only": true,
+    "empty_native_sources_retired": [
+      "business_object_tasks",
+      "email_agent_classification_tasks",
+      "email_historical_candidates",
+      "feedback_iteration_decisions",
+      "feedback_processing_batches",
+      "feedback_processing_items",
+      "feedback_processing_rounds",
+      "oa_notification_events",
+      "okr_review_items",
+      "wechat_memory_import_jobs",
+      "workbench_artifacts",
+      "workbench_attachments"
+    ],
+    "retained_empty_child_three_fk_rebinding": {
+      "references feedback_iteration_decisions(id)": "references tasks(\"feedback_iteration_decisions__id\")",
+      "references feedback_processing_items(feedback_key)": "references tasks(\"feedback_processing_items__feedback_key\")",
+      "references feedback_processing_rounds(id)": "references tasks(\"feedback_processing_rounds__id\")"
+    },
+    "all_other_table_ddl_exact": true
+  },
+  "negative_control": {
+    "mutation": "only classification Attention inner candidate IDs use global Tasks.id; outer source ROWID filter and all predicates unchanged",
+    "different_checkpoints": [
+      "attention_nonempty",
+      "attention_limited",
+      "attention_attempts_memory",
+      "offline_replaced_attention",
+      "compacted_done_attention"
+    ],
+    "source_classification_attention": [
+      {
+        "category": "Email classification",
+        "id": "z-failed",
+        "status": "failed",
+        "context": "sender@example.invalid",
+        "summary": "Subject z-failed",
+        "updated_at": "2040-01-01 00:00:00",
+        "error": "second tied failure"
+      },
+      {
+        "category": "Email classification",
+        "id": "blank-failed",
+        "status": "failed",
+        "context": "sender@example.invalid",
+        "summary": "Subject blank-failed",
+        "updated_at": "2039-12-31 22:00:00",
+        "error": " "
+      },
+      {
+        "category": "Email classification",
+        "id": "a-failed",
+        "status": "failed",
+        "context": "sender@example.invalid",
+        "summary": "Subject a-failed",
+        "updated_at": "2039-12-31 22:00:00",
+        "error": "first tied failure"
+      },
+      {
+        "category": "Email classification",
+        "id": "None",
+        "status": "failed",
+        "context": "sender@example.invalid",
+        "summary": "Subject None",
+        "updated_at": "2039-12-31 22:00:00",
+        "error": ""
+      }
+    ],
+    "mutant_classification_attention": []
+  },
+  "checkpoints": 47,
+  "equal_checkpoints": 47,
+  "differences": [],
+  "called": [
+    "app.audit_web._human_decision_attention_rows",
+    "app.audit_web._meeting_job_queue_snapshot",
+    "app.audit_web._okr_review_queue_snapshot",
+    "app.audit_web._queue_attention_rows",
+    "app.audit_web._queue_count_for",
+    "app.audit_web._queue_latest_error",
+    "app.audit_web._queue_latest_value",
+    "app.audit_web._queue_retryable_count",
+    "app.audit_web._queue_status_counts",
+    "app.audit_web._queue_status_snapshots",
+    "app.audit_web._reply_attempt_queue_snapshot",
+    "app.audit_web._reply_task_queue_snapshot",
+    "app.audit_web._sqlite_table_columns",
+    "app.audit_web._sqlite_table_exists",
+    "app.audit_web._work_summary_input_queue_snapshot",
+    "app.email_task_adapter.close_offline_task",
+    "app.email_task_adapter.open_offline_task",
+    "app.quality_gate.required_live_channels",
+    "app.quality_gate.scan_hourly_quality",
+    "app.rule_question_retirement.retire_rule_question"
+  ],
+  "entered": {
+    "source": {
+      "_queue_status_snapshots": 4,
+      "_sqlite_table_exists": 115,
+      "_reply_task_queue_snapshot": 5,
+      "_queue_count_for": 181,
+      "_reply_attempt_queue_snapshot": 6,
+      "_work_summary_input_queue_snapshot": 5,
+      "_queue_status_counts": 18,
+      "_queue_retryable_count": 18,
+      "_queue_latest_value": 18,
+      "_queue_latest_error": 19,
+      "_sqlite_table_columns": 22,
+      "_meeting_job_queue_snapshot": 5,
+      "_okr_review_queue_snapshot": 5,
+      "scan_hourly_quality": 6,
+      "_check_structured_needs_human": 5,
+      "_check_email_classification_tasks": 5,
+      "_queue_attention_rows": 5,
+      "_human_decision_attention_rows": 1,
+      "retire_rule_question": 6,
+      "_retire_in_connection": 6
+    },
+    "target": {
+      "_queue_status_snapshots": 4,
+      "_sqlite_table_exists": 124,
+      "_reply_task_queue_snapshot": 5,
+      "_queue_count_for": 181,
+      "_reply_attempt_queue_snapshot": 6,
+      "_work_summary_input_queue_snapshot": 5,
+      "_queue_status_counts": 18,
+      "_queue_retryable_count": 18,
+      "_queue_latest_value": 18,
+      "_queue_latest_error": 19,
+      "_sqlite_table_columns": 22,
+      "_meeting_job_queue_snapshot": 5,
+      "_okr_review_queue_snapshot": 5,
+      "scan_hourly_quality": 6,
+      "_check_structured_needs_human": 5,
+      "_check_email_classification_tasks": 5,
+      "_queue_attention_rows": 5,
+      "_human_decision_attention_rows": 1,
+      "retire_rule_question": 6,
+      "_retire_in_connection": 6
+    }
+  },
+  "coordinates": {
+    "source": {
+      "email_agent_classification_tasks": [
+        [
+          7
+        ],
+        [
+          90
+        ],
+        [
+          91
+        ],
+        [
+          92
+        ],
+        [
+          93
+        ],
+        [
+          94
+        ],
+        [
+          100
+        ]
+      ],
+      "business_object_tasks": [
+        [
+          1
+        ],
+        [
+          2
+        ],
+        [
+          3
+        ],
+        [
+          4
+        ]
+      ]
+    },
+    "target": [
+      [
+        503,
+        "business_object_tasks",
+        1,
+        102
+      ],
+      [
+        504,
+        "business_object_tasks",
+        2,
+        103
+      ],
+      [
+        505,
+        "business_object_tasks",
+        3,
+        104
+      ],
+      [
+        506,
+        "business_object_tasks",
+        4,
+        103
+      ],
+      [
+        507,
+        "email_agent_classification_tasks",
+        7,
+        null
+      ],
+      [
+        508,
+        "email_agent_classification_tasks",
+        90,
+        null
+      ],
+      [
+        509,
+        "email_agent_classification_tasks",
+        91,
+        null
+      ],
+      [
+        510,
+        "email_agent_classification_tasks",
+        92,
+        null
+      ],
+      [
+        511,
+        "email_agent_classification_tasks",
+        93,
+        null
+      ],
+      [
+        512,
+        "email_agent_classification_tasks",
+        94,
+        null
+      ],
+      [
+        513,
+        "email_agent_classification_tasks",
+        100,
+        null
+      ]
+    ]
+  },
+  "comparison_digests": {
+    "source": "fd4c5fe626f2ee62a2d44e1b5d33a41ce59750f676c67e865f3a39ac2a050548",
+    "target": "fd4c5fe626f2ee62a2d44e1b5d33a41ce59750f676c67e865f3a39ac2a050548"
+  },
+  "observations": {
+    "empty_selected_snapshots": {
+      "return": [
+        {
+          "name": "Reply tasks",
+          "table": "reply_tasks (current business-object projection)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Reply attempts",
+          "table": "reply_attempts (current trigger state)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Work items",
+          "table": "work_summary_inputs",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Email classifications",
+          "table": "email_agent_classification_tasks",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Follow-ups",
+          "table": "follow_up_drafts",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting jobs",
+          "table": "meeting_alignment_jobs",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "OKR reviews",
+          "table": "okr_review_requests",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Memory writes",
+          "table": "memory_write_events",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting Memory writes",
+          "table": "meeting_memory_write_events",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "DingTalk Todos",
+          "table": "work_todo_dingtalk_links",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "WeChat deliveries",
+          "table": "wechat_deliveries (delivery outcome)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Email provider actions",
+          "table": "email_actions",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "table": "reply_tasks (channel=email, unsubscribe)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": "",
+          "_summary_projection": true
+        }
+      ]
+    },
+    "empty_quality": {
+      "return": {
+        "checked_at": "2040-01-01T00:00:00+00:00",
+        "mode": "fail_closed_queue_coverage",
+        "ok": true,
+        "checked_sources": [
+          "reply_tasks",
+          "reply_attempts",
+          "sent_replies",
+          "agent_runs",
+          "work_summary_inputs",
+          "follow_up_drafts",
+          "meeting_alignment_jobs",
+          "okr_review_requests",
+          "work_todo_dingtalk_links",
+          "wechat_deliveries",
+          "memory_write_events",
+          "feedback_events",
+          "daily_scan_state",
+          "wechat_read_state",
+          "errors",
+          "email_agent_classification_tasks",
+          "email_classifier_runtime_samples",
+          "task_todo_sync_outbox"
+        ],
+        "missing_sources": [],
+        "violations": [],
+        "attention": [],
+        "native_delivery_coverage": {
+          "checked": 0,
+          "unavailable": 0
+        }
+      }
+    },
+    "missing_required_quality": {
+      "return": {
+        "checked_at": "2040-01-01T00:00:00+00:00",
+        "mode": "fail_closed_queue_coverage",
+        "ok": false,
+        "checked_sources": [],
+        "missing_sources": [
+          "reply_tasks",
+          "reply_attempts",
+          "sent_replies",
+          "agent_runs",
+          "work_summary_inputs",
+          "follow_up_drafts",
+          "meeting_alignment_jobs",
+          "okr_review_requests",
+          "work_todo_dingtalk_links",
+          "wechat_deliveries",
+          "memory_write_events",
+          "feedback_events",
+          "daily_scan_state",
+          "wechat_read_state",
+          "errors"
+        ],
+        "violations": [
+          {
+            "source": "reply_tasks",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "reply_attempts",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "sent_replies",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "agent_runs",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "work_summary_inputs",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "follow_up_drafts",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "meeting_alignment_jobs",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "work_todo_dingtalk_links",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "wechat_deliveries",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "memory_write_events",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "feedback_events",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "daily_scan_state",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "wechat_read_state",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          },
+          {
+            "source": "errors",
+            "code": "source_missing",
+            "count": 1,
+            "severity": "error",
+            "detail": "required queue source is unavailable to the quality check"
+          }
+        ],
+        "attention": [],
+        "native_delivery_coverage": null
+      }
+    },
+    "class_exists_empty": {
+      "return": true
+    },
+    "class_columns": {
+      "return": [
+        "attempt_count",
+        "available_at",
+        "channel",
+        "created_at",
+        "error",
+        "generation",
+        "input_json",
+        "lease_expires_at",
+        "owner",
+        "result_json",
+        "stable_message_identity",
+        "status",
+        "task_id",
+        "updated_at"
+      ]
+    },
+    "empty_counts": {
+      "return": {}
+    },
+    "empty_latest": {
+      "return": ""
+    },
+    "empty_error": {
+      "return": ""
+    },
+    "classification_retryable_zero": {
+      "return": 0
+    },
+    "count_helper": {
+      "return": 2
+    },
+    "native_columns": {
+      "return": [
+        "created_at",
+        "deadline_at_snapshot",
+        "dingtalk_task_id",
+        "executor_name",
+        "executor_user_id",
+        "id",
+        "last_dingtalk_done",
+        "last_dingtalk_payload_json",
+        "last_error",
+        "last_pull_at",
+        "last_push_at",
+        "priority_snapshot",
+        "retry_count",
+        "status",
+        "title_snapshot",
+        "updated_at",
+        "work_todo_id"
+      ]
+    },
+    "native_retryable": {
+      "return": 0
+    },
+    "missing_class_presence": {
+      "return": false
+    },
+    "missing_class_columns": {
+      "return": []
+    },
+    "nonempty_class_counts": {
+      "return": {
+        "failed": 4,
+        "pending": 1,
+        "running": 1
+      }
+    },
+    "nonempty_class_latest": {
+      "return": "2039-12-31 22:00:00"
+    },
+    "tied_class_latest_error": {
+      "return": {
+        "unspecified_tie_eligible_errors": [
+          "first tied failure",
+          "second tied failure"
+        ]
+      }
+    },
+    "nonempty_snapshots": {
+      "return": [
+        {
+          "name": "Reply tasks",
+          "table": "reply_tasks (current business-object projection)",
+          "counts": {
+            "done": 2,
+            "failed": 1
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "synthetic current"
+        },
+        {
+          "name": "Reply attempts",
+          "table": "reply_attempts (current trigger state)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Work items",
+          "table": "work_summary_inputs",
+          "counts": {
+            "failed": 1,
+            "processing": 1
+          },
+          "pending": 0,
+          "processing": 1,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "work failure"
+        },
+        {
+          "name": "Email classifications",
+          "table": "email_agent_classification_tasks",
+          "counts": {
+            "failed": 4,
+            "pending": 1,
+            "running": 1
+          },
+          "pending": 1,
+          "processing": 1,
+          "failed": 4,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": {
+            "unspecified_tie_eligible_errors": [
+              "first tied failure",
+              "second tied failure"
+            ]
+          }
+        },
+        {
+          "name": "Follow-ups",
+          "table": "follow_up_drafts",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting jobs",
+          "table": "meeting_alignment_jobs",
+          "counts": {
+            "failed": 1,
+            "processing": 1
+          },
+          "pending": 0,
+          "processing": 1,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "meeting failure"
+        },
+        {
+          "name": "OKR reviews",
+          "table": "okr_review_requests",
+          "counts": {
+            "failed": 1,
+            "processing": 1
+          },
+          "pending": 0,
+          "processing": 1,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "okr failure"
+        },
+        {
+          "name": "Memory writes",
+          "table": "memory_write_events",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting Memory writes",
+          "table": "meeting_memory_write_events",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "DingTalk Todos",
+          "table": "work_todo_dingtalk_links",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "WeChat deliveries",
+          "table": "wechat_deliveries (delivery outcome)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Email provider actions",
+          "table": "email_actions",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "table": "reply_tasks (channel=email, unsubscribe)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": "",
+          "_summary_projection": true
+        }
+      ]
+    },
+    "unique_class_latest_error": {
+      "return": "second tied failure"
+    },
+    "unique_class_snapshots": {
+      "return": [
+        {
+          "name": "Reply tasks",
+          "table": "reply_tasks (current business-object projection)",
+          "counts": {
+            "done": 2,
+            "failed": 1
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "synthetic current"
+        },
+        {
+          "name": "Reply attempts",
+          "table": "reply_attempts (current trigger state)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Work items",
+          "table": "work_summary_inputs",
+          "counts": {
+            "failed": 1,
+            "processing": 1
+          },
+          "pending": 0,
+          "processing": 1,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "work failure"
+        },
+        {
+          "name": "Email classifications",
+          "table": "email_agent_classification_tasks",
+          "counts": {
+            "failed": 4,
+            "pending": 1,
+            "running": 1
+          },
+          "pending": 1,
+          "processing": 1,
+          "failed": 4,
+          "retryable": 0,
+          "latest_updated_at": "2040-01-01 00:00:00",
+          "latest_error": "second tied failure"
+        },
+        {
+          "name": "Follow-ups",
+          "table": "follow_up_drafts",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting jobs",
+          "table": "meeting_alignment_jobs",
+          "counts": {
+            "failed": 1,
+            "processing": 1
+          },
+          "pending": 0,
+          "processing": 1,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "meeting failure"
+        },
+        {
+          "name": "OKR reviews",
+          "table": "okr_review_requests",
+          "counts": {
+            "failed": 1,
+            "processing": 1
+          },
+          "pending": 0,
+          "processing": 1,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "okr failure"
+        },
+        {
+          "name": "Memory writes",
+          "table": "memory_write_events",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting Memory writes",
+          "table": "meeting_memory_write_events",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "DingTalk Todos",
+          "table": "work_todo_dingtalk_links",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "WeChat deliveries",
+          "table": "wechat_deliveries (delivery outcome)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Email provider actions",
+          "table": "email_actions",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "table": "reply_tasks (channel=email, unsubscribe)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": "",
+          "_summary_projection": true
+        }
+      ]
+    },
+    "summary_snapshot": {
+      "return": {
+        "name": "Work items",
+        "table": "work_summary_inputs",
+        "counts": {
+          "failed": 1,
+          "processing": 1
+        },
+        "pending": 0,
+        "processing": 1,
+        "failed": 1,
+        "retryable": 0,
+        "latest_updated_at": "2039-12-31 22:00:00",
+        "latest_error": "work failure"
+      }
+    },
+    "meeting_snapshot": {
+      "return": {
+        "name": "Meeting jobs",
+        "table": "meeting_alignment_jobs",
+        "counts": {
+          "failed": 1,
+          "processing": 1
+        },
+        "pending": 0,
+        "processing": 1,
+        "failed": 1,
+        "retryable": 0,
+        "latest_updated_at": "2039-12-31 22:00:00",
+        "latest_error": "meeting failure"
+      }
+    },
+    "okr_snapshot": {
+      "return": {
+        "name": "OKR reviews",
+        "table": "okr_review_requests",
+        "counts": {
+          "failed": 1,
+          "processing": 1
+        },
+        "pending": 0,
+        "processing": 1,
+        "failed": 1,
+        "retryable": 0,
+        "latest_updated_at": "2039-12-31 22:00:00",
+        "latest_error": "okr failure"
+      }
+    },
+    "reply_physical_snapshot": {
+      "return": {
+        "name": "Reply tasks",
+        "table": "reply_tasks (current business-object projection)",
+        "counts": {
+          "done": 2,
+          "failed": 1
+        },
+        "pending": 0,
+        "processing": 0,
+        "failed": 1,
+        "retryable": 0,
+        "latest_updated_at": "2039-12-31 22:00:00",
+        "latest_error": "synthetic current"
+      }
+    },
+    "attempt_empty_snapshot": {
+      "return": {
+        "name": "Reply attempts",
+        "table": "reply_attempts (current trigger state)",
+        "counts": {},
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0,
+        "latest_updated_at": "",
+        "latest_error": ""
+      }
+    },
+    "attention_nonempty": {
+      "return": [
+        {
+          "category": "Email classification",
+          "id": "z-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject z-failed",
+          "updated_at": "2040-01-01 00:00:00",
+          "error": "second tied failure"
+        },
+        {
+          "category": "Reply task",
+          "id": "103",
+          "status": "failed",
+          "context": "Context current",
+          "summary": "Canonical current",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "synthetic current"
+        },
+        {
+          "category": "Work item",
+          "id": "301",
+          "status": "failed",
+          "context": "Source title",
+          "summary": "Synthetic summary 301",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "work failure"
+        },
+        {
+          "category": "Meeting",
+          "id": "401",
+          "status": "failed",
+          "context": "Meeting 401",
+          "summary": "Meeting 401",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "meeting failure"
+        },
+        {
+          "category": "OKR",
+          "id": "501",
+          "status": "failed",
+          "context": "OKR 501",
+          "summary": "OKR review",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "okr failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "blank-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject blank-failed",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": " "
+        },
+        {
+          "category": "Email classification",
+          "id": "a-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject a-failed",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "first tied failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "None",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject None",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": ""
+        }
+      ]
+    },
+    "attention_limited": {
+      "return": [
+        {
+          "category": "Email classification",
+          "id": "z-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject z-failed",
+          "updated_at": "2040-01-01 00:00:00",
+          "error": "second tied failure"
+        },
+        {
+          "category": "Reply task",
+          "id": "103",
+          "status": "failed",
+          "context": "Context current",
+          "summary": "Canonical current",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "synthetic current"
+        }
+      ]
+    },
+    "human_empty": {
+      "return": []
+    },
+    "nonempty_quality": {
+      "return": {
+        "checked_at": "2040-01-01T00:00:00+00:00",
+        "mode": "fail_closed_queue_coverage",
+        "ok": false,
+        "checked_sources": [
+          "reply_tasks",
+          "reply_attempts",
+          "sent_replies",
+          "agent_runs",
+          "work_summary_inputs",
+          "follow_up_drafts",
+          "meeting_alignment_jobs",
+          "okr_review_requests",
+          "work_todo_dingtalk_links",
+          "wechat_deliveries",
+          "memory_write_events",
+          "feedback_events",
+          "daily_scan_state",
+          "wechat_read_state",
+          "errors",
+          "email_agent_classification_tasks",
+          "email_classifier_runtime_samples",
+          "task_todo_sync_outbox"
+        ],
+        "missing_sources": [],
+        "violations": [
+          {
+            "source": "work_summary_inputs",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "work item has no terminal handling"
+          },
+          {
+            "source": "work_summary_inputs",
+            "code": "processing_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "work item exceeded the task agent timeout"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "failed",
+            "count": 4,
+            "severity": "error",
+            "detail": "email classification reached a non-retryable failure"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "running_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "email classification exceeded its execution lease"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "pending_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "email classification remained due without being claimed"
+          },
+          {
+            "source": "meeting_alignment_jobs",
+            "code": "active_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "meeting alignment job stopped progressing"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "OKR review request has no terminal handling"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "processing_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "OKR review exceeded the Codex timeout"
+          }
+        ],
+        "attention": [
+          {
+            "source": "work_summary_inputs",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "work item is queued or processing"
+          },
+          {
+            "source": "meeting_alignment_jobs",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "meeting alignment work is pending"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "OKR review work is pending"
+          }
+        ],
+        "native_delivery_coverage": {
+          "checked": 0,
+          "unavailable": 0
+        }
+      }
+    },
+    "live_channels": {
+      "return": [
+        "codex",
+        "dingtalk"
+      ]
+    },
+    "attempt_map_supersession": {
+      "return": {
+        "name": "Reply attempts",
+        "table": "reply_attempts (current trigger state)",
+        "counts": {
+          "failed": 1,
+          "needs_human": 1
+        },
+        "pending": 0,
+        "processing": 0,
+        "failed": 1,
+        "retryable": 0,
+        "latest_updated_at": "2040-01-01 00:00:00",
+        "latest_error": ""
+      }
+    },
+    "attention_attempts_memory": {
+      "return": [
+        {
+          "category": "Email classification",
+          "id": "z-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject z-failed",
+          "updated_at": "2040-01-01 00:00:00",
+          "error": "second tied failure"
+        },
+        {
+          "category": "Reply task",
+          "id": "103",
+          "status": "failed",
+          "context": "Context current",
+          "summary": "Canonical current",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "synthetic current"
+        },
+        {
+          "category": "Work item",
+          "id": "301",
+          "status": "failed",
+          "context": "Source title",
+          "summary": "Synthetic summary 301",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "work failure"
+        },
+        {
+          "category": "Meeting",
+          "id": "401",
+          "status": "failed",
+          "context": "Meeting 401",
+          "summary": "Meeting 401",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "meeting failure"
+        },
+        {
+          "category": "OKR",
+          "id": "501",
+          "status": "failed",
+          "context": "OKR 501",
+          "summary": "OKR review",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "okr failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "blank-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject blank-failed",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": " "
+        },
+        {
+          "category": "Email classification",
+          "id": "a-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject a-failed",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "first tied failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "None",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject None",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": ""
+        },
+        {
+          "category": "Service error",
+          "id": "meeting-memory-1",
+          "status": "failed",
+          "context": "Meeting Memory: Meeting 401",
+          "root_cause": "meeting_memory_write_failed",
+          "summary": "Memory write for delivered meeting conclusion: Meeting 401",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "memory failure"
+        }
+      ]
+    },
+    "quality_before_retirement": {
+      "return": {
+        "checked_at": "2040-01-01T00:00:00+00:00",
+        "mode": "fail_closed_queue_coverage",
+        "ok": false,
+        "checked_sources": [
+          "reply_tasks",
+          "reply_attempts",
+          "sent_replies",
+          "agent_runs",
+          "work_summary_inputs",
+          "follow_up_drafts",
+          "meeting_alignment_jobs",
+          "okr_review_requests",
+          "work_todo_dingtalk_links",
+          "wechat_deliveries",
+          "memory_write_events",
+          "feedback_events",
+          "daily_scan_state",
+          "wechat_read_state",
+          "errors",
+          "email_agent_classification_tasks",
+          "email_classifier_runtime_samples",
+          "task_todo_sync_outbox"
+        ],
+        "missing_sources": [],
+        "violations": [
+          {
+            "source": "reply_attempts",
+            "code": "invalid_needs_human_result",
+            "count": 1,
+            "severity": "error",
+            "detail": "needs_human projection has no valid structured decision result"
+          },
+          {
+            "source": "work_summary_inputs",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "work item has no terminal handling"
+          },
+          {
+            "source": "work_summary_inputs",
+            "code": "processing_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "work item exceeded the task agent timeout"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "failed",
+            "count": 4,
+            "severity": "error",
+            "detail": "email classification reached a non-retryable failure"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "running_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "email classification exceeded its execution lease"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "pending_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "email classification remained due without being claimed"
+          },
+          {
+            "source": "meeting_alignment_jobs",
+            "code": "active_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "meeting alignment job stopped progressing"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "OKR review request has no terminal handling"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "processing_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "OKR review exceeded the Codex timeout"
+          },
+          {
+            "source": "meeting_memory_write_events",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "external delivery queue has an unrecovered failure"
+          }
+        ],
+        "attention": [
+          {
+            "source": "work_summary_inputs",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "work item is queued or processing"
+          },
+          {
+            "source": "meeting_alignment_jobs",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "meeting alignment work is pending"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "OKR review work is pending"
+          }
+        ],
+        "native_delivery_coverage": {
+          "checked": 0,
+          "unavailable": 0
+        }
+      }
+    },
+    "retirement_missing": {
+      "error": {
+        "type": "ValueError",
+        "message": "attempt is not an obsolete completed Consumer rule question"
+      }
+    },
+    "retirement_wrong_attempt": {
+      "error": {
+        "type": "ValueError",
+        "message": "attempt is not an obsolete completed Consumer rule question"
+      }
+    },
+    "retirement_preview": {
+      "return": {
+        "transition": "retired_rule_question",
+        "attempt_id": 3,
+        "task_id": 104,
+        "agent_run_id": 1,
+        "execution_generation": "initial",
+        "authority": "fixture-authority",
+        "original_result_sha256": "34e3cd0f0c72a7fe05e0ebf3cd94c6439e122a8dfa155685f99cf594e8e69c79",
+        "applied": false
+      }
+    },
+    "retirement_apply": {
+      "return": {
+        "transition": "retired_rule_question",
+        "attempt_id": 3,
+        "task_id": 104,
+        "agent_run_id": 1,
+        "execution_generation": "initial",
+        "authority": "fixture-authority",
+        "original_result_sha256": "34e3cd0f0c72a7fe05e0ebf3cd94c6439e122a8dfa155685f99cf594e8e69c79",
+        "applied": true,
+        "resolved_at": "2040-01-01 00:00:00"
+      }
+    },
+    "retirement_replay": {
+      "return": {
+        "agent_run_id": 1,
+        "applied": true,
+        "attempt_id": 3,
+        "authority": "fixture-authority",
+        "execution_generation": "initial",
+        "original_result_sha256": "34e3cd0f0c72a7fe05e0ebf3cd94c6439e122a8dfa155685f99cf594e8e69c79",
+        "resolved_at": "2040-01-01 00:00:00",
+        "task_id": 104,
+        "transition": "retired_rule_question"
+      }
+    },
+    "retirement_authority_conflict": {
+      "error": {
+        "type": "ValueError",
+        "message": "retirement receipt does not match the authority and original result"
+      }
+    },
+    "quality_after_retirement": {
+      "return": {
+        "checked_at": "2040-01-01T00:00:00+00:00",
+        "mode": "fail_closed_queue_coverage",
+        "ok": false,
+        "checked_sources": [
+          "reply_tasks",
+          "reply_attempts",
+          "sent_replies",
+          "agent_runs",
+          "work_summary_inputs",
+          "follow_up_drafts",
+          "meeting_alignment_jobs",
+          "okr_review_requests",
+          "work_todo_dingtalk_links",
+          "wechat_deliveries",
+          "memory_write_events",
+          "feedback_events",
+          "daily_scan_state",
+          "wechat_read_state",
+          "errors",
+          "email_agent_classification_tasks",
+          "email_classifier_runtime_samples",
+          "task_todo_sync_outbox"
+        ],
+        "missing_sources": [],
+        "violations": [
+          {
+            "source": "work_summary_inputs",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "work item has no terminal handling"
+          },
+          {
+            "source": "work_summary_inputs",
+            "code": "processing_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "work item exceeded the task agent timeout"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "failed",
+            "count": 4,
+            "severity": "error",
+            "detail": "email classification reached a non-retryable failure"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "running_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "email classification exceeded its execution lease"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "pending_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "email classification remained due without being claimed"
+          },
+          {
+            "source": "meeting_alignment_jobs",
+            "code": "active_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "meeting alignment job stopped progressing"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "OKR review request has no terminal handling"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "processing_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "OKR review exceeded the Codex timeout"
+          },
+          {
+            "source": "meeting_memory_write_events",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "external delivery queue has an unrecovered failure"
+          }
+        ],
+        "attention": [
+          {
+            "source": "work_summary_inputs",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "work item is queued or processing"
+          },
+          {
+            "source": "meeting_alignment_jobs",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "meeting alignment work is pending"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "OKR review work is pending"
+          }
+        ],
+        "native_delivery_coverage": {
+          "checked": 0,
+          "unavailable": 0
+        }
+      }
+    },
+    "offline_first": {
+      "return": null
+    },
+    "offline_replace": {
+      "return": null
+    },
+    "offline_replaced_attention": {
+      "return": [
+        {
+          "category": "Email classification",
+          "id": "z-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject z-failed",
+          "updated_at": "2040-01-01 00:00:00",
+          "error": "second tied failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "offline-probe",
+          "status": "failed",
+          "context": "Email classification",
+          "summary": "offline:offline-probe",
+          "updated_at": "2040-01-01 00:00:00",
+          "error": ""
+        },
+        {
+          "category": "Reply task",
+          "id": "103",
+          "status": "failed",
+          "context": "Context current",
+          "summary": "Canonical current",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "synthetic current"
+        },
+        {
+          "category": "Work item",
+          "id": "301",
+          "status": "failed",
+          "context": "Source title",
+          "summary": "Synthetic summary 301",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "work failure"
+        },
+        {
+          "category": "Meeting",
+          "id": "401",
+          "status": "failed",
+          "context": "Meeting 401",
+          "summary": "Meeting 401",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "meeting failure"
+        },
+        {
+          "category": "OKR",
+          "id": "501",
+          "status": "failed",
+          "context": "OKR 501",
+          "summary": "OKR review",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "okr failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "blank-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject blank-failed",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": " "
+        },
+        {
+          "category": "Email classification",
+          "id": "a-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject a-failed",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "first tied failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "None",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject None",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": ""
+        },
+        {
+          "category": "Service error",
+          "id": "meeting-memory-1",
+          "status": "failed",
+          "context": "Meeting Memory: Meeting 401",
+          "root_cause": "meeting_memory_write_failed",
+          "summary": "Memory write for delivered meeting conclusion: Meeting 401",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "memory failure"
+        }
+      ]
+    },
+    "compacted_done_snapshot": {
+      "return": [
+        {
+          "name": "Reply tasks",
+          "table": "reply_tasks (current business-object projection)",
+          "counts": {
+            "done": 2,
+            "failed": 1
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "synthetic current"
+        },
+        {
+          "name": "Reply attempts",
+          "table": "reply_attempts (current trigger state)",
+          "counts": {
+            "failed": 1,
+            "skipped": 1
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2040-01-01 00:00:00",
+          "latest_error": ""
+        },
+        {
+          "name": "Work items",
+          "table": "work_summary_inputs",
+          "counts": {
+            "failed": 1,
+            "processing": 1
+          },
+          "pending": 0,
+          "processing": 1,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "work failure"
+        },
+        {
+          "name": "Email classifications",
+          "table": "email_agent_classification_tasks",
+          "counts": {
+            "done": 1,
+            "failed": 5,
+            "pending": 1,
+            "running": 1
+          },
+          "pending": 1,
+          "processing": 1,
+          "failed": 5,
+          "retryable": 0,
+          "latest_updated_at": "2040-01-01 00:00:00",
+          "latest_error": "second tied failure"
+        },
+        {
+          "name": "Follow-ups",
+          "table": "follow_up_drafts",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting jobs",
+          "table": "meeting_alignment_jobs",
+          "counts": {
+            "failed": 1,
+            "processing": 1
+          },
+          "pending": 0,
+          "processing": 1,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "meeting failure"
+        },
+        {
+          "name": "OKR reviews",
+          "table": "okr_review_requests",
+          "counts": {
+            "failed": 1,
+            "processing": 1
+          },
+          "pending": 0,
+          "processing": 1,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "okr failure"
+        },
+        {
+          "name": "Memory writes",
+          "table": "memory_write_events",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting Memory writes",
+          "table": "meeting_memory_write_events",
+          "counts": {
+            "failed": 1
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2039-12-31 22:00:00",
+          "latest_error": "memory failure"
+        },
+        {
+          "name": "DingTalk Todos",
+          "table": "work_todo_dingtalk_links",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "WeChat deliveries",
+          "table": "wechat_deliveries (delivery outcome)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Email provider actions",
+          "table": "email_actions",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": ""
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "table": "reply_tasks (channel=email, unsubscribe)",
+          "counts": {},
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "",
+          "latest_error": "",
+          "_summary_projection": true
+        }
+      ]
+    },
+    "compacted_done_attention": {
+      "return": [
+        {
+          "category": "Email classification",
+          "id": "z-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject z-failed",
+          "updated_at": "2040-01-01 00:00:00",
+          "error": "second tied failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "offline-probe",
+          "status": "failed",
+          "context": "Email classification",
+          "summary": "offline:offline-probe",
+          "updated_at": "2040-01-01 00:00:00",
+          "error": ""
+        },
+        {
+          "category": "Reply task",
+          "id": "103",
+          "status": "failed",
+          "context": "Context current",
+          "summary": "Canonical current",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "synthetic current"
+        },
+        {
+          "category": "Work item",
+          "id": "301",
+          "status": "failed",
+          "context": "Source title",
+          "summary": "Synthetic summary 301",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "work failure"
+        },
+        {
+          "category": "Meeting",
+          "id": "401",
+          "status": "failed",
+          "context": "Meeting 401",
+          "summary": "Meeting 401",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "meeting failure"
+        },
+        {
+          "category": "OKR",
+          "id": "501",
+          "status": "failed",
+          "context": "OKR 501",
+          "summary": "OKR review",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "okr failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "blank-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject blank-failed",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": " "
+        },
+        {
+          "category": "Email classification",
+          "id": "a-failed",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject a-failed",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "first tied failure"
+        },
+        {
+          "category": "Email classification",
+          "id": "None",
+          "status": "failed",
+          "context": "sender@example.invalid",
+          "summary": "Subject None",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": ""
+        },
+        {
+          "category": "Service error",
+          "id": "meeting-memory-1",
+          "status": "failed",
+          "context": "Meeting Memory: Meeting 401",
+          "root_cause": "meeting_memory_write_failed",
+          "summary": "Memory write for delivered meeting conclusion: Meeting 401",
+          "updated_at": "2039-12-31 22:00:00",
+          "error": "memory failure"
+        }
+      ]
+    },
+    "compacted_done_quality": {
+      "return": {
+        "checked_at": "2040-01-01T00:00:00+00:00",
+        "mode": "fail_closed_queue_coverage",
+        "ok": false,
+        "checked_sources": [
+          "reply_tasks",
+          "reply_attempts",
+          "sent_replies",
+          "agent_runs",
+          "work_summary_inputs",
+          "follow_up_drafts",
+          "meeting_alignment_jobs",
+          "okr_review_requests",
+          "work_todo_dingtalk_links",
+          "wechat_deliveries",
+          "memory_write_events",
+          "feedback_events",
+          "daily_scan_state",
+          "wechat_read_state",
+          "errors",
+          "email_agent_classification_tasks",
+          "email_classifier_runtime_samples",
+          "task_todo_sync_outbox"
+        ],
+        "missing_sources": [],
+        "violations": [
+          {
+            "source": "work_summary_inputs",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "work item has no terminal handling"
+          },
+          {
+            "source": "work_summary_inputs",
+            "code": "processing_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "work item exceeded the task agent timeout"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "failed",
+            "count": 5,
+            "severity": "error",
+            "detail": "email classification reached a non-retryable failure"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "running_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "email classification exceeded its execution lease"
+          },
+          {
+            "source": "email_agent_classification_tasks",
+            "code": "pending_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "email classification remained due without being claimed"
+          },
+          {
+            "source": "meeting_alignment_jobs",
+            "code": "active_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "meeting alignment job stopped progressing"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "OKR review request has no terminal handling"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "processing_stale",
+            "count": 1,
+            "severity": "error",
+            "detail": "OKR review exceeded the Codex timeout"
+          },
+          {
+            "source": "meeting_memory_write_events",
+            "code": "failed",
+            "count": 1,
+            "severity": "error",
+            "detail": "external delivery queue has an unrecovered failure"
+          }
+        ],
+        "attention": [
+          {
+            "source": "work_summary_inputs",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "work item is queued or processing"
+          },
+          {
+            "source": "meeting_alignment_jobs",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "meeting alignment work is pending"
+          },
+          {
+            "source": "okr_review_requests",
+            "code": "active",
+            "count": 1,
+            "severity": "info",
+            "detail": "OKR review work is pending"
+          }
+        ],
+        "native_delivery_coverage": {
+          "checked": 0,
+          "unavailable": 0
+        }
+      }
+    },
+    "offline_close": {
+      "return": null
+    }
+  },
+  "native_receipt_seam": {
+    "only_run_id": 1,
+    "read_count": 4,
+    "canonical_sha256": "34e3cd0f0c72a7fe05e0ebf3cd94c6439e122a8dfa155685f99cf594e8e69c79"
+  },
+  "compacted_input": {
+    "input_compacted": true,
+    "message_present": false,
+    "sha256": "b3d5d4512c703db819a3c2c02ba65c00b3ed5e1e1344c8fbe494d4f5638aac79"
+  },
+  "tie_witness": {
+    "source": [
+      {
+        "label": "tied_class_latest_error",
+        "raw_selected": "first tied failure",
+        "max_timestamp": "2039-12-31 22:00:00",
+        "eligible_errors": [
+          "first tied failure",
+          "second tied failure"
+        ]
+      },
+      {
+        "label": "nonempty_snapshots",
+        "raw_selected": "first tied failure",
+        "max_timestamp": "2039-12-31 22:00:00",
+        "eligible_errors": [
+          "first tied failure",
+          "second tied failure"
+        ]
+      }
+    ],
+    "target": [
+      {
+        "label": "tied_class_latest_error",
+        "raw_selected": "first tied failure",
+        "max_timestamp": "2039-12-31 22:00:00",
+        "eligible_errors": [
+          "first tied failure",
+          "second tied failure"
+        ]
+      },
+      {
+        "label": "nonempty_snapshots",
+        "raw_selected": "first tied failure",
+        "max_timestamp": "2039-12-31 22:00:00",
+        "eligible_errors": [
+          "first tied failure",
+          "second tied failure"
+        ]
+      }
+    ]
+  },
+  "replacement_witness": {
+    "source": [
+      {
+        "step": "first",
+        "rowid": 101
+      },
+      {
+        "step": "replace",
+        "rowid": 102
+      }
+    ],
+    "target": [
+      {
+        "step": "first",
+        "id": 514,
+        "rowid": 101
+      },
+      {
+        "step": "replace",
+        "id": 514,
+        "rowid": 102
+      }
+    ]
+  },
+  "preflight_sha256": "e70a0adce844f6cbbd6f11c58d1c12906cf2c7dffd73f94fbeb8a588ace84f63",
+  "coverage_contract": {
+    "fixed_checkpoints": 47,
+    "all20instrumented_owners_entered": true,
+    "all7generic_helpers_entered": true,
+    "source_statement_parameter_expressions": "exact original52execute/36_count tuples in pinned reader proposal static receipt; reader patch unchanged",
+    "eligible_human_decision_attention": "not seeded; actual SQL executes with zero eligible rows",
+    "tie_boundary": "two classification latest-error checkpoints compare actual maximum-timestamp eligible set and retain raw choices; no tie-break added",
+    "retirement_native_provenance": "unproved; one explicit canonical synthetic native-result function seam only"
+  },
+  "branch_limits": [
+    "synthetic fresh only; no frozen actual profile/nonempty migration/copy/inverse/cold target/complete schema manifests",
+    "eligible approved human-decision candidate/selection and all seven business-map join branch combinations not proved; owner entry does not establish all branches",
+    "no concurrent readers/writers, provider/send, native CLI/source provenance, HTTP/browser/server/UI, full eleven-table acceptance or deploy",
+    "compacted input created by actual pure input codec/compactor; public classifier completion lifecycle is separate earlier Email proof",
+    "only declared equal-time classification latest-error tie-set normalization; all other compared outputs/facts/transactions exact"
+  ],
+  "owned_temp_removed": true,
+  "application_files_unchanged": true
+}
