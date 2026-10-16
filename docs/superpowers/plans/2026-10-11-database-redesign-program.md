@@ -10,8 +10,10 @@ seven-kind-only implementation boundary recorded below, without selecting any
 new runtime constructor or changing production tables.
 
 The next row-transfer unit covers eighteen families/146 source fields. Its
-thirteen transfer and thirty-five integrated cases pass; independent review
-found no concrete blocker. Final frozen-source proof converts and inverses all
+thirteen transfer and thirty-five integrated cases pass; sequential independent
+source-fidelity and fresh QUALITY reviews found no concrete blocker. QUALITY
+independently reran all48 cases and verified the executed module hash.
+Final frozen-source proof converts and inverses all
 6823 rows, including4105 byte-exact derived load receipts and1939 export
 receipts, with exact types/rowids and six allocator waters. Both in-memory
 targets pass quick_check and source970a is unchanged. This proves only the row
