@@ -14395,13 +14395,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     (account_id,),
                 ).fetchall()
             }
+            current_rowids = {
+                key: row["rowid"] for key, row in existing.items()
+            }
             for row in existing.values():
                 update_config(db, "wechat_reply_scopes", row["rowid"], {
                     "enabled": 0, "disabled_reason": "not_selected",
                     "updated_at": now_text,
                 })
             for scope in scopes:
-                previous = existing.get((scope.target_type, scope.target_id))
+                key = (scope.target_type, scope.target_id)
+                previous = existing.get(key)
                 if scope.last_active_at:
                     watermark = scope.last_active_at
                 elif previous is not None and bool(previous["enabled"]):
@@ -14420,10 +14424,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "disabled_reason": "", "last_discovered_at": watermark,
                     "updated_at": now_text,
                 }
-                if previous is None:
-                    insert_config(db, "wechat_reply_scopes", values)
+                rowid = current_rowids.get(key)
+                if rowid is None:
+                    inserted = insert_config(db, "wechat_reply_scopes", values)
+                    current_rowids[key] = inserted.lastrowid
                 else:
-                    update_config(db, "wechat_reply_scopes", previous["rowid"], values)
+                    update_config(db, "wechat_reply_scopes", rowid, values)
 
     def advance_wechat_scope_watermark(
         self, account_id: str, target_type: str, target_id: str, sent_at: str

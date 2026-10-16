@@ -6,6 +6,7 @@ import pytest
 
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_storage import insert_task
+from app.configs_definitions import config_projection
 from app.wechat.models import WechatReplyScope
 
 
@@ -134,6 +135,60 @@ def test_replace_disables_omitted_scopes(tmp_path):
     store.replace_wechat_reply_scopes("acct-1", [a])
     enabled = store.list_wechat_reply_scopes("acct-1", enabled_only=True)
     assert [s.target_id for s in enabled] == ["u1"]
+
+
+def test_replace_new_duplicate_scope_keeps_last_input_and_one_public_row(tmp_path):
+    store = _store(tmp_path)
+    first = WechatReplyScope(
+        account_id="acct-1", target_type="direct", target_id="u1",
+        display_name="First", trigger_mode="every_inbound_text",
+        last_active_at="2026-07-20T10:00:00+08:00",
+    )
+    last = first.model_copy(update={
+        "display_name": "Second", "conversation_id": "second-conversation",
+        "last_active_at": "2026-07-21T10:00:00+08:00",
+    })
+
+    store.replace_wechat_reply_scopes("acct-1", [first, last])
+
+    assert store.list_wechat_reply_scopes("acct-1") == [last]
+    with store._connect() as db:
+        rows = db.execute(
+            f"select rowid from ({config_projection('wechat_reply_scopes', include_rowid=True)}) "
+            "where account_id='acct-1'"
+        ).fetchall()
+    assert len(rows) == 1 and rows[0]["rowid"] > 0
+
+
+def test_replace_existing_duplicate_scope_uses_original_enabled_watermark(tmp_path):
+    store = _store(tmp_path)
+    original = WechatReplyScope(
+        account_id="acct-1", target_type="direct", target_id="u1",
+        display_name="Original", trigger_mode="every_inbound_text",
+        last_active_at="2026-07-20T10:00:00+08:00",
+    )
+    store.replace_wechat_reply_scopes("acct-1", [original])
+    with store._connect() as db:
+        original_rowid = db.execute(
+            f"select rowid from ({config_projection('wechat_reply_scopes', include_rowid=True)}) "
+            "where account_id='acct-1'"
+        ).fetchone()["rowid"]
+
+    first = original.model_copy(update={
+        "display_name": "First", "enabled": False,
+        "last_active_at": "2026-09-01T10:00:00+08:00",
+    })
+    last = original.model_copy(update={"display_name": "Second", "last_active_at": ""})
+    store.replace_wechat_reply_scopes("acct-1", [first, last])
+
+    assert store.list_wechat_reply_scopes("acct-1") == [
+        last.model_copy(update={"last_active_at": original.last_active_at})
+    ]
+    with store._connect() as db:
+        assert db.execute(
+            f"select rowid from ({config_projection('wechat_reply_scopes', include_rowid=True)}) "
+            "where account_id='acct-1'"
+        ).fetchone()["rowid"] == original_rowid
 
 
 def test_dingtalk_claim_does_not_claim_wechat_task(tmp_path):
