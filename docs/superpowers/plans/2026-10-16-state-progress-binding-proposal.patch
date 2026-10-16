@@ -1,0 +1,72 @@
+--- a/app/repository_updater.py
++++ b/app/repository_updater.py
+@@ -51,13 +51,58 @@
+     """Persist deploy progress using the release's explicitly selected schema.
+ 
+     This DAO never constructs an application store or migrates the database.
+-    The paired publication binds the committed schema role; it rebinds source
+-    only after a successful inverse commit.
++    It selects the committed release role at construction and before updater
++    progress writes; explicit getters and setters never reselect a backend.
+     """
+ 
+     def __init__(self, database_path: Path) -> None:
+         self.database_path = Path(database_path)
+         self.bind_schema_source()
++        self.bind_committed_schema()
++
++    def bind_committed_schema(self) -> None:
++        """Select the progress backend from one committed, read-only snapshot."""
++        from app.action_email_schema_release import (
++            SOURCE_EMAIL_VERSION, TARGET_EMAIL_VERSION, TARGET_STORE_VERSION,
++        )
++        from app.state_definitions import state_projection
++
++        if not self.database_path.exists():
++            self.bind_schema_source()
++            return
++        with closing(sqlite3.connect(
++            self.database_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30
++        )) as db:
++            db.execute("begin")
++            ledger = db.execute(
++                "select 1 from main.sqlite_schema where type='table' "
++                "and name='email_schema_migrations' collate nocase"
++            ).fetchone()
++            version = db.execute(
++                "select max(version) from main.email_schema_migrations"
++            ).fetchone()[0] if ledger else None
++            if version is not None:
++                if type(version) is not int or not (
++                    0 < version <= SOURCE_EMAIL_VERSION or version == TARGET_EMAIL_VERSION
++                ):
++                    raise ValueError("unsupported committed Email schema role")
++                current = version == TARGET_EMAIL_VERSION
++            elif db.execute(
++                "select 1 from main.sqlite_schema where name='state' collate nocase"
++            ).fetchone():
++                marker = db.execute(
++                    f"select value from ({state_projection('service_state')}) "
++                    "where key='store_schema_version'"
++                ).fetchone()
++                if marker is None or marker[0] != TARGET_STORE_VERSION:
++                    raise ValueError("unsupported committed Store-only State schema role")
++                current = True
++            else:
++                current = False
++        if current:
++            self.bind_schema_current()
++        else:
++            self.bind_schema_source()
+ 
+     def bind_schema_source(self) -> None:
+         self._state_schema_current = False
+@@ -755,6 +800,8 @@
+             "error": error,
+             "updated_at": datetime.now(timezone.utc).isoformat(),
+         }
++        if isinstance(self.store, ExistingSchemaUpgradeStateStore):
++            self.store.bind_committed_schema()
+         self.store.set_service_state(
+             UPGRADE_OPERATION_STATE_KEY,
+             json.dumps(payload, ensure_ascii=False, sort_keys=True),
