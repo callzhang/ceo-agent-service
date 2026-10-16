@@ -54,4 +54,6 @@ Four actual/fresh available/exhausted-round cases assert unsupported expression 
 
 - [x] Final scoped1075/71.50s PASS, owned temp removed. Previous API boundary regression14failed/50deselected0.90s reproduces unsupported admission; this is API contract rejection evidence, not14native equivalence failures. The independent native mismatch was2/8cases above.
 - [x] Exact final app/test transfer and applied64, with mechanical receipt correction (previous writer8/42deselected was not50; separate SPEC50/4.09s).
-- [ ] Sequential SPEC rereview and QUALITY rereview of narrowed contract.
+- [x] Sequential independent SPEC64/5.87s and QUALITY64/5.39s/restored64/4.95s PASS; all six final mutation controls caught; owned temporary copies removed. Acceptance ../specs/2026-10-16-task12-insert-expression-acceptance.json.
+
+Final acceptance is unselected6efc08c1a with app127311aa... and regression0835a92e... . Earlier pending review/transfer entries describe historical attempts and are superseded by the final checkboxes and exact acceptance receipt. No caller, constructor, migration or production selection.

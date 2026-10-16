@@ -1,5 +1,15 @@
 # Database Redesign Program
 
+## Current continuation after complete Task12 DAO proposals, 2026-10-16
+
+Final target remains **ten core tables plus email_schema_migrations**. Production readonly head44ee956d still has116ordinary tables; the last integrated nonempty copied-DB forward/current-write/inverse/true-predecessor/reforward proof remains67ordinary. No Tasks20 migration, production update or final11 acceptance is claimed.
+
+Complete unselected principal DAO proposals now cover all20source kinds: published8 Store/Workbench, Email2, miscellaneous Store4, feedback4 and Workbench children2. Root independently reran bounded real public proofs: Email79/79 across16methods; miscellaneous71/71 across28methods; feedback75/75 across21methods; Workbench children/filesystem50/50 across14methods, plus prior Workbench81/81 across26methods. Each receipt explicitly records EMPTY prepared target and constructor bypass; feedback also rebinds three retained child FKs. Helpers are pinned per receipt. These observations do not replace nonempty migration, current constructor, complete helper/caller integration or final CLI/UI evidence.
+
+New external writer proposal b74fce7d4 closes20native UPDATEs/23direct Tasks SQL sites in eight additional modules, including dispatcher, recovery, delivery repair, explicit maintenance and summary-leaf CAS. It has only static/source/copy-import evidence. Console/quality/retirement reader conversion is in progress. Remaining projection import consumers, Store runtime-parent check and explicit classification compaction, constructor/schema maps/manifests, codec hooks and retained feedback child FK release must all be integrated together before complete Tasks20 cutover. No incomplete callers are selected.
+
+The native INSERT-expression extension is at6efc08c1a, app127311aa.../test0835a92e... . Rootfinal scoped1075/71.50s, writer64/5.85s and independent SPEC64/5.87s pass. Two independent findings were addressed: metadata-derived native REPLACE default substitution for NULL expressions; and explicit non-AUTO-only expression support because existing five source AUTO allocators require bound preparation. All three real feedback expression INSERTs are non-AUTO. Final QUALITY64/5.39s/restored64/4.95s and six meaningful mutation controls PASS; accepted unselected at ../specs/2026-10-16-task12-insert-expression-acceptance.json. Historical source and narrower acceptance evidence below retain their stated limits.
+
 ## Latest accepted Tasks12 storage and published-source reconciliation, 2026-10-16
 
 Task12 native SQL parts are now independently accepted unselected at2302361dd/c9cc8df6 with stronger final regressionce3380139: full884 root/author/SPEC checks pass; final46 source-target cases pass with nine meaningful mutation failures, including repaired visible ABORT and cross-coupled old-RHS witnesses. The prior explicit-transaction helper-only guard is removed; existing zero-row DML retains SQLite implicit transaction behavior with no helper BEGIN/commit. Exact ../specs/2026-10-16-task12-native-parts-acceptance.json supersedes the earlier Email interface gaps, while all runtime selectors remain unselected.
