@@ -777,3 +777,21 @@ two cases passed in the existing provisioned test environment. All 53 cases
 therefore passed across those bounded runs. All reviewer-owned temporary
 parents were removed and their absence checked. Ruff, syntax parsing and
 `git diff --check` also pass. This is acceptance of source binding only.
+
+#### Unselected retained-runs FK translation
+
+`app/configs_run_schema.py` now validates the exact full current Workbench
+`runs` table, index and trigger declarations. Under the caller's FK-off
+transaction it rebuilds `runs` with only two changed FK targets:
+`scheduled_task_id` to `schedules(id)` and `snapshot_id` to the full-unique,
+kind-restricted `configs(schedule_snapshot_public_id)` alias. The alias is
+derived from the existing numeric public key for scheduled config versions;
+no new config business content is stored. Forward and inverse preserve the
+physical runs rows, public values/storage classes, all other declarations and
+`runs` plus `runs:<kind>` sequence waters. An unrelated synthetic
+`workbench_events` to `tasks` orphan, including its binary payload, remains
+unchanged and is not treated as a translated-edge rejection. Inverse reads
+current facts after conversion, including newer writes. Focused synthetic
+actual/fresh tests pass;
+native parent retirement, caller selection and copied actual-data proof remain
+separate work.

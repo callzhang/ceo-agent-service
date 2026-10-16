@@ -315,6 +315,9 @@ def _definitions():
         "('managed_skills','managed_skill_revisions','runtime_feedback_iteration_capabilities',"
         "'runtime_skill_configs','scheduled_task_config_versions') "
         "then cast(source_key as integer) end) virtual",
+        "schedule_snapshot_public_id integer generated always as "
+        "(case when record_type='scheduled_task_config_versions' "
+        "then numeric_public_key end) virtual",
         "runtime_config_status text",
         "binding_account_kind text generated always as "
         "(case when record_type='email_category_folder_bindings' then 'email_accounts' end) virtual",
@@ -414,6 +417,8 @@ def _definitions():
         "create unique index idx_configs_public on configs(record_type,public_key)",
         "create unique index idx_configs_typed_public "
         "on configs(id,record_type,public_key)",
+        "create unique index idx_configs_schedule_snapshot_public_id "
+        "on configs(schedule_snapshot_public_id)",
         "create unique index idx_configs_binding_identity on "
         "configs(binding_account_id,binding_category_key) "
         "where record_type='email_category_folder_bindings'",

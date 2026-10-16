@@ -1,5 +1,13 @@
 # Current Runtime Mechanism
 
+An unselected retained-runs helper translates exactly the two scheduled-run
+FK targets after the mapped parents exist. It requires an active caller FK-off
+transaction and exact current full Workbench `runs` declarations, including
+indexes and triggers. The inverse rebuilds from current runs facts rather than
+a stored row snapshot. It preserves existing public integer references,
+physical IDs, storage classes and `runs` sequence waters. The default
+`create_run_schema` remains native; no runtime constructor selects this helper.
+
 Fifteen-kind configs, schedules and two typed Skill receipt kinds now have
 unselected storage implementations. No current constructor or schema marker
 selects them. Their writes require the caller transaction; native SQLITE_FULL

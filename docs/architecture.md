@@ -1,5 +1,14 @@
 # CEO Agent Service Architecture
 
+The unselected retained-runs translator binds the exact current Workbench
+`runs` declaration and changes only `scheduled_task_id` to `schedules(id)`
+and `snapshot_id` to a kind-restricted, full-unique
+`configs(schedule_snapshot_public_id)` alias. Public integer values, physical
+run IDs, other indexes/triggers, and run sequence waters are preserved. Its
+forward and inverse rebuilds require a caller FK-off transaction; inverse
+reads current facts, including intervening writes. No current Store path
+selects the translated declaration or retires the native parents.
+
 The unselected configs storage now declares all fifteen existing config kinds
 (118 source fields), the real schedules definition (17 fields), and two Skill
 receipt action kinds (11 source fields). The receipt extension is explicitly
