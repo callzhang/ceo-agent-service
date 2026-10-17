@@ -2241,6 +2241,18 @@ def test_list_pending_oa_approvals_command_and_parser():
     ]
 
 
+def test_list_pending_oa_approvals_normalizes_host_timezone_to_dingtalk_date():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_list_pending_oa_approvals_command(
+        start="2025-10-16T23:07:51-07:00",
+        end="2026-10-16T23:07:51-07:00",
+    )
+
+    assert command[command.index("--start") + 1] == "2025-10-17T14:07:51+08:00"
+    assert command[command.index("--end") + 1] == "2026-10-17T14:07:51+08:00"
+
+
 def test_parse_pending_oa_approvals_reads_the_values_key_dws_returns():
     """`oa approval list-pending` returns its rows under `result.values`.
 

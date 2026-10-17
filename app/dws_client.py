@@ -42,6 +42,16 @@ _DWS_PROCESS_GATE = threading.Lock()
 _DWS_LAST_PROCESS_START_MONOTONIC = 0.0
 
 
+def _oa_pending_bound_in_dingtalk_timezone(value: str) -> str:
+    """Normalize pending-list bounds before DWS interprets their calendar date."""
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+    return parsed.astimezone(DINGTALK_MESSAGE_TIME_ZONE).isoformat(
+        timespec="seconds"
+    )
+
+
 def _dws_process_min_interval_seconds() -> float:
     raw = os.getenv(DWS_PROCESS_MIN_INTERVAL_SECONDS_ENV, "1.0").strip()
     try:
@@ -1002,6 +1012,8 @@ class DwsClient:
             now = datetime.now(tz=DINGTALK_MESSAGE_TIME_ZONE)
             start = (now - timedelta(days=7)).isoformat(timespec="seconds")
             end = now.isoformat(timespec="seconds")
+        start = _oa_pending_bound_in_dingtalk_timezone(start)
+        end = _oa_pending_bound_in_dingtalk_timezone(end)
         return [
             self.dws_bin,
             "oa",
