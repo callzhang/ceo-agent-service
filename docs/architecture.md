@@ -120,8 +120,13 @@ native event/result projection. File I/O never extends these writer leases.
 
 钉钉发送核验只从发送结果的 `result` 读取新消息/发送任务身份，不递归扫描引用消息、
 历史消息或 nextActions。存在 `result.openTaskId` 时必须查询该任务，即使同时返回了消息 ID；
-只有原生查询的 `result.sendStatus=SUCCESS` 才算该异步任务投递成功。unknown、pending、
-缺失任务或查询失败保持未知；processQueryKey、重复 UUID 接受及泛化的 finished 均不是投递证明。
+只有原生查询的 `result.sendStatus=SUCCESS` 才算该异步任务投递成功。没有可查询任务时，
+只有服务通过只读会话核验得到的 `dingtalk.reply-readback.v1` 证据可确认投递：同一会话、
+完整分页的原会话窗口中唯一精确正文、引用原触发消息、当前账号发送、消息未撤回，且
+核验正文摘要匹配。`im.message-list.v1` 解析会保留 `quotedMessage` 身份，供精确引用校验。
+服务在比较正文时只移除自己添加的反馈回调尾缀，外部回执仍保留实际发送文本。单独的消息 ID、
+processQueryKey、重复 UUID 接受及泛化的 finished 均不是投递证明。unknown、pending、
+不完整或存在冲突的读回保持未知；读回找不到消息也不能单独授权重发。
 原生回复在投递未定时保存已接受的 provider 回执，冷恢复只重查同一任务，不再次发消息。
 已显式纠正为未知的历史回执仍保留已接受效果，System 只能核对它，不能复用为 verified 或重发。
 历史修正通过显式小批量维护完成，保留原始 provider 结果、之前的核验结论和状态；不改写 Agent

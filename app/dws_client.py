@@ -2070,6 +2070,47 @@ class DwsClient:
             single_chat=conversation.single_chat,
         )
 
+    def read_complete_group_messages_in_window(
+        self, conversation_id: str, start: str, end: str,
+    ) -> list[DingTalkMessage]:
+        """Read and validate every message in one bounded group window."""
+        if not conversation_id.strip() or not start.strip() or not end.strip():
+            raise ValueError("group conversation and message window are required")
+        payload = self.run_json([
+            self.dws_bin, "chat", "+chat-messages", "--group", conversation_id,
+            "--start", start, "--end", end, "--order", "asc", "--page-all",
+            "--page-limit", "50", "--max-items", "1000", "--no-reactions",
+            "--format", "json",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("native group message window is not an object")
+        messages = payload.get("messages")
+        if (
+            payload.get("contractVersion") != "im.message-list.v1"
+            or payload.get("complete") is not True
+            or payload.get("partial") is not False
+            or payload.get("hasMore") is not False
+            or payload.get("truncated") is not False
+            or payload.get("failedCount") != 0
+            or payload.get("failures") != []
+            or not isinstance(payload.get("pagesFetched"), int)
+            or payload.get("pagesFetched", 0) < 1
+            or not isinstance(messages, list)
+            or payload.get("count") != len(messages)
+        ):
+            raise DwsError("native group message window is incomplete or inconsistent")
+        query_range = payload.get("queryRange")
+        if (
+            not isinstance(query_range, dict)
+            or query_range.get("order") != "asc"
+            or self._datetime_string_to_epoch_ms(str(query_range.get("startTime") or ""))
+                != self._datetime_string_to_epoch_ms(start)
+            or self._datetime_string_to_epoch_ms(str(query_range.get("endTime") or ""))
+                != self._datetime_string_to_epoch_ms(end)
+        ):
+            raise DwsError("native group message window has no ordered query range")
+        return self.parse_messages(payload, conversation_title="", single_chat=False)
+
     def read_unread_messages(
         self, conversation: DingTalkConversation
     ) -> list[DingTalkMessage]:
@@ -3384,10 +3425,36 @@ class DwsClient:
         trigger: DingTalkMessage,
         text: str,
     ) -> dict[str, Any] | None:
-        """Positive-only readback: a bounded empty page never authorizes resend."""
-        expected_body = "".join(f"@{trigger.sender_name} {text}".split())
+        """Return a delivery proof only for one exact original-target readback.
+
+        The provider may omit the service feedback callback suffix when it
+        renders a reply. Compare the authored message body while preserving
+        the callback text in the stored outbound receipt.
+        """
+        from app.feedback_spike import message_body_without_feedback_callbacks
+
+        authored_body = message_body_without_feedback_callbacks(text)
+        mention = f"@{trigger.sender_name}"
+        authored_start = authored_body.lstrip()
+        already_mentions_trigger_sender = (
+            authored_start.startswith(mention)
+            and (
+                len(authored_start) == len(mention)
+                or authored_start[len(mention)].isspace()
+            )
+        )
+        expected_message_body = (
+            authored_start
+            if already_mentions_trigger_sender
+            else f"{mention} {authored_body}"
+        )
+        end_time = datetime.now().astimezone().isoformat(timespec="seconds")
+        messages = self.read_complete_group_messages_in_window(
+            conversation.open_conversation_id, trigger.create_time, end_time,
+        )
+        expected_body = "".join(expected_message_body.split())
         matches = [
-            message for message in self.read_recent_messages(conversation)
+            message for message in messages
             if message.open_conversation_id == conversation.open_conversation_id
             and message.quoted_message_id == trigger.open_message_id
             and "".join(message.content.split()) == expected_body
@@ -3397,10 +3464,31 @@ class DwsClient:
         if len(matches) != 1:
             return None
         message = matches[0]
+        sender_user_id = message.sender_user_id or self.resolve_message_sender(message)
+        actual_digest = hashlib.sha256(
+            "".join(message.content.split()).encode("utf-8")
+        ).hexdigest()
+        expected_digest = hashlib.sha256(
+            expected_body.encode("utf-8")
+        ).hexdigest()
         return {
             "success": True,
             "result": {"openMessageId": message.open_message_id},
             "readback": message.model_dump(mode="json"),
+            "readbackVerification": {
+                "contractVersion": "dingtalk.reply-readback.v1",
+                "messageId": message.open_message_id,
+                "conversationId": message.open_conversation_id,
+                "quotedMessageId": message.quoted_message_id,
+                "senderUserId": sender_user_id,
+                "senderOpenDingTalkId": message.sender_open_dingtalk_id
+                or str(message.raw_payload.get("senderId") or ""),
+                "bodySha256": actual_digest,
+                "expectedBodySha256": expected_digest,
+                "exactMatchCount": 1,
+                "completeWindowReadback": True,
+                "recalled": False,
+            },
         }
 
     def reconcile_message_send(
@@ -3456,6 +3544,60 @@ class DwsClient:
                 return {"state": "ambiguous", "open_task_id": "", "status_result": {}}
             open_task_id = open_task_id or nested_task_id or receipt_task_id
         if not open_task_id:
+            readback = send_result.get("readbackVerification")
+            message = send_result.get("readback")
+            if isinstance(readback, dict) and isinstance(message, dict):
+                message_id = result.get("openMessageId")
+                def valid_digest(value: object) -> bool:
+                    return (
+                        isinstance(value, str) and len(value) == 64
+                        and all(character in "0123456789abcdef" for character in value)
+                    )
+
+                message_body = message.get("content")
+                if isinstance(message_body, str):
+                    message_body_digest = hashlib.sha256(
+                        "".join(message_body.split()).encode("utf-8")
+                    ).hexdigest()
+                else:
+                    message_body_digest = ""
+                if (
+                    send_result.get("success") is True
+                    and readback.get("contractVersion") == "dingtalk.reply-readback.v1"
+                    and isinstance(message_id, str) and bool(message_id.strip())
+                    and readback.get("messageId") == message_id
+                    and message.get("open_message_id") == message_id
+                    and message.get("open_conversation_id") == readback.get("conversationId")
+                    and message.get("quoted_message_id") == readback.get("quotedMessageId")
+                    and (
+                        message.get("sender_user_id") == readback.get("senderUserId")
+                        or (
+                            isinstance(readback.get("senderOpenDingTalkId"), str)
+                            and bool(readback["senderOpenDingTalkId"].strip())
+                            and (message.get("sender_open_dingtalk_id")
+                                 or message.get("raw_payload", {}).get("senderId"))
+                                == readback["senderOpenDingTalkId"]
+                        )
+                    )
+                    and isinstance(readback.get("conversationId"), str)
+                    and bool(readback["conversationId"].strip())
+                    and isinstance(readback.get("quotedMessageId"), str)
+                    and bool(readback["quotedMessageId"].strip())
+                    and isinstance(readback.get("senderUserId"), str)
+                    and bool(readback["senderUserId"].strip())
+                    and readback.get("exactMatchCount") == 1
+                    and readback.get("completeWindowReadback") is True
+                    and readback.get("recalled") is False
+                    and valid_digest(readback.get("bodySha256"))
+                    and message_body_digest == readback.get("bodySha256")
+                    and readback.get("bodySha256") == readback.get("expectedBodySha256")
+                ):
+                    return {
+                        "state": "sent",
+                        "open_task_id": "",
+                        "status_result": {},
+                        "readback": readback,
+                    }
             return {
                 # An outgoing message ID is identity, not delivery status. If
                 # the provider did not return a queryable send task, the caller
@@ -4787,6 +4929,8 @@ class DwsClient:
                     "conversationId", "messageId", "sender", "createTime", "text",
                 )):
                     continue
+                quoted = row.get("quotedMessage")
+                quoted = quoted if isinstance(quoted, dict) else {}
                 parsed.append(DingTalkMessage(
                     open_conversation_id=row["conversationId"],
                     open_message_id=row["messageId"],
@@ -4796,7 +4940,10 @@ class DwsClient:
                     create_time=row["createTime"],
                     content="" if row["text"] is None else row["text"],
                     message_type=DwsClient._message_type(row),
-                    mentioned_user_ids=DwsClient._mentioned_user_ids(row), raw_payload=row,
+                    mentioned_user_ids=DwsClient._mentioned_user_ids(row),
+                    quoted_message_id=(quoted.get("messageId") or quoted.get("openMessageId")),
+                    quoted_content=(quoted.get("text") or quoted.get("content")),
+                    raw_payload=row,
                 ))
             return parsed
         result = payload.get("result", {})

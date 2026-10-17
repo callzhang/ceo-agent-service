@@ -1029,8 +1029,10 @@ def _message_receipt_feedback(result: ConsumerAgentResult) -> AuditFeedback | No
             "Do not repeat or replace the send. First query the provider send task using its "
             "openTaskId when available. If there is no queryable task, read the complete "
             "original conversation window once with read_dingtalk_messages_in_window. "
-            "A unique exact message from the authenticated sender, with exact body and quoted "
-            "trigger identity, confirms delivery. A complete, failure-free negative readback "
+            "A unique exact message from the authenticated sender, with exact authored body "
+            "and quoted trigger identity, confirms delivery. The provider may omit the service "
+            "feedback callback suffix; ignore only that exact generated suffix when comparing "
+            "the authored body. A complete, failure-free negative readback "
             "confirms non-delivery; an incomplete, truncated, failed, or ambiguous readback "
             "leaves the outcome uncertain."
         ),

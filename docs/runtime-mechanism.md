@@ -37,8 +37,17 @@ terminal source/projection readback. See `docs/system-health-quality-validation.
 DingTalk delivery verification reads outgoing identifiers only from the native
 send `result`, never referencedMessage or nested action metadata. An openTaskId
 always requires a task query; only result.sendStatus=SUCCESS confirms asynchronous
-delivery. Accepted UUID duplicates, processQueryKey and generic finished statuses
-do not prove delivery. Unknown/pending/query failures retain ambiguity. Native
+delivery. When no queryable task exists, the native reply recovery path can
+confirm delivery from its `dingtalk.reply-readback.v1` proof only after a
+complete paginated read of the original conversation window yields one exact
+outgoing message. The message must quote the original trigger, match the
+authenticated sender and un-recalled state, and have the same normalized body
+digest as the prepared authored text. `im.message-list.v1` parsing preserves
+quoted-message identity for this comparison. The service removes only its own
+feedback callback suffix when comparing the authored body; it retains the
+actual provider text in the receipt. A message ID by itself, accepted UUID
+duplicates, processQueryKey and generic finished statuses do not prove delivery.
+Unknown, pending, incomplete or conflicting readbacks retain ambiguity. Native
 reply preparation persists the accepted receipt before verification, including
 unknown outcomes, and rechecks it on recovery without another send.
 
