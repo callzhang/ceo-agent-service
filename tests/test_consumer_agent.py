@@ -961,7 +961,7 @@ def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate()
 
     assert "stardust-oa-finance-review" not in instructions
     assert "finance registry" not in instructions
-    assert "A current-instance choice is a needs_human candidate only when" in instructions
+    assert "Do not transfer a current-instance business decision to Derek" in instructions
     assert "Missing facts, even facts only Derek can provide" in instructions
 
 
@@ -998,14 +998,15 @@ def test_consumer_prompt_declares_common_quality_fields_and_priority(monkeypatch
     assert "needs_human is allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5" in instructions
     assert "otherwise do not return needs_human" in instructions
     assert "Technical/provider, authentication-route, schema, model-output and retry failures are failed" in instructions
-    assert "complete current-instance plans" in instructions
-    assert "requested_input with zero options" in instructions
+    assert "complete plans for continuing this item under the selected reusable rule" in instructions
+    assert "never with requested_input as a zero-option needs_human" in instructions
     assert "For proposal, no_action, and failed, decision_options must be empty" in instructions
     assert "requested_input, needs_human_reason, and decision_basis must be null" in instructions
-    assert "never creates a reusable policy or edits a Skill" in instructions
+    assert "never writes a reusable policy or edits a Skill itself" in instructions
+    assert "user feedback may independently select one-time application and Skill update" in instructions
     assert "needs_human is valid only when risk is high" not in instructions
     assert "only risk and confidence" not in instructions
-    assert "Human choices apply only to the current instance" in instructions
+    assert "reusable rule choice for this task class" in instructions
     assert "dependency_read_unavailable" in instructions
     assert "successful read returns no match" in instructions
 
@@ -1036,7 +1037,7 @@ def test_consumer_instructions_reserve_human_for_unsupported_skill_only():
 
     assert "Use the applicable application behavior, business Skills" in instructions
     assert "needs_human" in instructions
-    assert "A current-instance choice is a needs_human candidate only when" in instructions
+    assert "Do not transfer a current-instance business decision to Derek" in instructions
     assert "not by themselves a needs_human policy choice" in instructions
 
 
@@ -3657,7 +3658,7 @@ def test_decision_quality_gate_requires_independent_judgment_of_removal_requests
     assert "A missing removal capability is an execution limitation, not a reusable rule gap" in text
     assert "even facts only Derek can provide" in text
     assert "not by themselves a needs_human policy choice" in text
-    assert "only when the applicable authorization rules make it non-delegable" in text
+    assert "Do not transfer a current-instance business decision to Derek" in text
 
 
 def test_decision_quality_gate_makes_score_thresholds_mandatory_for_consumer_and_audit():
@@ -3668,6 +3669,8 @@ def test_decision_quality_gate_makes_score_thresholds_mandatory_for_consumer_and
         "apply this outcome gate in order",
         "information_completeness < 0.5 means ask one focused factual question in a normal proposal",
         "needs_human is allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5",
+        "two to four mutually exclusive options",
+        "A missing fact or a request that Derek decide this one business case is not a policy gap",
         "Audit must independently check that the proposed outcome matches these scores",
         "otherwise do not return needs_human",
     )
@@ -3759,7 +3762,7 @@ def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
     text = " ".join(CONSUMER_ROLE_BOUNDARY.split())
     assert "DingTalk bodies use structured Markdown" not in text
     assert "OA comments and email use plain text" not in text
-    assert "the one choice and why it matters" in text
+    assert "the reusable task class rule that is missing and why it matters" in text
 
 
 def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):

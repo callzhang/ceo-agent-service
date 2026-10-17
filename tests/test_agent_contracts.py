@@ -64,6 +64,7 @@ def _decision_options() -> list[dict[str, str]]:
             "instruction": "Proceed with the verified candidate.",
             "consequence": "The accepted candidate can move to Audit.",
             "applies_to": "task_class",
+            "plan": _proposal(),
         },
         {
             "key": "B",
@@ -71,6 +72,8 @@ def _decision_options() -> list[dict[str, str]]:
             "instruction": "Request a corrected candidate.",
             "consequence": "No candidate executes yet.",
             "applies_to": "task_class",
+            "terminal_outcome": "skipped",
+            "reason": "No reusable rule is accepted yet.",
         },
     ]
 
@@ -1116,7 +1119,7 @@ def test_current_instance_option_requires_exactly_one_branch():
     with pytest.raises(ValidationError):
         DecisionOption(**common, terminal_outcome="skipped", reason="")
     with pytest.raises(ValidationError):
-        DecisionOption(**common, applies_to="task_class", plan=_proposal())
+        DecisionOption(**common, applies_to="current_instance", plan=_proposal())
 
 
 def test_live_consumer_wire_rejects_old_authorization_plan():
@@ -1140,24 +1143,26 @@ def test_open_ended_human_input_cannot_bypass_decision_quality_gate():
         "requested_input": "What is the invoice number?",
         "needs_human_reason": "Only Derek has the receipt",
         "decision_basis": _decision_basis(),
-        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        # Match Attempt 15564: the score gate passes, but this is still a
+        # current-instance question rather than a reusable rule decision.
+        "risk": "high", "confidence": 0.42, "rule_coverage": 1.0,
         "information_completeness": 1.0, "error": _error(),
     }
-    with pytest.raises(ValidationError, match="does not satisfy decision quality gate"):
+    with pytest.raises(ValidationError, match="two to four task-class options"):
         ConsumerAgentResult.model_validate(payload)
 
 
 def test_needs_human_is_allowed_when_high_risk_confidence_is_low():
     payload = {
         "outcome": "needs_human", "summary": "Need a decision",
-        "proposal": None, "decision_options": [],
-        "requested_input": "Which policy should apply?",
+        "proposal": None, "decision_options": _decision_options(),
+        "requested_input": None,
         "needs_human_reason": "The consequence is high and the evidence is uncertain",
         "decision_basis": _decision_basis(),
         "risk": "high", "confidence": 0.49, "rule_coverage": 1.0,
         "information_completeness": 1.0, "error": _error(),
     }
-    assert ConsumerAgentResult.model_validate(payload).requested_input
+    assert ConsumerAgentResult.model_validate(payload).decision_options
     with pytest.raises(ValidationError):
         ConsumerAgentResult.model_validate({**payload, "error": {**_error(), "code": "tool_failed"}})
     with pytest.raises(ValidationError):
@@ -1167,14 +1172,51 @@ def test_needs_human_is_allowed_when_high_risk_confidence_is_low():
 def test_needs_human_is_allowed_when_rule_coverage_is_low():
     payload = {
         "outcome": "needs_human", "summary": "Need a rule decision",
-        "proposal": None, "decision_options": [],
-        "requested_input": "Which rule should apply to this task class?",
+        "proposal": None, "decision_options": _decision_options(),
+        "requested_input": None,
         "needs_human_reason": "No applicable rule covers this decision",
         "decision_basis": _decision_basis(),
         "risk": "low", "confidence": 0.99, "rule_coverage": 0.49,
         "information_completeness": 1.0, "error": _error(),
     }
-    assert ConsumerAgentResult.model_validate(payload).requested_input
+    assert ConsumerAgentResult.model_validate(payload).decision_options
+
+
+def test_persisted_instance_question_remains_readable_but_not_admissible():
+    from app.agent_contracts import parse_persisted_consumer_result
+
+    payload = {
+        "outcome": "needs_human", "summary": "Need a missing current fact",
+        "proposal": None, "decision_options": [],
+        "requested_input": "What salary ceiling should I use?",
+        "needs_human_reason": "Only Derek can answer this current-instance question",
+        "decision_basis": _decision_basis(),
+        "risk": "high", "confidence": 0.42, "rule_coverage": 1.0,
+        "information_completeness": 0.62, "error": _error(),
+    }
+    with pytest.raises(ValidationError, match="two to four task-class options"):
+        ConsumerAgentResult.model_validate(payload)
+    assert parse_persisted_consumer_result(payload).requested_input == payload["requested_input"]
+
+
+def test_new_needs_human_options_are_explicitly_for_reusable_task_class_rules():
+    payload = _explainable_needs_human_payload(ConsumerAgentResult)
+    options = ConsumerAgentResult.model_validate(payload).decision_options
+    assert len(options) == 2
+    assert all(option.applies_to == "task_class" for option in options)
+    invalid_options = [
+        {**_decision_options()[0], "applies_to": "current_instance"},
+        _decision_options()[1],
+    ]
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**payload, "decision_options": invalid_options})
+
+    missing_scope = [
+        {key: value for key, value in option.items() if key != "applies_to"}
+        for option in _decision_options()
+    ]
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**payload, "decision_options": missing_scope})
 
 
 def test_incomplete_information_prevents_needs_human_even_when_risk_is_high():
@@ -1290,8 +1332,18 @@ def test_pinned_consumer_schema_rejects_unbound_human_question_and_option():
     }
     with pytest.raises(JsonSchemaValidationError):
         Draft202012Validator(schema).validate(base)
-    valid = {**base, "requested_input": "What is the invoice number?"}
+    input_only = {**base, "requested_input": "What is the invoice number?"}
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema).validate(input_only)
+    valid = {**base, "decision_options": _decision_options(), "requested_input": None}
     Draft202012Validator(schema).validate(valid)
+    option_schema = schema["$defs"]["DecisionOption"]
+    assert "applies_to" in option_schema["required"]
+    assert option_schema["properties"]["applies_to"] == {
+        "const": "task_class",
+        "description": "Human feedback chooses a reusable rule for this task class, not this instance's action.",
+        "type": "string",
+    }
     invalid_option = {**base, "decision_options": [{
         "key": "stop", "label": "Stop", "instruction": "Stop now",
         "consequence": "No action", "terminal_outcome": "skipped",

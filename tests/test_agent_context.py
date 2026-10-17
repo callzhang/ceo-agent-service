@@ -86,7 +86,9 @@ def test_audit_core_prompt_contains_only_runtime_invariants():
     assert "## Dynamic Skill" in text
     assert "candidate_digest" in text
     assert "without executing actions" in text
-    assert "current-instance-bound" in text
+    assert "reusable rule choices" in text
+    assert "current-instance decision" in text
+    assert "applies_to=task_class" in text
 
 
 def test_audit_field_feedback_is_grounded_in_current_candidate_json():

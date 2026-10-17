@@ -69,8 +69,11 @@ def test_default_oa_rules_keep_material_and_policy_gaps_separate():
     assert "live `processCode`" in rules
     assert "sole authority for the template action" in rules
     assert "cannot be reported as 100%" in rules
-    assert "cannot close that policy gap" in rules
+    assert "cannot close the reusable policy gap" in rules
     assert "Do not introduce a new factual requirement" in rules
+    assert "reusable rule should govern this task class" in rules
+    assert "do not ask {{principal}} to choose the outcome or action for this individual OA" in rules
+    assert "current-instance `needs_human` question" not in rules
 
 
 def test_default_rules_do_not_treat_consumer_audit_clock_progress_as_conflict():

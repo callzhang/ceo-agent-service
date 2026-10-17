@@ -62,10 +62,19 @@ def validate_audit_candidate_fields(result: AuditAgentResult, candidate: Consume
 
 
 def validate_audit_candidate_decision_quality(candidate: ConsumerAgentResult) -> None:
-    """Independently enforce the shared human-escalation gate at Audit entry."""
+    """Independently enforce the shared human-escalation and rule-choice gates."""
 
     if candidate.outcome is not ConsumerOutcome.NEEDS_HUMAN:
         return
+    if not (
+        2 <= len(candidate.decision_options) <= 4
+        and candidate.requested_input is None
+        and all(option.applies_to == "task_class" for option in candidate.decision_options)
+    ):
+        raise ResultParseError(
+            "needs_human requires two to four reusable task-class rule options; "
+            "current-instance questions must be ordinary proposals"
+        )
     try:
         require_needs_human_decision_quality(
             risk=candidate.risk,

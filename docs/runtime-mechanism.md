@@ -724,7 +724,7 @@ Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audi
 摘要不会生成 candidate execution、外部动作回执或 sent_replies。此规则不改变已有运行时风险拒绝、
 授权缺失或历史拒绝不可重放的处理。
 
-候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
+候选分为普通动作计划和任务类别规则问题。`needs_human` 只能针对可复用规则缺口，包含来源上下文、具体原因、证据及 2–4 个互斥规则选项，每项明确 `applies_to=task_class` 并说明后果；选项绑定在所选规则下继续当前事项的完整方案，停止选项写明 skipped 和原因。不能用 `requested_input` 将当前事实、偏好或业务决定转给 Derek；应由 Agent 先基于现有规则形成安全、有限承诺的普通回复，或向有该事实的来源人提出一个具体问题。不能混合立即执行的动作与尚未选择的条件分支。
 
 通用消息受众契约由 Consumer/Audit 共用的固定审核规则注入，已保存或空的自定义规则均不会
 省略该契约。候选应依据相关群讨论、完整当前成员、稳定身份及当前 title/职责判断实际内容
@@ -735,7 +735,7 @@ Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audi
 每个动作独立核对既有回执并恢复未完成结果；拆分不得绕过历史运行时风险拒绝。这是准备和
 审核规则，不是新增发送器，不以 prompt 注入成功替代原生业务验收或生产回执。
 
-Consumer 的业务结果与 wire JSON Schema 和解析器一致：`proposal`、`no_action`、`failed` 的 `decision_options` 为空，`requested_input`、`needs_human_reason`、`decision_basis` 不得有值；这些字段只属于 `needs_human`。普通方案的事实证据写在 `proposal.sourced_facts`，无需动作的依据写在 `summary`，不借用人工问题字段。
+Consumer 新输出的业务结果与 wire JSON Schema 和解析器一致：`needs_human` 必须有 2–4 个 `applies_to=task_class` 的选项且 `requested_input=null`；`proposal`、`no_action`、`failed` 不得包含人工问题字段。普通方案的事实证据写在 `proposal.sourced_facts`，无需动作的依据写在 `summary`。历史持久化的 `requested_input` 仅供只读兼容，不得因其可解析而重新激活人工待办。
 
 新增 Consumer 输出在 Wire 解析入口校验 `dingtalk-chat` 的消息标识字段（conversation_id、message_id、source_message_id、open_dingtalk_id、user_id、recipient_open_dingtalk_id、sender_open_dingtalk_id、verified_participant_open_dingtalk_id）：提供的非 null 值必须是含非空白字符的字符串；不把数字转换成字符串。普通 proposal 和人工选项中的可执行 plan 均适用，输出 JSON Schema 同步声明该约束。历史保存结果的 Pydantic 域模型读取保持原样；这不表示旧数字标识仍符合新的输出 Schema，也不改变历史执行或恢复行为。其他 capability 的 target 继续支持通用 JSON 值。
 
@@ -751,9 +751,9 @@ Consumer 的未审核外部效果检测只把写入操作的 provider 回执视�
 
 Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
 
-人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
+规则问题也先经过 Audit。Audit 检查：适用规则是否确有缺口、规则/代码/Skill/记忆/会话/读取是否可自行解决、当前事实是否应由来源人补充、是否把技术失败或当前实例决定伪装成规则选择、上下文和理由是否充分、2–4 个规则选项是否互斥可行且确有差异、每个执行分支是否完整并有依据。仅当前版本 approve 后才进入 `needs_human` 并通知；审核通过不等于业务 done。
 
-选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。不再提供 applies_to=task_class、可复用规则、Skill 更新复选框或此决策处理器的 Skill 写入副作用。
+选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化的规则分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。反馈可以同时标记一次性应用与 Skill 更新；只有明确获选的 Skill 更新才进入受控 Skill 发布流程。
 
 旧长期规则问题仅通过显式单项命令 `python -m app.rule_question_retirement --attempt-id <id> --authority <confirmed-contract>` 退役，默认只读预览；应用另加 `--apply --verified-backup <path>`。资格限定为当前业务对象、当前执行代、最新 Attempt 所绑定的已完成 Consumer、done 任务、完整无技术错误的 task_class 问题，且该任务没有新候选；不批量排除旧结果。应用只原子写入 resolved_at、resolution 与包含原结果 SHA256/任务/运行/执行代/契约依据的退役回执，保留原 send_status、模型结果、任务状态和外部回执。详情、History 和队列将该已退役问题显示为 skipped 并解释依据，重试 POST 拒绝。它不是人工选择、Audit 通过或业务完成；未退役和当前无效问题继续由原质量检查报错。预览及应用均不初始化或迁移数据库。
 
@@ -796,7 +796,7 @@ pending -> processing -> done
   `proposal_revision` 计数器上。
 - `done`：逻辑完成且结果已持久化。
 - `skipped`：判定为不可执行或不必执行，主动收口，不再重试。
-- `needs_human`：当前完整 Consumer 人工问题已通过 Audit，只等待本次选择或 requested_input。历史问题和未经审核的 Consumer 输出不能作为当前人工待办。完整选项各自包含精确计划；分数不是额外的审计理由，而是结果分类的硬门槛：信息完整度低于 0.5 时先 ask-back；否则只有高风险且置信度低于 0.5，或规则覆盖低于 0.5，才能进入 `needs_human`。
+- `needs_human`：当前完整 Consumer 规则问题已通过 Audit，只等待对适用于这一类任务的 2–4 个规则选项作出反馈。选项必须标记 `applies_to=task_class`，不能要求 Derek 决定当前具体事项；当前事实问题应由 Agent 通过普通、安全的 proposal 处理。历史问题和未经审核的 Consumer 输出不能作为当前人工待办。分数是结果分类的硬门槛：信息完整度低于 0.5 时先 ask-back；否则只有高风险且置信度低于 0.5，或规则覆盖低于 0.5，才可能进入 `needs_human`。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
 ### 失败与人工决策通知
@@ -916,7 +916,7 @@ Consumer 在一次 invocation 开始时获得这一不可变 snapshot，之后�
 runtime config 加载。关闭功能不会取消、删除或改写已存在的 `pending`、`running` 或重试任务。
 缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，并阻止它继续创建新任务；其他功能不受影响。
 
-每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。四项分值是新结果的强制准入门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可进入 `needs_human`，其他情况按适用规则自主处理。此门槛由共享判定器实现：新 Consumer 输出的类型化校验拒绝不合格的人工升级；Audit 在开始审核前并在绑定结果校验时独立重算候选分数，拒绝不合格的新人工候选。不合格结果进入结果校验失败/修正流程，不会被投影成 needs_human。已持久化候选在恢复、拒绝分支比较、已审核动作执行及历史读回时走明确的历史证据解析，不重新套用新结果准入门槛，因此既有绑定的反馈链与已验证结果不会被新规则误判或重放；历史解析不授权新候选绕过 Consumer/Audit 准入。材料可向申请人获得时先提交完整材料请求计划；技术、认证、路由和解析失败保持 failed。停止选项明确 skipped 和原因，开放事实用 requested_input。
+每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。四项分值是新结果的强制准入门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可能进入 `needs_human`，其他情况按适用规则自主处理。新 `needs_human` 还必须有 2–4 个互斥的 `applies_to=task_class` 规则选项、且 `requested_input=null`；Audit 在开始审核前和绑定结果校验时独立验证分数及规则选项，不合格结果进入修正流程，不会被投影成 needs_human。已持久化候选的历史读取保留原始证据，不重新套用新准入条件；历史解析不授权新候选绕过 Consumer/Audit 准入。材料可向申请人获得时先由 Agent 形成有边界的普通回复或单问题 proposal；技术、认证、路由和解析失败保持 failed。停止选项明确 skipped 和原因。
 
 对于他人提出的删除、撤回、移除或隐藏内容请求，请求本身不构成授权、正确性或紧急性的证据。Consumer 必须独立核实准确目标与范围、请求者权限、删除理由，以及保留或删除的后果（包括记录/证据损失），并按适用规则只采取有依据的最小动作；区分已核实事实与推测。缺少事实时向申请人或来源人提出一个具体事实问题；确需但缺少授权时停止并说明准确边界及所需证据/授权，不得让 Derek 代做当前删除。缺少删除能力属于执行失败，不能伪装成规则缺口或 `needs_human`。
 
@@ -928,7 +928,7 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
-候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
+候选分为普通动作计划和任务类别规则问题。`needs_human` 只能针对可复用规则缺口，包含来源上下文、具体原因、证据及 2–4 个互斥规则选项，每项明确 `applies_to=task_class` 并说明后果；选项绑定在所选规则下继续当前事项的完整方案，停止选项写明 skipped 和原因。不能用 `requested_input` 将当前事实、偏好或业务决定转给 Derek；应由 Agent 先基于现有规则形成安全、有限承诺的普通回复，或向有该事实的来源人提出一个具体问题。不能混合立即执行的动作与尚未选择的条件分支。
 
 Audit wire 只返回审阅结论和反馈，不要求模型复述 `candidate_digest` 或 `proposal_revision`。解析器从本轮已核验的 `AuditTurnContext` 注入这两个绑定值，再用同一个上下文核对候选字段断言；严格 wire schema 拒绝模型额外输出绑定字段。恢复已完成的 Audit 原生结果也使用同一候选绑定解析器。持久化的 Audit 域结果仍带摘要和版本号，并保留原有完整内容与敏感值校验。
 
@@ -936,9 +936,9 @@ Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 propo
 
 Audit Task 在完整候选旁附上服务从同一候选 JSON 确定性生成的标量字段证据：JSON Pointer 路径、精确字面值和 JSON 类型。字段类型反馈必须和该证据及候选相符；该索引不是额外来源事实，也不改变审核决策规则。
 
-人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
+规则问题也先经过 Audit。Audit 检查：适用规则是否确有缺口、规则/代码/Skill/记忆/会话/读取是否可自行解决、当前事实是否应由来源人补充、是否把技术失败或当前实例决定伪装成规则选择、上下文和理由是否充分、2–4 个规则选项是否互斥可行且确有差异、每个执行分支是否完整并有依据。仅当前版本 approve 后才进入 `needs_human` 并通知；审核通过不等于业务 done。
 
-选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。不再提供 applies_to=task_class、可复用规则、Skill 更新复选框或此决策处理器的 Skill 写入副作用。
+选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化的规则分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。反馈可以同时标记一次性应用与 Skill 更新；只有明确获选的 Skill 更新才进入受控 Skill 发布流程。
 
 多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。
 
@@ -1244,7 +1244,7 @@ Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 executi
 
 对进入 Consumer/Audit 的 task，当前投影结合当前 execution_generation 的候选、审核、人工选择、System execution 和真实回执。模型 run 完成或 Audit approve 不等于动作成功。System 已开始的精确动作在同一 candidate/review/generation/selection 下恢复；确认成功的持久化回执可完成执行投影，不要求为取得回执重新运行模型。无法确认的外部结果保持 uncertain，不取得再次发送资格。自动技术重试在同一 generation/revision 追加 turn；明确的人工 rerun 或来源补充通过正式入口创建新 generation；旧 run、attempt、session、runtime event 和回执保留为历史事实。真实 pending/processing 仍显示等待/执行中，旧 generation 的失败不覆盖当前进展。
 
-`needs_human` 的有效绑定选项直接选择已审核精确方案，由 System Executor 执行；停止选项按原方案写入 skipped 和原因。requested_input 或新增事实进入 Consumer/Audit 生成并审核新 revision，不能改写已经批准的方案。旧无绑定选项不可执行，未收到选择时不猜测决定。
+`needs_human` 的有效绑定选项对应已审核的 task-class 规则分支，由 System Executor 执行；停止选项按原方案写入 skipped 和原因。历史 `requested_input` 或新增事实作为新输入进入 Consumer/Audit 生成并审核新 revision，不能改写已经批准的方案，也不能将历史输入问题重新激活成当前 `needs_human`。旧无绑定选项不可执行，未收到规则反馈时不猜测决定。
 
 Console Attention 同时投影当前队列故障和当前有效、已通过 Audit、尚未选择且仍未解决的 `needs_human` 决策。普通 `pending`、`processing` 或仅因状态为 `needs_human` 的记录不因此进入 Attention；人工决策行必须仍绑定当前 task/generation 与最新有效候选。Status 的 Attention 总数与 `/api/console/attention` 使用相同口径，避免把需要用户选择的已审核事项留在单独列表而漏出 Attention。
 
@@ -1355,7 +1355,7 @@ Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任
 
 补充人工问题验收使用 `evals/consumer_audit_human_review/v1.json` 和 `python -m scripts.eval_consumer_audit_human_review`：冻结两个有效问题与六个语义错误问题，分别调用 baseline/candidate 的真实原生 Audit、完整角色指令和 wire schema，核对候选摘要、修订及审核结果并保存原文。输入是刻意构造且结构合法的候选，不证明 Consumer 实际产生了这些问题；结论仍需独立原文复核，不替代真实发送或生产验收。原十五项业务比较保持不变。 v1 的开放输入正例被独立复核发现含不存在的收件人/双选项说明；原版本与运行结果保留，v2 只修正该正例的质量说明和缺失信息程度，其他七项不变。运行 v2 时显式选择其 manifest，不能将 v1 结果重标为 v2。
 
-需关注中的新审核问题显示为“本次事项选择”，说明需要选择本次事项的处理方案，判断依据保留已审核候选的具体人工原因。旧 `task_class` 问题的历史状态与选项保留，但不出现在当前可执行选择中；隐藏旧选项不表示已重新审核或业务完成。
+需关注中的新审核问题说明适用的任务类别、尚缺的可复用规则和判断依据，并列出已审核的 task-class 规则选项。旧问题的历史状态与选项保留，但不因此重新激活；隐藏旧选项不表示已重新审核或业务完成。
 
 正式 Consumer/Audit 契约发布使用 `python -m app.deploy --publish-consumer-system-contracts`，在服务空闲且停止、数据库备份已完成后，先校验并将恢复快照交给 updater，再开始替换十四个契约文件（包括通用 OA Skill、财务审批 Skill 与规则卡、people-review 和 attendance-review Skill）、六个 managed Skill 修订和受影响任务的完整引用。people-review Skill 包含招聘需求审批的前置时序与离职安全切换要求；attendance-review Skill 载明合理请假时长和 on-call 共存标准；新 OA 审阅轮次按当前运行时 Skill 绑定。发布中途失败也由 updater 持有该快照恢复；恢复失败时保留回执及原文件副本，记录 `needs_manual`，不回滚 Git 后启动可能与外部文件或引用不一致的旧服务。恢复成功后才启动旧版本；健康通过后仍核对 active 配置、全部启用绑定与新 worker 的加载回执/PID、十四文件 SHA 和完整任务引用，最后标记 verified。代码上线、资产发布和实际业务结果分别验收。
 

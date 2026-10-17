@@ -92,9 +92,12 @@ DECISION_QUALITY_GATE_INSTRUCTIONS = """
 Include risk, confidence, rule_coverage and information_completeness as truthful
 facts about the current decision, and apply this outcome gate in order:
 information_completeness < 0.5 means ask one focused factual question in a
-normal proposal; otherwise, needs_human is allowed only when (risk is high and
-confidence < 0.5) or rule_coverage < 0.5; otherwise do not return needs_human
-and complete the supported work under the applicable rules. Audit must
+normal proposal; it is never a needs_human result. Otherwise, needs_human is
+allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5,
+and then only for a reusable task-class rule choice with two to four mutually
+exclusive options. A missing fact or a request that Derek decide this one
+business case is not a policy gap; otherwise do not return needs_human and
+complete the supported work under the applicable rules. Audit must
 independently check that the proposed outcome matches these scores and return
 or reject a candidate that does not. Use the applicable application behavior,
 business Skills, available source material, memory and session context to
@@ -110,10 +113,16 @@ own summary of the known facts, gaps, and available rule coverage.
 Ask the applicant or source owner for material they can supply. Missing facts,
 even facts only Derek can provide, call for one focused factual question to
 the person who can supply them; they are not by themselves a needs_human
-policy choice. A current-instance choice is a needs_human candidate only when
-the applicable authorization rules make it non-delegable, not merely because
-it is consequential or someone requested it. Every such candidate is reviewed
-by Audit before it becomes visible. Technical/provider,
+policy choice. Do not transfer a current-instance business decision to Derek
+merely because it is consequential or a requester asks for it. Independently
+assess facts, authority, applicable rules and consequences, then take the
+narrowest supported action. When facts are missing, ask the source owner one
+focused factual question in a normal proposal. If a reply is safe, state what
+can be done, the material risk and explicit limits; do not invent facts or make
+a commitment. A needs_human result is only for a reusable rule choice for this
+task class and must contain two to four mutually exclusive options marked
+applies_to=task_class, never a request for Derek to decide this specific item.
+Every such candidate is reviewed by Audit before it becomes visible. Technical/provider,
 authentication-route, schema, model-output and retry failures are failed;
 never disguise them as a human business decision. A real login/access/material
 request must name the exact necessary human action and its source context.
@@ -134,9 +143,12 @@ the exact boundary and required evidence or authorization instead of offering
 the user a plan to perform the deletion. A missing removal capability is an
 execution limitation, not a reusable rule gap or a reason to transfer the
 current action to Derek.
-Executable options contain complete current-instance plans; stop options state
-skipped with a reason. Open-ended input uses requested_input with zero options.
-This flow never creates a reusable policy or edits a Skill.
+Executable options contain complete plans for continuing this item under the
+selected reusable rule; stop options state skipped with a reason. A request for
+current-instance facts or judgment is never represented as a zero-option
+requested_input needs_human result. This flow never writes a reusable policy or
+edits a Skill itself; user feedback may independently select one-time
+application and Skill update.
 """.strip()
 AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION = """
 Use the current work profile, complete conversation context, and inspected
@@ -260,12 +272,14 @@ Every action has a stable action_identity for the same intended external
 outcome. Change it only when the intended outcome, target or purpose changes.
 Supply canonical typed capability/operation, exact target and payload; no shell
 argv. Preserve all accepted service-prepared message text in later stages.
-Explain a needs_human reason for Derek in ordinary Chinese: the one choice and
-why it matters. Supply source context, facts and rule evidence, feasible
-alternatives and consequences. Every executable option includes a complete
-current-instance plan; a stop choice has terminal_outcome skipped and reason.
-Use requested_input without options when an open-ended fact is needed.
-Do not propose long-term rule choices, applies_to, or Skill updates.
+Explain a needs_human reason in ordinary Chinese: identify the reusable task
+class rule that is missing and why it matters. Supply source context, facts and
+rule evidence, and two to four mutually exclusive policy choices, each marked
+applies_to=task_class. Every executable option includes a complete plan for
+continuing this item under that selected rule; a stop choice has
+terminal_outcome skipped and reason. Ask for missing current-instance facts in
+a normal proposal, never with requested_input as a zero-option needs_human.
+Feedback may separately select one-time application and Skill update.
 For proposal, no_action, and failed, decision_options must be empty and
 requested_input, needs_human_reason, and decision_basis must be null. Use
 those fields only for a needs_human result.

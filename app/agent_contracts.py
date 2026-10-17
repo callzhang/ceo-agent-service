@@ -26,6 +26,38 @@ class RiskLevel(StrEnum):
     HIGH = "high"
 
 
+def _decision_option_json_schema(schema: dict[str, object]) -> None:
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return
+    properties["applies_to"] = {
+        "const": "task_class",
+        "description": "Human feedback chooses a reusable rule for this task class, not this instance's action.",
+        "type": "string",
+    }
+    required = schema.setdefault("required", [])
+    if isinstance(required, list) and "applies_to" not in required:
+        required.append("applies_to")
+    schema["oneOf"] = [
+        {
+            "properties": {
+                "plan": {"type": "object"},
+                "terminal_outcome": {"type": "null"},
+                "reason": {"type": "null"},
+            },
+            "required": ["plan"],
+        },
+        {
+            "properties": {
+                "plan": {"type": "null"},
+                "terminal_outcome": {"const": "skipped"},
+                "reason": {"type": "string", "minLength": 1},
+            },
+            "required": ["terminal_outcome", "reason"],
+        },
+    ]
+
+
 def _consumer_result_json_schema(schema: dict[str, object]) -> None:
     required = schema.setdefault("required", [])
     for field in ("risk", "confidence", "rule_coverage", "information_completeness"):
@@ -61,37 +93,21 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
             "properties": {
                 "outcome": {"const": "needs_human"},
                 "proposal": {"type": "null"},
-                "decision_options": {"type": "array", "maxItems": 4},
+                "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
+                "requested_input": {"type": "null"},
                 "needs_human_reason": {"type": "string", "minLength": 1},
                 "decision_basis": {"type": "object"},
             },
-            "oneOf": [
-                {
-                    "properties": {
-                        "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
-                        "requested_input": {"type": "null"},
-                    },
-                    "required": ["decision_options"],
-                },
-                {
-                    "properties": {
-                        "decision_options": {"type": "array", "maxItems": 0},
-                        "requested_input": {"type": "string", "minLength": 1},
-                    },
-                    "required": ["decision_options", "requested_input"],
-                },
-            ],
             "required": [
                 "outcome",
                 "proposal",
                 "decision_options",
+                "requested_input",
                 "needs_human_reason",
                 "decision_basis",
             ],
         },
     ]
-
-
 def _audit_result_json_schema(schema: dict[str, object]) -> None:
     required = schema.setdefault("required", [])
     for field in ("risk", "confidence", "rule_coverage", "information_completeness"):
@@ -293,36 +309,21 @@ class ConsumerProposal(BaseModel):
 
 
 class DecisionOption(BaseModel):
-    """One bound choice for the current business instance."""
+    """One reusable rule choice for a class of business tasks."""
 
     model_config = ConfigDict(
         extra="forbid", strict=True,
-        json_schema_extra={
-            "oneOf": [
-                {
-                    "properties": {
-                        "plan": {"type": "object"},
-                        "terminal_outcome": {"type": "null"},
-                        "reason": {"type": "null"},
-                    },
-                    "required": ["plan"],
-                },
-                {
-                    "properties": {
-                        "plan": {"type": "null"},
-                        "terminal_outcome": {"const": "skipped"},
-                        "reason": {"type": "string", "minLength": 1},
-                    },
-                    "required": ["terminal_outcome", "reason"],
-                },
-            ]
-        },
+        json_schema_extra=_decision_option_json_schema,
     )
 
     key: str = Field(min_length=1)
     label: str = Field(min_length=1)
     instruction: str = Field(min_length=1)
     consequence: str = Field(min_length=1)
+    applies_to: Literal["task_class"] | None = Field(
+        default=None,
+        description="New human feedback must explicitly choose a reusable rule for this task class.",
+    )
     plan: ConsumerProposal | None = None
     terminal_outcome: Literal["skipped"] | None = None
     reason: str | None = None
@@ -517,15 +518,34 @@ class ConsumerAgentResult(BaseModel):
         if (self.outcome is ConsumerOutcome.PROPOSAL) != (self.proposal is not None):
             raise ValueError("proposal is required only for proposal outcome")
         if self.outcome is ConsumerOutcome.NEEDS_HUMAN:
-            if not (info.context or {}).get("persisted_evidence", False):
+            persisted_evidence = (info.context or {}).get("persisted_evidence", False)
+            if not persisted_evidence:
                 require_needs_human_decision_quality(
                     risk=self.risk,
                     confidence=self.confidence,
                     rule_coverage=self.rule_coverage,
                     information_completeness=self.information_completeness,
                 )
-            if not ((2 <= len(self.decision_options) <= 4 and self.requested_input is None) or (not self.decision_options and self.requested_input)):
-                raise ValueError("needs_human requires two to four options or requested_input")
+            has_task_class_choices = (
+                2 <= len(self.decision_options) <= 4
+                and self.requested_input is None
+                and all(option.applies_to == "task_class" for option in self.decision_options)
+            )
+            is_legacy_persisted_question = (
+                persisted_evidence and not self.decision_options and bool(self.requested_input)
+            )
+            is_legacy_persisted_instance_decision = (
+                persisted_evidence
+                and 2 <= len(self.decision_options) <= 4
+                and self.requested_input is None
+                and all(option.applies_to is None for option in self.decision_options)
+            )
+            if not (
+                has_task_class_choices
+                or is_legacy_persisted_question
+                or is_legacy_persisted_instance_decision
+            ):
+                raise ValueError("needs_human requires two to four task-class options")
             keys = [option.key for option in self.decision_options]
             if len(keys) != len(set(keys)):
                 raise ValueError("decision option keys must be unique")
