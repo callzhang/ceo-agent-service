@@ -70,13 +70,13 @@
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
       "target": "skills/stardust-oa-finance-review/SKILL.md",
-      "old_sha256": "c7de13fa622d2f17b7cc3bb174554be0a4e4b55bf42a9c822c31181ba697d9c0",
+      "old_sha256": "2e156a33336d28a2188470c8e8c6164091d43e50e35c187ece0b95eff0f3a294",
       "new_sha256": "2e156a33336d28a2188470c8e8c6164091d43e50e35c187ece0b95eff0f3a294"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
       "target": "skills/stardust-oa-finance-review/references/finance-rule-cards.md",
-      "old_sha256": "9ed440a077892d3557d523c7d3f020c7c855028a81955602e7ff2f8383d8824a",
+      "old_sha256": "8df9e0c77ef38893f358d6ebc287ca45e511d1fd877f3aabf7969901952f6eb9",
       "new_sha256": "8df9e0c77ef38893f358d6ebc287ca45e511d1fd877f3aabf7969901952f6eb9"
     },
     {
