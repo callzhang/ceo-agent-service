@@ -478,7 +478,7 @@ PDF 附件读取失败时，先判断是“真的不可读”还是“PDF 结构
 
 ### 审批 OCR 路径
 
-审批中的扫描 PDF、图片附件、发票/完税证明截图、合同扫描件、盖章扫描件、报销凭证、验收单等，如果没有可用文本层，必须使用 `ocr` skill 的外部 Stardust OCR 服务读取；不要把本地 `magick + tesseract` 当作默认路径，避免 PDF 转图卡住或 OCR 语言/版面处理不一致。
+审批中的扫描 PDF、图片附件、发票/完税证明截图、合同扫描件、盖章扫描件、报销凭证、验收单等，如果没有可用文本层，Consumer 和 Audit 必须使用其 MCP 工具目录中的 `ai_services.ocr_document` 读取。`read_dingtalk_drive_file` 对扫描件会返回精确来源的 `ocr_input_base64`、MIME 类型、PDF 页码和 SHA-256；将二进制传给 OCR MCP，保留返回的页码、置信度和警告。不得改用本地 OCR 脚本或 `magick + tesseract` 绕过该 MCP 路径。
 
 OCR 前提：
 
@@ -487,23 +487,7 @@ OCR 前提：
 3. OCR 结果要和审批表单、评论、合同/发票字段、历史审批编号交叉验证；不得只凭 OCR 单点通过财务、合同、录用、立项等高风险审批。
 4. OCR 失败或服务认证失败是真失败；不要未经授权上传到其他 OCR 服务，也不要用猜测补全文字。
 
-常用命令：
-
-```bash
-python3 "$HOME/.agents/skills/ocr/scripts/ocr.py" \
-  "/absolute/path/to/scanned.pdf" \
-  --format markdown \
-  --output "/absolute/path/to/ocr-result.md"
-```
-
-如果只需要抽查关键页，使用一基页码：
-
-```bash
-python3 "$HOME/.agents/skills/ocr/scripts/ocr.py" \
-  "/absolute/path/to/scanned.pdf" \
-  --pages 1,3-5 \
-  --format markdown
-```
+对 PDF，优先把 `ocr_page_numbers` 传给 `ai_services.ocr_document(page_numbers=...)`，使用一基页码；表格、表单或复杂版面使用 `engine="qwen"`，普通扫描件使用默认 `rapidocr`。MCP 不可用、认证失败、输入超出受控读取上限或 OCR 返回空文本时，记录具体技术阻塞并保留 OA 待处理；不得回退到未授权的服务或把读取失败归责申请人。
 
 审批审阅时要读取 OCR 输出全文，并在材料记录中说明“通过 OCR 读取扫描件”。如果 OCR 输出与表单/评论冲突，先回看对应原图并核对版面，区分识别错误与源文件中真实矛盾；只有原图也能确认存在实质矛盾时，才按事实矛盾规则要求解释或补充依据。OCR 不确定或工具识别错误属于审阅端限制，不得单独归责申请人或作为拒绝理由；不得自动同意。
 

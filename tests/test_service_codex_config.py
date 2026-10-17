@@ -52,6 +52,28 @@ url = "https://personal.example/xiaoqing"
     assert not any("personal.example" in option for option in options)
 
 
+def test_default_service_manifest_exposes_ai_services_to_background_agents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.service_codex_config import DEFAULT_SERVICE_MCP_CONFIG_PATH
+
+    monkeypatch.delenv("CEO_SERVICE_MCP_CONFIG_PATH", raising=False)
+    default_document = json.loads(DEFAULT_SERVICE_MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+    configured = default_document["servers"]["ai_services"]
+    assert configured["url"] == "https://ai-services.preseen.ai/mcp"
+    isolated_manifest = _write_manifest(
+        tmp_path / "ai-services-only.json", {"ai_services": configured}
+    )
+    manifest = load_service_mcp_manifest(path=isolated_manifest)
+    options = service_mcp_config_options(path=isolated_manifest)
+
+    server = next(server for server in manifest.servers if server.name == "ai_services")
+    assert server.url == "https://ai-services.preseen.ai/mcp"
+    assert 'mcp_servers.ai_services.url="https://ai-services.preseen.ai/mcp"' in options
+    assert "mcp_servers.ai_services.enabled=false" not in options
+
+
 def test_service_manifest_resolves_environment_backed_command_transport(
     tmp_path: Path,
 ) -> None:
