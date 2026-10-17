@@ -2595,31 +2595,32 @@ class PlaywrightUnsubscribeBrowser:
             return UnsubscribePageState.ALREADY_UNSUBSCRIBED
         if "resubscribe" in normalized and "unsubscribed" in normalized:
             return UnsubscribePageState.ALREADY_UNSUBSCRIBED
-        if any(
+        terminal_completion_markers = (
+            "successfully unsubscribed",
+            "you are unsubscribed",
+            "you have been unsubscribed",
+            "you've been unsubscribed",
+            # The confirmation LinkedIn and others actually print.
+            "you've unsubscribed",
+            "you have unsubscribed",
+            "you have been removed from",
+            "unsubscribe complete",
+            "unsubscribe confirmation complete",
+            "subscription cancelled",
+            "list-unsubscribe post returned http 2",
+            "退订成功",
+            "不会再收到",
+        )
+        if any(marker in normalized for marker in terminal_completion_markers):
+            return UnsubscribePageState.DONE
+        conditional_future_consequence = re.search(
+            r"\b(?:by|if|when|once)\s+(?:you\s+)?unsubscrib(?:e|ing)\b"
+            r".{0,120}\byou(?:'ll| will)\s+no longer receive\b",
+            normalized,
+        )
+        if not conditional_future_consequence and any(
             marker in normalized
-            for marker in (
-                "successfully unsubscribed",
-                "you are unsubscribed",
-                "you have been unsubscribed",
-                "you've been unsubscribed",
-                # The confirmation LinkedIn and others actually print.
-                "you've unsubscribed",
-                "you have unsubscribed",
-                # What the tracker hosts print instead of the word
-                # "unsubscribed": a statement about what will now happen.
-                # Three live receipts recorded this page as
-                # skipped_no_reliable_entry while the unsubscribe had in fact
-                # completed.
-                "you will no longer receive",
-                "you'll no longer receive",
-                "you have been removed from",
-                "unsubscribe complete",
-                "unsubscribe confirmation complete",
-                "subscription cancelled",
-                "list-unsubscribe post returned http 2",
-                "退订成功",
-                "不会再收到",
-            )
+            for marker in ("you will no longer receive", "you'll no longer receive")
         ):
             return UnsubscribePageState.DONE
         # After the statements the page makes about this address: a page that
@@ -2747,11 +2748,10 @@ class PlaywrightUnsubscribeBrowser:
             else:
                 state = judgement.state
                 judged_evidence = judgement.evidence
-            # The page's own terminal wording is stronger evidence than a
-            # conservative action_required judgement. Providers such as
-            # beehiiv render the confirmation sentence together with the
-            # subscription-management shell, and the page judge can otherwise
-            # send an already-completed unsubscribe back into control discovery.
+            # Explicit completion wording is stronger evidence than a
+            # conservative action_required judgement. Conditional consequence
+            # copy is excluded by _state_from_text because it describes what
+            # will happen after the user acts, not a completed unsubscribe.
             if textual_state in {
                 UnsubscribePageState.DONE,
                 UnsubscribePageState.ALREADY_UNSUBSCRIBED,

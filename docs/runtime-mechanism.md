@@ -306,6 +306,10 @@ always-on/plugin entries may remain visible; empty does not mean zero native Ski
 The page states, verbatim evidence contract, route, approval, sandbox and
 unsubscribe execution rules are unchanged. Native global memory and AGENTS
 instructions remain CLI-owned and are not represented as service prompt text.
+A conditional consequence such as “By unsubscribing, you will no longer
+receive…” does not establish completion and cannot override `action_required`.
+Explicit completion and existing unconditioned tracker-host receipt wording
+remain terminal. See `docs/email-unsubscribe-conditional-copy-validation.md`.
 
 The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
 to 20 MiB for non-PDF files and 64 MiB for PDFs before parsing; OOXML aggregate

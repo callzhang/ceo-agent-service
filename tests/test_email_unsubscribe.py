@@ -3884,6 +3884,18 @@ def test_a_typographic_apostrophe_does_not_hide_a_confirmed_unsubscribe() -> Non
     )
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "By unsubscribing, you will no longer receive this newsletter.",
+        "If you unsubscribe, you will no longer receive this newsletter.",
+        "When you unsubscribe, you'll no longer receive this newsletter.",
+    ],
+)
+def test_a_conditional_future_consequence_is_not_terminal_evidence(text: str) -> None:
+    assert PlaywrightUnsubscribeBrowser._state_from_text(text) is None
+
+
 def test_a_confirmation_outranks_the_sites_own_sign_in_link() -> None:
     state_from_text = PlaywrightUnsubscribeBrowser._state_from_text
 
@@ -3979,7 +3991,7 @@ def test_an_agents_judgement_decides_the_state_and_travels_with_the_record() -> 
     assert seen[0][1] == "news.example.com" and seen[0][2] == text
 
 
-def test_terminal_page_text_overrides_conservative_action_required_judgement() -> None:
+def test_conditional_consequence_does_not_override_action_required_judgement() -> None:
     from app.email_unsubscribe import UnsubscribePageJudgement
 
     text = (
@@ -3992,11 +4004,67 @@ def test_terminal_page_text_overrides_conservative_action_required_judgement() -
             UnsubscribePageState.ACTION_REQUIRED,
             "The page shows an unsubscribe action.",
         ),
+        controls=[
+            {
+                "blocked": False,
+                "forms": [],
+                "links": [],
+                "buttons": [_unsubscribe_button_snapshot()],
+            }
+        ],
+    )
+
+    observation = browser._observe_current_page(_effect())
+
+    assert observation.state is UnsubscribePageState.ACTION_REQUIRED
+    assert observation.receipt is None
+    assert [item.intent for item in observation.controls] == ["unsubscribe"]
+
+
+def test_conditional_consequence_is_not_a_terminal_text_fallback() -> None:
+    text = "By unsubscribing, you will no longer receive this newsletter."
+    browser = _discovery_browser(
+        control_snapshots=[
+            {
+                "blocked": False,
+                "forms": [],
+                "links": [],
+                "buttons": [_unsubscribe_button_snapshot()],
+            }
+        ],
+        structures=[{"textLength": len(text), "controlCount": 1}],
+        texts=[text],
     )
 
     discovery = browser.discover_current_page(_effect())
 
-    assert discovery.state is UnsubscribePageState.DONE
+    assert discovery.state is UnsubscribePageState.ACTION_REQUIRED
+
+
+def test_explicit_unsubscribe_confirmation_still_overrides_action_required() -> None:
+    from app.email_unsubscribe import UnsubscribePageJudgement
+
+    text = "You've been unsubscribed from this newsletter."
+    browser, _seen = _judged_browser(
+        [text],
+        UnsubscribePageJudgement(
+            UnsubscribePageState.ACTION_REQUIRED,
+            "The page shows a management control.",
+        ),
+        controls=[
+            {
+                "blocked": False,
+                "forms": [],
+                "links": [],
+                "buttons": [_unsubscribe_button_snapshot("Manage preferences")],
+            }
+        ],
+    )
+
+    observation = browser._observe_current_page(_effect())
+
+    assert observation.state is UnsubscribePageState.DONE
+    assert observation.receipt is not None
 
 
 def test_the_agent_reads_the_page_only_after_its_text_stops_changing() -> None:
@@ -4057,7 +4125,7 @@ def test_terminal_readback_does_not_require_a_second_agent_route() -> None:
     browser = _discovery_browser(
         control_snapshots=[{"blocked": False, "forms": [], "links": []}],
         structures=[{"textLength": 60, "controlCount": 0}],
-        texts=["By unsubscribing, you will no longer receive this newsletter."],
+        texts=["You've been unsubscribed from this newsletter."],
     )
 
     def unavailable(*_args):
