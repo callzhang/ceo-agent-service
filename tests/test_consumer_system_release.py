@@ -47,7 +47,7 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     finance_source = "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
 
     assert entries[finance_source]["old_sha256"] == (
-        "e9ab732503f6c35c89af8c3a9424836c8e3cf9e29752c59a4a6b20dbef5d89fb"
+        "f56bb13b4e3540da3d3a8debfc62a1c725b2013d10cdce76ef0c4a23469eaf28"
     )
     assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
     assert {
@@ -75,6 +75,8 @@ def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
         "Count only returns that independently established the same material gap from readable, "
         "source-verified evidence and gave the applicant a fair chance to resolve it."
     ) in card
+    assert "不能把审核方无法读取归为申请人未提交" in card
+    assert "不等于客户验收，也不代表客户未验收" in card
 
 
 def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest():
