@@ -15,6 +15,9 @@ files in `ci/consumer-system-contract-release.json`: six service-managed
 `SKILL.md` files, the generic DingTalk OA Skill, the weekly report's DingTalk
 runbook, and the Audit rules. The manifest pins the previously observed SHA-256
 of each installed file and the reviewed SHA-256 of each committed replacement.
+An entry may already match its replacement when another release installed the
+same source in advance; exact old-target and source checks still apply, and
+the publisher reads the target back with the rest of the release.
 It separately pins the old managed revision SHA-256 because a process may have
 loaded an immutable revision different from the installed file. A mismatch
 stops publication before replacement.
