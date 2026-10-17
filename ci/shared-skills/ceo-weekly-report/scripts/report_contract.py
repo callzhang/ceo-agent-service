@@ -41,8 +41,22 @@ def reporting_window(
 def validate_manifest(manifest: dict) -> list[str]:
     errors: list[str] = []
     target = manifest.get("target", {})
-    if not all(target.get(key) for key in ("title", "node_id", "revision")):
-        errors.append("target identity or revision is incomplete")
+    if target.get("exists") is False:
+        if not target.get("title"):
+            errors.append("target title is incomplete")
+    elif target.get("exists") is True or "exists" not in target:
+        revision = target.get("revision")
+        valid_revision = (
+            type(revision) is int and revision >= 0
+        ) or (isinstance(revision, str) and revision.isdecimal())
+        if (
+            not target.get("title")
+            or not target.get("node_id")
+            or not valid_revision
+        ):
+            errors.append("target identity or revision is incomplete")
+    else:
+        errors.append("target existence is missing")
 
     previous = manifest.get("previous", {})
     if not all(previous.get(key) for key in ("title", "node_id")):

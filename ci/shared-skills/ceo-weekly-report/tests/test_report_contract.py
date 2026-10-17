@@ -21,6 +21,7 @@ class ReportContractTests(unittest.TestCase):
                 "title": "2026年9月14日管理层周会",
                 "node_id": "node",
                 "revision": 7,
+            "exists": True,
             },
             "previous": {
                 "title": "2026年9月7日管理层周会",
@@ -99,6 +100,37 @@ class ReportContractTests(unittest.TestCase):
 
     def test_complete_manifest_has_no_errors(self):
         self.assertEqual(validate_manifest(self.complete_manifest()), [])
+
+    def test_missing_target_needs_title_but_not_nonexistent_node_or_revision(self):
+        manifest = self.complete_manifest()
+        manifest["target"] = {
+            "title": "2026年9月14日管理层周会",
+            "exists": False,
+            "year_page_id": None,
+        }
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_missing_target_still_requires_title(self):
+        manifest = self.complete_manifest()
+        manifest["target"] = {"exists": False}
+        self.assertIn("target title is incomplete", validate_manifest(manifest))
+
+    def test_existing_target_requires_integer_revision_and_identity(self):
+        manifest = self.complete_manifest()
+        manifest["target"] = {
+            "title": "2026年9月14日管理层周会",
+            "node_id": "node",
+            "revision": -1,
+            "exists": True,
+        }
+        self.assertIn(
+            "target identity or revision is incomplete", validate_manifest(manifest)
+        )
+
+    def test_existing_target_accepts_provider_revision_string(self):
+        manifest = self.complete_manifest()
+        manifest["target"]["revision"] = "7"
+        self.assertEqual(validate_manifest(manifest), [])
 
     def test_manifest_rejects_incomplete_pagination(self):
         manifest = self.complete_manifest()
