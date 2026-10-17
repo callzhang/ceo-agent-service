@@ -3198,6 +3198,8 @@ that no more work should run; it does not report the external action as successf
 
 Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
 
+Attempt detail 的 System Execution 只对当前审核候选，或已有执行记录的历史候选生成投影。过期候选若没有执行记录，仍可作为历史审核证据查看，但不把其中未开始的动作显示为“等待执行”。已有历史执行和 canonical provider receipt 继续只读显示；此投影不改变队列、重试或执行状态。
+
 
 ### 原始触发、当前来源和立项财务口径（2026-10-14）
 

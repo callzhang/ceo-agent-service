@@ -2271,6 +2271,13 @@ Historical terminal Attempt or settlement projections cannot override a current 
 
 Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
 
+Attempt detail projects System Execution only when a current reviewed candidate
+exists or the historical candidate has an execution record. A stale candidate
+without an execution record remains visible as historical review evidence, but
+its unstarted actions are not presented as pending execution. Existing
+historical execution records and canonical provider receipts remain readable;
+this projection does not alter queues, retries, or execution state.
+
 History list status for a failed Attempt follows its owning AgentRun's stable
 reply-task identity when that task's DingTalk trigger key has since changed.
 Current terminal task state is projected without rewriting the Attempt or its

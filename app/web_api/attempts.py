@@ -657,6 +657,8 @@ def _system_execution_payload(
     plan = branch.get("plan") if branch else candidate.get("proposal")
     actions = plan.get("actions", []) if isinstance(plan, dict) else []
     execution = store.get_candidate_execution(reviewed["id"])
+    if not is_current and execution is None:
+        return None
     if candidate.get("outcome") == "no_action" and execution is None:
         return None
     attempts = {

@@ -24,6 +24,56 @@ def test_current_question_keeps_decision_status_after_earlier_sent_stage(tmp_pat
     assert detail["system_execution"] is None
 
 
+def test_stale_historical_action_without_execution_is_not_projected_as_pending(tmp_path, monkeypatch):
+    body = {
+        "outcome": "needs_human", "summary": "Choose a current response", "proposal": None,
+        "decision_options": [
+            {"key": "send", "label": "Send reply", "instruction": "Send the exact reply",
+             "consequence": "Applicant receives it", "applies_to": "task_class",
+             "plan": {"objective": "Reply to applicant", "actions": [{
+                 "description": "Send exact approved reply", "action_identity": "reply",
+                 "capability": "dingtalk-chat", "operation": "send_direct_message",
+                 "target": {"open_dingtalk_id": "applicant"},
+                 "payload": {"content": "The exact reply"},
+             }], "sourced_facts": [{"assertion": "Applicant asked for a reply", "references": ["message:1"]}],
+                 "authored_judgment": "One choice remains"}},
+            {"key": "stop", "label": "Stop", "instruction": "Do not reply",
+             "consequence": "No message", "applies_to": "task_class",
+             "terminal_outcome": "skipped", "reason": "Already resolved"},
+        ],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "medium", "confidence": 0.8, "rule_coverage": 0.4,
+        "information_completeness": 1.0,
+        "needs_human_reason": "Only Derek can choose this instance's reply",
+        "decision_basis": {"verified_facts": [{"assertion": "Applicant asked for a reply", "references": ["message:1"]}],
+                           "rule_evidence": [{"assertion": "Applicant asked for a reply", "references": ["message:1"]}],
+                           "quality_explanation": "No existing rule selects one option",
+                           "no_external_action_evidence": [{"assertion": "Applicant asked for a reply", "references": ["message:1"]}],
+                           "conclusion": "Ask Derek"},
+        "requested_input": None, "stage_index": 0, "predecessor_review_id": None,
+        "continue_after_execution": False, "durable_memories": [],
+    }
+    body = ConsumerAgentResult.model_validate(body).model_dump(mode="json")
+    body["outcome"] = "proposal"
+    body["proposal"] = body["decision_options"][0]["plan"]
+    body["decision_options"] = []
+    body["needs_human_reason"] = None
+    body["decision_basis"] = None
+    body["requested_input"] = None
+    candidate_result = ConsumerAgentResult.model_validate(body)
+    monkeypatch.setattr(fixtures, "_question", lambda: candidate_result)
+    store, _task, candidate, _review, attempt_id = fixtures._approved_question(
+        tmp_path / "stale-history.sqlite3"
+    )
+
+    store.invalidate_review_candidate(candidate["id"], "a later review superseded it")
+
+    _, detail = build_attempt_detail(store, attempt_id)
+
+    assert detail["system_execution"] is None
+    assert store.get_candidate_execution(candidate["id"]) is None
+
+
 def test_selected_plan_projects_pending_actions_without_inferred_receipts(tmp_path, monkeypatch):
     store, task, candidate, review, attempt_id = _two_action_question(tmp_path, monkeypatch)
     store.select_candidate_option(candidate["id"], review["id"], "send")
