@@ -126,13 +126,15 @@ sed -n '1,220p' /Users/derek/.agents/skills/dws/SKILL.md
 常用只读命令：
 
 ```bash
-dws oa approval list-pending --start "<YYYY-MM-DD>" --end "<YYYY-MM-DD>" --format json
+dws oa approval list-pending --create-time-from "<YYYY-MM-DD>" --create-time-to "<YYYY-MM-DD>" --format json
 dws oa approval detail --instance-id <processInstanceId> --format json
 dws oa approval records --instance-id <processInstanceId> --format json
 dws oa approval tasks --instance-id <processInstanceId> --format json
 ```
 
 当前服务角色使用不按日期截断的具名待办读取接口，避免旧待办被遗漏；交互式命令可显式传时间范围，需审全量当前待办时不要把近几日窗口当成完整列表。`dws mcp` 的 canonical MCP 命令面已禁用，不能再用 `dws mcp oa get_processInstance_detail` 作为详情兜底。
+
+`--create-time-from` 和 `--create-time-to` 使用 `yyyy-MM-dd`，且截止日期包含当天。兼容参数 `--start` 和 `--end` 则要求完整 ISO-8601 时间戳；不要把日期字符串传给这两个兼容参数。
 
 ### DWS detail 解析失败的已知模式
 
