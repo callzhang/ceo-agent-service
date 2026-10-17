@@ -63,6 +63,10 @@ _AUDIT_SESSION_FIELDS = frozenset(
 )
 
 
+class UnsubscribeOutcomeUnresolvedError(RuntimeError):
+    """A previous unsubscribe may have acted but has no terminal receipt."""
+
+
 def normalize_unsubscribe_result_text(value: str) -> tuple[str, str]:
     """Normalize and redact terminal page text before it crosses the boundary.
 

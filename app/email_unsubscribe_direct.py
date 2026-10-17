@@ -34,6 +34,7 @@ from app.email_unsubscribe import (
     UnsubscribeOutcome,
     UnsubscribePageState,
     UnsubscribeProviderAuthError,
+    UnsubscribeOutcomeUnresolvedError,
     UnsubscribeTerminalReceipt,
     browser_failure_code,
     browser_failure_category,
@@ -571,6 +572,11 @@ class DirectEmailUnsubscribeOperation:
                     str(error.get("code") or ""),
                 )
             return normalized
+        except UnsubscribeOutcomeUnresolvedError as exc:
+            return _failed_call(
+                "email_unsubscribe_outcome_unresolved",
+                detail=str(exc),
+            )
         except Exception as exc:  # noqa: BLE001 - a public tool fails closed
             detail = _rejection_detail(exc)
             return _failed_call(

@@ -13976,6 +13976,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 from app.email_unsubscribe import (
                     TRANSIENT_BROWSER_ERROR_CODES,
                     TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES,
+                    UnsubscribeOutcomeUnresolvedError,
                 )
 
                 if (
@@ -13988,10 +13989,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     or previous.get("input_version") != input_version
                     or previous.get("input_digest") != input_digest
                 ):
-                    raise ValueError("unsubscribe execution requires reconciliation")
+                    raise UnsubscribeOutcomeUnresolvedError(
+                        "unsubscribe execution requires reconciliation"
+                    )
                 retry_count = int(previous.get("retry_count") or 0)
                 if retry_count >= TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
-                    raise ValueError("unsubscribe external retry budget exhausted")
+                    raise UnsubscribeOutcomeUnresolvedError(
+                        "unsubscribe external retry budget exhausted; reconciliation required"
+                    )
             receipt = db.execute("select effect_digest,outcome from email_unsubscribe_receipts where action_identity=?", (action_identity,)).fetchone()
             if receipt is not None and (
                 receipt["effect_digest"] != previous_receipt_digest or receipt["outcome"] not in _RETRYABLE_SKIP_OUTCOMES

@@ -510,14 +510,26 @@ def test_unclassified_pending_execution_marker_is_still_fenced(tmp_path: Path) -
         input_version=task.input_version,
         input_digest=sha256(task.trigger_message_json.encode("utf-8")).hexdigest(),
     )
+    with sqlite3.connect(email_store.path) as db:
+        marker_before = db.execute(
+            "select value from service_state where key=?",
+            (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",),
+        ).fetchone()[0]
 
     result = operation.execute(task.id)
 
     assert result["status"] == "failed"
-    assert result["error"]["code"] == "unsubscribe_operation_rejected:ValueError"
+    assert result["error"]["code"] == "email_unsubscribe_outcome_unresolved"
+    assert result["error"]["retryable"] is False
     assert "requires reconciliation" in result["summary"]
     assert browser.calls == []
     assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
+    with sqlite3.connect(email_store.path) as db:
+        marker_after = db.execute(
+            "select value from service_state where key=?",
+            (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",),
+        ).fetchone()[0]
+    assert marker_after == marker_before
 
 
 def test_retryable_external_failures_cannot_exceed_the_worker_retry_budget(
@@ -552,6 +564,7 @@ def test_retryable_external_failures_cannot_exceed_the_worker_retry_budget(
 
     assert exhausted["status"] == "failed"
     assert exhausted["error"]["retryable"] is False
+    assert exhausted["error"]["code"] == "email_unsubscribe_outcome_unresolved"
     assert "budget exhausted" in exhausted["summary"]
     assert len(browser.calls) == TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
     assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
