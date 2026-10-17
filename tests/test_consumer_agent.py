@@ -112,6 +112,7 @@ def test_consumer_revision_prompt_keeps_feedback_time_and_replacement_contract()
 def test_consumer_revision_context_reuse_requires_matching_audit_chain(
     monkeypatch,
 ):
+    from pathlib import Path
     from types import SimpleNamespace
 
     feedback = AuditFeedback(
@@ -159,7 +160,14 @@ def test_consumer_revision_context_reuse_requires_matching_audit_chain(
         def list_agent_runs_for_task_generation(self, *_args, **_kwargs):
             return [prior]
 
-    monkeypatch.setattr(consumer_agent, "count_codex_session_lines", lambda _: 8)
+    expected_codex_home = Path("/configured/codex-home")
+    count_calls = []
+    monkeypatch.setattr(consumer_agent, "_codex_home", lambda: expected_codex_home)
+    monkeypatch.setattr(
+        consumer_agent,
+        "count_codex_session_lines",
+        lambda _session_id, **kwargs: count_calls.append(kwargs) or 8,
+    )
     marker_calls = []
     monkeypatch.setattr(
         consumer_agent,
@@ -177,6 +185,8 @@ def test_consumer_revision_context_reuse_requires_matching_audit_chain(
         feedback=feedback,
     )
     assert marker_calls[0][0][1] == "consumer-source-context-sha256:" + "b" * 64
+    assert count_calls == [{"codex_home": expected_codex_home}]
+    assert marker_calls[0][1]["codex_home"] == expected_codex_home
 
 
 @pytest.mark.parametrize(
@@ -226,7 +236,9 @@ def test_consumer_revision_context_reuse_fails_closed_on_grown_or_compacted_sess
             return [prior]
 
     monkeypatch.setattr(
-        consumer_agent, "count_codex_session_lines", lambda _: session_lines
+        consumer_agent,
+        "count_codex_session_lines",
+        lambda _session_id, **_kwargs: session_lines,
     )
     monkeypatch.setattr(
         consumer_agent,

@@ -133,7 +133,8 @@ Consumer 收到 Audit return/reject 后，仅当任务代次、候选与审核�
 Codex session 均匹配，且 transcript 自上一 Consumer turn 后无新增内容、无 compaction 时，才
 复用该 session 的源上下文，并提交本轮时间、完整 Audit feedback、必要的 runtime correction 与
 完整替代候选要求。指纹绑定 Developer 指令、稳定 Task 输入、输出契约及图片来源。轨迹缺失、检查
-失败、session 被其他 turn 追加或路线不匹配时，回退到完整输入。运行快照记录本轮实际选用的 prompt；
+失败、session 被其他 turn 追加或路线不匹配时，回退到完整输入。尾部行数、marker 和本轮输入解析
+共用同一个已解析的 Codex home，避免 `CODEX_HOME` 与默认目录中的同 ID 副本造成误判。运行快照记录本轮实际选用的 prompt；
 Audit 独立性、结果校验、反馈次数及任务生命周期均不变。
 
 冻结 Task Skill 的入口只提交名称、用途与当前正文 SHA-256，不内联正文。冷启动、正文未在当前原生 session 完整可见、或哈希不匹配时，读取任务冻结的正文；同一 session 中仍完整可见且哈希匹配时复用已有正文。安装版 Skill 仍按精确入口按需读取；独立 Audit session 自行读取适用 Skill。
@@ -1248,7 +1249,7 @@ source_metrics 是正文字符观测，不是总 prompt token 保证；检索排
 Task Agent 共享 task-agent:work-tracking:v1 逻辑 session，各 route 保留各自原生 session，
 native CLI 自行 compact；每个 WorkItem 仍独立 workload/run。process-work-items 领取前持有 SQLite
 共享会话锁，运行时续租并在提交前核验；失锁本轮不提交，普通既有重试策略不变。
-相邻 WorkItem 的渲染语义 Project/Task 上下文完全相同时，只在同一 Codex route/session 的上一完整输入仍可读、输入指纹匹配、transcript 尾部未增长且期间无 compaction 时，后续轮次才复用该上下文；当前 WorkItem、当前指令和完整结果合同每轮重新提交。来源变化、route/session 变化、compaction、尾部变化或轨迹不可读时完整注入。
+相邻 WorkItem 的渲染语义 Project/Task 上下文完全相同时，只在同一 Codex route/session 的上一完整输入仍可读、输入指纹匹配、transcript 尾部未增长且期间无 compaction 时，后续轮次才复用该上下文；尾部行数、marker 和本轮输入解析共用同一个已解析的 Codex home。当前 WorkItem、当前指令和完整结果合同每轮重新提交。来源变化、route/session 变化、compaction、尾部变化或轨迹不可读时完整注入。
 旧 task:<run_id> session 历史保留。prompt 使用当前选定 Skill 根目录中的 ceo-work-tracking 正文，不固定历史 revision；旧 scheduled
 skill_protocol 不注入，scheduled prompt 仅保留专项业务范围，旧 payload/history 不改。只读工具行为由 prompt 引导，不是技术上禁用 CLI/MCP 写入的权限边界。
 

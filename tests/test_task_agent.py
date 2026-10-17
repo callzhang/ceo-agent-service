@@ -1259,6 +1259,7 @@ class FakeCodexWithAuditEvents(FakeCodex):
 def test_task_agent_reuses_identical_context_only_with_verified_codex_tail(
     monkeypatch, guard_result, tail_advanced
 ):
+    from pathlib import Path
     from app.agent_runtime_contracts import RuntimeKind
     from app.task_agent import TaskAgentRunner
 
@@ -1286,9 +1287,13 @@ def test_task_agent_reuses_identical_context_only_with_verified_codex_tail(
             return result
 
     codex = ContextCodex(payload)
+    expected_codex_home = Path("/configured/codex-home")
+    count_calls = []
+    monkeypatch.setattr("app.task_agent._codex_home", lambda: expected_codex_home)
     monkeypatch.setattr(
         "app.codex_history.count_codex_session_lines",
-        lambda _session_id: codex.last_transcript_end_line + int(tail_advanced),
+        lambda _session_id, **kwargs: count_calls.append(kwargs)
+        or codex.last_transcript_end_line + int(tail_advanced),
     )
     guard_calls = []
 
@@ -1325,6 +1330,8 @@ def test_task_agent_reuses_identical_context_only_with_verified_codex_tail(
     if guard_calls:
         assert guard_calls[0][0] == "task-session-repeat"
         assert guard_calls[0][1].startswith("task-semantic-context-sha256:")
+        assert count_calls == [{"codex_home": expected_codex_home}]
+        assert guard_calls[0][2]["codex_home"] == expected_codex_home
 
 
 def test_task_agent_keeps_full_context_when_semantic_context_changes(monkeypatch):
@@ -1357,7 +1364,7 @@ def test_task_agent_keeps_full_context_when_semantic_context_changes(monkeypatch
     codex = ContextCodex(payload)
     monkeypatch.setattr(
         "app.codex_history.count_codex_session_lines",
-        lambda _session_id: codex.last_transcript_end_line,
+        lambda _session_id, **_kwargs: codex.last_transcript_end_line,
     )
     monkeypatch.setattr(
         "app.native_trajectory.codex_session_has_final_user_marker_without_compaction",

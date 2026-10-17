@@ -50,6 +50,7 @@ from app.business_skills import (
 from app.managed_skills import RuntimeSkillSnapshot
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
+from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
@@ -196,8 +197,11 @@ def _consumer_revision_context_reusable(
     prior_attempt = completed_codex_attempt(prior_run.id)
     if prior_attempt is None:
         return False
+    codex_home = _codex_home()
     try:
-        if count_codex_session_lines(session_id) != prior_attempt.transcript_end:
+        if count_codex_session_lines(
+            session_id, codex_home=codex_home
+        ) != prior_attempt.transcript_end:
             return False
     except (OSError, UnicodeError):
         return False
@@ -224,6 +228,7 @@ def _consumer_revision_context_reusable(
     return codex_session_has_final_user_marker_without_compaction(
         session_id,
         marker,
+        codex_home=codex_home,
         context_start_line=initial_attempt.transcript_start,
         attempt_start_line=prior_attempt.transcript_start,
         attempt_end_line=prior_attempt.transcript_end,

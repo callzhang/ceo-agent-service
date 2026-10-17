@@ -22,7 +22,7 @@ from app.agent_runtime_router import (
     RoutedResultValidationError,
     RoutedResultValidationRetry,
 )
-from app.codex_runner import memory_connector_config_issue
+from app.codex_runner import _codex_home, memory_connector_config_issue
 from app.external_retry import ExternalDependencyError
 from app.agent_result import agent_message_json_objects
 from app.routed_result_privacy import audit_references_from_full_events
@@ -365,8 +365,11 @@ class TaskAgentRunner:
             )
 
             session_id = prior.session_id
+            codex_home = _codex_home()
             try:
-                session_end_line = count_codex_session_lines(session_id)
+                session_end_line = count_codex_session_lines(
+                    session_id, codex_home=codex_home
+                )
             except (OSError, UnicodeError):
                 session_end_line = -1
             if (
@@ -374,6 +377,7 @@ class TaskAgentRunner:
                 and codex_session_has_final_user_marker_without_compaction(
                     session_id,
                     prior.marker,
+                    codex_home=codex_home,
                     context_start_line=prior.context_start_line,
                     attempt_start_line=prior.attempt_start_line,
                     attempt_end_line=prior.attempt_end_line,
