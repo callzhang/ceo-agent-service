@@ -41,6 +41,10 @@ def reconcile_oa_return_attempt(
         return SystemExecutor._failure(
             "oa_reconciliation_review_stale", "Attempt is not bound to the current reviewed candidate"
         )
+    if attempt.agent_run_id != current.get("audit_run_id"):
+        return SystemExecutor._failure(
+            "oa_reconciliation_attempt_mismatch", "Attempt is not bound to this Audit run"
+        )
     try:
         candidate = parse_persisted_consumer_result(candidate_row["candidate_json"])
     except ValueError:
@@ -54,9 +58,9 @@ def reconcile_oa_return_attempt(
         )
     action: ProposedAction = plan.actions[0]
     if (action.capability != "dingtalk-oa" or action.operation != "revert_task"
-        or action.target.get("process_instance_id") != attempt.oa_process_instance_id
-        or action.target.get("task_id") != attempt.oa_task_id
-        or action.payload.get("remark") != attempt.oa_remark):
+        or (attempt.oa_process_instance_id and action.target.get("process_instance_id") != attempt.oa_process_instance_id)
+        or (attempt.oa_task_id and action.target.get("task_id") != attempt.oa_task_id)
+        or (attempt.oa_remark and action.payload.get("remark") != attempt.oa_remark)):
         return SystemExecutor._failure(
             "oa_reconciliation_action_mismatch", "Reviewed action is not this Attempt's OA return"
         )

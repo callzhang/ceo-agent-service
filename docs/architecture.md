@@ -34,8 +34,9 @@ override task closure; the projection does not modify the Attempt, candidate,
 or execution receipt.
 
 An operator may reconcile one existing uncertain OA return through the dedicated
-History endpoint. It requires the exact current reviewed candidate/review, matching
-Attempt process/task identity, one existing uncertain action journal, and a current
+History endpoint. It requires the exact current reviewed candidate/review, an
+Attempt linked to that Audit run (and matching any OA identity fields already
+stored on the Attempt), one existing uncertain action journal, and a current
 uncertain execution. The executor reuses the original action identity and runs in
 reconciliation-only mode: only the registered OA handler's readback can update
 the action ledger and execution projection; the dispatch path is unavailable. The

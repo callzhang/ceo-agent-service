@@ -146,6 +146,9 @@ def test_return_acceptance_survives_store_reopen_and_changed_source(tmp_path, mo
         oa_process_instance_id="process", oa_task_id="original",
         oa_remark="Need exact handover facts", send_status="uncertain",
     )
+    from app.action_storage import update_action
+    with store._immediate_write_transaction() as db:
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
 
     reopened = AutoReplyStore(store.path)
     from app.oa_reconciliation import reconcile_oa_return_attempt
