@@ -8,7 +8,11 @@ from app.store import AutoReplyStore
 def seed_failed_job(store):
     return store.upsert_meeting_alignment_job(
         meeting_id="recording-one", title="Business review",
-        source_json='{"source":"original"}', participants_json="[]",
+        source_json=json.dumps({
+            "meeting_id": "recording-one",
+            "calendar_evidence": {"source": "calendar"},
+            "source": "original",
+        }), participants_json="[]",
         ended_at="2026-10-01T10:00:00+00:00",
         eligible_at="2026-10-01T10:00:00+00:00", status="failed",
     )
@@ -60,3 +64,64 @@ def test_analysis_rerun_preserves_identity_history_and_ignores_expired_claim(tmp
     assert json.loads(after.send_result_json) == {}
     assert store.get_meeting_alignment_run(run_id).status == "failed"
     assert store.rerun_meeting_alignment_jobs([job_id]) == []
+
+
+def test_complete_asr_transcript_requeues_the_same_failed_unsent_meeting(tmp_path):
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    job_id = seed_failed_job(store)
+    run_id = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="old-session",
+        decision_json="{}",
+        audit_summary="Transcript source unavailable",
+        status="failed",
+        error="complete transcript is unavailable",
+    )
+    evidence = {
+        "provider": "ai_services",
+        "model": "qwen3-asr",
+        "audio_sha256": "a" * 64,
+        "audio_duration_seconds": 120.0,
+        "completed_chunks": 1,
+        "total_chunks": 1,
+        "segments": [
+            {"start_seconds": 1.5, "end_seconds": 4.0, "text": "Reviewed the page."}
+        ],
+    }
+
+    recovered = store.attach_asr_transcript_and_rerun_meeting_job(job_id, evidence)
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert recovered == job_id
+    assert job.status == "retry"
+    assert job.meeting_id == "recording-one"
+    assert json.loads(job.source_json)["asr_transcript"] == evidence
+    assert job.decision_json == "{}"
+    assert job.send_result_json == "{}"
+    assert store.get_meeting_alignment_run(run_id).status == "failed"
+    assert store.attach_asr_transcript_and_rerun_meeting_job(job_id, evidence) is None
+
+
+def test_asr_transcript_rerun_preserves_existing_delivery_guards(tmp_path):
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    job_id = seed_failed_job(store)
+    key = f"meeting-alignment:{job_id}:recording-one"
+    store.prepare_outbound_postfix("dingtalk", key, "Summary", "Original")
+    store.record_outbound_postfix_receipt(
+        "dingtalk", key, {"openTaskId": "already-dispatched"}
+    )
+    before = store.get_meeting_alignment_job(job_id)
+    evidence = {
+        "provider": "ai_services",
+        "model": "qwen3-asr",
+        "audio_sha256": "a" * 64,
+        "audio_duration_seconds": 120.0,
+        "completed_chunks": 1,
+        "total_chunks": 1,
+        "segments": [
+            {"start_seconds": 1.5, "end_seconds": 4.0, "text": "Reviewed the page."}
+        ],
+    }
+
+    assert store.attach_asr_transcript_and_rerun_meeting_job(job_id, evidence) is None
+    assert store.get_meeting_alignment_job(job_id) == before

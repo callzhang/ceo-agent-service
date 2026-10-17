@@ -788,6 +788,90 @@ def test_parser_supports_worker_commands():
     assert args.db == "/tmp/worker.sqlite3"
 
 
+def test_parser_supports_meeting_asr_transcript_import_preview_and_apply():
+    parser = build_parser()
+    preview = parser.parse_args(
+        [
+            "import-meeting-asr-transcript",
+            "--job-id",
+            "404973",
+            "--input-json",
+            "/tmp/asr-transcript.json",
+        ]
+    )
+    apply = parser.parse_args(
+        [
+            "import-meeting-asr-transcript",
+            "--job-id",
+            "404973",
+            "--input-json",
+            "/tmp/asr-transcript.json",
+            "--apply",
+        ]
+    )
+
+    assert preview.command == "import-meeting-asr-transcript"
+    assert preview.job_id == 404973
+    assert preview.apply is False
+    assert apply.apply is True
+
+
+def test_meeting_asr_import_command_previews_then_applies_same_failed_job(
+    tmp_path, capsys
+):
+    from types import SimpleNamespace
+
+    from app.meeting_alignment import TERMINAL_STATUSES
+    from app.store import AutoReplyStore
+
+    db_path = tmp_path / "meeting.sqlite3"
+    store = AutoReplyStore(db_path)
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="recording-one",
+        title="Review",
+        source_json=json.dumps({
+            "meeting_id": "recording-one",
+            "calendar_evidence": {"source": "calendar"},
+        }),
+        participants_json="[]",
+        ended_at="2026-10-15T04:02:40+00:00",
+        eligible_at="2026-10-15T04:02:40+00:00",
+        status="failed",
+    )
+    transcript_path = tmp_path / "asr.json"
+    transcript_path.write_text(
+        json.dumps({
+            "provider": "ai_services",
+            "model": "qwen3-asr",
+            "audio_sha256": "a" * 64,
+            "audio_duration_seconds": 120,
+            "completed_chunks": 1,
+            "total_chunks": 1,
+            "segments": [
+                {"start_seconds": 1, "end_seconds": 2, "text": "Page review."}
+            ],
+        }),
+        encoding="utf-8",
+    )
+    settings = SimpleNamespace(db_path=db_path, dry_run=False)
+
+    preview = cli.import_meeting_asr_transcript_command(
+        settings, job_id=job_id, input_json=transcript_path
+    )
+    assert preview["applied"] is False
+    assert store.get_meeting_alignment_job(job_id).status == "failed"
+    assert json.loads(capsys.readouterr().out)["applied"] is False
+
+    applied = cli.import_meeting_asr_transcript_command(
+        settings, job_id=job_id, input_json=transcript_path, apply=True
+    )
+    assert applied["recovered_job_id"] == job_id
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.status not in TERMINAL_STATUSES
+    assert "asr_transcript" in json.loads(job.source_json)
+
+
 def test_parser_supports_detached_repository_updater():
     args = build_parser().parse_args(
         ["repository-updater", "--operation-id", "op-1", "--db", "/tmp/worker.sqlite3"]

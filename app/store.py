@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -17883,6 +17884,102 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ids,
             ).fetchall()
             return [int(row["id"]) for row in rows]
+
+    def attach_asr_transcript_and_rerun_meeting_job(
+        self, job_id: int, transcript: dict[str, Any]
+    ) -> int | None:
+        """Bind a complete, provenance-bearing ASR transcript to one failed job.
+
+        This is a same-identity source recovery, not a delivery retry. It applies
+        the ordinary meeting rerun effect guards and preserves prior runs.
+        """
+        from app.meeting_alignment_source import MeetingAsrTranscript
+
+        if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
+            return None
+        evidence = MeetingAsrTranscript.model_validate(transcript)
+        transcript_json = evidence.model_dump(mode="json")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                """select id, legacy_key, meeting_id, status, locked_at,
+                          source_json, decision_json, send_result_json, updated_at
+                   from tasks
+                   where record_type='meeting_alignment_jobs'
+                     and cast(legacy_key as integer)=?""",
+                (job_id,),
+            ).fetchone()
+            if row is None or row["status"] != "failed" or row["locked_at"]:
+                return None
+            try:
+                source = json.loads(row["source_json"] or "{}")
+            except (TypeError, ValueError):
+                return None
+            if (
+                not isinstance(source, dict)
+                or source.get("meeting_id") != row["meeting_id"]
+                or "asr_transcript" in source
+                or not isinstance(source.get("calendar_evidence"), dict)
+                or source["calendar_evidence"].get("source") != "calendar"
+                or row["send_result_json"] != "{}"
+            ):
+                return None
+            delivery_key = (
+                "meeting-alignment:" + str(row["legacy_key"]) + ":" + row["meeting_id"]
+            )
+            if db.execute(
+                f"""select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound
+                    where outbound.channel='dingtalk'
+                      and outbound.delivery_key in (?, ?)
+                    limit 1""",
+                (delivery_key, delivery_key + ":sensitive"),
+            ).fetchone():
+                return None
+            if db.execute(
+                "select 1 from meeting_alignment_delivery_claims where job_id=? limit 1",
+                (job_id,),
+            ).fetchone():
+                return None
+            if db.execute(
+                """select 1 from dispatcher_claim_leases
+                   where adapter_name='meeting' and source_id=?
+                     and coalesce(terminal_at,'')=''
+                     and julianday(lease_expires_at)>julianday('now') limit 1""",
+                (str(job_id),),
+            ).fetchone():
+                return None
+            if db.execute(
+                """select 1 from runs
+                   where record_type='meeting_alignment_runs' and task_id=?
+                     and status='running' limit 1""",
+                (job_id,),
+            ).fetchone():
+                return None
+            if db.execute(
+                f"""select 1 from ({RUNTIME_ATTEMPT_SQL}) runtime
+                    join runs run on runtime.workload_key=run.legacy_key
+                    where runtime.workload_kind='meeting'
+                      and run.record_type='meeting_alignment_runs'
+                      and run.task_id=? and runtime.status in ('starting','running')
+                    limit 1""",
+                (job_id,),
+            ).fetchone():
+                return None
+
+            source["asr_transcript"] = transcript_json
+            source_json = json.dumps(source, ensure_ascii=False, sort_keys=True)
+            updated = db.execute(
+                """update tasks
+                   set source_json=?, status='retry', attempts=0, locked_at=null,
+                       available_at='', error='', decision_json='{}', target_kind='',
+                       target_id='', target_title='', mentions_json='[]',
+                       final_message='', updated_at=current_timestamp
+                   where record_type='meeting_alignment_jobs' and id=?
+                     and status='failed' and coalesce(locked_at,'')=''
+                     and source_json=? and updated_at=? and send_result_json='{}'
+                   returning cast(legacy_key as integer)""",
+                (source_json, row["id"], row["source_json"], row["updated_at"]),
+            ).fetchone()
+            return int(updated[0]) if updated else None
 
     def baseline_meeting_alignment_jobs_before(
         self,
