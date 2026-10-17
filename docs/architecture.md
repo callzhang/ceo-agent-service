@@ -1742,6 +1742,8 @@ Attempt 详情的 system_execution 按 candidate、review、selection 绑定显�
 
 独立 Email 退订仍使用原有 direct executor、浏览器步骤和回执；已识别的可重试外部页面/网络失败按指数退避重试，耗尽后仍以 `failed` 保留在 History，不作为管理者 Attention。旧格式 `failed_browser: category=<名称>` 与当前错误格式共享外部错误分类。服务自身的执行围栏错误（如 `unsubscribe_operation_rejected:ValueError`）不归入外部错误；结果不确定时保留真实失败并等回读，不重放操作或清除标记。效果零副作用的旧失败任务也只有在 ActionPlan 完整且没有执行中标记、claim、receipt、effect、浏览器 step 或 Agent run 时才会自动重新入队。无运行时调用者的旧 Agent continuation driver 已删除；Agent finalizer 不再从历史 Audit 声明触发退订、切换渠道或伪造执行成功。默认 developer prompt 和 OA 规则种子统一为新角色合同；既有自定义规则、managed Skill 配置与 runtime-only Skill 必须在安静的正式发布窗口中逐项发布并记录版本，部署代码本身不会覆盖它们。
 
+退订入口导航遇到超时时，若同一次导航已离开空白页，执行器直接读取当前页面并检查真实页面回执，不再请求退订 URL；若仍停留在空白页，则保留外部超时失败并沿用有界退避。该读回只恢复已经到达的页面证据，不清除未知执行围栏，也不把页面未读成成功。
+
 原生 OA detail 明确 success=false 时，来源读取边界保留 errcode/errorCode 及 errmsg/errorMessage，按提供方错误记录原 server/code/认证属性；不把 native 失败 envelope 当成空表单或通用 Codex 错误。Consumer 失败 run 保留原始脱敏说明，System 执行技术失败保留来源和原码，不派发或制造业务人工问题。
 
 Consumer/Audit stages (2026-10-04): immediate continuation is reserved for work whose inputs are established by the preceding verified action, such as approval followed by applicant notification. Material requests complete their own stage and wait for a later source update; their delivery receipt is not evidence that materials arrived. Audit uses the same complete production review instructions as the frozen model evaluation, and checks actual provider identities and complete effects rather than outcome labels alone.
