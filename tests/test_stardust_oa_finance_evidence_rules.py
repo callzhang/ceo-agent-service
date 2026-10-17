@@ -78,6 +78,15 @@ def test_supplier_payment_tracker_status_is_not_customer_acceptance_evidence() -
         assert "count of prior returns" in text
 
 
+def test_unknown_customer_correspondence_is_not_an_applicant_omission() -> None:
+    skill_text = FINANCE_SKILL.read_text(encoding="utf-8")
+    card_text = FINANCE_RULE_CARD_PATHS[0].read_text(encoding="utf-8")
+    for text in (skill_text, card_text):
+        assert "未取得客户邮件正文不等于申请人未提交客户确认" in text
+        assert "不得仅因审阅方未取得第三方客户回复而要求申请人补交" in text
+        assert "只有独立证据证明申请材料确实缺少该项" in text
+
+
 def test_supplier_payment_tracks_readability_per_attachment() -> None:
     text = FINANCE_RULE_CARD_PATHS[0].read_text(encoding="utf-8")
     assert "Per-attachment read ledger (supplier payment)" in text
