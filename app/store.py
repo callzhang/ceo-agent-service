@@ -24390,13 +24390,99 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return reconciled
 
     def reconcile_invalid_needs_human_projections(self) -> int:
-        """Do not rewrite historical human-decision or terminal projections.
+        """Close current human projections whose approved candidate is invalid.
 
-        New questions are created only from a persisted approved candidate.
-        Legacy attempts remain readable, while the current projections and
-        decision endpoint separately decide whether they are actionable.
+        A legacy input-only question can remain readable as historical evidence,
+        but it is not a valid current needs-human result. Retain the candidate,
+        review and run unchanged; only close the current task/Attempt projection
+        so startup recovery cannot revive the question.
         """
-        return 0
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(f"""
+                select t.id as task_id, t.execution_generation,
+                       a.id as attempt_id, a.agent_run_id,
+                       c.id as candidate_id, c.candidate_json,
+                       r.audit_run_id
+                from ({REPLY_TASK_SQL}) t
+                join ({REVIEW_CANDIDATE_SQL}) c on c.task_id=t.id
+                  and c.execution_generation=t.execution_generation
+                  and c.invalidated_at=''
+                join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
+                  and r.decision='approve' and r.candidate_digest=c.candidate_digest
+                join ({REPLY_ATTEMPT_COMMON_SQL}) a on a.channel=t.channel
+                  and a.conversation_id=t.conversation_id
+                  and a.trigger_message_id=t.trigger_message_id
+                left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
+                where t.status='needs_human' and a.send_status='needs_human'
+                  and a.reviewed_at is null and trim(coalesce(a.resolved_at,''))=''
+                  and choice.id is null
+                  and a.agent_run_id=r.audit_run_id
+                  and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
+                      where newest.task_id=t.id and newest.execution_generation=t.execution_generation)
+                  and a.id=(select max(newest.id) from ({REPLY_ATTEMPT_COMMON_SQL}) newest
+                      where newest.channel=t.channel and newest.conversation_id=t.conversation_id
+                        and newest.trigger_message_id=t.trigger_message_id)
+                  and exists(select 1 from business_object_tasks current_object
+                      where current_object.business_object_key=t.business_object_key
+                        and current_object.reply_task_id=t.id)
+                order by t.id
+            """).fetchall()
+            reconciled = 0
+            for row in rows:
+                if self._is_actionable_needs_human_candidate(row["candidate_json"]):
+                    continue
+
+                task_cursor = db.execute(
+                    """
+                    update tasks as reply_tasks
+                    set status='failed', error='invalid_needs_human_projection',
+                        available_at='', locked_at=null, updated_at=current_timestamp
+                    where reply_tasks.record_type='reply_tasks' and id=?
+                      and status='needs_human' and execution_generation=?
+                    """,
+                    (row["task_id"], row["execution_generation"]),
+                )
+                if task_cursor.rowcount != 1:
+                    continue
+                attempt_cursor = update_action(
+                    db,
+                    "reply_attempts",
+                    row["attempt_id"],
+                    {
+                        "send_status": "failed",
+                        "send_error": "invalid_needs_human_projection",
+                        "human_decision_options_json": "[]",
+                        "updated_at": db.execute(
+                            "select current_timestamp"
+                        ).fetchone()[0],
+                    },
+                    where_sql="agent_run_id=? and send_status='needs_human' "
+                    "and reviewed_at is null and trim(coalesce(resolved_at,''))=''",
+                    parameters=(row["audit_run_id"],),
+                )
+                reconciled += attempt_cursor.rowcount
+            return reconciled
+
+    @staticmethod
+    def _is_actionable_needs_human_candidate(candidate_json: object) -> bool:
+        """Recognize only a current reusable task-class rule question."""
+        from app.agent_contracts import ConsumerOutcome, parse_persisted_consumer_result
+
+        try:
+            candidate = parse_persisted_consumer_result(
+                str(candidate_json or "")
+            )
+        except ValueError:
+            return False
+        return (
+            candidate.outcome is ConsumerOutcome.NEEDS_HUMAN
+            and candidate.requested_input is None
+            and 2 <= len(candidate.decision_options) <= 4
+            and all(
+                option.applies_to == "task_class"
+                for option in candidate.decision_options
+            )
+        )
 
     def reconcile_valid_needs_human_projections(self) -> int:
         """Restore only a current, unselected, Audit-approved persisted question.
@@ -24439,7 +24525,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     candidate = json.loads(row["candidate_json"])
                 except (TypeError, json.JSONDecodeError):
                     continue
-                if candidate.get("outcome") != "needs_human":
+
+                if not self._is_actionable_needs_human_candidate(
+                    json.dumps(candidate, ensure_ascii=False)
+                ):
                     continue
                 # A completed Audit run identifies the exact reviewed question.
                 # Never bind a failed projection to a different run.
