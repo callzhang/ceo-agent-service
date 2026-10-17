@@ -556,7 +556,21 @@ class DirectEmailUnsubscribeOperation:
                 effect, entry, one_click_verified=one_click_verified,
                 executed=executed, persist_result=persist_result, start_execution=start_execution,
             )
-            return _normalize_result(result).model_dump(mode="json")
+            normalized = _normalize_result(result).model_dump(mode="json")
+            error = normalized.get("error")
+            if (
+                not result.receipt
+                and execution_record
+                and normalized.get("status") == "failed"
+                and isinstance(error, dict)
+                and error.get("retryable") is True
+            ):
+                self.task_store.record_direct_email_unsubscribe_retryable_failure(
+                    action_identity,
+                    execution_record,
+                    str(error.get("code") or ""),
+                )
+            return normalized
         except Exception as exc:  # noqa: BLE001 - a public tool fails closed
             detail = _rejection_detail(exc)
             return _failed_call(

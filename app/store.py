@@ -13964,8 +13964,34 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     or task["input_version"] != input_version
                     or hashlib.sha256(self._reply_task_from_row(task).trigger_message_json.encode("utf-8")).hexdigest() != input_digest):
                 raise AgentRunLeaseLostError("unsubscribe execution identity changed")
-            if db.execute("select 1 from service_state where key=?", (key,)).fetchone():
-                raise ValueError("unsubscribe execution requires reconciliation")
+            pending = db.execute(
+                "select value from service_state where key=?", (key,)
+            ).fetchone()
+            retry_count = 0
+            if pending is not None:
+                try:
+                    previous = json.loads(pending["value"])
+                except (TypeError, json.JSONDecodeError):
+                    previous = None
+                from app.email_unsubscribe import (
+                    TRANSIENT_BROWSER_ERROR_CODES,
+                    TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES,
+                )
+
+                if (
+                    not isinstance(previous, dict)
+                    or previous.get("state") != "retryable"
+                    or previous.get("error_code") not in TRANSIENT_BROWSER_ERROR_CODES
+                    or previous.get("task_id") != task_id
+                    or previous.get("action_identity") != action_identity
+                    or previous.get("execution_generation") != execution_generation
+                    or previous.get("input_version") != input_version
+                    or previous.get("input_digest") != input_digest
+                ):
+                    raise ValueError("unsubscribe execution requires reconciliation")
+                retry_count = int(previous.get("retry_count") or 0)
+                if retry_count >= TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
+                    raise ValueError("unsubscribe external retry budget exhausted")
             receipt = db.execute("select effect_digest,outcome from email_unsubscribe_receipts where action_identity=?", (action_identity,)).fetchone()
             if receipt is not None and (
                 receipt["effect_digest"] != previous_receipt_digest or receipt["outcome"] not in _RETRYABLE_SKIP_OUTCOMES
@@ -13979,10 +14005,52 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "task_id": task_id, "action_identity": action_identity,
                 "execution_generation": execution_generation, "input_version": input_version,
                 "input_digest": input_digest, "owner_pid": os.getpid(),
+                "state": "pending", "retry_count": retry_count,
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }, sort_keys=True)
-            db.execute("insert into service_state(key,value) values (?,?)", (key, value))
+            db.execute(
+                "insert into service_state(key,value) values (?,?) "
+                "on conflict(key) do update set value=excluded.value",
+                (key, value),
+            )
             return value
+
+    def record_direct_email_unsubscribe_retryable_failure(
+        self, action_identity: str, execution_record: str, error_code: str
+    ) -> None:
+        """Authorize a bounded retry only after a typed transient browser error."""
+        from app.email_unsubscribe import TRANSIENT_BROWSER_ERROR_CODES
+
+        if error_code not in TRANSIENT_BROWSER_ERROR_CODES:
+            raise ValueError("unsubscribe failure is not an external transient")
+        key = f"email_unsubscribe_execution_pending:v1:{action_identity}"
+        with self._immediate_write_transaction() as db:
+            if db.execute(
+                "select 1 from email_unsubscribe_receipts where action_identity=?",
+                (action_identity,),
+            ).fetchone() is not None:
+                raise ValueError("unsubscribe terminal receipt already exists")
+            row = db.execute(
+                "select value from service_state where key=?", (key,)
+            ).fetchone()
+            if row is None or row["value"] != execution_record:
+                raise ValueError("unsubscribe execution marker changed")
+            try:
+                marker = json.loads(execution_record)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValueError("unsubscribe execution marker is invalid") from exc
+            if not isinstance(marker, dict) or marker.get("state") != "pending":
+                raise ValueError("unsubscribe execution marker is not pending")
+            marker.update(
+                state="retryable",
+                retry_count=int(marker.get("retry_count") or 0) + 1,
+                error_code=error_code,
+                failed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            db.execute(
+                "update service_state set value=? where key=? and value=?",
+                (json.dumps(marker, sort_keys=True), key, execution_record),
+            )
 
     def settle_direct_email_unsubscribe_execution(self, action_identity: str, execution_record: str) -> None:
         """Clear only this attempt's fence after a real terminal receipt exists."""
