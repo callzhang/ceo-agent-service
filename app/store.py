@@ -26524,11 +26524,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and trim(coalesce(attempts.resolved_at, ''))=''
                   and trim(coalesce(attempts.oa_process_instance_id, ''))<>''
                   and trim(coalesce(attempts.oa_task_id, ''))<>''
-                  and attempts.id=(
-                      select max(latest.id)
-                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
-                      where latest.oa_process_instance_id=attempts.oa_process_instance_id
-                  )
                   and not exists (
                       select 1
                       from ({REPLY_TASK_CURRENT_SQL}) as tasks
@@ -26572,13 +26567,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 or current["oa_task_id"] != task_id
                 or str(current["resolved_at"] or "").strip()
             ):
-                return False
-            latest = db.execute(
-                f"select max(id) from ({REPLY_ATTEMPT_COMMON_SQL}) "
-                "where oa_process_instance_id=?",
-                (process_id,),
-            ).fetchone()[0]
-            if int(latest or 0) != attempt_id:
                 return False
             owner = db.execute(
                 f"""select 1 from ({REPLY_TASK_CURRENT_SQL}) tasks

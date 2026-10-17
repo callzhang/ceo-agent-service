@@ -34,23 +34,28 @@ def test_unbound_failed_oa_attempt_is_skipped_only_after_exact_terminal_readback
         oa_process_instance_id="process-1",
         oa_task_id="task-1",
     )
+    older_attempt = SimpleNamespace(**{
+        **vars(attempt), "id": 4593, "trigger_message_id": "older-message"
+    })
 
     class Store:
         def list_unbound_failed_oa_attempts(self, *, limit):
             assert limit == 100
-            return [attempt]
+            return [attempt, older_attempt]
 
         def skip_unbound_failed_oa_attempt(
             self, attempt_id, *, process_instance_id, oa_task_id, terminal_evidence
         ):
-            assert (attempt_id, process_instance_id, oa_task_id) == (
-                4594, "process-1", "task-1"
-            )
+            assert process_instance_id == "process-1"
+            assert oa_task_id == "task-1"
             self.evidence = terminal_evidence
-            return True
+            return attempt_id in {4593, 4594}
 
     class Dws:
+        calls = 0
+
         def read_oa_process_instance_openapi(self, process_id):
+            self.calls += 1
             assert process_id == "process-1"
             return {"result": {
                 "status": "COMPLETED",
@@ -59,7 +64,9 @@ def test_unbound_failed_oa_attempt_is_skipped_only_after_exact_terminal_readback
             }}
 
     store = Store()
-    assert reconcile_unbound_failed_oa_attempts(store, Dws()) == [4594]
+    dws = Dws()
+    assert reconcile_unbound_failed_oa_attempts(store, dws) == [4594, 4593]
+    assert dws.calls == 1
     assert "process-1" in store.evidence
     assert "task-1" in store.evidence
     assert "COMPLETED" in store.evidence

@@ -1082,21 +1082,27 @@ def reconcile_unbound_failed_oa_attempts(
     """Skip only failed OA Attempts whose exact process and task are terminal.
 
     This covers legacy Attempts that predate a locally owning Reply Task or
-    Consumer run. The native read is read-only; any incomplete or mismatched
-    state leaves the original failure actionable.
+    Consumer run. Each Attempt is closed only after the same read-only source
+    check, and a repeated process detail is read once per scan. An incomplete
+    or mismatched state leaves the original failure actionable.
     """
     read_detail = getattr(dws, "read_oa_process_instance_openapi", None)
     if read_detail is None:
         return []
     reconciled: list[int] = []
+    detail_by_process: dict[str, Any] = {}
     for attempt in store.list_unbound_failed_oa_attempts(limit=limit):
         process_id = str(attempt.oa_process_instance_id or "").strip()
         oa_task_id = str(attempt.oa_task_id or "").strip()
         if not process_id or not oa_task_id:
             continue
-        try:
-            detail = read_detail(process_id)
-        except Exception:
+        if process_id not in detail_by_process:
+            try:
+                detail_by_process[process_id] = read_detail(process_id)
+            except Exception:
+                detail_by_process[process_id] = None
+        detail = detail_by_process[process_id]
+        if detail is None:
             continue
         process_state = _oa_terminal_process_state(detail)
         if process_state is None:

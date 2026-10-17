@@ -849,7 +849,7 @@ def test_history_does_not_call_unbound_oa_failure_recovered_without_a_task(tmp_p
     assert recovered_rows == []
 
 
-def test_unbound_failed_oa_attempt_closure_requires_latest_exact_orphan(tmp_path):
+def test_unbound_failed_oa_attempts_close_only_for_exact_orphan_source(tmp_path):
     store = AutoReplyStore(tmp_path / "history-unbound-oa-terminal.sqlite3")
     with store._connect() as db:
         failed_attempt = insert_action(db, "reply_attempts", {
@@ -866,25 +866,42 @@ def test_unbound_failed_oa_attempt_closure_requires_latest_exact_orphan(tmp_path
             "send_error": "codex_process_failed",
             "codex_reason": "runtime failed before a Consumer result",
         })
+        older_attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "orphan-oa",
+            "conversation_title": "Completed OA task",
+            "trigger_message_id": "message-older",
+            "trigger_sender": "sender",
+            "trigger_text": "approval action retry",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-oa",
+            "oa_task_id": "task-oa",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+            "send_error": "codex_process_failed",
+        })
 
     candidates = store.list_unbound_failed_oa_attempts()
-    assert [attempt.id for attempt in candidates] == [failed_attempt.lastrowid]
+    assert {attempt.id for attempt in candidates} == {
+        failed_attempt.lastrowid, older_attempt.lastrowid
+    }
     evidence = '{"process_status":"COMPLETED","oa_task_status":"COMPLETED"}'
-    assert store.skip_unbound_failed_oa_attempt(
-        failed_attempt.lastrowid,
-        process_instance_id="process-oa",
-        oa_task_id="task-oa",
-        terminal_evidence=evidence,
-    )
+    for attempt in candidates:
+        assert store.skip_unbound_failed_oa_attempt(
+            attempt.id,
+            process_instance_id="process-oa",
+            oa_task_id="task-oa",
+            terminal_evidence=evidence,
+        )
     rows = store.list_operation_logs_with_count(
         limit=10,
         statuses=("skipped",),
         history_types=(history_types.APPROVAL,),
         source_tables=("reply_attempts",),
     )[1]
-    assert [(row.source_id, row.status) for row in rows] == [
-        (failed_attempt.lastrowid, "skipped")
-    ]
+    assert {(row.source_id, row.status) for row in rows} == {
+        (failed_attempt.lastrowid, "skipped"),
+        (older_attempt.lastrowid, "skipped"),
+    }
     attempt = store.get_reply_attempt(failed_attempt.lastrowid)
     assert attempt.send_status == "skipped"
     assert attempt.send_error == "codex_process_failed"

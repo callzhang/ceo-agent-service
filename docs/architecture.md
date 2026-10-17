@@ -2285,10 +2285,10 @@ means the obsolete follow-up no longer needs action.
 
 Legacy failed OA Attempts that have no owning local Reply Task are reconciled
 by the scheduled OA scan using their exact persisted process and task IDs. The
-scan closes only the latest unresolved failed Attempt when live native
-readback confirms both the process and that exact OA task are terminal and a
-transactional recheck confirms no local Task owns the trigger. It records the
-readback as the resolution and marks the follow-up `skipped`, preserving the
+scan closes unresolved failed Attempts for that exact process/task when live
+native readback confirms both the process and task are terminal and a
+transactional recheck confirms no local Task owns each trigger. It records the
+readback as the resolution and marks each follow-up `skipped`, preserving the
 original failure reason; it does not infer message delivery or create a new
 Consumer/Audit run. Missing, partial, mismatched, nonterminal or failed reads
 leave the Attempt unchanged.
