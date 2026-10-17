@@ -19,7 +19,7 @@ from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandSkillMaterial,
 )
-from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, ConsumerProposal
+from app.agent_contracts import AuditAgentResult, AuditFeedback, ConsumerAgentResult, ConsumerProposal
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
@@ -38,6 +38,9 @@ from app.consumer_agent import (
     audit_developer_instructions,
     consumer_developer_instructions,
     consumer_wire_contract_hash,
+    _consumer_source_context_fingerprint,
+    _consumer_revision_prompt,
+    _consumer_revision_context_reusable,
 )
 from app.developer_prompt import DeveloperPromptTemplateError
 from app.outbound_postfix import PreparedOutboundMessage
@@ -57,6 +60,189 @@ def native_executor_records(tmp_path, monkeypatch):
 
     monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "task-artifacts")
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
+
+
+def test_consumer_source_fingerprint_binds_task_sources_contract_and_images():
+    base = {
+        "task_id": 7,
+        "execution_generation": "generation-a",
+        "contract_hash": "contract-a",
+        "developer_instructions": "developer-v1",
+        "stable_task_prompt": "source facts",
+        "image_sources": ("image-a:sha256-a",),
+    }
+    original = _consumer_source_context_fingerprint(**base)
+
+    assert _consumer_source_context_fingerprint(**base) == original
+    for field, value in (
+        ("task_id", 8),
+        ("execution_generation", "generation-b"),
+        ("contract_hash", "contract-b"),
+        ("developer_instructions", "developer-v2"),
+        ("stable_task_prompt", "changed source facts"),
+        ("image_sources", ("image-a:sha256-b",)),
+    ):
+        changed = {**base, field: value}
+        assert _consumer_source_context_fingerprint(**changed) != original
+
+
+def test_consumer_revision_prompt_keeps_feedback_time_and_replacement_contract():
+    feedback = AuditFeedback(
+        rule="source accuracy",
+        observation="The date is unsupported.",
+        requested_revision="Remove the unsupported date and return a complete candidate.",
+    )
+
+    prompt = _consumer_revision_prompt(
+        feedback,
+        proposal_revision=1,
+        continuation="Keep the source boundary explicit.",
+        context_marker="consumer-source-context-sha256:abc123",
+        current_time="2026-10-17 09:05 -0700",
+    )
+
+    assert "The date is unsupported." in prompt
+    assert "complete replacement Consumer candidate" in prompt
+    assert "2026-10-17 09:05 -0700" in prompt
+    assert "Keep the source boundary explicit." in prompt
+    assert "<!-- consumer-source-context-sha256:abc123 -->" in prompt
+    assert "source facts" not in prompt
+
+
+def test_consumer_revision_context_reuse_requires_matching_audit_chain(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    feedback = AuditFeedback(
+        rule="source accuracy",
+        observation="Keep the source boundary explicit.",
+        requested_revision="Return a complete corrected candidate.",
+    )
+    audit_result = AuditAgentResult.model_validate({
+        "outcome": "return",
+        "summary": "Revise the source boundary.",
+        "proposal_revision": 0,
+        "candidate_digest": "a" * 64,
+        "evidence_refs": [],
+        "feedback": feedback.model_dump(mode="json"),
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+    prior = SimpleNamespace(
+        id=20, role=AgentRole.CONSUMER, status="completed", reply_task_id=7,
+        execution_generation="generation-a", proposal_revision=0,
+        codex_session_id="session-a",
+    )
+    audit = SimpleNamespace(
+        id=21, role=AgentRole.AUDIT, status="completed", reply_task_id=7,
+        execution_generation="generation-a", proposal_revision=0,
+        parent_agent_run_id=prior.id, adopted_result_json=audit_result.model_dump_json(),
+    )
+    attempt = SimpleNamespace(
+        status="completed", runtime_kind="codex_cli", session_id="session-a",
+        transcript_start=2, transcript_end=8,
+    )
+
+    class Store:
+        def get_agent_run(self, run_id, *, load_events):
+            assert load_events is False
+            return {audit.id: audit, prior.id: prior}.get(run_id)
+
+        def list_agent_runtime_attempts(self, run_id):
+            assert run_id == prior.id
+            return [attempt]
+
+        def list_agent_runs_for_task_generation(self, *_args, **_kwargs):
+            return [prior]
+
+    monkeypatch.setattr(consumer_agent, "count_codex_session_lines", lambda _: 8)
+    marker_calls = []
+    monkeypatch.setattr(
+        consumer_agent,
+        "codex_session_has_final_user_marker_without_compaction",
+        lambda *args, **kwargs: marker_calls.append((args, kwargs)) or True,
+    )
+
+    assert _consumer_revision_context_reusable(
+        Store(),
+        SimpleNamespace(id=7, execution_generation="generation-a"),
+        proposal_revision=1,
+        session_id="session-a",
+        fingerprint="b" * 64,
+        parent_agent_run_id=audit.id,
+        feedback=feedback,
+    )
+    assert marker_calls[0][0][1] == "consumer-source-context-sha256:" + "b" * 64
+
+
+@pytest.mark.parametrize(
+    ("session_lines", "marker_valid"),
+    [(9, True), (8, False)],
+)
+def test_consumer_revision_context_reuse_fails_closed_on_grown_or_compacted_session(
+    monkeypatch, session_lines, marker_valid
+):
+    from types import SimpleNamespace
+
+    feedback = AuditFeedback(
+        rule="source accuracy", observation="Keep the boundary.",
+        requested_revision="Return a complete candidate.",
+    )
+    audit_result = AuditAgentResult.model_validate({
+        "outcome": "return", "summary": "Revise.", "proposal_revision": 0,
+        "candidate_digest": "a" * 64, "evidence_refs": [],
+        "feedback": feedback.model_dump(mode="json"),
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+    prior = SimpleNamespace(
+        id=20, role=AgentRole.CONSUMER, status="completed", reply_task_id=7,
+        execution_generation="generation-a", proposal_revision=0,
+        codex_session_id="session-a",
+    )
+    audit = SimpleNamespace(
+        id=21, role=AgentRole.AUDIT, status="completed", reply_task_id=7,
+        execution_generation="generation-a", proposal_revision=0,
+        parent_agent_run_id=prior.id, adopted_result_json=audit_result.model_dump_json(),
+    )
+    attempt = SimpleNamespace(
+        status="completed", runtime_kind="codex_cli", session_id="session-a",
+        transcript_start=2, transcript_end=8,
+    )
+
+    class Store:
+        def get_agent_run(self, run_id, *, load_events):
+            return {audit.id: audit, prior.id: prior}.get(run_id)
+
+        def list_agent_runtime_attempts(self, _run_id):
+            return [attempt]
+
+        def list_agent_runs_for_task_generation(self, *_args, **_kwargs):
+            return [prior]
+
+    monkeypatch.setattr(
+        consumer_agent, "count_codex_session_lines", lambda _: session_lines
+    )
+    monkeypatch.setattr(
+        consumer_agent,
+        "codex_session_has_final_user_marker_without_compaction",
+        lambda *_args, **_kwargs: marker_valid,
+    )
+
+    assert not _consumer_revision_context_reusable(
+        Store(),
+        SimpleNamespace(id=7, execution_generation="generation-a"),
+        proposal_revision=1,
+        session_id="session-a",
+        fingerprint="b" * 64,
+        parent_agent_run_id=audit.id,
+        feedback=feedback,
+    )
 
 
 def test_consumer_records_specific_missing_agent_cli_receipt(
@@ -1247,6 +1433,94 @@ def _return_fixture_candidate(store, audit, summary):
     adopted = store.reviewed_candidate_for_audit_run(audit.id)
     assert adopted["id"] == candidate["id"]
     assert adopted["decision"] == "return"
+
+
+@pytest.mark.parametrize("context_reusable", [True, False])
+def test_consumer_feedback_compacts_only_for_verified_session(
+    store, task, context, monkeypatch, context_reusable
+):
+    config, router, adapter = _consumer_runtime_dependencies(
+        store, routes="codex_oauth"
+    )
+    first_executor = CapturingExecutor(_result_jsonl(session="session-a"))
+    first = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=first_executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        forced_runtime_route=config.routes[0],
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    assert "Check this" in first_executor.prompts[0]
+    assert "consumer-source-context-sha256:" in first_executor.prompts[0]
+
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=first.run_id,
+        operation_id="audit-compact-context",
+        owner="audit-test",
+    ).run
+    feedback = AuditFeedback(
+        rule="source accuracy",
+        observation="Keep the source boundary explicit.",
+        requested_revision="Return a complete corrected candidate.",
+    )
+    _return_fixture_candidate(store, audit, feedback.observation)
+    monkeypatch.setattr(
+        consumer_agent,
+        "_consumer_revision_context_reusable",
+        lambda *_args, **_kwargs: context_reusable,
+    )
+    revision_executor = CapturingExecutor(_result_jsonl(session="session-a"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=revision_executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        forced_runtime_route=config.routes[0],
+        codex_session_exists=lambda _: True,
+    ).run(
+        task,
+        context,
+        proposal_revision=1,
+        parent_agent_run_id=audit.id,
+        feedback=feedback,
+    )
+
+    prompt = revision_executor.prompts[0]
+    assert ("Check this" not in prompt) is context_reusable
+    assert "Keep the source boundary explicit." in prompt
+    if context_reusable:
+        assert len(prompt) < len(first_executor.prompts[0])
+    else:
+        assert len(prompt) > len(first_executor.prompts[0])
+    [revision] = [
+        run
+        for run in store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        )
+        if run.role is AgentRole.CONSUMER and run.proposal_revision == 1
+    ]
+    snapshot = next(
+        event
+        for event in _prompt_observations(store, revision.id)
+        if event.get("type") == "runtime.prompt"
+    )
+    assert snapshot["task_prompt"] == prompt
+    assert any(
+        section["name"]
+        == ("Consumer Audit-feedback revision" if context_reusable else "当前任务事实")
+        for section in snapshot["sections"]
+    )
 
 
 @pytest.fixture

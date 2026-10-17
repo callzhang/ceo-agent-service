@@ -64,6 +64,14 @@ Consumer 会话兼容键还绑定本轮实际选中的 Skill 正文：冻结 Ski
 的 Consumer 会话仍按原连续会话行为处理。旧会话及历史运行保留，Audit 会话规则、审批权限和动作门槛
 不变。
 
+Consumer 收到 Audit 的 return/reject 后，只有原候选、审核、任务代次及 Codex session
+精确匹配，原始完整输入指纹仍在同一 transcript 中，且 session 自上一 Consumer turn 后没有
+新增内容或 compaction 时，才在该 session 里提交精简修订指令：本轮时间、完整 Audit feedback、
+必要的 runtime correction，以及要求返回完整替代候选。原始事实和候选由同一 session 继续承载，
+指纹绑定 Developer 指令、稳定 Task 输入、结果契约和图片来源。条件不满足、找不到可信轨迹或
+线路不是该 Codex session 时，一律提交完整 Consumer 输入。每轮都提交当前任务专属内容；实际
+提交输入及 prompt snapshot 记录所选版本。此优化不改变 Audit 独立审核、反馈预算、候选校验或任务状态。
+
 人工重跑 OA Attempt 会创建新执行代际，并从当前选中的 OA 定时任务 Skill 重新冻结输入；若无法读取
 当前所选 Skill 或对应任务配置，则不排入重跑。原 Attempt、旧代际和旧 Skill 快照保留不变。
 人工重跑内部 OA 待办使用持久化任务中的 `oa-pending:` 合成触发 ID；按触发 ID 定位当前任务并恢复其实际 `oa_pending_scan:<process>` 会话。该类 ID 不是钉钉消息 ID，不调用钉钉会话读取或按 ID 读取；若当前任务已不存在，按未找到任务失败。

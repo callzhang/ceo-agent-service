@@ -93,6 +93,55 @@ native model failure or a reason for a compatibility branch. This fixture proves
 Task context survives native Claude resume; it does not validate all configured
 API routes, business scenarios or production release.
 
+## Consumer Audit-feedback revision input, 2026-10-17
+
+Production trajectory inspection found a repeated-input case in Consumer
+feedback revisions: Task 405336 used one Codex session for three Consumer
+revisions and repeated 41,385 of the original 41,394 characters in each of two
+revisions. This candidate narrows only the repeated Consumer input. It retains
+the original full source in the exact native session and submits the new Audit
+feedback, current turn time, any runtime correction and the complete replacement
+result requirement. Audit's independent context is unchanged.
+
+Compaction is allowed only when the persisted Audit return/reject points to the
+exact preceding completed Consumer run, task and generation, the selected
+Codex route/session is unique and unchanged, the latest completed transcript is
+still at its persisted line end, and native trajectory inspection proves the
+initial full-input fingerprint remains in that session with no intervening
+compaction. Missing, malformed, grown or compacted history and all other routes
+fall back to the full current Consumer input. The prompt snapshot records the
+input actually submitted.
+
+Local verification on the isolated worktree: 203 passed and 4 skipped across
+`tests/test_native_trajectory_context_guard.py`, `tests/test_agent_turn_runner.py`
+and `tests/test_consumer_agent.py`; Ruff and `git diff --check` pass. Synthetic
+integration tests assert that the verified path is shorter, includes the full
+Audit feedback and is reflected in the saved prompt snapshot; a failed guard
+keeps the original task facts in the full prompt. Native model comparison,
+production release and live readback are separate gates.
+
+### Native Codex cold/resume comparison
+
+Two tool-free native Codex sessions were cold-started with the same 628-character
+fictional meeting source, then resumed with either the full source plus Audit
+feedback or the compact feedback-only prompt. The type-only output schema did
+not encode expected values. Both native resumes returned valid structured
+results without tool calls. Each kept the prior slot `withdrawn`, retained the
+current local time and `America/Los_Angeles`, described the DST occurrence as
+unresolved, and reported a draft card with no invitation sent. The full arm said
+the new slot was `proposed`; the compact arm explicitly said
+`proposed_not_accepted`. The correction prompts were 1,041 and 519 characters,
+respectively (50.1% fewer in the compact arm). Session IDs, source digest and
+outputs are recorded in `evals/trajectory_optimization/consumer_revision_context.native.v1.json`.
+
+An earlier attempted comparison used output-schema `const` values that exposed
+the expected answer. Those two resumes are excluded. Its corrected runs used
+independent cold sessions and a schema that constrained field types only. This
+small synthetic comparison shows the tested model retained the source facts in
+these two sessions; it does not establish a general quality or latency gain,
+validate the service's trajectory reader against every native format, or cover
+other models, providers, tasks or production behavior.
+
 ## Consumer model-facing evidence correction
 
 Full CodeMode inspection of daily-report run 25643 supersedes the earlier raw
