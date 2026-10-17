@@ -6,11 +6,7 @@ from pathlib import Path
 FINANCE_RULE_CARD_PATHS = [
     Path("ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"),
 ]
-RUNTIME_RULE_CARD = Path(
-    "/Users/derek/.agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md"
-)
-if RUNTIME_RULE_CARD.is_file():
-    FINANCE_RULE_CARD_PATHS.append(RUNTIME_RULE_CARD)
+FINANCE_SKILL = Path("ci/shared-skills/stardust-oa-finance-review/SKILL.md")
 OA_SKILL_PATHS = [Path("ci/shared-skills/dingtalk-oa-approval/SKILL.md")]
 RUNTIME_OA_SKILL = Path("/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md")
 
@@ -24,6 +20,22 @@ def test_supplier_payment_distinguishes_email_reply_from_customer_acceptance() -
         assert "不能把审核方无法读取" in text
 
 
+def test_supplier_payment_never_uses_stamp_presence_as_a_review_condition() -> None:
+    required = (
+        "do not assess whether a stamp, chop, or signature is present",
+        "not request a stamp, chop, or signature",
+        "只核对实质付款条件",
+    )
+    for path in FINANCE_RULE_CARD_PATHS:
+        text = path.read_text(encoding="utf-8")
+        for rule in required:
+            assert rule in text
+        assert "unless an applicable contract term or authoritative rule expressly makes that form a condition" not in text
+    skill_text = FINANCE_SKILL.read_text(encoding="utf-8")
+    assert "do not assess whether a stamp, chop, or signature is present or absent" in skill_text
+    assert "Do not request a stamp, chop, or signature" in skill_text
+
+
 def test_supplier_payment_unreadable_submitted_evidence_stays_a_reviewer_blocker() -> None:
     for path in FINANCE_RULE_CARD_PATHS:
         text = path.read_text(encoding="utf-8")
@@ -32,8 +44,8 @@ def test_supplier_payment_unreadable_submitted_evidence_stays_a_reviewer_blocker
         assert "Only independently readable and source-verified evidence" in text
         assert "Prior return count is history, not an action rule" in text
         assert "do not ask the applicant to resubmit the same unreadable file" in text
-        assert "without a stamp on each related attachment" in text
-        assert "A blank signature page alone is not a reason to return" in text
+        assert "Do not request a stamp, chop, or signature" in text
+        assert "A blank stamp/signature area is not a defect to report" in text
         assert "only when independently verified as applicant-resolvable material omissions" in text
         assert "never because the reviewer cannot read a submitted item" in text
 
