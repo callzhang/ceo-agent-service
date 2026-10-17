@@ -13371,6 +13371,97 @@ def test_rerun_message_reuses_persisted_service_trigger_without_chat_lookup(
     assert dws.messages_by_id_reads == []
 
 
+def test_rerun_oa_synthetic_trigger_resolves_current_task_across_conversation_ids(
+    tmp_path: Path, monkeypatch
+):
+    requested_conversation = DingTalkConversation(
+        open_conversation_id="oa_pending_scan",
+        title="审批待办",
+        single_chat=True,
+        unread_point=0,
+    )
+    trigger = message(
+        "请审阅当前审批。",
+        message_id="oa-pending:proc-1:revision-1:2026-10-17",
+        single_chat=True,
+    ).model_copy(
+        update={
+            "open_conversation_id": "oa_pending_scan:proc-1",
+            "conversation_title": "审批待办",
+            "raw_payload": {
+                "source": "oa_pending_scan",
+                "processInstanceId": "proc-1",
+                "taskId": "task-1",
+            },
+        }
+    )
+    dws = FakeDws(
+        [requested_conversation],
+        {"oa_pending_scan": []},
+        unread_messages={"oa_pending_scan": []},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    assert worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        channel="dingtalk",
+    )
+    assert worker.store.get_reply_task_by_trigger_message_id(
+        trigger.open_message_id
+    ) is not None
+    script_agent_result(
+        worker,
+        explicit_agent_result(ScriptOutcome.NO_ACTION, "still waiting for details"),
+    )
+
+    processed = worker.rerun_message(
+        requested_conversation,
+        trigger.open_message_id,
+        force_new_decision=True,
+    )
+
+    assert processed == trigger.open_message_id
+    assert dws.recent_message_reads == []
+    assert dws.unread_message_reads == []
+    assert dws.messages_by_id_reads == []
+
+
+def test_rerun_missing_oa_synthetic_trigger_never_queries_dingtalk_by_id(
+    tmp_path: Path, monkeypatch
+):
+    service_conversation = DingTalkConversation(
+        open_conversation_id="oa_pending_scan:proc-1",
+        title="审批待办",
+        single_chat=True,
+        unread_point=0,
+    )
+    dws = FakeDws(
+        [service_conversation],
+        {service_conversation.open_conversation_id: []},
+        unread_messages={service_conversation.open_conversation_id: []},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    with pytest.raises(
+        ValueError, match="OA pending service trigger is no longer persisted"
+    ):
+        worker.rerun_message(
+            service_conversation,
+            "oa-pending:proc-1:revision-1:2026-10-17",
+            force_new_decision=True,
+        )
+
+    assert dws.recent_message_reads == []
+    assert dws.unread_message_reads == []
+    assert dws.messages_by_id_reads == []
+
+
 def test_rerun_message_does_not_resend_when_trigger_already_has_sent_reply(
     tmp_path: Path, monkeypatch
 ):
