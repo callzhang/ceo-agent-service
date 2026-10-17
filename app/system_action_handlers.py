@@ -147,13 +147,14 @@ class DingTalkMessageHandler:
                     or not task.trigger_create_time):
                 return ActionOutcome("uncertain", {"reason": "compacted_trigger_metadata_unavailable"})
             trigger = self.dws.read_message_by_id(conversation, task.trigger_message_id)
+            trigger_sender_user_id = getattr(task, "trigger_sender_user_id", "")
             if (trigger is None
                     or trigger.open_message_id != task.trigger_message_id
                     or trigger.open_conversation_id != task.conversation_id
                     or trigger.sender_name != task.trigger_sender
                     or trigger.create_time != task.trigger_create_time
-                    or (task.trigger_sender_user_id
-                        and trigger.sender_user_id != task.trigger_sender_user_id)):
+                    or (trigger_sender_user_id
+                        and trigger.sender_user_id != trigger_sender_user_id)):
                 return ActionOutcome("uncertain", {"reason": "compacted_trigger_readback_mismatch"})
         receipt = self.dws.reconcile_reply_to_trigger(conversation, trigger, prepared.final_body)
         if receipt is None:
