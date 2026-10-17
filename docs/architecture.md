@@ -735,6 +735,8 @@ DWS 明确的保密群历史拒绝由适配器转换为候选级 `GroupHistoryRe
 
 ## History 语义与无效入口边界
 
+History 页面顶部固定展示与独立 Attention 页面共用的 Attention 面板，直接读取同一 Attention API；它不改变记录筛选、计数或终态语义。
+
 Status 的 Attempt 队列统计先按触发对象选出最新 Attempt 标识，再读取当前状态和失败详情，排序不携带历史错误正文。
 Status 的 Reply task 当前业务对象投影和 Email 当前计划动作投影各在单次 SQL 中只读取一次，
 随后计算计数、重试、最新时间和错误。每次请求仍使用新的只读快照；当前对象范围、大小写与空值

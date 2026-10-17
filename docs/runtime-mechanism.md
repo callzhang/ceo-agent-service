@@ -1,5 +1,7 @@
 # Current Runtime Mechanism
 
+History 页面在事件图表和执行记录之前展示 Attention 面板；它复用独立 Attention 页面及 `/api/console/attention` 的读取、刷新、总数与详情行为，不改变 History 的记录查询或任务状态。
+
 The main launchd job declares `ProcessType=Interactive` because the local HTTP
 Console is a user-facing application dependency and does not use XPC activity
 for Adaptive classification. Omitting ProcessType applies Standard CPU/I/O
