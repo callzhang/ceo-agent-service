@@ -26,7 +26,10 @@ def test_current_oa_pending_node_remains_attention_after_comment_done(tmp_path):
     rows = _queue_attention_rows(store)
     assert [(r["category"], r["id"]) for r in rows] == [("OA approval", str(task.id))]
     assert rows[0]["status"] == "pending"
-    assert "OA process remains unresolved" in rows[0]["error"]
+    assert rows[0]["error"] == (
+        "DingTalk still reports this OA process as pending; the latest scan has not observed a terminal state."
+    )
+    assert "no final approval or return receipt" not in rows[0]["error"]
     assert "principal OA node is still pending" not in rows[0]["error"]
     store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T02:00:00Z",
         cursor_json=json.dumps({"pending_business_object_keys": []}), last_error="")
@@ -76,7 +79,7 @@ def test_verified_pending_node_is_visible_before_local_task_is_enqueued(tmp_path
         last_error="")
     rows = _queue_attention_rows(store)
     assert [(row["category"], row["id"]) for row in rows] == [("OA approval", "oa:instance:second")]
-    assert "OA process remains unresolved" in rows[0]["error"]
+    assert "DingTalk still reports this OA process as pending" in rows[0]["error"]
     assert "principal OA node" not in rows[0]["error"]
 
 
