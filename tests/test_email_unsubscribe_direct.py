@@ -29,6 +29,7 @@ from app.email_unsubscribe import (
     UnsubscribeOutcome,
     UnsubscribePageState,
     UnsubscribeTerminalReceipt,
+    TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES,
     extract_unsubscribe_entries,
 )
 from app.email_unsubscribe_direct import (
@@ -456,6 +457,104 @@ def test_one_call_unsubscribes_and_persists_the_receipt(tmp_path: Path) -> None:
     receipt = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
     assert receipt is not None and receipt["outcome"] == "done"
     assert len(browser.calls) == 1
+
+
+def test_retryable_external_browser_failure_allows_only_the_same_bounded_retry(
+    tmp_path: Path,
+) -> None:
+    effect = _effect()
+    operation, task, email_store, browser = _operation(
+        tmp_path,
+        [
+            UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
+                "provider navigation timed out",
+            ),
+            _terminal(effect, UnsubscribePageState.DONE, "You have unsubscribed."),
+        ],
+    )
+
+    first = operation.execute(task.id)
+
+    assert first["status"] == "failed"
+    assert first["error"]["retryable"] is True
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
+    with sqlite3.connect(email_store.path) as db:
+        marker = json.loads(
+            db.execute(
+                "select value from service_state where key=?",
+                (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",),
+            ).fetchone()[0]
+        )
+    assert marker["state"] == "retryable"
+    assert marker["error_code"] == "email_unsubscribe_browser_timeout"
+
+    second = operation.execute(task.id)
+
+    assert second["status"] == "done"
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)["outcome"] == "done"
+    assert len(browser.calls) == 2
+
+
+def test_unclassified_pending_execution_marker_is_still_fenced(tmp_path: Path) -> None:
+    from hashlib import sha256
+
+    operation, task, email_store, browser = _operation(
+        tmp_path,
+        [_terminal(_effect(), UnsubscribePageState.DONE, "You have unsubscribed.")],
+    )
+    operation.task_store.begin_direct_email_unsubscribe_execution(
+        task_id=task.id,
+        action_identity=ACTION_IDENTITY,
+        execution_generation=task.execution_generation,
+        input_version=task.input_version,
+        input_digest=sha256(task.trigger_message_json.encode("utf-8")).hexdigest(),
+    )
+
+    result = operation.execute(task.id)
+
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "unsubscribe_operation_rejected:ValueError"
+    assert "requires reconciliation" in result["summary"]
+    assert browser.calls == []
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
+
+
+def test_retryable_external_failures_cannot_exceed_the_worker_retry_budget(
+    tmp_path: Path,
+) -> None:
+    operation, task, email_store, browser = _operation(
+        tmp_path,
+        [
+            UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
+                "provider navigation timed out",
+            )
+            for _ in range(5)
+        ],
+    )
+
+    for attempt in range(4):
+        result = operation.execute(task.id)
+        assert result["status"] == "failed"
+        assert result["error"]["retryable"] is True
+        if attempt < 3:
+            with sqlite3.connect(email_store.path) as db:
+                marker = json.loads(
+                    db.execute(
+                        "select value from service_state where key=?",
+                        (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",),
+                    ).fetchone()[0]
+                )
+            assert marker["retry_count"] == attempt + 1
+
+    exhausted = operation.execute(task.id)
+
+    assert exhausted["status"] == "failed"
+    assert exhausted["error"]["retryable"] is False
+    assert "budget exhausted" in exhausted["summary"]
+    assert len(browser.calls) == TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
 
 
 def test_source_message_unavailable_is_not_retryable(tmp_path: Path) -> None:
