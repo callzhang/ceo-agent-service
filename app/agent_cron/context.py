@@ -238,14 +238,23 @@ class ScheduledAgentContextBuilder:
                 raise ValueError(
                     f"selected OA managed Skill is unavailable: {ref.skill_name}"
                 )
-            revisions = tuple(
-                item for item in option.revisions if item.available
-            )
+            revisions = tuple(option.revisions)
             if not revisions:
                 raise ValueError(
                     f"selected OA managed Skill has no available revision: {ref.skill_name}"
                 )
             latest = max(revisions, key=lambda item: item.revision_number)
+            # The OA scanner's process snapshot is immutable for the lifetime
+            # of the worker. A newer registered Skill revision is therefore
+            # often reported as `managed_revision_not_loaded`, even though
+            # this new review input can materialize it directly from the
+            # managed Skill store. Do not fall back to an older loaded body.
+            unavailable_reason = getattr(latest, "unavailable_reason", None)
+            if not latest.available and unavailable_reason != "managed_revision_not_loaded":
+                raise ValueError(
+                    "selected OA managed Skill latest revision is unavailable: "
+                    f"{ref.skill_name} ({unavailable_reason or 'unknown reason'})"
+                )
             current_refs.append(
                 ScheduledTaskSkillRef(
                     skill_source="managed",
