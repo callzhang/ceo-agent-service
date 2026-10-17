@@ -83,8 +83,7 @@
       "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
       "target": "skills/stardust-oa-people-review/SKILL.md",
       "old_sha256": "c67ef8fa1fcf2c3cb12c530c6596947c15c9bf9b949cc821bf90cd5229c8cf90",
-      "new_sha256": "ca0b3f0c69d3e9ac9455dea84b8ae9854e2745402d5838b94e1320a5586ffc76",
-      "old_managed_sha256": "c67ef8fa1fcf2c3cb12c530c6596947c15c9bf9b949cc821bf90cd5229c8cf90"
+      "new_sha256": "ca0b3f0c69d3e9ac9455dea84b8ae9854e2745402d5838b94e1320a5586ffc76"
     },
     {
       "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
