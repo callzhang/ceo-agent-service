@@ -991,12 +991,11 @@ def reconcile_failed_oa_reply_tasks(store: AutoReplyStore, dws: Any) -> list[int
             candidate = json.loads(latest.adopted_result_json)
         except (TypeError, json.JSONDecodeError):
             continue
-        if not isinstance(candidate, dict) or candidate.get("outcome") != "proposal":
+        if not isinstance(candidate, dict):
             continue
         proposal = candidate.get("proposal")
         actions = proposal.get("actions") if isinstance(proposal, dict) else None
-        if not isinstance(actions, list):
-            continue
+        actions = actions if isinstance(actions, list) else []
         oa_targets = []
         for action in actions:
             if not isinstance(action, dict) or action.get("capability") != "dingtalk-oa":
@@ -1012,6 +1011,16 @@ def reconcile_failed_oa_reply_tasks(store: AutoReplyStore, dws: Any) -> list[int
             task_id = str(target.get("task_id") or "").strip()
             if process_id and task_id:
                 oa_targets.append((process_id, task_id))
+        if not oa_targets:
+            business_object_key = str(
+                getattr(task, "business_object_key", "") or ""
+            ).strip()
+            if business_object_key.startswith("oa:"):
+                process_id, separator, task_id = business_object_key[3:].rpartition(":")
+                process_id = process_id.strip()
+                task_id = task_id.strip()
+                if separator and process_id and task_id:
+                    oa_targets.append((process_id, task_id))
         for process_id, oa_task_id in oa_targets:
             try:
                 detail = read_detail(process_id)

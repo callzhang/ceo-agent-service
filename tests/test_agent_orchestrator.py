@@ -203,8 +203,9 @@ def test_uncertain_dingtalk_send_returns_to_consumer_for_receipt_followup(tmp_pa
             "authored_judgment": "Supported",
         },
     })
-    consumer = ScriptedConsumer(store, proposal, candidate(outcome="no_action"))
-    audit = ScriptedAudit(store, "approve", "approve")
+    no_action = candidate(outcome="no_action")
+    consumer = ScriptedConsumer(store, proposal, *(no_action for _ in range(3)))
+    audit = ScriptedAudit(store, *("approve" for _ in range(4)))
 
     class UncertainOnce(VerifiedHandler):
         def dispatch(self, action, *, action_key, candidate):
@@ -225,10 +226,11 @@ def test_uncertain_dingtalk_send_returns_to_consumer_for_receipt_followup(tmp_pa
 
     result = runtime.process(task, context, refresh_context=lambda: context)
 
-    assert result.status == "no_action"
+    assert result.status == "failed_terminal"
+    assert result.error.code == "external_action_uncertain"
     assert store.get_reply_task(task.id).status == "processing"
     assert len(handler.calls) == 1
-    assert len(consumer.calls) == 2
+    assert len(consumer.calls) == 4
     followup = consumer.calls[1]
     assert followup[1] == 1
     assert followup[3] is not None
@@ -240,6 +242,7 @@ def test_uncertain_dingtalk_send_returns_to_consumer_for_receipt_followup(tmp_pa
     ]
     assert len(uncertain_receipts) == 1
     assert uncertain_receipts[0].completed is False
+    assert all(call[3] is not None for call in consumer.calls[2:])
 
 
 @pytest.mark.parametrize("code", ["codex_provider_capacity_exhausted", "runtime_provider_unreachable"])

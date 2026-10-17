@@ -85,8 +85,9 @@ def test_uncertain_reply_is_skipped_without_attention_when_exact_oa_task_is_term
     task = SimpleNamespace(
         id=46, channel="dingtalk", error="external_action_uncertain",
         execution_generation="gen-6", status="failed",
+        business_object_key="oa:process-46:node-46",
     )
-    run = SimpleNamespace(
+    reviewed_run = SimpleNamespace(
         id=93, role="consumer", status="completed", proposal_revision=1,
         turn_attempt=0, adopted_result_json=json.dumps({
             "outcome": "proposal",
@@ -96,13 +97,19 @@ def test_uncertain_reply_is_skipped_without_attention_when_exact_oa_task_is_term
             }]},
         }),
     )
+    latest_no_action = SimpleNamespace(
+        id=94, role="consumer", status="completed", proposal_revision=2,
+        turn_attempt=0, adopted_result_json=json.dumps({
+            "outcome": "no_action", "proposal": None,
+        }),
+    )
 
     class Store:
         def list_reply_tasks(self, *, statuses, limit):
             return [task]
 
         def list_agent_runs_for_task_generation(self, *args, **kwargs):
-            return [run]
+            return [reviewed_run, latest_no_action]
 
         def skip_unresolved_reply_task_for_terminal_oa_source(
             self, task_id, *, expected_execution_generation,

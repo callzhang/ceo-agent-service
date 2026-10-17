@@ -198,6 +198,13 @@ proposal only while the source is still current. Incomplete, truncated, failed,
 or ambiguous readback preserves uncertainty. The follow-up may not dispatch the
 same candidate or claim success. Restart recovery recreates the same feedback
 from the persisted uncertain execution before retrying a failed Consumer turn.
+An Audit-approved `no_action` cannot settle the generation while that exact
+message execution remains uncertain. The orchestrator carries the original
+uncertain receipt through later Consumer/Audit parent revisions and asks the
+Consumer to reconcile it again; after the existing three content-feedback
+cycles, it stops as `failed_terminal` with `external_action_uncertain`. Exact
+live terminal OA reconciliation may still settle the follow-up as `skipped`,
+without changing or treating the original send as delivered.
 
 Audit handoff includes System-produced JSON type facts for each current action's
 target and payload fields, including human-option plans. The facts come from the

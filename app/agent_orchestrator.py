@@ -409,19 +409,11 @@ class AgentOrchestrator:
                 else None
             )
             if feedback is None and parent and parent.status == "completed":
-                parent_review = self.store.get_candidate_review_for_audit_run(parent.id)
-                execution = (
-                    self.store.get_candidate_execution(parent_review["candidate_id"])
-                    if parent_review else None
+                uncertain_delivery = self._uncertain_message_delivery(parent)
+                feedback = (
+                    uncertain_delivery["feedback"]
+                    if uncertain_delivery is not None else None
                 )
-                if execution and execution["status"] == "uncertain":
-                    original = self.store.get_agent_run(
-                        parent.parent_agent_run_id, load_events=False
-                    ) if parent.parent_agent_run_id else None
-                    if original is not None:
-                        feedback = _message_receipt_feedback(
-                            self._consumer_result(original)
-                        )
             # Technical attempts stay in the same revision and use its original
             # parent; they do not spend a content feedback cycle.
             return _NextConsumer(
@@ -609,6 +601,25 @@ class AgentOrchestrator:
         ):
             return self._candidate_terminal(state, "needs_human", review_result.error)
         if result.outcome is ConsumerOutcome.NO_ACTION:
+            uncertain_delivery = self._uncertain_message_delivery(parent)
+            if uncertain_delivery is not None:
+                if (
+                    consumer.proposal_revision
+                    - uncertain_delivery["proposal_revision"]
+                    >= MAX_CONTENT_FEEDBACK_CYCLES
+                ):
+                    return self._candidate_terminal(
+                        state,
+                        "failed_terminal",
+                        AgentError(code="external_action_uncertain", retryable=False),
+                    )
+                return _NextConsumer(
+                    consumer.proposal_revision + 1,
+                    audit.id,
+                    uncertain_delivery["feedback"],
+                    stage_index=result.stage_index,
+                    predecessor_review_id=result.predecessor_review_id,
+                )
             return self._candidate_terminal(state, "no_action", review_result.error)
         execution = self.store.get_candidate_execution(candidate["id"])
         if execution and execution["status"] == "uncertain":
@@ -673,22 +684,70 @@ class AgentOrchestrator:
             result = SystemExecutionResult.model_validate_json(execution["result_json"])
             if result.error.code == "business_state_changed" and result.external_result:
                 changes = (*changes, result.external_result.live_result_reference)
-            elif result.error.code == "external_action_uncertain":
-                receipts[f"uncertain:{review['candidate_id']}"] = PriorReceipt(
-                    receipt_id=f"uncertain:{review['candidate_id']}",
-                    operation="dingtalk_message_delivery_verification",
-                    summary=json.dumps({
-                        "state": "uncertain",
-                        "instruction": "A prior accepted message send has no verified delivery receipt. Reconcile its provider task/readback before proposing any new send.",
-                        "execution_summary": result.summary,
-                    }, ensure_ascii=False),
-                    completed=False,
-                )
+        uncertain_delivery = self._uncertain_message_delivery(
+            self.store.get_agent_run(parent_id, load_events=False)
+            if parent_id else None
+        )
+        if uncertain_delivery is not None:
+            candidate_id = uncertain_delivery["candidate_id"]
+            receipts[f"uncertain:{candidate_id}"] = PriorReceipt(
+                receipt_id=f"uncertain:{candidate_id}",
+                operation="dingtalk_message_delivery_verification",
+                summary=json.dumps({
+                    "state": "uncertain",
+                    "instruction": (
+                        "A prior accepted message send has no verified delivery receipt. "
+                        "Reconcile its provider task/readback before proposing any new send."
+                    ),
+                    "execution_summary": uncertain_delivery["execution_summary"],
+                }, ensure_ascii=False),
+                completed=False,
+            )
         return replace(context,
             prior_receipts=tuple(receipts.values()),
             prior_human_decisions=tuple(self.store.list_human_decision_evidence(task.id)),
             business_state_changes=changes,
         )
+
+    def _uncertain_message_delivery(self, audit_run):
+        while audit_run is not None and audit_run.status == "completed":
+            review = self.store.get_candidate_review_for_audit_run(audit_run.id)
+            execution = (
+                self.store.get_candidate_execution(review["candidate_id"])
+                if review else None
+            )
+            if execution is not None and execution["status"] == "uncertain":
+                original = (
+                    self.store.get_agent_run(
+                        audit_run.parent_agent_run_id, load_events=False
+                    )
+                    if audit_run.parent_agent_run_id else None
+                )
+                if original is not None and original.status == "completed":
+                    result = self._consumer_result(original)
+                    feedback = _message_receipt_feedback(result)
+                    if feedback is not None:
+                        execution_result = SystemExecutionResult.model_validate_json(
+                            execution["result_json"]
+                        )
+                        return {
+                            "candidate_id": review["candidate_id"],
+                            "execution_summary": execution_result.summary,
+                            "feedback": feedback,
+                            "proposal_revision": original.proposal_revision,
+                        }
+            consumer = (
+                self.store.get_agent_run(
+                    audit_run.parent_agent_run_id, load_events=False
+                )
+                if audit_run.parent_agent_run_id else None
+            )
+            if consumer is None or not consumer.parent_agent_run_id:
+                break
+            audit_run = self.store.get_agent_run(
+                consumer.parent_agent_run_id, load_events=False
+            )
+        return None
 
     @staticmethod
     def _business_revision(state: _NextExecution) -> _NextConsumer:

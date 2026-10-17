@@ -58,6 +58,7 @@ def candidate(
                     label="Notify",
                     instruction="Notify once",
                     consequence="Recipient is informed",
+                        applies_to="task_class",
                     plan=plan,
                 ),
                 dict(
@@ -65,6 +66,7 @@ def candidate(
                     label="Stop",
                     instruction="Stop",
                     consequence="No notification",
+                        applies_to="task_class",
                     terminal_outcome="skipped",
                     reason="No contact desired",
                 ),
@@ -364,7 +366,7 @@ def test_completed_stage_restart_uses_exact_predecessor_review(tmp_path):
     assert len(consumer.calls)==2
 
 
-def test_uncertain_execution_reconciles_on_later_pass_without_model_rerun(tmp_path):
+def test_uncertain_message_send_requires_consumer_receipt_review_before_new_action(tmp_path):
     store, task, context = setup(tmp_path)
 
     class UncertainThenVerified(Executor):
@@ -377,15 +379,117 @@ def test_uncertain_execution_reconciles_on_later_pass_without_model_rerun(tmp_pa
                 return result
             return super().execute(task, candidate_id, review_id)
 
-    consumer, audit = Consumer(store, candidate()), Audit(store, 'approve')
+    consumer, audit = Consumer(store, candidate(), candidate("Verified receipt follow-up")), Audit(store, 'approve', 'approve')
     executor = UncertainThenVerified(store)
     orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=audit, system_executor=executor)
-    first = orchestrator.process(task, context, refresh_context=lambda: context)
-    assert first.status == 'failed_retryable'
-    resumed = orchestrator.process(task, context, refresh_context=lambda: context)
-    assert resumed.status == 'executed'
+    result = orchestrator.process(task, context, refresh_context=lambda: context)
+    assert result.status == 'executed'
+    assert len(consumer.calls) == len(audit.calls) == 2
+    assert consumer.calls[1][1] is not None
+    assert any(
+        receipt.operation == "dingtalk_message_delivery_verification"
+        and receipt.completed is False
+        for receipt in consumer.calls[1][0].prior_receipts
+    )
     assert len(executor.calls) == 2
-    assert len(consumer.calls) == len(audit.calls) == 1
+
+
+def test_no_action_after_uncertain_message_is_returned_for_receipt_feedback(tmp_path):
+    store, task, context = setup(tmp_path)
+
+    no_action = ConsumerAgentResult.model_validate({
+        "outcome": "no_action",
+        "summary": "No reply is needed.",
+        "proposal": None,
+        "decision_options": [],
+        "error": AgentError(code="", retryable=False),
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+
+    class UncertainOnce(Executor):
+        def execute(self, task, candidate_id, review_id, *, context=None):
+            if self.calls:
+                return super().execute(task, candidate_id, review_id, context=context)
+            self.calls.append((candidate_id, review_id))
+            claim = self.store.claim_candidate_execution(
+                candidate_id, review_id, "executor", 60
+            )
+            uncertain = SystemExecutionResult(
+                outcome="failed",
+                summary="Provider accepted the send but returned no verifiable receipt.",
+                error=AgentError(code="external_action_uncertain", retryable=True),
+            )
+            self.store.finish_candidate_execution(
+                claim["id"], "executor", "uncertain", uncertain
+            )
+            return uncertain
+
+    consumer = Consumer(store, candidate(), no_action, candidate("Reviewed retry"))
+    audit = Audit(store, "approve", "approve", "approve")
+    executor = UncertainOnce(store)
+    result = AgentOrchestrator(
+        store=store, consumer=consumer, audit=audit, system_executor=executor,
+    ).process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "executed"
+    assert len(consumer.calls) == 3
+    assert consumer.calls[1][1] is not None
+    assert consumer.calls[2][1] is not None
+    assert any(
+        receipt.operation == "dingtalk_message_delivery_verification"
+        and receipt.completed is False
+        for receipt in consumer.calls[2][0].prior_receipts
+    )
+    assert len(audit.calls) == 3
+    assert len(executor.calls) == 2
+
+
+def test_unresolved_message_receipt_feedback_exhaustion_does_not_settle_no_action(
+    tmp_path,
+):
+    store, task, context = setup(tmp_path)
+    no_action = ConsumerAgentResult.model_validate({
+        "outcome": "no_action",
+        "summary": "No reply is needed.",
+        "proposal": None,
+        "decision_options": [],
+        "error": AgentError(code="", retryable=False),
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+
+    class AlwaysUncertain(Executor):
+        def execute(self, task, candidate_id, review_id, *, context=None):
+            self.calls.append((candidate_id, review_id))
+            claim = self.store.claim_candidate_execution(
+                candidate_id, review_id, "executor", 60
+            )
+            uncertain = SystemExecutionResult(
+                outcome="failed",
+                summary="No verifiable provider receipt is available.",
+                error=AgentError(code="external_action_uncertain", retryable=True),
+            )
+            self.store.finish_candidate_execution(
+                claim["id"], "executor", "uncertain", uncertain
+            )
+            return uncertain
+
+    consumer = Consumer(store, candidate(), *(no_action for _ in range(3)))
+    audit = Audit(store, *("approve" for _ in range(4)))
+    result = AgentOrchestrator(
+        store=store, consumer=consumer, audit=audit,
+        system_executor=AlwaysUncertain(store),
+    ).process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "failed_terminal"
+    assert result.error.code == "external_action_uncertain"
+    assert result.consumer_result.outcome == "no_action"
+    assert len(consumer.calls) == 4
 
 
 def test_changed_business_state_revises_same_stage_then_reviews_again(tmp_path):
