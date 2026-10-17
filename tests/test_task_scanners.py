@@ -40,7 +40,7 @@ def test_unbound_failed_oa_attempt_is_skipped_only_after_exact_terminal_readback
 
     class Store:
         def list_unbound_failed_oa_attempts(self, *, limit):
-            assert limit == 100
+            assert limit == 20
             return [attempt, older_attempt]
 
         def skip_unbound_failed_oa_attempt(

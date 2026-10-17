@@ -881,17 +881,14 @@ def test_unbound_failed_oa_attempts_close_only_for_exact_orphan_source(tmp_path)
         })
 
     candidates = store.list_unbound_failed_oa_attempts()
-    assert {attempt.id for attempt in candidates} == {
-        failed_attempt.lastrowid, older_attempt.lastrowid
-    }
+    assert [attempt.id for attempt in candidates] == [older_attempt.lastrowid]
     evidence = '{"process_status":"COMPLETED","oa_task_status":"COMPLETED"}'
-    for attempt in candidates:
-        assert store.skip_unbound_failed_oa_attempt(
-            attempt.id,
-            process_instance_id="process-oa",
-            oa_task_id="task-oa",
-            terminal_evidence=evidence,
-        )
+    assert store.skip_unbound_failed_oa_attempt(
+        candidates[0].id,
+        process_instance_id="process-oa",
+        oa_task_id="task-oa",
+        terminal_evidence=evidence,
+    )
     rows = store.list_operation_logs_with_count(
         limit=10,
         statuses=("skipped",),
@@ -907,6 +904,10 @@ def test_unbound_failed_oa_attempts_close_only_for_exact_orphan_source(tmp_path)
     assert attempt.send_error == "codex_process_failed"
     assert attempt.codex_reason == "runtime failed before a Consumer result"
     assert attempt.resolution == evidence
+    older = store.get_reply_attempt(older_attempt.lastrowid)
+    assert older.send_status == "skipped"
+    assert older.send_error == "codex_process_failed"
+    assert older.resolution == evidence
     assert store.list_unbound_failed_oa_attempts() == []
 
 

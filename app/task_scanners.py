@@ -1077,7 +1077,7 @@ def reconcile_failed_oa_reply_tasks(store: AutoReplyStore, dws: Any) -> list[int
 
 
 def reconcile_unbound_failed_oa_attempts(
-    store: AutoReplyStore, dws: Any, *, limit: int = 100
+    store: AutoReplyStore, dws: Any, *, limit: int = 20
 ) -> list[int]:
     """Skip only failed OA Attempts whose exact process and task are terminal.
 

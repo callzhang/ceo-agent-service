@@ -2283,9 +2283,11 @@ external writes and no current principal tasks, and explicitly leaves chat deliv
 unverified. The original provider receipt and execution remain `uncertain`; `skipped`
 means the obsolete follow-up no longer needs action.
 
-Legacy failed OA Attempts that have no owning local Reply Task are reconciled
-by the scheduled OA scan using their exact persisted process and task IDs. The
-scan closes unresolved failed Attempts for that exact process/task when live
+Legacy failed OA Attempts with no active local Reply Task bound to their
+trigger are reconciled by the scheduled OA scan using their exact persisted
+process and task IDs. It examines at most 20 distinct process/task groups per
+scan, prioritizing groups whose local business-object task is already done or
+skipped. The scan closes unresolved failed Attempts for that exact process/task when live
 native readback confirms both the process and task are terminal and a
 transactional recheck confirms no active local Task owns each trigger. A local
 Task already closed as `done` or `skipped` does not block the reconciliation.

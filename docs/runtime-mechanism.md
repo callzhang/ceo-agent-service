@@ -229,9 +229,11 @@ cycles, it stops as `failed_terminal` with `external_action_uncertain`. Exact
 live terminal OA reconciliation may still settle the follow-up as `skipped`,
 without changing or treating the original send as delivered.
 
-The OA scan also handles a legacy failed OA Attempt that has no owning local
-Reply Task or Consumer run. It reads the exact persisted OA process and task IDs
-through the native read-only detail API. Only an explicitly terminal process
+The OA scan also handles legacy failed OA Attempts that have no active local
+Reply Task bound to their trigger. It checks at most 20 distinct process/task
+groups per scan, prioritizing those whose local business-object task is already
+`done` or `skipped`, and reads exact persisted OA IDs through the native
+read-only detail API. Only an explicitly terminal process
 and that exact terminal task, followed by an in-transaction recheck that no
 active local Task owns the trigger, it can close unresolved failures for that
 exact process/task as `skipped` (the source detail is read once per process per
