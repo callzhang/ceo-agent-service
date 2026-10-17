@@ -33,6 +33,16 @@ its own status. Current unresolved System Execution uncertainty continues to
 override task closure; the projection does not modify the Attempt, candidate,
 or execution receipt.
 
+An operator may reconcile one existing uncertain OA return through the dedicated
+History endpoint. It requires the exact current reviewed candidate/review, matching
+Attempt process/task identity, one existing uncertain action journal, and a current
+uncertain execution. The executor reuses the original action identity and runs in
+reconciliation-only mode: only the registered OA handler's readback can update
+the action ledger and execution projection; the dispatch path is unavailable. The
+original provider response is retained in the verified evidence. Inconclusive or
+conflicting DWS evidence leaves the execution uncertain. This endpoint is not an
+Attempt rerun and does not create a new Consumer or Audit generation.
+
 When live OA evidence proves that the exact source process and reviewed task are
 terminal, an unresolved delivery task may be closed as `skipped` with that
 source evidence. This closes current actionable Attention without asserting the

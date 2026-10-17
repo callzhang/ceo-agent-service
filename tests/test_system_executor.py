@@ -184,6 +184,20 @@ def test_uncertain_action_resumes_from_positive_reconciliation_without_redispatc
     assert store.events.index("begin:0") < store.events.index("receipt:0")
 
 
+def test_reconciliation_only_requires_an_existing_uncertain_oa_return():
+    from tests.test_oa_return_readback import action
+
+    candidate = _candidate(actions=[action().model_dump(mode="json")])
+    store = FakeStore(candidate)
+    handler = Handler()
+    result = SystemExecutor(store, {("dingtalk-oa", "revert_task"): handler}, owner="reconciler").execute(
+        store.get_reply_task(1), 1, 2, reconciliation_only=True,
+    )
+    assert result.error.code == "reconciliation_precondition_failed"
+    assert handler.calls == []
+    assert "claim" not in store.events
+
+
 @pytest.mark.parametrize("prior_status", ["uncertain", "dispatched"])
 @pytest.mark.parametrize("message", [False, True])
 def test_existing_effect_reconciles_before_changed_business_source_guard(monkeypatch, prior_status, message):

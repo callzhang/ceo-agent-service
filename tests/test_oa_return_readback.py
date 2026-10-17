@@ -139,11 +139,23 @@ def test_return_acceptance_survives_store_reopen_and_changed_source(tmp_path, mo
     execution = store.get_candidate_execution(selected["id"])
     [original] = store.list_candidate_action_attempts(execution["id"])
     assert json.loads(original["result_json"])["provider_response"]["result"] is True
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, action="agent_run", sensitivity_kind="oa_approval",
+        oa_process_instance_id="process", oa_task_id="original",
+        oa_remark="Need exact handover facts", send_status="uncertain",
+    )
 
     reopened = AutoReplyStore(store.path)
-    recovered = SystemExecutor(reopened, dws=source).execute(task, selected["id"], review["id"], context=context)
+    from app.oa_reconciliation import reconcile_oa_return_attempt
+
+    recovered = reconcile_oa_return_attempt(
+        reopened, source, attempt_id=attempt_id,
+        candidate_id=selected["id"], review_id=review["id"],
+    )
     [after] = reopened.list_candidate_action_attempts(execution["id"])
-    assert recovered.outcome == "executed"
+    assert recovered.outcome == "executed", recovered.model_dump(mode="json")
     assert after["status"] == "verified"
     assert after["created_at"] == original["created_at"]
     assert after["external_action_key"] == original["external_action_key"]

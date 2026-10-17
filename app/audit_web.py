@@ -11255,6 +11255,22 @@ def create_audit_app(
             return HTMLResponse("missing or invalid oa url", status_code=400)
         return HTMLResponse(render_dingtalk_open_oa_popup(cleaned_url))
 
+    @app.post("/api/console/history/{attempt_id}/reconcile-oa-return")
+    def reconcile_oa_return(attempt_id: int, candidate_id: int, review_id: int) -> JSONResponse:
+        """Reconcile an existing uncertain OA return; this endpoint cannot dispatch actions."""
+        from app.dws_client import DwsClient
+        from app.oa_reconciliation import reconcile_oa_return_attempt
+
+        try:
+            result = reconcile_oa_return_attempt(
+                AutoReplyStore(db_path), DwsClient(), attempt_id=attempt_id,
+                candidate_id=candidate_id, review_id=review_id,
+            )
+        except (KeyError, ValueError) as exc:
+            return JSONResponse({"outcome": "failed", "error": {"code": "oa_reconciliation_invalid", "detail": str(exc)}}, status_code=409)
+        status_code = 200 if result.outcome == "executed" else 409
+        return JSONResponse(jsonable_encoder(result.model_dump(mode="json")), status_code=status_code)
+
     @app.post("/open-attempt")
     def open_attempt(request: Request, attempt_id: int) -> JSONResponse:
         if attempt_id <= 0:
