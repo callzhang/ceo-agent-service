@@ -34,7 +34,9 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
-    assert entry["old_sha256"] == "b5fe46acbe2e3cb432e23159fb53d6eb11285eb7fe8939f94d00681d9adf887e"
+    assert entry["old_sha256"] == _digest(
+        Path.home().joinpath(".agents/skills/dingtalk-oa-approval/SKILL.md").read_bytes()
+    )
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
     audit_source = "app/defaults/audit_rules.md"
     audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
