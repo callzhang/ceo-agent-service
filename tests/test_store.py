@@ -3589,6 +3589,54 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
     assert "accepted event-1" in error[1]
 
 
+def test_expired_reply_task_can_be_skipped_with_generation_bound_evidence(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-calendar-expired",
+        conversation_title="Calendar invite",
+        single_chat=True,
+        trigger_message_id="msg-calendar-expired",
+        trigger_create_time="2026-10-15 09:00:00",
+        trigger_sender="Casey",
+        trigger_text="Calendar invite",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    with store._connect() as db:
+        db.execute(
+            "update tasks set status='failed', error='external_action_uncertain' "
+            "where record_type='reply_tasks' and id=?",
+            (task.id,),
+        )
+
+    assert not store.skip_unresolved_reply_task(
+        task.id,
+        expected_execution_generation="stale-generation",
+        reason="Calendar event has ended; no further response action is required.",
+    )
+    assert store.skip_unresolved_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        reason="Calendar event has ended; no further response action is required.",
+    )
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "skipped"
+    assert updated.error == "external_action_uncertain"
+    with store._connect() as db:
+        error = db.execute(
+            "select kind, detail, resolved_at, resolution from errors "
+            "where conversation_id=? and message_id=? order by id desc limit 1",
+            (task.conversation_id, task.trigger_message_id),
+        ).fetchone()
+    assert error is not None
+    assert error[0] == "reply_task_skipped_by_operator"
+    assert error[1] == error[3]
+    assert error[2]
+    assert "event has ended" in error[3]
+
+
 def test_settlement_evidence_reconcile_commits_between_bounded_batches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

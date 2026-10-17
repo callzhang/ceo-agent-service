@@ -848,6 +848,49 @@ def register_console_routes(
         _record_feedback_event_for_attempt(store, attempt_id, feedback)
         return command_result(message="反馈已保存")
 
+    @app.get("/api/console/reply-tasks/{task_id}")
+    async def console_reply_task_state(task_id: int):
+        task = store_factory().get_reply_task(task_id)
+        if task is None:
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "Reply task not found", "details": {}},
+                status_code=404,
+            )
+        return item_envelope({
+            "id": task.id,
+            "status": task.status,
+            "error": task.error,
+            "execution_generation": task.execution_generation,
+        })
+
+    @app.post("/api/console/reply-tasks/{task_id}/skip")
+    async def console_skip_uncertain_reply_task(task_id: int, request: Request):
+        payload = await json_object(request)
+        generation = str(payload.get("execution_generation") or "")
+        reason = str(payload.get("reason") or "")
+        try:
+            skipped = store_factory().skip_unresolved_reply_task(
+                task_id,
+                expected_execution_generation=generation,
+                reason=reason,
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "code": "invalid_skip", "message": str(exc), "details": {}},
+                status_code=422,
+            )
+        if not skipped:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "reply_task_not_skippable",
+                    "message": "Reply task is no longer a failed uncertain action in this execution generation",
+                    "details": {},
+                },
+                status_code=409,
+            )
+        return command_result(message="已记录为 skipped；原外部动作不确定状态保留")
+
     @app.post("/api/console/history/{attempt_id}/rerun")
     async def console_history_rerun(attempt_id: int, request: Request):
         from app.audit_web import handle_rerun_attempt_post

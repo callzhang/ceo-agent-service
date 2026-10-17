@@ -1,5 +1,7 @@
 # Current Runtime Mechanism
 
+History 页面在事件图表和执行记录之前展示 Attention 面板；它复用独立 Attention 页面及 `/api/console/attention` 的读取、刷新、总数与详情行为，不改变 History 的记录查询或任务状态。
+
 The main launchd job declares `ProcessType=Interactive` because the local HTTP
 Console is a user-facing application dependency and does not use XPC activity
 for Adaptive classification. Omitting ProcessType applies Standard CPU/I/O
@@ -3078,6 +3080,13 @@ persists, the typed failure remains visible to normal recovery and Attention.
 Recorded DingTalk delivery recovery (2026-10-14): startup reconciliation, explicit failed-task completion and protection against failed-run projection all honor the receipt verification state. A recorded receipt with verification.state=ambiguous or failed does not prove delivery and cannot restore done. Positive sent receipts and previously recorded legacy readback receipts keep their existing completion behavior.
 
 Historical terminal Attempt or settlement projections cannot override a current external_action_uncertain/external_action_failed task error. A later verified provider result uses the normal execution completion writer. Original Attempt and settlement history remains unchanged.
+
+An operator may explicitly stop a current failed `external_action_uncertain` Reply task through
+`GET /api/console/reply-tasks/{task_id}` followed by `POST /api/console/reply-tasks/{task_id}/skip` with
+the observed `execution_generation` and a non-empty reason. The generation and uncertain failure are checked
+again inside the write transaction. The task becomes `skipped`; its external-action error and original Attempt
+and Agent runs remain unchanged, and an immutable settlement error records the operator's reason. This records
+that no more work should run; it does not report the external action as successful or verified.
 
 Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
 

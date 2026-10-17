@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const listHistory = vi.hoisted(() => vi.fn());
 const getHistoryChart = vi.hoisted(() => vi.fn());
 const listHistoryTypes = vi.hoisted(() => vi.fn());
+const listAttention = vi.hoisted(() => vi.fn());
 vi.mock("../api/console", () => ({
   listHistory,
   getHistoryChart,
   listHistoryTypes,
+  listAttention,
   displayValue: (value: unknown) => typeof value === "string" ? value : JSON.stringify(value),
 }));
 
@@ -62,6 +64,8 @@ describe("HistoryPage", () => {
     listHistory.mockReset();
     getHistoryChart.mockReset();
     listHistoryTypes.mockReset();
+    listAttention.mockReset();
+    listAttention.mockResolvedValue({ items: [], meta: { total: 0, snapshot_at: "2026-08-29T00:00:00Z" } });
     listHistoryTypes.mockResolvedValue([
       { value: "queue", label: "队列" },
       { value: "dingtalk", label: "钉钉消息" },
@@ -113,6 +117,18 @@ describe("HistoryPage", () => {
     expect(row).toHaveAttribute("href", "/tasks/836");
     expect(screen.queryByText("问")).not.toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "分页导航" })).toBeInTheDocument();
+  });
+
+  it("pins the live Attention panel above the History chart and records", async () => {
+    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
+
+    const attention = await screen.findByRole("heading", { name: "待处理问题" });
+    const chart = screen.getByRole("region", { name: "Recent 24 hour events" });
+    const history = document.querySelector(".history-workspace-card");
+    if (!history) throw new Error("History records panel is missing");
+    expect(attention.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chart.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(listAttention).toHaveBeenCalled();
   });
 
   it("changes the event chart time range through the history query", async () => {

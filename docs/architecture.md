@@ -417,6 +417,12 @@ settlement evidence，再按固定大小批次短写。每个批次重新核验 
 及 settlement evidence，并只压缩实际关闭的 task 输入。启动恢复不会为整个历史集合持有一个 SQLite
 写事务，也不会覆盖并发 writer 已写入的终态。
 
+只有明确的操作员决定可以停止仍处于 `external_action_uncertain` 的失败 Reply task：先读取
+`GET /api/console/reply-tasks/{task_id}` 的当前 generation，再向对应 `/skip` 入口提交 generation
+和非空原因。写入原子检查失败状态与 generation，将 task 投影为 `skipped` 并追加
+`reply_task_skipped_by_operator` settlement evidence；原 task error、Attempt 和 Agent run 保留，
+不声称外部动作成功，也不调用 provider 或重新执行动作。重复提交、generation 过期或 task 状态变化均被拒绝。
+
 旧版本曾在同一个 `reply_task` 的不同 generation 各写入一条 `reply_attempt` 投影。此类遗留行仍
 保留其 `agent_run` 作为执行事实，但 History（包括 Console API）只展示该 task 的最新 Attempt；它们
 不是多个独立业务事项，也不能重复计数或形成多张处理卡片。History 图表仍在每条原始 Attempt 的
@@ -736,6 +742,8 @@ DWS 明确的保密群历史拒绝由适配器转换为候选级 `GroupHistoryRe
 该规范化不重新分析会议、不改变目标，也不重发已有送达记录。
 
 ## History 语义与无效入口边界
+
+History 页面顶部固定展示与独立 Attention 页面共用的 Attention 面板，直接读取同一 Attention API；它不改变记录筛选、计数或终态语义。
 
 Status 的 Attempt 队列统计先按触发对象选出最新 Attempt 标识，再读取当前状态和失败详情，排序不携带历史错误正文。
 Status 的 Reply task 当前业务对象投影和 Email 当前计划动作投影各在单次 SQL 中只读取一次，

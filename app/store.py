@@ -20414,6 +20414,58 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 self._compact_settled_reply_task_input(db, task_id)
             return cursor.rowcount == 1
 
+    def skip_unresolved_reply_task(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+        reason: str,
+    ) -> bool:
+        """Stop an uncertain failed Reply task by an explicit operator decision.
+
+        This does not assert that the external action succeeded. The original
+        task error and immutable Agent run history remain intact; the separate
+        error row records why the operator chose not to continue the action.
+        """
+        evidence = reason.strip()
+        generation = expected_execution_generation.strip()
+        if not evidence:
+            raise ValueError("skip reason must be non-empty")
+        if not generation:
+            raise ValueError("execution generation is required")
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                f"select conversation_id, trigger_message_id, error "
+                f"from ({REPLY_TASK_SQL}) as reply_tasks "
+                "where id=? and status='failed' and execution_generation=?",
+                (task_id, generation),
+            ).fetchone()
+            if task is None or str(task["error"] or "") != "external_action_uncertain":
+                return False
+            cursor = db.execute(
+                "update tasks as reply_tasks set status='skipped', available_at='', "
+                "locked_at=null, updated_at=current_timestamp "
+                "where reply_tasks.record_type='reply_tasks' and id=? "
+                "and status='failed' and error='external_action_uncertain' "
+                "and execution_generation=?",
+                (task_id, generation),
+            )
+            if cursor.rowcount != 1:
+                return False
+            db.execute(
+                "insert into errors (conversation_id, message_id, kind, detail, "
+                "resolved_at, resolution) values (?, ?, ?, ?, current_timestamp, ?)",
+                (
+                    task["conversation_id"],
+                    task["trigger_message_id"],
+                    "reply_task_skipped_by_operator",
+                    evidence,
+                    evidence,
+                ),
+            )
+            self._compact_settled_reply_task_input(db, task_id)
+            return True
+
     def reconcile_unresolved_reply_tasks_with_settlement_evidence(self) -> int:
         """Close stale tasks with exact settlement evidence in bounded writes."""
         candidate_sql = """
