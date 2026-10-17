@@ -15081,6 +15081,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return None
             return self._reply_task_from_row(row)
 
+    def get_reply_task_by_trigger_message_id(
+        self, trigger_message_id: str, *, channel: str = "dingtalk"
+    ) -> ReplyTask | None:
+        """Find the current task for a globally unique synthetic trigger ID."""
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                select *
+                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                where channel=? and trigger_message_id=?
+                order by id desc
+                limit 1
+                """,
+                (channel, trigger_message_id),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._reply_task_from_row(row)
+
     def get_reply_task_for_business_object(
         self, business_object_key: str
     ) -> ReplyTask | None:
