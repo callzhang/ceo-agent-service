@@ -4,7 +4,7 @@
     {
       "source": "app/defaults/audit_rules.md",
       "target": "audit_rules",
-      "old_sha256": "2109b25434cadad2822888f489877849c5eb169db31b7acf516e45f89e2526e1",
+      "old_sha256": "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237",
       "new_sha256": "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
     },
     {
@@ -64,8 +64,8 @@
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
-      "old_sha256": "766eb3a6a2432523e04c26182ccc0f39749f2f1f7ebb4d2958ebfa5b36686359",
-      "new_sha256": "0779fe3af74baad510950c5332391ee20fcf76ab624d432390448dc1cc265162"
+      "old_sha256": "0779fe3af74baad510950c5332391ee20fcf76ab624d432390448dc1cc265162",
+      "new_sha256": "b5fe46acbe2e3cb432e23159fb53d6eb11285eb7fe8939f94d00681d9adf887e"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",

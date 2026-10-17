@@ -60,7 +60,8 @@ def test_supplier_payment_tracks_readability_per_attachment() -> None:
 def test_reviewer_side_unreadable_returns_do_not_trigger_three_return_refusal() -> None:
     for path in OA_SKILL_PATHS:
         text = path.read_text(encoding="utf-8")
-        assert "因审阅端权限、解析、OCR 或客户端问题要求申请人补交的错误退回，不得计入拒绝次数" in text
+        assert "因审阅端权限、下载、解析、OCR 或客户端读失败而要求申请人重交的退回" in text
+        assert "均不得计数" in text
         assert "记录具体阻塞并保持审批待处理" in text
         assert "若附件已提交而障碍仅在我方权限或读取能力" in text
         assert "只有独立证据确认源文件确实缺失、空白、损坏或缺页" in text
@@ -70,6 +71,15 @@ def test_reviewer_side_unreadable_returns_do_not_trigger_three_return_refusal() 
         assert "申请人可提供可读副本时优先退回补正" not in text
         assert "若正文无法取得且申请人能补正，优先退回" not in text
         assert "有经独立证据确认属于申请人可补正的真实材料缺口时" in text
+
+
+def test_three_return_threshold_requires_verified_per_return_evidence() -> None:
+    text = OA_SKILL_PATHS[0].read_text(encoding="utf-8")
+    assert "为每一轮退回建立有效性记录" in text
+    assert "该轮提出的具体问题、当时可读且来源可核验的证据" in text
+    assert "申请人针对该轮的回应及获得公平补正机会的事实" in text
+    assert "未完成逐轮核验的退回次数不得计入拒绝阈值" in text
+    assert "只有逐轮证据证明三轮都针对同一项真实、实质且由申请人或前序审批人可处理的缺口" in text
 
 
 def test_runtime_oa_skill_does_not_treat_reader_failure_as_applicant_material_gap() -> None:
