@@ -76,7 +76,7 @@
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
       "target": "skills/stardust-oa-finance-review/references/finance-rule-cards.md",
-      "old_sha256": "e5e6d647b6f9ffdf9e5eb9a22808a23f62681511bad5a08d89e5228695d0461f",
+      "old_sha256": "2e5cc31fecc272549b6854b120790935d82d33368dc178e7743327ab061afeb5",
       "new_sha256": "2e5cc31fecc272549b6854b120790935d82d33368dc178e7743327ab061afeb5"
     },
     {
