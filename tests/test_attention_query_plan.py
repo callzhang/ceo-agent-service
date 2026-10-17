@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sqlite3
 
 import pytest
@@ -131,6 +132,46 @@ def test_indexed_attention_applies_order_and_limit_after_failed_selection(tmp_pa
         with store.read_snapshot():
             rows = _queue_attention_rows(store, limit=limit)
         assert [row["id"] for row in rows] == [str(task.id) for task in expected]
+
+
+def test_attention_excludes_typed_unsubscribe_failures_but_keeps_failed_history(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    unsubscribe = _failed_task(store, "failed")
+    ordinary_email = _failed_task(store, "FAILED")
+    with store._connect() as db:
+        for task, action_type in ((unsubscribe, "unsubscribe"), (ordinary_email, "reply")):
+            db.execute(
+                "update tasks set channel='email', conversation_title='Email action', "
+                "trigger_message_id=? where record_type='reply_tasks' and id=?",
+                (f"email-action:{task.id}", task.id),
+            )
+            db.execute(
+                "update tasks set channel='email', conversation_title='Email action', "
+                "trigger_message_id=?, trigger_message_json=? "
+                "where record_type='reply_task_inputs' and parent_id=?",
+                (
+                    f"email-action:{task.id}",
+                    json.dumps({"schema": "email_agent_action.v1", "action_type": action_type}),
+                    task.id,
+                ),
+            )
+        db.execute(
+            "update tasks set error='unsubscribe_operation_rejected:ValueError' "
+            "where record_type='reply_tasks' and id=?",
+            (unsubscribe.id,),
+        )
+
+    rows = _queue_attention_rows(store)
+
+    assert {row["id"] for row in rows if row["category"] == "Reply task"} == {
+        str(ordinary_email.id)
+    }
+    with store._connect() as db:
+        row = db.execute(
+            "select status,error from tasks where record_type='reply_tasks' and id=?",
+            (unsubscribe.id,),
+        ).fetchone()
+        assert tuple(row) == ("failed", "unsubscribe_operation_rejected:ValueError")
 
 
 @pytest.mark.parametrize("surface", ["work_attention", "work_error", "reply_error"])

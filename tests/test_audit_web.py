@@ -12076,9 +12076,9 @@ def test_status_lists_the_outbox_and_memory_write_queues(tmp_path: Path):
     assert "task_memory_write" in names
 
 
-def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_path: Path):
-    # Derek, 2026-09-25: a failure whose cause is a third party's page stays
-    # failed (History keeps it) but is not an Attention item.
+def test_attention_skips_all_typed_unsubscribe_failures(tmp_path: Path):
+    # All typed unsubscribe failures stay failed (History keeps them), but are
+    # not manager Attention items regardless of whether the error is external.
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     errors = {
         "external-form": "email_unsubscribe_browser_failed: category=form_response_rejected",
@@ -12126,9 +12126,9 @@ def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_pa
     listed = {row["id"] for row in rows if row["category"] == "Reply task"}
     attempt_titles = [row for row in rows if row["category"] == "Reply"]
 
-    assert listed == {ids["ours-runtime"], ids["ours-unknown"]}
-    # Our own failures show as their Reply task row (the Attempt collapses into
-    # it); the external ones show as neither the task nor the Attempt.
+    assert listed == set()
+    # The task records and failed Attempts remain intact; the Attention
+    # projection excludes every typed unsubscribe task.
     assert attempt_titles == []
     assert store.count_current_unresolved_problem_attempts() == 2
     with store._connect() as db:

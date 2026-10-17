@@ -3435,6 +3435,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     ]
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
+    failed_unsubscribe_triggers: set[tuple[str, str, str]] = set()
     pending_oa_rows: list[dict[str, str]] = []
     with store._connect() as db:
         state = db.execute(
@@ -3473,6 +3474,44 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             deterministic=True,
         )
         if _sqlite_table_exists(db, "tasks"):
+            failed_unsubscribe_triggers.update(
+                (
+                    str(row["channel"] or "dingtalk"),
+                    str(row["conversation_id"] or ""),
+                    str(row["trigger_message_id"] or ""),
+                )
+                for row in db.execute(
+                    f"""
+                    select reply_tasks.channel, reply_tasks.conversation_id,
+                           reply_tasks.trigger_message_id
+                    from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                    where reply_tasks.id in (
+                        select cast(legacy_key as integer) from tasks indexed by idx_reply_tasks_status
+                        where record_type='reply_tasks' and lower(status)='failed'
+                    )
+                      and reply_tasks.channel='email'
+                      and json_valid(reply_tasks.trigger_message_json)
+                      and json_extract(reply_tasks.trigger_message_json, '$.action_type')='unsubscribe'
+                    """
+                ).fetchall()
+            )
+            failed_unsubscribe_triggers.update(
+                (
+                    str(row["channel"] or ""),
+                    str(row["conversation_id"] or ""),
+                    str(row["trigger_message_id"] or ""),
+                )
+                for row in db.execute(
+                    f"""
+                    select attempts.channel, attempts.conversation_id,
+                           attempts.trigger_message_id
+                    from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
+                    where attempts.channel='email'
+                      and attempts.action='direct_unsubscribe'
+                      and lower(attempts.send_status)='failed'
+                    """
+                ).fetchall()
+            )
             reply_task_sql = f"""
                 select reply_tasks.id, reply_tasks.channel,
                        reply_tasks.conversation_id, reply_tasks.trigger_message_id,
@@ -3499,6 +3538,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   -- Failed for a reason outside this service: History keeps it,
                   -- Attention does not (Derek 2026-09-25).
                   and not """ + external_task_error_sql() + f"""
+                  -- Email unsubscribe failures stay visible in History and
+                  -- follow their own retry/reconciliation path, never manager
+                  -- Attention, including unresolved execution-fence errors.
+                  and not (
+                    reply_tasks.channel='email'
+                    and json_valid(reply_tasks.trigger_message_json)
+                    and json_extract(reply_tasks.trigger_message_json, '$.action_type')='unsubscribe'
+                  )
                   -- A later successful run of the same scheduled task is the
                   -- authoritative recovery for an older scheduled reply task.
                   and not exists (
@@ -3528,13 +3575,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 reply_task_params = (limit,)
             reply_task_rows = db.execute(reply_task_sql, reply_task_params).fetchall()
             for row in reply_task_rows:
-                active_reply_task_triggers.add(
-                    (
-                        str(row["channel"] or "dingtalk"),
-                        str(row["conversation_id"] or ""),
-                        str(row["trigger_message_id"] or ""),
-                    )
+                trigger_key = (
+                    str(row["channel"] or "dingtalk"),
+                    str(row["conversation_id"] or ""),
+                    str(row["trigger_message_id"] or ""),
                 )
+                if trigger_key in failed_unsubscribe_triggers:
+                    continue
+                active_reply_task_triggers.add(trigger_key)
                 rows.append(
                     {
                         "category": "Reply task",
@@ -3863,11 +3911,21 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
         # the error count or appear beside technical failures.
         if send_status != "failed":
             continue
+        if (
+            str(attempt["channel"] or "").casefold() == "email"
+            and str(attempt["action"] or "").casefold() == "direct_unsubscribe"
+        ):
+            continue
         trigger_key = (
             attempt["channel"],
             attempt["conversation_id"],
             attempt["trigger_message_id"],
         )
+        # Failed direct unsubscribe tasks have their own History and
+        # retry/reconciliation surfaces; their linked Attempt must not re-add
+        # the same business action to manager Attention.
+        if trigger_key in failed_unsubscribe_triggers:
+            continue
         if send_status == "failed" and trigger_key in active_reply_task_triggers:
             continue
         rows.append(

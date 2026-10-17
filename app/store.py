@@ -25784,6 +25784,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             sql = f"""
                 select attempts.id, attempts.channel, attempts.conversation_id,
+                       attempts.action,
                        attempts.trigger_message_id, attempts.send_status,
                        attempts.conversation_title, attempts.trigger_text,
                        attempts.updated_at, attempts.send_error
@@ -25885,6 +25886,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 {
                     "id": str(row["id"] or ""),
                     "channel": str(row["channel"] or ""),
+                    "action": str(row["action"] or ""),
                     "conversation_id": str(row["conversation_id"] or ""),
                     "trigger_message_id": str(row["trigger_message_id"] or ""),
                     "send_status": str(row["send_status"] or ""),
