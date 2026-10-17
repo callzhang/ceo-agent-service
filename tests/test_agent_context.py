@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -317,6 +318,14 @@ def _context(
             ),
         ),
     )
+
+
+def test_context_carries_verified_agent_quote_as_structured_provenance():
+    context = replace(_context(), trigger_quotes_agent_message=True)
+
+    rendered = context.render_business_context()
+
+    assert '"quoted_agent_authored_message":true' in rendered
 
 
 def test_context_renders_reference_and_command_without_resolved_body():

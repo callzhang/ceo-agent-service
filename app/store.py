@@ -20525,6 +20525,41 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return None
             return SentReply.model_validate(dict(row))
 
+    def is_verified_agent_authored_message(
+        self,
+        conversation_id: str,
+        message_id: str,
+        *,
+        channel: str = "dingtalk",
+    ) -> bool:
+        """Match a provider message ID to a successfully read-back agent send."""
+        conversation_id = conversation_id.strip()
+        message_id = message_id.strip()
+        channel = channel.strip()
+        if not conversation_id or not message_id or not channel:
+            return False
+        with self._connect() as db:
+            return db.execute(
+                f"""
+                select 1
+                from ({SENT_REPLY_SQL}) as sent
+                where sent.channel=?
+                  and sent.conversation_id=?
+                  and json_valid(sent.send_result_json)
+                  and json_extract(sent.send_result_json, '$.verification.state')='sent'
+                  and json_extract(
+                      sent.send_result_json,
+                      '$.verification.status_result.result.sendStatus'
+                  )='SUCCESS'
+                  and json_extract(
+                      sent.send_result_json,
+                      '$.verification.status_result.result.openMessageId'
+                  )=?
+                limit 1
+                """,
+                (channel, conversation_id, message_id),
+            ).fetchone() is not None
+
     def list_sent_replies_after(self, sent_reply_id: int) -> list[SentReply]:
         with self._connect() as db:
             rows = db.execute(

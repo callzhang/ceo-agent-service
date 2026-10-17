@@ -137,6 +137,16 @@ def require_needs_human_decision_quality(
     return result
 
 
+def require_needs_human_context_eligible(
+    *, outcome: str, trigger_quotes_agent_message: bool,
+) -> None:
+    """A verified reply to an Agent-authored message stays in Agent recovery."""
+    if outcome == "needs_human" and trigger_quotes_agent_message:
+        raise ValueError(
+            "needs_human is not allowed when the trigger quotes a verified agent-authored message"
+        )
+
+
 def classify_stored_needs_human_projection(
     result: object,
 ) -> StoredNeedsHumanProjection:

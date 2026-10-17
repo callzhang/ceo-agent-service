@@ -56,6 +56,12 @@ else:
 
 如果澄清后信息仍不完整，继续生成下一条最小澄清 proposal；不能把普通材料缺失直接升级成 Derek 的管理决策。
 
+如果当前 trigger 引用了一条可由本服务 provider 发送回执核验的 Agent 消息，则它属于
+Agent 发起的续接/恢复链。该来源事实由 `conversation_id + quoted_message_id` 与已成功
+readback 的 `sent_replies` 关联，不从正文签名猜测。此类 trigger 不得进入
+`needs_human`，即使一般分数满足升级条件；Agent 必须独立判断并生成有边界的普通 proposal，
+必要时向事实来源方 ask-back。Consumer 结果校验与 Audit 候选复核都执行此上下文门槛。
+
 ### `needs_human`
 
 信息已经足够时，以下任一条件成立即可进入 `needs_human`：

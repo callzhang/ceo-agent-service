@@ -23,6 +23,7 @@ from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
+from app.decision_quality import require_needs_human_context_eligible
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import (
     AgentTurnProcess,
@@ -143,6 +144,12 @@ the exact boundary and required evidence or authorization instead of offering
 the user a plan to perform the deletion. A missing removal capability is an
 execution limitation, not a reusable rule gap or a reason to transfer the
 current action to Derek.
+When the task context marks `quoted_agent_authored_message` true, the trigger
+is a reply to a message this service sent and verified through the provider.
+Treat it as an Agent-owned continuation/recovery: independently assess the new
+facts, correct or complete the supported work, and never return needs_human
+for that trigger. If facts remain missing, ask the source owner in an ordinary
+proposal.
 Executable options contain complete plans for continuing this item under the
 selected reusable rule; stop options state skipped with a reason. A request for
 current-instance facts or judgment is never represented as a zero-option
@@ -681,6 +688,13 @@ class ConsumerAgentRunner:
 
 def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revision, source_client):
     from app.reviewed_sources import capture_candidate_sources
+    try:
+        require_needs_human_context_eligible(
+            outcome=parsed.outcome.value,
+            trigger_quotes_agent_message=context.trigger_quotes_agent_message,
+        )
+    except ValueError as exc:
+        raise ResultParseError(str(exc)) from exc
     prepared = _prepare_outgoing_dingtalk_messages(parsed, store=store, task=task,
         context=context, proposal_revision=proposal_revision)
     if prepared.outcome is ConsumerOutcome.FAILED:

@@ -31,7 +31,10 @@ from app.audit_rules import render_audit_rules
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
-from app.decision_quality import require_needs_human_decision_quality
+from app.decision_quality import (
+    require_needs_human_context_eligible,
+    require_needs_human_decision_quality,
+)
 from app.reviewed_candidates import candidate_digest
 from app.runtime_prompt_context import explicit_participant_timezones
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
@@ -61,11 +64,20 @@ def validate_audit_candidate_fields(result: AuditAgentResult, candidate: Consume
             raise ResultParseError("Audit candidate field assertion contradicts the bound candidate; correct Audit feedback, not the candidate")
 
 
-def validate_audit_candidate_decision_quality(candidate: ConsumerAgentResult) -> None:
+def validate_audit_candidate_decision_quality(
+    candidate: ConsumerAgentResult, *, trigger_quotes_agent_message: bool = False,
+) -> None:
     """Independently enforce the shared human-escalation and rule-choice gates."""
 
     if candidate.outcome is not ConsumerOutcome.NEEDS_HUMAN:
         return
+    try:
+        require_needs_human_context_eligible(
+            outcome=candidate.outcome.value,
+            trigger_quotes_agent_message=trigger_quotes_agent_message,
+        )
+    except ValueError as exc:
+        raise ResultParseError(str(exc)) from exc
     if not (
         2 <= len(candidate.decision_options) <= 4
         and candidate.requested_input is None
@@ -170,7 +182,10 @@ class AuditAgentRunner:
     ) -> AgentTurnRunResult[AuditAgentResult]:
         if context.task.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
-        validate_audit_candidate_decision_quality(context.candidate)
+        validate_audit_candidate_decision_quality(
+            context.candidate,
+            trigger_quotes_agent_message=context.task.trigger_quotes_agent_message,
+        )
         exact_digest = candidate_digest(context.candidate)
         if context.candidate_digest != exact_digest:
             raise ValueError("Audit candidate digest mismatch")

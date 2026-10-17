@@ -55,7 +55,7 @@ from app.dws_client import (
     DwsUserProfile,
 )
 from app.outbound_postfix import compose_outbound_postfix
-from app.action_storage import update_action
+from app.action_storage import insert_action, update_action
 from app.store import AgentRole, AutoReplyStore
 from app.task_storage import REPLY_TASK_SQL
 from app.skill_features import FeatureRegistry
@@ -1854,6 +1854,49 @@ def test_worker_restores_finance_oa_scheduled_consumer_snapshot(
     assert context.skill_protocol_source == scheduled_consumer.skill_protocol_source
     assert context.skill_names == scheduled_consumer.skill_names
     assert "scheduled_consumer" not in context.trigger_raw_payload
+
+
+def test_worker_marks_quote_of_verified_agent_message_as_recovery_context(
+    tmp_path, monkeypatch,
+):
+    worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
+    trigger = message("这是回复", message_id="incoming", quoted_content="Agent 原消息")
+    trigger.quoted_message_id = "agent-output-id"
+    with worker.store._connect() as db:
+        insert_action(db, "sent_replies", {
+            "conversation_id": trigger.open_conversation_id,
+            "trigger_message_id": "earlier-input",
+            "reply_text": "Agent 原消息",
+            "send_result_json": json.dumps({
+                "verification": {
+                    "state": "sent",
+                    "status_result": {"result": {
+                        "openMessageId": "agent-output-id",
+                        "sendStatus": "SUCCESS",
+                    }},
+                },
+            }),
+            "channel": "dingtalk",
+        })
+    assert worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        channel="dingtalk",
+    )
+    [task] = worker.store.peek_reply_tasks(limit=1, channel="dingtalk")
+
+    context = worker._build_agent_task_context(
+        conversation=conversation(), task=task, trigger=trigger,
+        context_messages=[trigger],
+    )
+
+    assert context.trigger_quotes_agent_message is True
 
 
 def test_disabled_calendar_invite_leaves_new_calendar_task_uncreated(tmp_path, monkeypatch):

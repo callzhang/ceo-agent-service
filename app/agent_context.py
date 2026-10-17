@@ -89,6 +89,7 @@ class AgentTaskContext:
     messages: tuple[AgentContextMessage, ...]
     materials: tuple[MaterialReference, ...]
     prior_receipts: tuple[PriorReceipt, ...]
+    trigger_quotes_agent_message: bool = False
     manual_rerun: ManualRerunInstruction | None = None
     trigger_sender_user_id: str = ""
     trigger_sender_open_dingtalk_id: str = ""
@@ -163,6 +164,7 @@ class AgentTaskContext:
             "text": self.trigger_text,
             "create_time": self.trigger_create_time,
             "raw_payload": self.trigger_raw_payload,
+            "quoted_agent_authored_message": self.trigger_quotes_agent_message,
         }
         messages = [
             {

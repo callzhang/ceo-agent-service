@@ -2962,6 +2962,14 @@ class DingTalkAutoReplyWorker:
             messages=tuple(messages),
             materials=materials,
             prior_receipts=self._agent_prior_receipts(task),
+            trigger_quotes_agent_message=bool(
+                trigger.quoted_message_id
+                and self.store.is_verified_agent_authored_message(
+                    conversation.open_conversation_id,
+                    trigger.quoted_message_id,
+                    channel=task.channel,
+                )
+            ),
             manual_rerun=manual_rerun,
             trigger_raw_payload=trigger_raw_payload,
             image_paths=tuple(str(path.resolve()) for path in image_paths),

@@ -98,6 +98,13 @@ def test_audit_rechecks_needs_human_candidate_against_quality_scores():
         "information_completeness": 1.0,
     })
 
+    with pytest.raises(ResultParseError, match="trigger quotes a verified agent-authored message"):
+        from app.audit_agent import validate_audit_candidate_decision_quality
+
+        validate_audit_candidate_decision_quality(
+            candidate, trigger_quotes_agent_message=True,
+        )
+
     with pytest.raises(ResultParseError, match="does not satisfy decision quality gate"):
         validate_audit_candidate_fields(audit_result, candidate)
 

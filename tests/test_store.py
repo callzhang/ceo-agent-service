@@ -64,6 +64,55 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts():
         )
 
 
+def test_agent_authored_message_requires_verified_provider_readback(tmp_path):
+    store = AutoReplyStore(tmp_path / "agent-message-origin.sqlite3")
+    with store._connect() as db:
+        insert_action(db, "sent_replies", {
+            "conversation_id": "conversation",
+            "trigger_message_id": "incoming-trigger",
+            "reply_text": "AI-generated body",
+            "send_result_json": json.dumps({
+                "verification": {
+                    "state": "sent",
+                    "status_result": {
+                        "result": {
+                            "openMessageId": "verified-outgoing-id",
+                            "sendStatus": "SUCCESS",
+                        },
+                    },
+                },
+            }),
+            "channel": "dingtalk",
+        })
+        insert_action(db, "sent_replies", {
+            "conversation_id": "conversation",
+            "trigger_message_id": "other-trigger",
+            "reply_text": "Unverified body",
+            "send_result_json": json.dumps({
+                "verification": {
+                    "state": "unknown",
+                    "status_result": {
+                        "result": {
+                            "openMessageId": "unverified-outgoing-id",
+                            "sendStatus": "SUCCESS",
+                        },
+                    },
+                },
+            }),
+            "channel": "dingtalk",
+        })
+
+    assert store.is_verified_agent_authored_message(
+        "conversation", "verified-outgoing-id", channel="dingtalk"
+    )
+    assert not store.is_verified_agent_authored_message(
+        "conversation", "unverified-outgoing-id", channel="dingtalk"
+    )
+    assert not store.is_verified_agent_authored_message(
+        "another-conversation", "verified-outgoing-id", channel="dingtalk"
+    )
+
+
 def _sqlite_failure(
     message: str,
     *,
