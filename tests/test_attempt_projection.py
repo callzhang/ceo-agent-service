@@ -150,3 +150,98 @@ def test_completed_audit_follows_its_retried_consumer_within_one_revision():
         SimpleNamespace(id=2, role="audit", execution_generation="g1", proposal_revision=0, turn_attempt=0, status="completed"),
     ]
     assert project_attempt_status(attempt, task, runs) == "skipped"
+
+
+def test_expired_oa_source_projects_uncertain_follow_up_as_skipped_without_claiming_delivery():
+    import json
+
+    resolution = json.dumps({
+        "business_id": "business-1",
+        "checked_at": "2026-10-15T10:37:10+00:00",
+        "closure_reason": "source process terminated; follow-up is no longer actionable",
+        "current_principal_task_ids": [],
+        "external_write_count": 0,
+        "historical_chat_delivery": "unverified; original uncertain delivery remains unchanged",
+        "native_and_openapi_business_id_match": True,
+        "original_message_id": "trigger-1",
+        "original_oa_task_id": "task-1",
+        "original_oa_task_status": "CANCELED",
+        "process_finished_at": "2026-10-14 17:44:07",
+        "process_instance_id": "process-1",
+        "process_status": "TERMINATED",
+        "source": "exact original DingTalk message and native OA detail/OpenAPI readback",
+    })
+    attempt = SimpleNamespace(
+        send_status="uncertain",
+        send_error="external_action_uncertain",
+        resolved_at="2026-10-15T10:37:10+00:00",
+        resolution=resolution,
+        channel="dingtalk",
+        trigger_message_id="trigger-1",
+    )
+    task = SimpleNamespace(status="done", execution_generation="g1")
+    run = SimpleNamespace(
+        id=2, execution_generation="g1", turn_attempt=0, proposal_revision=1,
+        role="audit", status="completed",
+    )
+
+    assert project_attempt_status(
+        attempt, task, [run], current_execution_status="uncertain"
+    ) == "skipped"
+
+
+def test_expired_oa_projection_requires_exact_source_and_zero_external_writes():
+    import json
+
+    attempt = SimpleNamespace(
+        send_status="uncertain",
+        resolved_at="2026-10-15T10:37:10+00:00",
+        resolution=json.dumps({
+            "external_write_count": 1,
+            "native_and_openapi_business_id_match": True,
+            "original_message_id": "trigger-1",
+            "original_oa_task_id": "task-1",
+            "original_oa_task_status": "CANCELED",
+            "process_instance_id": "process-1",
+            "process_status": "TERMINATED",
+            "source": "exact original DingTalk message and native OA detail/OpenAPI readback",
+        }),
+        channel="dingtalk",
+        trigger_message_id="trigger-1",
+    )
+    task = SimpleNamespace(status="done", execution_generation="g1")
+
+    assert project_attempt_status(
+        attempt, task, [], current_execution_status="uncertain"
+    ) == "uncertain"
+
+
+def test_terminal_oa_skip_message_does_not_claim_delivery():
+    import json
+
+    from app.web_api.attempts import _status_message
+
+    attempt = SimpleNamespace(
+        send_status="uncertain",
+        resolved_at="2026-10-15T10:37:10+00:00",
+        resolution=json.dumps({
+            "current_principal_task_ids": [],
+            "external_write_count": 0,
+            "historical_chat_delivery": "unverified; original uncertain delivery remains unchanged",
+            "native_and_openapi_business_id_match": True,
+            "original_message_id": "trigger-1",
+            "original_oa_task_id": "task-1",
+            "original_oa_task_status": "CANCELED",
+            "process_instance_id": "process-1",
+            "process_status": "TERMINATED",
+            "source": "exact original DingTalk message and native OA detail/OpenAPI readback",
+        }),
+        channel="dingtalk",
+        trigger_message_id="trigger-1",
+    )
+
+    message, requires_decision = _status_message(attempt, None)
+
+    assert "已跳过" in message
+    assert "仍未核实" in message
+    assert not requires_decision

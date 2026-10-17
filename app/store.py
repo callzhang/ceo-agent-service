@@ -226,6 +226,38 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 SERVICE_HEALTH_STATE_PREFIX = "service_health:"
+TERMINAL_OA_SOURCE_SKIP_SQL = """
+    reply_attempts.send_status='uncertain'
+    and reply_attempts.channel='dingtalk'
+    and trim(coalesce(reply_attempts.resolved_at, ''))<>''
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.source')
+        ='exact original DingTalk message and native OA detail/OpenAPI readback'
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.native_and_openapi_business_id_match')=1
+    and json_type(case when json_valid(reply_attempts.resolution)
+                       then reply_attempts.resolution else '{}' end, '$.external_write_count')='integer'
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.external_write_count')=0
+    and json_type(case when json_valid(reply_attempts.resolution)
+                       then reply_attempts.resolution else '{}' end, '$.current_principal_task_ids')='array'
+    and json_array_length(case when json_valid(reply_attempts.resolution)
+                               then reply_attempts.resolution else '{}' end, '$.current_principal_task_ids')=0
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.process_status') in ('COMPLETED','TERMINATED')
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.original_oa_task_status')
+        in ('COMPLETED','FINISHED','CANCELED','CANCELLED','TERMINATED')
+    and trim(coalesce(json_extract(case when json_valid(reply_attempts.resolution)
+                                     then reply_attempts.resolution else '{}' end, '$.process_instance_id'),''))<>''
+    and trim(coalesce(json_extract(case when json_valid(reply_attempts.resolution)
+                                     then reply_attempts.resolution else '{}' end, '$.original_oa_task_id'),''))<>''
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.original_message_id')
+        =reply_attempts.trigger_message_id
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.historical_chat_delivery') like 'unverified%'
+"""
 WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 TERMINAL_NO_ACTION_RUN_FAILURE_CODES = frozenset(
     {
@@ -25793,6 +25825,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     end as output_text,
                     action,
                     case
+                        when {TERMINAL_OA_SOURCE_SKIP_SQL} then 'skipped'
                         when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
                         when channel = 'wechat' then coalesce((
                             select case deliveries.status
@@ -30914,6 +30947,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     'Reply' as category,
                     action as action,
                     case
+                        -- A source-terminal closure skips further handling while
+                        -- preserving the uncertain provider delivery as audit data.
+                        when {TERMINAL_OA_SOURCE_SKIP_SQL} then 'skipped'
                         -- Current unresolved System Execution uncertainty
                         -- outranks a terminal task status. Resolved attempts
                         -- keep their existing resolution projection.

@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
+from app.attempt_projection import terminal_oa_source_closure_is_skipped
 from app.attempt_what_happened import build_what_happened, stopped_because
 from app.web_api.common import json_safe, normalize_display_value
 from app.run_storage import AGENT_RUN_SQL
@@ -38,6 +39,11 @@ def _status_message(
     attempt: Any, attention: Any, *, rerun_block_reason: str = ""
 ) -> tuple[str, bool]:
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
+    if terminal_oa_source_closure_is_skipped(attempt):
+        return (
+            "原 OA 流程已终止，此跟进已跳过；原消息送达情况仍未核实。",
+            False,
+        )
     if getattr(attempt, "resolved_at", "") and getattr(attempt, "resolution", ""):
         return str(attempt.resolution), False
     if status == "sent":

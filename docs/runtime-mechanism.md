@@ -173,7 +173,10 @@ task is terminal. The skip records process/task identity and the observed
 terminal state, preserves the uncertain delivery error and original provider
 receipt, and removes the task from actionable Attention without claiming the
 message was sent. Nonterminal, mismatched, incomplete, or failed OA reads leave
-the task unresolved.
+the task unresolved. When this exact closure was already recorded for a historical
+Attempt, History projects the follow-up as `skipped` in both list and detail while
+the raw provider/System Execution receipt remains `uncertain`; the status means
+no further follow-up is actionable, not that delivery failed or succeeded.
 
 When an approved DingTalk message send has no verified provider receipt, the
 orchestrator routes a bounded follow-up revision to Consumer with explicit

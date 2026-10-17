@@ -641,6 +641,119 @@ def test_history_projects_attempt_without_run_from_current_message_task(
     assert legacy_rows == []
 
 
+def test_history_projects_terminal_oa_closure_as_skipped_while_preserving_uncertainty(tmp_path):
+    import json
+
+    store = AutoReplyStore(tmp_path / "history-terminal-oa-skipped.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="terminal-oa-source",
+        conversation_title="张玲玲",
+        single_chat=False,
+        trigger_message_id="terminal-trigger",
+        trigger_create_time="2026-10-15 00:00:00",
+        trigger_sender="张玲玲",
+        trigger_text="催办已过期",
+        execution_generation="generation-1",
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
+            ("terminal-trigger",),
+        ).fetchone()[0]
+        consumer = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "consumer",
+            "status": "completed",
+        })
+        audit = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "audit",
+            "parent_id": consumer.lastrowid,
+            "status": "completed",
+        })
+        candidate = insert_action(db, "review_candidates", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "consumer_run_id": consumer.lastrowid,
+            "stage_index": 0,
+            "proposal_revision": 0,
+            "candidate_digest": "candidate-digest",
+            "candidate_json": '{"outcome":"proposal","proposal":{"actions":[]}}',
+        })
+        review = insert_action(db, "candidate_reviews", {
+            "candidate_id": candidate.lastrowid,
+            "audit_run_id": audit.lastrowid,
+            "decision": "approve",
+            "candidate_digest": "candidate-digest",
+            "result_json": '{"outcome":"approve"}',
+        })
+        execution = insert_action(db, "candidate_executions", {
+            "candidate_id": candidate.lastrowid,
+            "review_id": review.lastrowid,
+            "status": "uncertain",
+            "result_json": '{"reason":"receipt pending"}',
+        })
+        attempt_id = insert_action(db, "reply_attempts", {
+            "conversation_id": "terminal-oa-source",
+            "conversation_title": "张玲玲",
+            "trigger_message_id": "terminal-trigger",
+            "trigger_sender": "张玲玲",
+            "trigger_text": "催办已过期",
+            "action": "agent_run",
+            "sensitivity_kind": "general",
+            "send_status": "uncertain",
+            "send_error": "external_action_uncertain",
+            "agent_run_id": audit.lastrowid,
+        }).lastrowid
+        db.execute(
+            "update tasks set status='done' where record_type='reply_tasks' and id=?",
+            (task_id,),
+        )
+        resolution = json.dumps({
+            "business_id": "business-1",
+            "checked_at": "2026-10-15T10:37:10+00:00",
+            "closure_reason": "source process terminated; follow-up is no longer actionable",
+            "current_principal_task_ids": [],
+            "external_write_count": 0,
+            "historical_chat_delivery": "unverified; original uncertain delivery remains unchanged",
+            "native_and_openapi_business_id_match": True,
+            "original_message_id": "terminal-trigger",
+            "original_oa_task_id": "task-1",
+            "original_oa_task_status": "CANCELED",
+            "process_finished_at": "2026-10-14 17:44:07",
+            "process_instance_id": "process-1",
+            "process_status": "TERMINATED",
+            "source": "exact original DingTalk message and native OA detail/OpenAPI readback",
+        })
+        update_action(db, "reply_attempts", attempt_id, {
+            "resolved_at": "2026-10-15T10:37:10+00:00",
+            "resolution": resolution,
+        })
+
+    skipped_total, skipped_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("skipped",), source_tables=("reply_attempts",)
+    )
+    uncertain_total, uncertain_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("uncertain",), source_tables=("reply_attempts",)
+    )
+
+    assert execution.lastrowid
+    assert skipped_total == 1
+    assert [(row.source_id, row.status) for row in skipped_rows] == [(attempt_id, "skipped")]
+    assert uncertain_total == 0
+    assert uncertain_rows == []
+    history = store.list_history_items(
+        send_statuses=("skipped",), kinds=("reply",), limit=20
+    )
+    assert [(item.source_id, item.status) for item in history] == [(attempt_id, "skipped")]
+    stored = store.get_reply_attempt(attempt_id)
+    assert stored is not None
+    assert stored.send_status == "uncertain"
+    assert stored.send_error == "external_action_uncertain"
+
+
 def test_history_keeps_unbound_oa_external_uncertainty_uncertain(tmp_path):
     store = AutoReplyStore(tmp_path / "history-unbound-oa-uncertain.sqlite3")
     store.enqueue_reply_task(

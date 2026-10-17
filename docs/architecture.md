@@ -2209,7 +2209,13 @@ reply-task identity when that task's DingTalk trigger key has since changed.
 Current terminal task state is projected without rewriting the Attempt or its
 execution audit. A current candidate execution with an unresolved `uncertain`
 receipt remains `uncertain` even if its task closed; an independently resolved
-Attempt retains its recorded resolution state.
+Attempt retains its recorded resolution state. A verified terminal-source closure
+for an OA follow-up is the narrow exception: History projects that follow-up as
+`skipped` only when its persisted readback names the exact original message and OA
+process/task, confirms native/OpenAPI identity and terminal states, records zero
+external writes and no current principal tasks, and explicitly leaves chat delivery
+unverified. The original provider receipt and execution remain `uncertain`; `skipped`
+means the obsolete follow-up no longer needs action.
 
 
 ### 原始触发、当前来源和立项财务口径（2026-10-14）
