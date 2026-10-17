@@ -63,6 +63,7 @@ MAX_MCP_MATERIAL_RESPONSE_BYTES = 1024 * 1024 - 1024
 MAX_SKILL_BYTES = 256 * 1024
 MAX_TEXT_MATERIAL_BYTES = 512 * 1024
 MAX_SPREADSHEET_BYTES = 20 * 1024 * 1024
+MAX_PDF_BYTES = 64 * 1024 * 1024
 MAX_SPREADSHEET_ROWS = 200
 MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
@@ -421,15 +422,18 @@ def read_text_file(path: str) -> dict[str, object]:
         file_stat = os.fstat(material_file.fileno())
         if not stat.S_ISREG(file_stat.st_mode):
             raise AgentReadOnlyViolationError("text_material_file_not_regular")
-        if file_stat.st_size > MAX_TEXT_MATERIAL_BYTES:
-            if file_stat.st_size > MAX_SPREADSHEET_BYTES:
-                raise AgentReadOnlyViolationError("material_file_too_large")
         material_file.seek(0)
         is_pdf = (
             material_path.suffix.casefold() == ".pdf"
             or material_file.read(5) == b"%PDF-"
         )
         material_file.seek(0)
+        if is_pdf:
+            if file_stat.st_size > MAX_PDF_BYTES:
+                raise AgentReadOnlyViolationError("material_file_too_large")
+        elif file_stat.st_size > MAX_TEXT_MATERIAL_BYTES:
+            if file_stat.st_size > MAX_SPREADSHEET_BYTES:
+                raise AgentReadOnlyViolationError("material_file_too_large")
         if is_pdf:
             return _read_pdf_material(material_file, material_path)
         material_file.seek(0)
@@ -498,20 +502,24 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
 
     if ocr_page_numbers:
         material_file.seek(0)
+        digest = hashlib.file_digest(material_file, "sha256").hexdigest()
+        material_file.seek(0)
         binary = material_file.read(MAX_OCR_AGENT_INPUT_BYTES + 1)
-        if len(binary) > MAX_OCR_AGENT_INPUT_BYTES:
-            raise AgentReadOnlyViolationError("pdf_material_ocr_input_too_large")
-        return {
+        result = {
             "format": "pdf",
             "page_count": len(reader.pages),
             "pages": extracted_pages,
             "ocr_required": True,
             "ocr_page_numbers": ocr_page_numbers,
-            "ocr_input_base64": base64.b64encode(binary).decode("ascii"),
-            "ocr_mime_type": "application/pdf",
             "path": str(material_path),
-            "sha256": hashlib.sha256(binary).hexdigest(),
+            "sha256": digest,
         }
+        if len(binary) <= MAX_OCR_AGENT_INPUT_BYTES:
+            result["ocr_input_base64"] = base64.b64encode(binary).decode("ascii")
+            result["ocr_mime_type"] = "application/pdf"
+        else:
+            result["ocr_page_image_required"] = True
+        return result
 
     previews: list[dict[str, object]] = []
     remaining_chars = MAX_TEXT_MATERIAL_BYTES
@@ -555,6 +563,52 @@ def _ocr_input_for_agent(material_file, material_path: Path, *, file_format: str
     }
 
 
+def _pdf_page_ocr_input(
+    material_path: Path, *, page_number: int, source_sha256: str,
+) -> dict[str, object]:
+    """Render one original PDF page as a bounded image for the OCR MCP."""
+    if type(page_number) is not int or page_number < 1:
+        raise AgentReadOnlyViolationError("pdf_ocr_page_number_invalid")
+    document = None
+    page = None
+    try:
+        import pypdfium2 as pdfium
+        document = pdfium.PdfDocument(str(material_path))
+        if page_number > len(document):
+            raise AgentReadOnlyViolationError("pdf_ocr_page_number_invalid")
+        page = document[page_number - 1]
+        page_width, page_height = page.get_size()
+        scale = min(1.5, 2200 / max(page_width, page_height))
+        image = page.render(scale=scale).to_pil().convert("RGB")
+        for scale in (1.0, 0.85, 0.7):
+            current = image.copy()
+            if scale < 1.0:
+                current.thumbnail((int(image.width * scale), int(image.height * scale)))
+            for quality in (85, 75, 65):
+                encoded = BytesIO()
+                current.save(encoded, format="JPEG", quality=quality, optimize=True)
+                payload = encoded.getvalue()
+                if len(payload) <= MAX_OCR_AGENT_INPUT_BYTES:
+                    return {
+                        "format": "image",
+                        "ocr_required": True,
+                        "ocr_input_base64": base64.b64encode(payload).decode("ascii"),
+                        "ocr_mime_type": "image/jpeg",
+                        "ocr_original_page_number": page_number,
+                        "ocr_source_sha256": source_sha256,
+                    }
+        raise AgentReadOnlyViolationError("pdf_ocr_page_image_too_large")
+    except AgentReadOnlyViolationError:
+        raise
+    except Exception as exc:
+        raise AgentReadOnlyViolationError("pdf_ocr_page_render_failed") from exc
+    finally:
+        if page is not None:
+            page.close()
+        if document is not None:
+            document.close()
+
+
 def _download_dingtalk_drive_file(
     *,
     dws,
@@ -569,11 +623,13 @@ def _download_dingtalk_drive_file(
     if not _task_file_component(file_name) or len(file_name) > 255:
         raise AgentReadOnlyViolationError("drive_file_name_invalid")
     material_root.mkdir(parents=True, exist_ok=True)
+    is_pdf = Path(file_name).suffix.casefold() == ".pdf"
+    max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
     contents = dws.download_drive_file(
         node_id, file_name=file_name, space_id=space_id,
-        max_bytes=MAX_SPREADSHEET_BYTES,
+        max_bytes=max_bytes,
     )
-    if len(contents) > MAX_SPREADSHEET_BYTES:
+    if len(contents) > max_bytes:
         raise AgentReadOnlyViolationError("drive_file_too_large")
     package_source = BytesIO(contents)
     if zipfile.is_zipfile(package_source):
@@ -1364,18 +1420,20 @@ def build_role_server(
     bound.add_tool(read_text_file_tool, name="read_text_file", annotations=read)
     bound.add_tool(read_spreadsheet_tool, name="read_spreadsheet", annotations=read)
     drive_material_directory: tempfile.TemporaryDirectory[str] | None = None
+    drive_material_paths: dict[tuple[str, str, str], Path] = {}
 
     def read_dingtalk_drive_file(
-        node_id: str, space_id: str, file_name: str
+        node_id: str, space_id: str, file_name: str,
+        page_number: int | None = None,
     ) -> dict[str, object]:
         """Read the body of one exact DingTalk Drive attachment for OA review.
 
         Use after drive metadata identifies an accessible attachment node. Returns
-        bounded image, PDF, workbook, presentation, or text contents. When a
-        scan needs OCR, returns the exact source bytes, page numbers, and SHA-256
-        for the Consumer to pass to ai_services.ocr_document. A failed or
-        unreadable OCR result is a technical read failure, not missing applicant
-        material; do not attribute it to the applicant.
+        bounded image, PDF, workbook, presentation, or text contents. For a
+        scanned PDF above the inline OCR input limit, pass one of the returned
+        ocr_page_numbers as page_number to receive a bounded rendered page image
+        for ai_services.ocr_document. The exact downloaded PDF is retained only
+        for this MCP process lifetime. OCR failures are technical read failures.
         """
         nonlocal drive_material_directory
         from app.dws_client import DwsClient
@@ -1384,13 +1442,34 @@ def build_role_server(
                 prefix="oa-review-"
             )
             atexit.register(drive_material_directory.cleanup)
-        return _download_dingtalk_drive_file(
+        key = (node_id, space_id, file_name)
+        if page_number is not None:
+            material_path = drive_material_paths.get(key)
+            if material_path is None or not material_path.is_file():
+                result = _download_dingtalk_drive_file(
+                    dws=DwsClient(), node_id=node_id, space_id=space_id,
+                    file_name=file_name,
+                    material_root=Path(drive_material_directory.name),
+                )
+                material_path = Path(str(result["path"]))
+                drive_material_paths[key] = material_path
+            if material_path.suffix.casefold() != ".pdf":
+                raise ValueError("page_number is supported only for PDF attachments")
+            with material_path.open("rb") as source:
+                source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+            return _pdf_page_ocr_input(
+                material_path, page_number=page_number,
+                source_sha256=source_sha256,
+            )
+        result = _download_dingtalk_drive_file(
             dws=DwsClient(),
             node_id=node_id,
             space_id=space_id,
             file_name=file_name,
             material_root=Path(drive_material_directory.name),
         )
+        drive_material_paths[key] = Path(str(result["path"]))
+        return result
 
     bound.add_tool(
         read_dingtalk_drive_file,

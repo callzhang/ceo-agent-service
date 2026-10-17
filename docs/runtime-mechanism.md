@@ -278,7 +278,13 @@ unsubscribe execution rules are unchanged. Native global memory and AGENTS
 instructions remain CLI-owned and are not represented as service prompt text.
 
 The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
-and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Member parsing
+to 20 MiB for non-PDF files and 64 MiB for PDFs before parsing; OOXML aggregate
+uncompressed bytes remain limited to 20 MiB. Scanned PDF input above the 700 KiB
+inline MCP payload limit returns the original one-based OCR page list, and a
+page-specific read renders only that page to a bounded JPEG for
+`ai_services.ocr_document`. The exact downloaded PDF stays in the MCP process's
+temporary directory and is reused for page reads; it is removed when the process
+exits. Member parsing
 also uses bounded reads against one aggregate budget, with actual compressed
 stream termination checked instead of trusting the ZIP directory's size alone;
 only stored and deflated OOXML members are accepted. This termination check is

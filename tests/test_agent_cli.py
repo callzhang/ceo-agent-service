@@ -305,7 +305,7 @@ def test_dingtalk_drive_file_downloads_exact_node_and_extracts_text(
     class Dws:
         def download_drive_file(self, node, *, file_name, space_id, max_bytes):
             assert (node, file_name, space_id) == ("node-1", "proof.pdf", "space-1")
-            assert max_bytes == agent_cli.MAX_SPREADSHEET_BYTES
+            assert max_bytes == agent_cli.MAX_PDF_BYTES
             return b"pdf-bytes"
 
     monkeypatch.setattr(
@@ -405,7 +405,7 @@ def test_read_text_file_returns_scanned_pdf_bytes_and_exact_page_numbers(
     assert result["sha256"] == hashlib.sha256(material.read_bytes()).hexdigest()
 
 
-def test_read_text_file_rejects_scan_too_large_for_bounded_ocr_input(
+def test_read_text_file_marks_large_scan_for_page_image_ocr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
     material = tmp_path / "settlement.pdf"
@@ -421,8 +421,10 @@ def test_read_text_file_rejects_scan_too_large_for_bounded_ocr_input(
 
     monkeypatch.setattr(agent_cli, "PdfReader", lambda _stream: Reader())
     monkeypatch.setattr(agent_cli, "MAX_OCR_AGENT_INPUT_BYTES", 4)
-    with pytest.raises(AgentReadOnlyViolationError, match="pdf_material_ocr_input_too_large"):
-        agent_cli.read_text_file(str(material))
+    result = agent_cli.read_text_file(str(material))
+    assert result["ocr_page_image_required"] is True
+    assert result["ocr_page_numbers"] == [1]
+    assert "ocr_input_base64" not in result
 
 
 def test_read_text_file_extracts_bounded_pdf_material(
