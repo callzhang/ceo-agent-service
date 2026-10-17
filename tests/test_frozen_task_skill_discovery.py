@@ -252,6 +252,7 @@ def test_frozen_discovery_keeps_task_lookup_without_repeating_read_procedure():
     assert "agent_cli.read_task_skill(name)" in prompt
     assert "Task-frozen." in prompt
     assert "agent_cli.read_skill(name=...)" in prompt
-    assert "Reuse complete content already loaded in this session" not in prompt
-    assert "Otherwise read the exact frozen content" not in prompt
+    assert "reuse the complete body only when it remains visible earlier" in prompt
+    assert "its SHA-256 is listed here and matches" in prompt
+    assert "otherwise read the exact frozen body" in prompt
     assert "before deciding or reviewing" not in prompt

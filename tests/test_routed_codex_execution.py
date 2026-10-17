@@ -13,6 +13,7 @@ from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
     RuntimeFailure,
     RuntimeFailureClass,
+    RuntimeKind,
 )
 from app.agent_runtime_router import (
     CAPACITY_WAITS_BEFORE_FAILOVER,
@@ -836,6 +837,57 @@ def test_compact_input_is_bound_to_actual_resumed_session(store, config, bound_s
     )
     expected = "COMPACT REPAIR" if bound_session == "previous-session" else "FULL SOURCE AND REPAIR"
     assert prompts == ([expected, "FULL SOURCE AND REPAIR"] if fail_primary else [expected])
+
+
+@pytest.mark.parametrize(
+    "continuation_route,expected_prompt",
+    [("codex_oauth", "COMPACT REPAIR"), ("different-route", "FULL SOURCE AND REPAIR")],
+)
+def test_compact_input_is_bound_to_actual_resumed_route(
+    store, config, continuation_route, expected_prompt
+):
+    key = seed_structured_parent(store, 184)
+    store.upsert_conversation_runtime_session(
+        "task-scope", "codex_oauth", "same-session-id"
+    )
+    prompts = []
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "same-session-id"}),
+                    json.dumps({"type": "result", "value": 7}),
+                ]
+            ),
+            "",
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+        session_line_counter=lambda _: 2,
+    )
+    routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        conversation_id="task-scope",
+        prompt="FULL SOURCE AND REPAIR",
+        continuation_prompt="COMPACT REPAIR",
+        continuation_session_id="same-session-id",
+        continuation_route_name=continuation_route,
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
+        parser=lambda raw: json.loads(raw.splitlines()[-1])["value"],
+        result_codec=INT_CODEC,
+        required_capabilities=CAPABILITIES,
+    )
+
+    assert prompts == [expected_prompt]
 
 
 def test_friday_prior_thread_binding_never_selects_compact_input(tmp_path, monkeypatch):
@@ -1938,6 +1990,7 @@ def test_completed_result_is_recovered_by_matching_codec_without_child(
     second = routed.execute(**arguments)
 
     assert first.value == second.value == 42
+    assert first.runtime_kind == second.runtime_kind == RuntimeKind.CODEX_CLI
     assert first.attempt_id == second.attempt_id
     assert executor.calls == 1
     attempt = store.get_agent_runtime_attempt(first.attempt_id)

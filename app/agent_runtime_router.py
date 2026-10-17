@@ -447,6 +447,7 @@ def _contains_local_runtime_leak_outside_evidence_refs(value: object) -> bool:
 class RoutedCodexExecutionResult[ResultT]:
     value: ResultT
     route_name: str
+    runtime_kind: RuntimeKind
     attempt_id: int
     session_id: str
     transcript_start: int
@@ -1010,6 +1011,7 @@ class RoutedCodexExecution:
         conversation_id: str | None = None,
         continuation_prompt: str | None = None,
         continuation_session_id: str | None = None,
+        continuation_route_name: str | None = None,
         required_capabilities: frozenset[str] = frozenset(),
         result_validation_retry: RoutedResultValidationRetry | None = None,
         on_stdout_line: Callable[[str], None] | None = None,
@@ -1037,6 +1039,10 @@ class RoutedCodexExecution:
         original_prompt = prompt
         if (continuation_prompt is None) != (continuation_session_id is None):
             raise ValueError("continuation prompt and session must be paired")
+        if continuation_route_name is not None:
+            continuation_route_name = continuation_route_name.strip()
+            if not continuation_route_name or continuation_session_id is None:
+                raise ValueError("continuation route requires a continuation session")
         if continuation_prompt is not None:
             continuation_prompt = continuation_prompt.strip()
             continuation_session_id = continuation_session_id.strip()
@@ -1079,6 +1085,7 @@ class RoutedCodexExecution:
                 return RoutedCodexExecutionResult(
                     value=value,
                     route_name=latest.route_name,
+                    runtime_kind=RuntimeKind(latest.runtime_kind),
                     attempt_id=latest.id,
                     session_id=latest.session_id,
                     transcript_start=latest.transcript_start,
@@ -1294,6 +1301,10 @@ class RoutedCodexExecution:
                     if continuation_prompt is not None
                     and route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
                     and route_session_id == continuation_session_id
+                    and (
+                        continuation_route_name is None
+                        or route.name == continuation_route_name
+                    )
                     else original_prompt
                 )
             from app.native_trajectory import count_claude_session_lines
@@ -1707,6 +1718,7 @@ class RoutedCodexExecution:
                 return RoutedCodexExecutionResult(
                     value=value,
                     route_name=route.name,
+                    runtime_kind=route.runtime_kind,
                     attempt_id=completed.id,
                     session_id=observed_session_id,
                     transcript_start=transcript_start,

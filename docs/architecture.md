@@ -72,6 +72,8 @@ Consumer 收到 Audit 的 return/reject 后，只有原候选、审核、任务�
 线路不是该 Codex session 时，一律提交完整 Consumer 输入。每轮都提交当前任务专属内容；实际
 提交输入及 prompt snapshot 记录所选版本。此优化不改变 Audit 独立审核、反馈预算、候选校验或任务状态。
 
+冻结 Task Skill 的入口只提交名称、用途与当前正文 SHA-256，不内联完整正文。冷启动、当前 session 中看不到完整正文、或已有正文的 SHA-256 与本轮不一致时，Agent 必须读取本任务冻结的 Skill 正文；同一原生 session 中仍完整可见且 SHA-256 相同的正文可直接复用。安装版 Skill 仍按其精确入口按需读取；新 Audit session 没有可复用的 Consumer 正文，须独立读取适用 Skill。
+
 人工重跑 OA Attempt 会创建新执行代际，并从当前选中的 OA 定时任务 Skill 重新冻结输入；若无法读取
 当前所选 Skill 或对应任务配置，则不排入重跑。原 Attempt、旧代际和旧 Skill 快照保留不变。
 人工重跑内部 OA 待办使用持久化任务中的 `oa-pending:` 合成触发 ID；按触发 ID 定位当前任务并恢复其实际 `oa_pending_scan:<process>` 会话。该类 ID 不是钉钉消息 ID，不调用钉钉会话读取或按 ID 读取；若当前任务已不存在，按未找到任务失败。
@@ -1223,6 +1225,7 @@ source_metrics 是正文字符观测，不是总 prompt token 保证；检索排
 Task Agent 共享 task-agent:work-tracking:v1 逻辑 session，各 route 保留各自原生 session，
 native CLI 自行 compact；每个 WorkItem 仍独立 workload/run。process-work-items 领取前持有 SQLite
 共享会话锁，运行时续租并在提交前核验；失锁本轮不提交，普通既有重试策略不变。
+相邻 WorkItem 的渲染语义 Project/Task 上下文完全相同时，只在同一 Codex route/session 的上一完整输入仍可读、输入指纹匹配、transcript 尾部未增长且期间无 compaction 时，后续轮次才复用该上下文；当前 WorkItem、当前指令和完整结果合同每轮重新提交。来源变化、route/session 变化、compaction、尾部变化或轨迹不可读时完整注入。
 旧 task:<run_id> session 历史保留。prompt 使用当前选定 Skill 根目录中的 ceo-work-tracking 正文，不固定历史 revision；旧 scheduled
 skill_protocol 不注入，scheduled prompt 仅保留专项业务范围，旧 payload/history 不改。只读工具行为由 prompt 引导，不是技术上禁用 CLI/MCP 写入的权限边界。
 
