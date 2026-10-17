@@ -26512,6 +26512,133 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
+    def list_unbound_failed_oa_attempts(self, *, limit: int = 20) -> list[ReplyAttempt]:
+        """Return one oldest unresolved failed OA Attempt per process/task."""
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select attempts.*
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
+                where attempts.channel='dingtalk'
+                  and attempts.send_status='failed'
+                  and trim(coalesce(attempts.resolved_at, ''))=''
+                  and trim(coalesce(attempts.oa_process_instance_id, ''))<>''
+                  and trim(coalesce(attempts.oa_task_id, ''))<>''
+                  and attempts.id=(
+                      select max(latest.id)
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
+                      where latest.oa_process_instance_id=attempts.oa_process_instance_id
+                        and latest.oa_task_id=attempts.oa_task_id
+                        and latest.send_status='failed'
+                        and trim(coalesce(latest.resolved_at, ''))=''
+                  )
+                  and not exists (
+                      select 1
+                      from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                      where tasks.channel=attempts.channel
+                        and tasks.status in ('pending', 'processing', 'needs_human', 'failed')
+                        and ((tasks.conversation_id=attempts.conversation_id
+                              and tasks.trigger_message_id=attempts.trigger_message_id)
+                             or tasks.business_object_key='oa:' || attempts.oa_process_instance_id
+                                 || ':' || attempts.oa_task_id)
+                  )
+                order by case when exists (
+                    select 1
+                    from ({REPLY_TASK_CURRENT_SQL}) as terminal_tasks
+                    where terminal_tasks.channel=attempts.channel
+                      and terminal_tasks.business_object_key='oa:'
+                          || attempts.oa_process_instance_id || ':' || attempts.oa_task_id
+                      and terminal_tasks.status in ('done', 'skipped')
+                ) then 0 else 1 end, attempts.id asc
+                limit ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def skip_unbound_failed_oa_attempt(
+        self,
+        attempt_id: int,
+        *,
+        process_instance_id: str,
+        oa_task_id: str,
+        terminal_evidence: str,
+    ) -> bool:
+        """Close one orphaned failed Attempt after exact terminal source readback."""
+        process_id = process_instance_id.strip()
+        task_id = oa_task_id.strip()
+        evidence = terminal_evidence.strip()
+        if not process_id or not task_id or not evidence:
+            raise ValueError("exact OA identity and terminal evidence are required")
+        with self._immediate_write_transaction() as db:
+            current = db.execute(
+                f"select * from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?",
+                (attempt_id,),
+            ).fetchone()
+            if (
+                current is None
+                or current["send_status"] != "failed"
+                or current["channel"] != "dingtalk"
+                or current["oa_process_instance_id"] != process_id
+                or current["oa_task_id"] != task_id
+                or str(current["resolved_at"] or "").strip()
+            ):
+                return False
+            latest = db.execute(
+                f"select max(id) from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                "where oa_process_instance_id=? and oa_task_id=? "
+                "and send_status='failed' and trim(coalesce(resolved_at, ''))=''",
+                (process_id, task_id),
+            ).fetchone()[0]
+            if int(latest or 0) != attempt_id:
+                return False
+            owner = db.execute(
+                f"""select 1 from ({REPLY_TASK_CURRENT_SQL}) tasks
+                    where tasks.channel=?
+                      and tasks.status in ('pending', 'processing', 'needs_human', 'failed')
+                      and ((tasks.conversation_id=? and tasks.trigger_message_id=?)
+                           or tasks.business_object_key=?)
+                    limit 1""",
+                (
+                    current["channel"],
+                    current["conversation_id"],
+                    current["trigger_message_id"],
+                    f"oa:{process_id}:{task_id}",
+                ),
+            ).fetchone()
+            if owner is not None:
+                return False
+            unresolved = db.execute(
+                f"""select id from ({REPLY_ATTEMPT_COMMON_SQL})
+                    where channel='dingtalk' and send_status='failed'
+                      and oa_process_instance_id=? and oa_task_id=?
+                      and trim(coalesce(resolved_at, ''))=''
+                    order by id desc""",
+                (process_id, task_id),
+            ).fetchall()
+            closed = 0
+            for row in unresolved:
+                now = db.execute("select current_timestamp").fetchone()[0]
+                cursor = update_action(
+                    db,
+                    "reply_attempts",
+                    int(row["id"]),
+                    {
+                        "send_status": "skipped",
+                        "resolved_at": now,
+                        "resolution": evidence,
+                        "updated_at": now,
+                    },
+                    where_sql=(
+                        "send_status='failed' and channel='dingtalk' "
+                        "and oa_process_instance_id=? and oa_task_id=? "
+                        "and trim(coalesce(resolved_at, ''))=''"
+                    ),
+                    parameters=(process_id, task_id),
+                )
+                closed += cursor.rowcount
+            return closed > 0
+
     def list_open_oa_needs_human_attempts(
         self, *, limit: int = 100
     ) -> list[ReplyAttempt]:

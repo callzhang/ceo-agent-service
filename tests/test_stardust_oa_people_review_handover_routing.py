@@ -93,6 +93,18 @@ def test_ordinary_approval_is_not_a_reserved_personal_decision_and_wrong_recipie
         assert "Only an explicit discretionary choice outside the normal approval decision" in text
 
 
+def test_org_change_does_not_repeat_a_verified_return_after_the_same_approver_reapproves_without_new_facts() -> None:
+    path = Path("ci/shared-skills/stardust-oa-people-review/SKILL.md")
+    text = path.read_text(encoding="utf-8")
+    assert "prior verified return for the same unresolved facts" in text
+    assert "the responsible approver again approves without supplying new evidence" in text
+    assert "do not repeat the return or send a duplicate comment" in text
+    assert "Keep the current OA task pending with `no_action`" in text
+    assert "until new material or an explicit instruction changes the facts" in text
+    assert "takes precedence over the generic rule to return an unresolved issue again" in text
+    assert "A second action requires new submitted evidence" in text
+
+
 def test_algorithm_department_compensation_authority_is_documented_in_the_people_skill() -> None:
     for path in SKILL_PATHS:
         text = path.read_text(encoding="utf-8")

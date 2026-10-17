@@ -27,9 +27,10 @@ def _question():
         "outcome": "needs_human", "summary": "Choose a current response", "proposal": None,
         "decision_options": [
             {"key": "send", "label": "Send reply", "instruction": "Send the exact reply",
-             "consequence": "Applicant receives it", "plan": plan},
+             "consequence": "Applicant receives it", "applies_to": "task_class", "plan": plan},
             {"key": "stop", "label": "Stop", "instruction": "Do not reply",
-             "consequence": "No message", "terminal_outcome": "skipped", "reason": "Already resolved"},
+             "consequence": "No message", "applies_to": "task_class",
+             "terminal_outcome": "skipped", "reason": "Already resolved"},
         ],
         "error": {"code": "", "retryable": False, "authorization_required": False},
         "risk": "medium", "confidence": 0.8, "rule_coverage": 0.4,

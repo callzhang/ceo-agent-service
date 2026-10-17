@@ -2206,6 +2206,7 @@ Each newly enqueued OA review round re-materializes the currently selected Skill
 Manual OA rerun compares the refreshed trigger payload with the current task input. Identical input keeps the existing pending generation idempotently. When the selected Skill payload changed, rerun rotates to a new generation; an active Agent run makes that rotation unavailable and the request returns a conflict instead of claiming it was queued. The generation check and rotation are committed together, and prior inputs and runs remain immutable.
 
 For organization-change approvals, the people Skill treats missing business rationale and affected-work details as facts to clarify with a verified submitter or responsible party while the OA remains pending. Derek's ordinary final approval node alone does not turn that clarification into a reserved `needs_human` decision; only an explicit discretionary choice outside the normal approval decision or a genuine policy/authority gap uses that outcome.
+If the same responsible approver again approves after a verified return without supplying the requested facts, the people Skill's type-specific rule overrides the generic repeated-return instruction: keep the current task pending with `no_action`, without another return or comment, until new material or an explicit instruction changes the facts.
 
 OA Attention keeps process instances present in the latest successful pending scan visible even after the local Consumer task has completed a comment or return action. Its fallback detail states only that the latest scan still sees the DingTalk process pending; it does not infer that no return receipt exists. History/System Execution and live DWS readback remain the sources for action receipt and active-node detail.
 
@@ -2281,6 +2282,13 @@ Historical terminal Attempt or settlement projections cannot override a current 
 
 Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
 
+Attempt detail projects System Execution only when a current reviewed candidate
+exists or the historical candidate has an execution record. A stale candidate
+without an execution record remains visible as historical review evidence, but
+its unstarted actions are not presented as pending execution. Existing
+historical execution records and canonical provider receipts remain readable;
+this projection does not alter queues, retries, or execution state.
+
 History list status for a failed Attempt follows its owning AgentRun's stable
 reply-task identity when that task's DingTalk trigger key has since changed.
 Current terminal task state is projected without rewriting the Attempt or its
@@ -2293,6 +2301,20 @@ process/task, confirms native/OpenAPI identity and terminal states, records zero
 external writes and no current principal tasks, and explicitly leaves chat delivery
 unverified. The original provider receipt and execution remain `uncertain`; `skipped`
 means the obsolete follow-up no longer needs action.
+
+Legacy failed OA Attempts with no active local Reply Task bound to their
+trigger are reconciled by the scheduled OA scan using their exact persisted
+process and task IDs. It examines at most 20 distinct process/task groups per
+scan, prioritizing groups whose local business-object task is already done or
+skipped. The scan closes unresolved failed Attempts for that exact process/task when live
+native readback confirms both the process and task are terminal and a
+transactional recheck confirms no active local Task owns each trigger. A local
+Task already closed as `done` or `skipped` does not block the reconciliation.
+It records the
+readback as the resolution and marks each follow-up `skipped`, preserving the
+original failure reason; it does not infer message delivery or create a new
+Consumer/Audit run. Missing, partial, mismatched, nonterminal or failed reads
+leave the Attempt unchanged.
 
 
 ### 原始触发、当前来源和立项财务口径（2026-10-14）
