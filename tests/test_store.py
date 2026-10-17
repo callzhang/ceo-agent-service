@@ -5067,7 +5067,17 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
         db.execute(
             "update tasks set status='failed', error='email_unsubscribe_browser_timeout' where record_type='reply_tasks' and id=1"
         )
-    assert store.retry_failed_effect_free_email_unsubscribe_tasks() == [1]
+        db.execute(
+            "insert into service_state(key,value) values (?,?)",
+            (
+                f"email_unsubscribe_execution_pending:v1:{action_identity}",
+                json.dumps({"action_identity": action_identity}),
+            ),
+        )
+    assert store.retry_failed_effect_free_email_unsubscribe_tasks() == []
+    task = store.list_reply_tasks(limit=1)[0]
+    assert task.status == "failed"
+    assert task.error == "email_unsubscribe_browser_timeout"
 
 
 def test_reply_task_execution_generation_defaults_and_survives_requeue(

@@ -14332,9 +14332,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         Older direct-unsubscribe failures can have no Agent run at all.  They
         are retryable only when the immutable action payload is intact and no
-        claim, receipt, effect, or browser step was persisted.  This keeps the
-        stable action identity as the idempotency boundary while avoiding a
-        blind status edit for arbitrary failed reply tasks.
+        claim, receipt, effect, browser step, or execution-pending marker was
+        persisted.  This keeps the stable action identity as the idempotency
+        boundary while avoiding a blind status edit for arbitrary failed reply
+        tasks.
         """
         retryable_errors = (
             "email_unsubscribe_browser_failed:%",
@@ -14362,6 +14363,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and not exists (select 1 from email_unsubscribe_receipts where action_identity=tasks.trigger_message_id)
                   and not exists (select 1 from email_unsubscribe_effects where action_identity=tasks.trigger_message_id)
                   and not exists (select 1 from email_unsubscribe_steps where action_identity=tasks.trigger_message_id)
+                  and not exists (
+                      select 1 from service_state
+                      where key='email_unsubscribe_execution_pending:v1:' || tasks.trigger_message_id
+                  )
                 order by tasks.id
                 """,
                 (retryable_errors[0], retryable_errors[1], retryable_errors[2]),
