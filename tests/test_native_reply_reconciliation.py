@@ -69,8 +69,26 @@ def test_readback_requires_one_matching_message_from_current_sender(monkeypatch,
     if mismatch is None:
         assert result["result"]["openMessageId"] == "sent-id"
         assert client.verify_message_send_result(result)["state"] == "sent"
+    elif mismatch != "duplicate":
+        assert result["errorCode"] == "complete_readback_no_exact_match"
+        verification = client.verify_message_send_result(result)
+        assert verification["state"] == "failed"
+        assert verification["reason"] == "complete_readback_no_exact_match"
     else:
         assert result is None
+
+
+def test_complete_negative_reply_readback_is_a_failure(monkeypatch):
+    client = DwsClient()
+    conversation = DingTalkConversation(open_conversation_id="cid", title="Group", single_chat=False, unread_point=0)
+    trigger = DingTalkMessage(open_conversation_id="cid", open_message_id="trigger", conversation_title="Group", single_chat=False, sender_name="Mina", create_time="2026-10-01T21:00:00Z", content="Status?")
+    monkeypatch.setattr(client, "read_complete_group_messages_in_window", lambda *args: [])
+
+    result = client.reconcile_reply_to_trigger(conversation, trigger, "Public status")
+
+    assert result["readbackVerification"]["completeWindowReadback"] is True
+    assert result["readbackVerification"]["exactMatchCount"] == 0
+    assert client.verify_message_send_result(result)["state"] == "failed"
 
 
 def test_readback_failure_never_dispatches_again(tmp_path):

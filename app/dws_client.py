@@ -3473,6 +3473,23 @@ class DwsClient:
             and not message.is_recalled()
             and self.is_current_user_message(message)
         ]
+        if not matches:
+            expected_digest = hashlib.sha256(expected_body.encode("utf-8")).hexdigest()
+            return {
+                "success": False,
+                "errorCode": "complete_readback_no_exact_match",
+                "readbackVerification": {
+                    "contractVersion": "dingtalk.complete-message-window.v1",
+                    "state": "not_found",
+                    "conversationId": conversation.open_conversation_id,
+                    "windowStart": trigger.create_time,
+                    "windowEnd": end_time,
+                    "quotedMessageId": trigger.open_message_id,
+                    "expectedBodySha256": expected_digest,
+                    "exactMatchCount": 0,
+                    "completeWindowReadback": True,
+                },
+            }
         if len(matches) != 1:
             return None
         message = matches[0]
@@ -3506,7 +3523,46 @@ class DwsClient:
     def reconcile_message_send(
         self, conversation: DingTalkConversation, text: str, *, not_before: datetime,
     ) -> dict[str, Any] | None:
-        """Positive original-target readback; an empty page never permits resend."""
+        """Read back an exact group send from a complete window; partial reads stay unknown."""
+        if not conversation.single_chat and conversation.open_conversation_id:
+            start = not_before.astimezone().isoformat(timespec="seconds")
+            end = datetime.now().astimezone().isoformat(timespec="seconds")
+            messages = self.read_complete_group_messages_in_window(
+                conversation.open_conversation_id, start, end,
+            )
+            boundary_ms = int(not_before.timestamp() * 1000)
+            matches = [
+                message for message in messages
+                if message.open_conversation_id == conversation.open_conversation_id
+                and message.content == text
+                and self._datetime_string_to_epoch_ms(message.create_time) >= boundary_ms
+                and not message.is_recalled()
+                and self.is_current_user_message(message)
+            ]
+            if not matches:
+                expected_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                return {
+                    "success": False,
+                    "errorCode": "complete_readback_no_exact_match",
+                    "readbackVerification": {
+                        "contractVersion": "dingtalk.complete-message-window.v1",
+                        "state": "not_found",
+                        "conversationId": conversation.open_conversation_id,
+                        "windowStart": start,
+                        "windowEnd": end,
+                        "expectedBodySha256": expected_digest,
+                        "exactMatchCount": 0,
+                        "completeWindowReadback": True,
+                    },
+                }
+            if len(matches) != 1:
+                return None
+            message = matches[0]
+            return {
+                "success": True,
+                "result": {"openMessageId": message.open_message_id},
+                "readback": message.model_dump(mode="json"),
+            }
         boundary_ms = int(not_before.timestamp() * 1000)
         matches = [
             message for message in self.read_recent_messages(conversation)
@@ -3530,6 +3586,32 @@ class DwsClient:
         self, send_result: dict[str, Any]
     ) -> dict[str, Any]:
         if send_result.get("success") is False:
+            negative_readback = send_result.get("readbackVerification")
+            if (
+                isinstance(negative_readback, dict)
+                and negative_readback.get("contractVersion") == "dingtalk.complete-message-window.v1"
+                and negative_readback.get("state") == "not_found"
+                and negative_readback.get("completeWindowReadback") is True
+                and negative_readback.get("exactMatchCount") == 0
+                and isinstance(negative_readback.get("conversationId"), str)
+                and bool(negative_readback["conversationId"].strip())
+                and isinstance(negative_readback.get("windowStart"), str)
+                and isinstance(negative_readback.get("windowEnd"), str)
+                and isinstance(negative_readback.get("expectedBodySha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", negative_readback["expectedBodySha256"])
+                and (
+                    "quotedMessageId" not in negative_readback
+                    or (isinstance(negative_readback.get("quotedMessageId"), str)
+                        and bool(negative_readback["quotedMessageId"].strip()))
+                )
+            ):
+                return {
+                    "state": "failed",
+                    "open_task_id": "",
+                    "status_result": {},
+                    "reason": "complete_readback_no_exact_match",
+                    "readback_verification": negative_readback,
+                }
             return {
                 "state": "failed",
                 "open_task_id": "",
