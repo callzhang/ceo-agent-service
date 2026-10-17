@@ -3079,6 +3079,13 @@ Recorded DingTalk delivery recovery (2026-10-14): startup reconciliation, explic
 
 Historical terminal Attempt or settlement projections cannot override a current external_action_uncertain/external_action_failed task error. A later verified provider result uses the normal execution completion writer. Original Attempt and settlement history remains unchanged.
 
+An operator may explicitly stop a current failed `external_action_uncertain` Reply task through
+`GET /api/console/reply-tasks/{task_id}` followed by `POST /api/console/reply-tasks/{task_id}/skip` with
+the observed `execution_generation` and a non-empty reason. The generation and uncertain failure are checked
+again inside the write transaction. The task becomes `skipped`; its external-action error and original Attempt
+and Agent runs remain unchanged, and an immutable settlement error records the operator's reason. This records
+that no more work should run; it does not report the external action as successful or verified.
+
 Attempt detail and History attention prioritize the current failed task delivery error over historical Agent success summaries or a stored sent-reply row. Uncertain delivery is displayed as unconfirmed, while provider failure is displayed as failed. Historical Agent explanations and original raw receipts remain available as historical evidence.
 
 
