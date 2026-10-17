@@ -20563,6 +20563,60 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             self._compact_settled_reply_task_input(db, task_id)
             return True
 
+    def skip_unresolved_reply_task_for_terminal_oa_source(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+        process_instance_id: str,
+        oa_task_id: str,
+        settled_evidence: str,
+    ) -> bool:
+        """Skip an uncertain OA follow-up once its exact source task is terminal.
+
+        This records that no action remains applicable. It does not claim the
+        earlier external action was delivered and does not rewrite its receipt.
+        """
+        generation = expected_execution_generation.strip()
+        process_id = process_instance_id.strip()
+        source_task_id = oa_task_id.strip()
+        evidence = settled_evidence.strip()
+        if not generation or not process_id or not source_task_id or not evidence:
+            raise ValueError("terminal OA skip requires generation, source identity and evidence")
+        business_object_key = f"oa:{process_id}:{source_task_id}"
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                f"select conversation_id, trigger_message_id from ({REPLY_TASK_SQL}) "
+                "where id=? and status='failed' and error='external_action_uncertain' "
+                "and execution_generation=? and business_object_key=?",
+                (task_id, generation, business_object_key),
+            ).fetchone()
+            if task is None:
+                return False
+            cursor = db.execute(
+                "update tasks as reply_tasks set status='skipped', available_at='', "
+                "locked_at=null, updated_at=current_timestamp "
+                "where reply_tasks.record_type='reply_tasks' and id=? "
+                "and status='failed' and error='external_action_uncertain' "
+                "and execution_generation=? and business_object_key=?",
+                (task_id, generation, business_object_key),
+            )
+            if cursor.rowcount != 1:
+                return False
+            db.execute(
+                "insert into errors (conversation_id, message_id, kind, detail, "
+                "resolved_at, resolution) values (?, ?, ?, ?, current_timestamp, ?)",
+                (
+                    task["conversation_id"],
+                    task["trigger_message_id"],
+                    "reply_task_skipped_terminal_oa",
+                    evidence,
+                    evidence,
+                ),
+            )
+            self._compact_settled_reply_task_input(db, task_id)
+            return True
+
     def reconcile_unresolved_reply_tasks_with_settlement_evidence(self) -> int:
         """Close stale tasks with exact settlement evidence in bounded writes."""
         candidate_sql = """

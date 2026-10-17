@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 import json
 import os
 import subprocess
@@ -366,61 +368,60 @@ def test_read_text_file_rejects_non_utf8_material(tmp_path: Path):
         agent_cli.read_text_file(str(material))
 
 
-def test_read_text_file_extracts_image_material_with_ocr(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_read_text_file_returns_image_bytes_for_agent_ocr_mcp(tmp_path: Path):
     material = tmp_path / "settlement.jpg"
     material.write_bytes(b"\xff\xd8\xffimage-bytes")
-    expected = {
-        "data": [{
-            "source_id": f"input-1:{material.name}",
-            "text": "Customer acceptance record",
-            "confidence": 0.94,
-            "warnings": [],
-        }]
-    }
-
-    class Completed:
-        returncode = 0
-        stdout = json.dumps(expected)
-
-    def run(command, *, timeout):
-        assert command[1].endswith("/.agents/skills/ocr/scripts/ocr.py")
-        assert command[2] == str(material.resolve())
-        assert command[command.index("--format") + 1] == "json"
-        assert timeout == agent_cli.PDF_OCR_TIMEOUT_SECONDS
-        return Completed()
-
-    monkeypatch.setattr(agent_cli, "run_bounded_process", run)
 
     result = agent_cli.read_text_file(str(material))
 
     assert result["format"] == "image"
-    assert result["content"] == "Customer acceptance record"
-    assert result["confidence"] == 0.94
+    assert result["ocr_required"] is True
+    assert result["ocr_mime_type"] == "image/jpeg"
+    assert result["ocr_input_base64"] == base64.b64encode(material.read_bytes()).decode()
     assert result["sha256"]
 
 
-def test_read_text_file_reports_image_ocr_failure_as_technical_error(
+def test_read_text_file_returns_scanned_pdf_bytes_and_exact_page_numbers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    material = tmp_path / "settlement.jpg"
-    material.write_bytes(b"\xff\xd8\xffimage-bytes")
+    material = tmp_path / "settlement.pdf"
+    material.write_bytes(b"%PDF-1.7 scan")
 
-    class Completed:
-        returncode = 1
-        stdout = ""
+    class Page:
+        def extract_text(self):
+            return ""
 
-    monkeypatch.setattr(
-        agent_cli,
-        "run_bounded_process",
-        lambda *_args, **_kwargs: Completed(),
-    )
+    class Reader:
+        is_encrypted = False
+        pages = [Page(), Page()]
 
-    with pytest.raises(
-        AgentReadOnlyViolationError,
-        match="image_material_ocr_unavailable",
-    ):
+    monkeypatch.setattr(agent_cli, "PdfReader", lambda _stream: Reader())
+    result = agent_cli.read_text_file(str(material))
+
+    assert result["ocr_required"] is True
+    assert result["ocr_page_numbers"] == [1, 2]
+    assert result["ocr_mime_type"] == "application/pdf"
+    assert result["ocr_input_base64"] == base64.b64encode(material.read_bytes()).decode()
+    assert result["sha256"] == hashlib.sha256(material.read_bytes()).hexdigest()
+
+
+def test_read_text_file_rejects_scan_too_large_for_bounded_ocr_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    material = tmp_path / "settlement.pdf"
+    material.write_bytes(b"%PDF-1.7 scan")
+
+    class Page:
+        def extract_text(self):
+            return ""
+
+    class Reader:
+        is_encrypted = False
+        pages = [Page()]
+
+    monkeypatch.setattr(agent_cli, "PdfReader", lambda _stream: Reader())
+    monkeypatch.setattr(agent_cli, "MAX_OCR_AGENT_INPUT_BYTES", 4)
+    with pytest.raises(AgentReadOnlyViolationError, match="pdf_material_ocr_input_too_large"):
         agent_cli.read_text_file(str(material))
 
 

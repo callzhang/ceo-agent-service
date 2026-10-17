@@ -3,6 +3,7 @@ from app.task_storage import REPLY_TASK_INPUT_SQL, REPLY_TASK_SQL
 
 import asyncio
 import atexit
+import base64
 import argparse
 import hashlib
 import errno
@@ -66,7 +67,7 @@ MAX_SPREADSHEET_ROWS = 200
 MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 MAX_PDF_PAGES = 100
-PDF_OCR_TIMEOUT_SECONDS = 300
+MAX_OCR_AGENT_INPUT_BYTES = 700 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
@@ -469,48 +470,7 @@ def read_text_file(path: str) -> dict[str, object]:
 
 
 def _read_image_material(material_file, material_path: Path) -> dict[str, object]:
-    try:
-        completed = run_bounded_process(
-            [
-                sys.executable,
-                str(Path.home() / ".agents/skills/ocr/scripts/ocr.py"),
-                str(material_path),
-                "--format",
-                "json",
-            ],
-            timeout=PDF_OCR_TIMEOUT_SECONDS,
-        )
-        if completed.returncode:
-            raise ValueError("OCR process failed")
-        response = json.loads(completed.stdout)
-        items = response["data"]
-        if not isinstance(items, list) or len(items) != 1:
-            raise ValueError("OCR returned an unexpected number of sources")
-        item = items[0]
-        if not isinstance(item, dict):
-            raise ValueError("OCR returned a malformed source")
-        if item.get("source_id") != f"input-1:{material_path.name}":
-            raise ValueError("OCR source does not match the requested file")
-        content = item.get("text")
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("OCR returned empty image text")
-        material_file.seek(0)
-        result: dict[str, object] = {
-            "format": "image",
-            "content": content,
-            "path": str(material_path),
-            "sha256": hashlib.file_digest(material_file, "sha256").hexdigest(),
-        }
-        confidence = item.get("confidence")
-        if confidence is not None:
-            result["confidence"] = confidence
-        warnings = item.get("warnings") or []
-        if warnings:
-            result["warnings"] = warnings
-        return result
-    except (OSError, subprocess.TimeoutExpired, ProcessOutputLimitError,
-            ValueError, KeyError, TypeError) as exc:
-        raise AgentReadOnlyViolationError("image_material_ocr_unavailable") from exc
+    return _ocr_input_for_agent(material_file, material_path, file_format="image")
 
 
 def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
@@ -537,10 +497,21 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
             ocr_page_numbers.append(index)
 
     if ocr_page_numbers:
-        recognized = _ocr_pdf_pages(material_path, ocr_page_numbers)
-        for page in extracted_pages:
-            if page["index"] in recognized:
-                page.update(recognized[page["index"]])
+        material_file.seek(0)
+        binary = material_file.read(MAX_OCR_AGENT_INPUT_BYTES + 1)
+        if len(binary) > MAX_OCR_AGENT_INPUT_BYTES:
+            raise AgentReadOnlyViolationError("pdf_material_ocr_input_too_large")
+        return {
+            "format": "pdf",
+            "page_count": len(reader.pages),
+            "pages": extracted_pages,
+            "ocr_required": True,
+            "ocr_page_numbers": ocr_page_numbers,
+            "ocr_input_base64": base64.b64encode(binary).decode("ascii"),
+            "ocr_mime_type": "application/pdf",
+            "path": str(material_path),
+            "sha256": hashlib.sha256(binary).hexdigest(),
+        }
 
     previews: list[dict[str, object]] = []
     remaining_chars = MAX_TEXT_MATERIAL_BYTES
@@ -568,47 +539,20 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
     }
 
 
-def _ocr_pdf_pages(material_path: Path, page_numbers: list[int]) -> dict[int, dict[str, object]]:
-    script = Path.home() / ".agents/skills/ocr/scripts/ocr.py"
-    command = [
-        sys.executable, str(script), str(material_path),
-        "--format", "json", "--pages", ",".join(map(str, page_numbers)),
-    ]
-    try:
-        completed = run_bounded_process(command, timeout=PDF_OCR_TIMEOUT_SECONDS)
-        if completed.returncode:
-            raise AgentReadOnlyViolationError("pdf_material_ocr_unavailable")
-        response = json.loads(completed.stdout)
-        items = response["data"]
-        if len(items) != 1:
-            raise ValueError("OCR returned an unexpected number of sources")
-        item = items[0]
-        if item.get("source_id") != f"input-1:{material_path.name}":
-            raise ValueError("OCR source does not match the requested file")
-        requested = set(page_numbers)
-        recognized: dict[int, dict[str, object]] = {}
-        for ocr_page in item["pages"]:
-            index = ocr_page["page_number"]
-            text = ocr_page["text"]
-            if type(index) is not int or index not in requested or index in recognized:
-                raise ValueError("OCR page numbers do not match the request")
-            if not isinstance(text, str) or not text.strip():
-                raise ValueError("OCR returned an empty scanned page")
-            page: dict[str, object] = {"text": text, "source": "ocr"}
-            confidence = ocr_page.get("confidence", item.get("confidence"))
-            if confidence is not None:
-                page["confidence"] = confidence
-            warnings = [*(item.get("warnings") or []),
-                        *(ocr_page.get("warnings") or [])]
-            if warnings:
-                page["warnings"] = warnings
-            recognized[index] = page
-        if set(recognized) != requested:
-            raise ValueError("OCR omitted a requested page")
-        return recognized
-    except (OSError, subprocess.TimeoutExpired, ProcessOutputLimitError,
-            ValueError, KeyError, TypeError) as exc:
-        raise AgentReadOnlyViolationError("pdf_material_ocr_unavailable") from exc
+def _ocr_input_for_agent(material_file, material_path: Path, *, file_format: str):
+    material_file.seek(0)
+    binary = material_file.read(MAX_OCR_AGENT_INPUT_BYTES + 1)
+    if len(binary) > MAX_OCR_AGENT_INPUT_BYTES:
+        raise AgentReadOnlyViolationError("image_material_ocr_input_too_large")
+    return {
+        "format": file_format,
+        "ocr_required": True,
+        "ocr_input_base64": base64.b64encode(binary).decode("ascii"),
+        "ocr_mime_type": mimetypes.guess_type(material_path.name)[0]
+        or "application/octet-stream",
+        "path": str(material_path),
+        "sha256": hashlib.sha256(binary).hexdigest(),
+    }
 
 
 def _download_dingtalk_drive_file(
@@ -1427,9 +1371,11 @@ def build_role_server(
         """Read the body of one exact DingTalk Drive attachment for OA review.
 
         Use after drive metadata identifies an accessible attachment node. Returns
-        bounded image, PDF, workbook, presentation, or text contents. Images
-        and scanned PDF pages use the configured Stardust OCR client. OCR failure is a
-        technical read failure, not missing applicant material.
+        bounded image, PDF, workbook, presentation, or text contents. When a
+        scan needs OCR, returns the exact source bytes, page numbers, and SHA-256
+        for the Consumer to pass to ai_services.ocr_document. A failed or
+        unreadable OCR result is a technical read failure, not missing applicant
+        material; do not attribute it to the applicant.
         """
         nonlocal drive_material_directory
         from app.dws_client import DwsClient

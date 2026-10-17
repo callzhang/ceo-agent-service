@@ -3456,11 +3456,11 @@ class DwsClient:
                 return {"state": "ambiguous", "open_task_id": "", "status_result": {}}
             open_task_id = open_task_id or nested_task_id or receipt_task_id
         if not open_task_id:
-            message_id = next((result[key].strip() for key in ("openMessageId", "messageId", "msgId")
-                               if isinstance(result.get(key), str) and result[key].strip()), "")
             return {
-                "state": ("sent" if message_id and send_result.get("deliveryStatusKnown") is not False
-                          and send_result.get("deliveryStatus") != "unknown" else "ambiguous"),
+                # An outgoing message ID is identity, not delivery status. If
+                # the provider did not return a queryable send task, the caller
+                # must reconcile the exact message against native chat history.
+                "state": "ambiguous",
                 "open_task_id": "",
                 "status_result": {},
             }

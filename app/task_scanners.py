@@ -959,7 +959,7 @@ def reconcile_failed_oa_reply_tasks(store: AutoReplyStore, dws: Any) -> list[int
     ):
         if (
             task.channel != "dingtalk"
-            or task.error != "audit_revision_exhausted"
+            or task.error not in {"audit_revision_exhausted", "external_action_uncertain"}
             or not task.execution_generation
         ):
             continue
@@ -1045,11 +1045,21 @@ def reconcile_failed_oa_reply_tasks(store: AutoReplyStore, dws: Any) -> list[int
                 f"task_status={task_state}; consumer_run_id={latest.id}; "
                 f"execution_generation={task.execution_generation}"
             )
-            if store.close_unresolved_reply_task_already_settled(
-                task.id,
-                expected_execution_generation=task.execution_generation,
-                settled_evidence=evidence,
-            ):
+            if task.error == "external_action_uncertain":
+                settled = store.skip_unresolved_reply_task_for_terminal_oa_source(
+                    task.id,
+                    expected_execution_generation=task.execution_generation,
+                    process_instance_id=process_id,
+                    oa_task_id=oa_task_id,
+                    settled_evidence=evidence,
+                )
+            else:
+                settled = store.close_unresolved_reply_task_already_settled(
+                    task.id,
+                    expected_execution_generation=task.execution_generation,
+                    settled_evidence=evidence,
+                )
+            if settled:
                 reconciled.append(task.id)
             break
     return reconciled
