@@ -1430,10 +1430,11 @@ def build_role_server(
 
         Use after drive metadata identifies an accessible attachment node. Returns
         bounded image, PDF, workbook, presentation, or text contents. For a
-        scanned PDF above the inline OCR input limit, pass one of the returned
-        ocr_page_numbers as page_number to receive a bounded rendered page image
-        for ai_services.ocr_document. The exact downloaded PDF is retained only
-        for this MCP process lifetime. OCR failures are technical read failures.
+        scanned PDF above the inline OCR input limit, first read it normally,
+        then pass each listed one-based ocr_page_numbers value as page_number to
+        receive a bounded JPEG for ai_services.ocr_document. Map its OCR text
+        back to ocr_original_page_number. The exact PDF is retained only for
+        this MCP process lifetime. OCR failures are technical read failures.
         """
         nonlocal drive_material_directory
         from app.dws_client import DwsClient
