@@ -1229,6 +1229,7 @@ class FakeCodex:
     def decide(
         self, *, prompt, session_id=None, workload_key=None, session_scope_id=None,
         continuation_prompt=None, continuation_session_id=None,
+        continuation_route_name=None,
     ):
         self.prompts.append(prompt)
         self.calls.append(
@@ -1237,6 +1238,7 @@ class FakeCodex:
                 "session_scope_id": session_scope_id,
                 "continuation_prompt": continuation_prompt,
                 "continuation_session_id": continuation_session_id,
+                "continuation_route_name": continuation_route_name,
             }
         )
         return TaskAgentDecision.model_validate(self.payload)
@@ -1250,6 +1252,151 @@ class FakeCodexWithAuditEvents(FakeCodex):
     def __init__(self, payload, audit_tool_events):
         super().__init__(payload)
         self.last_audit_tool_events = audit_tool_events
+
+
+@pytest.mark.parametrize("guard_result", [True, False])
+@pytest.mark.parametrize("tail_advanced", [False, True])
+def test_task_agent_reuses_identical_context_only_with_verified_codex_tail(
+    monkeypatch, guard_result, tail_advanced
+):
+    from pathlib import Path
+    from app.agent_runtime_contracts import RuntimeKind
+    from app.task_agent import TaskAgentRunner
+
+    payload = {
+        "project_decisions": [],
+        "project_assessments": [],
+        "update_summary": "No project changes.",
+        "task_decisions": [],
+    }
+
+    class ContextCodex(FakeCodex):
+        last_session_id = None
+        last_route_name = None
+        last_runtime_kind = None
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def decide(self, **kwargs):
+            result = super().decide(**kwargs)
+            self.last_session_id = "task-session-repeat"
+            self.last_route_name = "codex_oauth"
+            self.last_runtime_kind = RuntimeKind.CODEX_CLI
+            self.last_transcript_start_line = 0
+            self.last_transcript_end_line += 10
+            return result
+
+    codex = ContextCodex(payload)
+    expected_codex_home = Path("/configured/codex-home")
+    count_calls = []
+    monkeypatch.setattr("app.task_agent._codex_home", lambda: expected_codex_home)
+    monkeypatch.setattr(
+        "app.codex_history.count_codex_session_lines",
+        lambda _session_id, **kwargs: count_calls.append(kwargs)
+        or codex.last_transcript_end_line + int(tail_advanced),
+    )
+    guard_calls = []
+
+    def guard(session_id, marker, **bounds):
+        guard_calls.append((session_id, marker, bounds))
+        return guard_result
+
+    monkeypatch.setattr(
+        "app.native_trajectory.codex_session_has_final_user_marker_without_compaction",
+        guard,
+    )
+    runner = TaskAgentRunner(codex)
+    item = _work_item()
+
+    runner.decide(
+        item, "same semantic context", run_id=1, session_scope_id="task-scope"
+    )
+    runner.decide(
+        item, "same semantic context", run_id=2, session_scope_id="task-scope"
+    )
+
+    compact = codex.calls[1]["continuation_prompt"]
+    should_compact = guard_result and not tail_advanced
+    assert bool(compact) is should_compact
+    if compact:
+        assert "same semantic context" not in compact
+        assert "Current Work Item JSON:" in compact
+        assert codex.calls[1]["continuation_session_id"] == "task-session-repeat"
+        assert codex.calls[1]["continuation_route_name"] == "codex_oauth"
+    else:
+        assert codex.calls[1]["continuation_session_id"] is None
+    assert "same semantic context" in codex.prompts[1]
+    assert len(guard_calls) == int(not tail_advanced)
+    if guard_calls:
+        assert guard_calls[0][0] == "task-session-repeat"
+        assert guard_calls[0][1].startswith("task-semantic-context-sha256:")
+        assert count_calls == [{"codex_home": expected_codex_home}]
+        assert guard_calls[0][2]["codex_home"] == expected_codex_home
+
+
+def test_task_agent_keeps_full_context_when_semantic_context_changes(monkeypatch):
+    from app.agent_runtime_contracts import RuntimeKind
+    from app.task_agent import TaskAgentRunner
+
+    payload = {
+        "project_decisions": [],
+        "project_assessments": [],
+        "update_summary": "No project changes.",
+        "task_decisions": [],
+    }
+
+    class ContextCodex(FakeCodex):
+        last_session_id = None
+        last_route_name = None
+        last_runtime_kind = None
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def decide(self, **kwargs):
+            result = super().decide(**kwargs)
+            self.last_session_id = "task-session-repeat"
+            self.last_route_name = "codex_oauth"
+            self.last_runtime_kind = RuntimeKind.CODEX_CLI
+            self.last_transcript_start_line = 0
+            self.last_transcript_end_line += 10
+            return result
+
+    codex = ContextCodex(payload)
+    monkeypatch.setattr(
+        "app.codex_history.count_codex_session_lines",
+        lambda _session_id, **_kwargs: codex.last_transcript_end_line,
+    )
+    monkeypatch.setattr(
+        "app.native_trajectory.codex_session_has_final_user_marker_without_compaction",
+        lambda *_args, **_kwargs: True,
+    )
+    runner = TaskAgentRunner(codex)
+    item = _work_item()
+
+    runner.decide(item, "context A", run_id=1, session_scope_id="task-scope")
+    runner.decide(item, "context B", run_id=2, session_scope_id="task-scope")
+
+    assert codex.calls[1]["continuation_prompt"] is None
+    assert codex.calls[1]["continuation_session_id"] is None
+    assert "context B" in codex.prompts[1]
+
+
+def test_compact_task_prompt_preserves_current_work_item_and_result_contract():
+    item = _work_item()
+    full = build_task_agent_prompt(item, "full semantic context")
+    compact = build_task_agent_prompt(
+        item,
+        "",
+        semantic_context_reuse_marker="a" * 64,
+    )
+
+    full_item = full.split("Current Work Item JSON:\n", 1)[1].splitlines()[0]
+    compact_item = compact.split("Current Work Item JSON:\n", 1)[1].splitlines()[0]
+    full_contract = full.split("Additional Task result constraints:\n", 1)[1]
+    compact_contract = compact.split("Additional Task result constraints:\n", 1)[1]
+
+    assert json.loads(full_item) == json.loads(compact_item)
+    assert full_contract == compact_contract
 
 
 class FakeRoutedTaskExecution:
@@ -1268,6 +1415,7 @@ class FakeRoutedTaskExecution:
         return SimpleNamespace(
             value=value,
             route_name="codex_oauth",
+            runtime_kind="codex_cli",
             attempt_id=1,
             session_id=self.session_id,
             transcript_start=self.transcript_start,
@@ -1366,6 +1514,8 @@ def test_attention_shape_omissions_use_existing_same_session_repair(fault, probl
             value = kwargs["parser"](_agent_message_jsonl(json.dumps(valid)))
             return SimpleNamespace(
                 value=value,
+                route_name="codex_oauth",
+                runtime_kind="codex_cli",
                 session_id="contract-repair-session",
                 transcript_start=0,
                 transcript_end=2,
@@ -1464,6 +1614,8 @@ def test_project_assessment_envelope_uses_one_same_session_parser_correction(fau
             value = kwargs["parser"](_agent_message_jsonl(json.dumps(valid)))
             return SimpleNamespace(
                 value=value,
+                route_name="codex_oauth",
+                runtime_kind="codex_cli",
                 session_id="assessment-repair-session",
                 transcript_start=0,
                 transcript_end=2,
@@ -4662,6 +4814,8 @@ def test_missing_new_task_title_uses_existing_same_session_repair():
             value = kwargs["parser"](_agent_message_jsonl(json.dumps(valid)))
             return SimpleNamespace(
                 value=value,
+                route_name="codex_oauth",
+                runtime_kind="codex_cli",
                 session_id="title-repair",
                 transcript_start=0,
                 transcript_end=2,

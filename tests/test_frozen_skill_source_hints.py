@@ -70,8 +70,11 @@ def test_frozen_discovery_is_an_entry_not_a_repeated_read_workflow():
     assert "ceo-document-review" in rendered
     assert hashlib.sha256(content.encode()).hexdigest() in rendered
     assert "agent_cli.read_task_skill(name)" in rendered
-    assert "Reuse complete content already loaded" not in rendered
-    assert "Otherwise read the exact frozen content" not in rendered
+    assert (
+        "reuse the complete body only when it remains visible earlier in this same "
+        "session and its SHA-256 is listed here and matches"
+    ) in rendered
+    assert "otherwise read the exact frozen body" in rendered
     assert "When a selected Skill names another" not in rendered
 
 

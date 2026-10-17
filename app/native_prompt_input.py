@@ -19,8 +19,10 @@ def _codex_text(record, *, role, kind):
     return "\n".join(blocks) if blocks and all(isinstance(text, str) for text in blocks) else None
 
 
-def _codex_input(attempt):
-    path = native.find_codex_session_path(attempt.session_id)
+def _codex_input(attempt, *, codex_home=None):
+    path = native.find_codex_session_path(
+        attempt.session_id, codex_home=codex_home
+    )
     records = native._codex_turn_records(path, attempt.transcript_start, attempt.transcript_end)
     tasks = [text for record in records
              if (text := _codex_text(record, role="user", kind="user.text")) is not None]
@@ -64,11 +66,11 @@ def _claude_input(attempt):
             "submitted_input": text, "developer_source": "本轮原生 Claude 合并输入"}
 
 
-def read_attempt_input(attempt):
+def read_attempt_input(attempt, *, codex_home=None):
     if not attempt.session_id or attempt.transcript_end <= attempt.transcript_start:
         return None
     if attempt.runtime_kind == "codex_cli":
-        return _codex_input(attempt)
+        return _codex_input(attempt, codex_home=codex_home)
     if attempt.runtime_kind == "claude_cli":
         return _claude_input(attempt)
     return None

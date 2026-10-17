@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from pydantic import ValidationError
 
 from app.agent_cron.commands import ServiceCommandConsumerContext
+from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import (
     CodexCommandFactory,
     BACKGROUND_AGENT_RUNTIME_BOUNDARY,
@@ -21,7 +22,7 @@ from app.agent_runtime_router import (
     RoutedResultValidationError,
     RoutedResultValidationRetry,
 )
-from app.codex_runner import memory_connector_config_issue
+from app.codex_runner import _codex_home, memory_connector_config_issue
 from app.external_retry import ExternalDependencyError
 from app.agent_result import agent_message_json_objects
 from app.routed_result_privacy import audit_references_from_full_events
@@ -287,7 +288,9 @@ def _canonicalize_current_source_provenance(
 
 
 class TaskCodex(Protocol):
-    last_session_id: str
+    last_session_id: str | None
+    last_route_name: str | None
+    last_runtime_kind: RuntimeKind | None
     last_transcript_start_line: int
     last_transcript_end_line: int
 
@@ -299,12 +302,27 @@ class TaskCodex(Protocol):
         session_scope_id: str | None = None,
         continuation_prompt: str | None = None,
         continuation_session_id: str | None = None,
+        continuation_route_name: str | None = None,
     ) -> TaskAgentDecision: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _TaskSemanticContextReuse:
+    fingerprint: str
+    marker: str
+    session_id: str
+    route_name: str
+    runtime_kind: RuntimeKind
+    context_start_line: int
+    attempt_start_line: int
+    attempt_end_line: int
+    latest_end_line: int
 
 
 class TaskAgentRunner:
     def __init__(self, codex: TaskCodex):
         self.codex = codex
+        self._semantic_context_reuse: _TaskSemanticContextReuse | None = None
 
     def decide(
         self,
@@ -317,19 +335,78 @@ class TaskAgentRunner:
         repair_round: int = 0,
         repair_context: str | None = None,
     ) -> TaskAgentDecision:
-        continuation = {}
-        prior_session = getattr(self.codex, "last_session_id", None)
-        if repair_context and prior_session:
+        full_candidate = candidate_prompt + (
+            "\n\n" + repair_context if repair_context else ""
+        )
+        context_fingerprint = hashlib.sha256(
+            candidate_prompt.encode("utf-8")
+        ).hexdigest()
+        context_marker = f"task-semantic-context-sha256:{context_fingerprint}"
+        full_prompt = build_task_agent_prompt(
+            work_item,
+            full_candidate,
+            memory_issue=memory_issue,
+        ).rstrip() + f"\n\n<!-- {context_marker} -->"
+        compact_prompt: str | None = None
+        continuation: dict[str, str] = {}
+        prior = self._semantic_context_reuse
+        if (
+            repair_round == 0
+            and not repair_context
+            and prior is not None
+            and prior.fingerprint == context_fingerprint
+            and prior.runtime_kind == RuntimeKind.CODEX_CLI
+            and prior.session_id == getattr(self.codex, "last_session_id", None)
+            and prior.route_name == getattr(self.codex, "last_route_name", None)
+        ):
+            from app.codex_history import count_codex_session_lines
+            from app.native_trajectory import (
+                codex_session_has_final_user_marker_without_compaction,
+            )
+
+            session_id = prior.session_id
+            codex_home = _codex_home()
+            try:
+                session_end_line = count_codex_session_lines(
+                    session_id, codex_home=codex_home
+                )
+            except (OSError, UnicodeError):
+                session_end_line = -1
+            if (
+                session_end_line == prior.latest_end_line
+                and codex_session_has_final_user_marker_without_compaction(
+                    session_id,
+                    prior.marker,
+                    codex_home=codex_home,
+                    context_start_line=prior.context_start_line,
+                    attempt_start_line=prior.attempt_start_line,
+                    attempt_end_line=prior.attempt_end_line,
+                    session_end_line=session_end_line,
+                )
+            ):
+                compact_prompt = build_task_agent_prompt(
+                    work_item,
+                    "",
+                    memory_issue=memory_issue,
+                    semantic_context_reuse_marker=context_fingerprint,
+                )
+                continuation = {
+                    "continuation_prompt": compact_prompt,
+                    "continuation_session_id": session_id,
+                    "continuation_route_name": prior.route_name,
+                }
+        elif repair_context and getattr(self.codex, "last_session_id", None):
             continuation = {
                 "continuation_prompt": build_task_agent_repair_prompt(repair_context),
-                "continuation_session_id": prior_session,
+                "continuation_session_id": str(self.codex.last_session_id),
             }
-        return self.codex.decide(
-            prompt=build_task_agent_prompt(
-                work_item,
-                candidate_prompt + ("\n\n" + repair_context if repair_context else ""),
-                memory_issue=memory_issue,
-            ),
+            route_name = getattr(self.codex, "last_route_name", None)
+            if route_name:
+                continuation["continuation_route_name"] = str(route_name)
+
+        self._semantic_context_reuse = None
+        decision = self.codex.decide(
+            prompt=full_prompt,
             workload_key=(
                 str(run_id) if repair_round == 0
                 else f"{run_id}:decision_repair.{repair_round}"
@@ -337,6 +414,41 @@ class TaskAgentRunner:
             session_scope_id=session_scope_id,
             **continuation,
         )
+        session_id = getattr(self.codex, "last_session_id", None)
+        route_name = getattr(self.codex, "last_route_name", None)
+        runtime_kind = getattr(self.codex, "last_runtime_kind", None)
+        transcript_start = int(getattr(self.codex, "last_transcript_start_line", 0) or 0)
+        transcript_end = int(getattr(self.codex, "last_transcript_end_line", 0) or 0)
+        compact_was_submitted = (
+            compact_prompt is not None
+            and session_id == continuation.get("continuation_session_id")
+            and route_name == continuation.get("continuation_route_name")
+            and runtime_kind == RuntimeKind.CODEX_CLI
+        )
+        if compact_was_submitted and prior is not None:
+            self._semantic_context_reuse = replace(
+                prior, latest_end_line=transcript_end
+            )
+        elif (
+            repair_round == 0
+            and not repair_context
+            and session_id
+            and route_name
+            and runtime_kind == RuntimeKind.CODEX_CLI
+            and transcript_end > transcript_start
+        ):
+            self._semantic_context_reuse = _TaskSemanticContextReuse(
+                fingerprint=context_fingerprint,
+                marker=context_marker,
+                session_id=session_id,
+                route_name=route_name,
+                runtime_kind=runtime_kind,
+                context_start_line=transcript_start,
+                attempt_start_line=transcript_start,
+                attempt_end_line=transcript_end,
+                latest_end_line=transcript_end,
+            )
+        return decision
 
 
 class TaskAgentCodexRunner:
@@ -356,6 +468,8 @@ class TaskAgentCodexRunner:
             extract_codex_audit_events_from_session
         )
         self.last_session_id: str | None = None
+        self.last_route_name: str | None = None
+        self.last_runtime_kind: RuntimeKind | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
@@ -368,8 +482,11 @@ class TaskAgentCodexRunner:
         session_scope_id: str | None = None,
         continuation_prompt: str | None = None,
         continuation_session_id: str | None = None,
+        continuation_route_name: str | None = None,
     ) -> TaskAgentDecision:
         self.last_session_id = None
+        self.last_route_name = None
+        self.last_runtime_kind = None
         self.last_audit_tool_events = []
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
@@ -393,6 +510,7 @@ class TaskAgentCodexRunner:
                 conversation_id=session_scope_id,
                 continuation_prompt=continuation_prompt,
                 continuation_session_id=continuation_session_id,
+                continuation_route_name=continuation_route_name,
                 required_capabilities=TASK_RUNTIME_CAPABILITIES,
                 result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
                     correction_prompt=_task_result_validation_repair_prompt
@@ -407,6 +525,8 @@ class TaskAgentCodexRunner:
         payload = json.loads(result.value)
         decision = TaskAgentDecision.model_validate(payload["decision"])
         self.last_session_id = result.session_id or None
+        self.last_route_name = result.route_name
+        self.last_runtime_kind = result.runtime_kind
         self.last_transcript_start_line = result.transcript_start
         self.last_transcript_end_line = result.transcript_end
         session_events = []
@@ -530,6 +650,7 @@ def build_task_agent_prompt(
     *,
     memory_issue: str = "",
     current_time: str = "",
+    semantic_context_reuse_marker: str | None = None,
 ) -> str:
     scheduled_consumer = ServiceCommandConsumerContext.from_payload(
         work_item.scheduled_consumer or None
@@ -558,6 +679,21 @@ def build_task_agent_prompt(
     effective_current_time = (
         current_time.strip() or datetime.now(timezone.utc).isoformat()
     )
+    if semantic_context_reuse_marker:
+        source_context_instruction = (
+            "The full source body and semantic Project/Task context were included in an earlier user message in this same session; reuse that exact context only as background. The current Work Item JSON below is authoritative for this turn."
+        )
+        semantic_context_text = (
+            "Reuse the earlier full semantic Project/Task context whose SHA-256 is "
+            f"{semantic_context_reuse_marker}. It remains background, never authority."
+        )
+    else:
+        source_context_instruction = (
+            "Source body: current_work_item.document_id in the semantic context below;\n"
+            "read its visible_ranges. Offsets are character ranges in that exact version,\n"
+            "not a claim that an omitted middle or another version was read."
+        )
+        semantic_context_text = candidate_prompt
     return f"""You are the CEO Agent Task/Project reader. Do not reply to the source.
 Follow the current CEO Work Tracking Skill and return one TaskAgentDecision envelope:
 project_decisions, task_decisions, project_assessments are all required (each 0..N).
@@ -592,11 +728,9 @@ sessions and the native CLI manages compaction. Current source authority takes p
 Current Work Item JSON:
 {work_item_json}
 {transcript_limitation}
-Source body: current_work_item.document_id in the semantic context below;
-read its visible_ranges. Offsets are character ranges in that exact version,
-not a claim that an omitted middle or another version was read.
+{source_context_instruction}
 Current semantic Project/Task context (rank is context, never authority):
-{candidate_prompt}
+{semantic_context_text}
 
 Additional Task result constraints:
 - For project_assessments, use exactly one selector: anchor_id for a known registered

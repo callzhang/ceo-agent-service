@@ -525,7 +525,10 @@ def render_task_skill_discovery(
         instructions: list[str] = []
         if frozen:
             instructions.append(
-                "Task-frozen reads: `agent_cli.read_task_skill(name)`."
+                "For frozen entries, reuse the complete body only when it remains "
+                "visible earlier in this same session and its SHA-256 is listed "
+                "here and matches; otherwise read the exact frozen body with "
+                "`agent_cli.read_task_skill(name)`."
             )
         instructions.append(
             "Other Skill reads: `agent_cli.read_skill(name=...)`."

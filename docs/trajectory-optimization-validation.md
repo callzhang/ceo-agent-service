@@ -93,6 +93,55 @@ native model failure or a reason for a compatibility branch. This fixture proves
 Task context survives native Claude resume; it does not validate all configured
 API routes, business scenarios or production release.
 
+## Consumer Audit-feedback revision input, 2026-10-17
+
+Production trajectory inspection found a repeated-input case in Consumer
+feedback revisions: Task 405336 used one Codex session for three Consumer
+revisions and repeated 41,385 of the original 41,394 characters in each of two
+revisions. This candidate narrows only the repeated Consumer input. It retains
+the original full source in the exact native session and submits the new Audit
+feedback, current turn time, any runtime correction and the complete replacement
+result requirement. Audit's independent context is unchanged.
+
+Compaction is allowed only when the persisted Audit return/reject points to the
+exact preceding completed Consumer run, task and generation, the selected
+Codex route/session is unique and unchanged, the latest completed transcript is
+still at its persisted line end, and native trajectory inspection proves the
+initial full-input fingerprint remains in that session with no intervening
+compaction. Missing, malformed, grown or compacted history and all other routes
+fall back to the full current Consumer input. The prompt snapshot records the
+input actually submitted.
+
+Local verification on the isolated worktree: 203 passed and 4 skipped across
+`tests/test_native_trajectory_context_guard.py`, `tests/test_agent_turn_runner.py`
+and `tests/test_consumer_agent.py`; Ruff and `git diff --check` pass. Synthetic
+integration tests assert that the verified path is shorter, includes the full
+Audit feedback and is reflected in the saved prompt snapshot; a failed guard
+keeps the original task facts in the full prompt. Native model comparison,
+production release and live readback are separate gates.
+
+### Native Codex cold/resume comparison
+
+Two tool-free native Codex sessions were cold-started with the same 628-character
+fictional meeting source, then resumed with either the full source plus Audit
+feedback or the compact feedback-only prompt. The type-only output schema did
+not encode expected values. Both native resumes returned valid structured
+results without tool calls. Each kept the prior slot `withdrawn`, retained the
+current local time and `America/Los_Angeles`, described the DST occurrence as
+unresolved, and reported a draft card with no invitation sent. The full arm said
+the new slot was `proposed`; the compact arm explicitly said
+`proposed_not_accepted`. The correction prompts were 1,041 and 519 characters,
+respectively (50.1% fewer in the compact arm). Session IDs, source digest and
+outputs are recorded in `evals/trajectory_optimization/consumer_revision_context.native.v1.json`.
+
+An earlier attempted comparison used output-schema `const` values that exposed
+the expected answer. Those two resumes are excluded. Its corrected runs used
+independent cold sessions and a schema that constrained field types only. This
+small synthetic comparison shows the tested model retained the source facts in
+these two sessions; it does not establish a general quality or latency gain,
+validate the service's trajectory reader against every native format, or cover
+other models, providers, tasks or production behavior.
+
 ## Consumer model-facing evidence correction
 
 Full CodeMode inspection of daily-report run 25643 supersedes the earlier raw
@@ -981,3 +1030,95 @@ and uncertain retries did not dispatch again. This independent external-action
 confirmation issue remains unresolved; it is not evidence that the input fix failed,
 and uncertain is not proof that the external comment was never written. No replay
 or incidental effect-reconciliation policy change was made.
+
+### Same-session frozen Skill reread regression, 2026-10-17
+
+A read-only scan of the 16 newest reply tasks found 127 `read_task_skill` calls. Six calls repeated an identical Skill body and SHA-256 in an existing Consumer session, totaling 180,203 characters of repeated body content. The evidence is decoded complete tool content and exact hashes, not matching names alone. Current saved task inputs provide the selected Skill hash but only instruct `Task-frozen reads`; they do not say when the already-read body can be reused.
+
+History identifies the regression: commit `3f00ea6` compacted the Task Skill entry and added the exact frozen-content hash, while removing the previous conditional that reused a complete unchanged body in the same session. Restore that condition with a fail-closed boundary: reuse only when the full prior body is still visible in the current native session and its SHA-256 matches; otherwise call `read_task_skill` for the exact frozen body. This preserves cold, changed-source and absent/compacted-content reads. Installed Skill reads, business rules, Audit lifecycle and action policy are unchanged.
+
+Task `405352` independently had 39 Agent-run records and 11 failed Consumer attempts across four execution generations. Four model-reported contract conflicts and seven result-validation failures all involve incompatible `needs_human` fields or quality-gate requirements. This is not caused by Skill rereading and is not changed here; resolving Audit feedback versus the result contract requires its own explicitly scoped decision.
+
+Earlier anonymous native same-session comparisons exercised unchanged-source read counts of `1/0` and changed-source `1/1` for Consumer and Audit roles. They support the mechanism but are not a replacement for a new fixed-case native comparison of this restored wording. No live business task, provider action, production configuration or service state was changed for this investigation.
+
+### Task Agent and Meeting source-size trace, 2026-10-17
+
+The complete native Task Agent session `01a13b26-22ac-7891-9388-64b6a5a44786` covers 16 AI Minutes work items across 40 turn contexts and 21 compactions. The full transcript contains 69 user messages, 35 Developer messages and no tool calls. Twenty-four submitted user messages contain a semantic Project/Task JSON block between 285,561 and 357,668 characters. One 328,174-character block with the same current Work Item identity and exact SHA-256 was submitted seven times; another 299,330-character block appeared twice. Six of the seven duplicate transitions occurred after compaction, so those are not evidence that the full evidence remained in model context. The complete 328,174-character block is repeated in adjacent user turns multiple times, including one transition without compaction; the 299,330-character block also repeats adjacently. Its payload is mostly `source_documents` (157,988 characters) and `source_signals` (61,792), followed by stored task evidence. Source inspection confirms `process_work_item()` retrieves and renders semantic context for every item, and `build_task_agent_prompt()` always inserts it. The current Work Item is a separate, much smaller block and must remain current. The repeat guard now hashes the exact rendered semantic context and offers a compact continuation only when the previous full input's exact marker is readable in the same Codex session, the route/session and transcript tail still match, and no compaction occurred. Changed context, missing/malformed history, compaction, tail movement or route/session change keeps the full input.
+
+### Task semantic-context reuse: anonymous native comparison, 2026-10-17
+
+Baseline and candidate each used two same-session, read-only Codex OAuth turns (`gpt-5.6-luna`) with the same fictional AI Minutes Work Item, synthetic Project context and current Work Tracking Skill. Both turns in the baseline submitted 38,666 characters. The candidate submitted the same 38,666-character full context cold, then a 29,692-character continuation with the current Work Item and complete current task instructions reissued. The resumed input was 8,974 characters shorter (23.2%).
+
+Baseline session `01a14a37-856b-7b01-b54c-cdd95cdec03f` and candidate session `01a14a38-6a35-7b00-bd47-4a90569713d2` each returned a valid `not_needed` assessment for the registered fictional Project (`anchor_id=917`) and zero Tasks on both turns. The compared second-turn summaries preserved the same source conclusion: on-plan progress, no risk and no new independent action. The complete native sessions have no tool/MCP calls or compaction. Both ran against isolated temporary SQLite stores; the test did not use production records or take business actions.
+
+This pair supports the exact repeated-context optimization on this synthetic case, not a general quality/cost claim or a result after compaction. Local regressions cover changed context, failed trajectory guard, transcript-tail movement, and route mismatch. Native cold/resume tests on other task families and production readback remain separate evidence gates.
+
+### Codex-home consistency regression, 2026-10-17
+
+Independent review found that Consumer and Task compared transcript line counts using the default Codex home while the marker reader used configured `CODEX_HOME`; the marker reader's submitted-input parser also resolved the home independently. If the same session ID existed in both locations, checks could inspect different transcripts. Both callers now resolve one Codex home and pass it to the line count and marker check, and the marker check passes it through submitted-input parsing. Regression tests place a stale same-ID default-home transcript beside the configured transcript and assert that marker and submitted-input reads resolve only the configured copy. Consumer and Task caller tests also assert that line count and marker checks receive the same resolved path. This closes a source-selection mismatch; it does not broaden the native quality evidence above.
+
+Meeting alignment run 405360 completed `sent`. Its native session `01a148a9-0abd-72d0-8331-d2aa0925d5a2` contains one 37,463-character Developer message and 422,255 characters across five User messages, with no tool calls. A 375,721-character User message includes a 289,925-character `核心发言提炼` section. That large source evidence is not identified as redundant and should not be cut by a character budget. Code inspection confirms the scheduled meeting prompt also inserts the full frozen Skill bodies through `materialized_skill_protocol()`; the observed trace does not show lazy reads. Before changing that path, compare each frozen Skill and Work Profile section against the hard-coded meeting contract and precomputed group/session evidence, and verify how the exact frozen body can be read on this runtime route. The present trace establishes input size and outcome, not that its source or Skill rules can safely be removed.
+
+These traces extend coverage beyond the 16 recent reply tasks but do not establish an all-task-family audit. Current task families include reply Consumer/Audit, Task Agent work summaries and meeting alignment; scheduled report/command runs and email classification/unsubscribe-page trajectories are separately recorded below. Email Review trajectory bodies remain unavailable: the production read-only database has 1,101 email-channel reply tasks, and 121 link Consumer and Audit run rows; the latest completed linked pair is task `384045` on 2026-09-15. Its native session files are absent from the checked local and GPU4 Codex homes, and `read_thread` returns `missing source rollout`. The current production Skill registry defaults `mail_review` to enabled and has no persisted override, but task metadata cannot establish input quality or tool behavior. The earlier search for document-review traces was scoped to sessions rooted in the production checkout and was too narrow: service sessions can be rooted in `/Users/derek/Documents/memory`. A complete multi-round reply trajectory that reads linked documents and a DingTalk sheet is recorded below; a dedicated `ceo-document-review` task still needs separate review. Native MCP Skill-read behavior for the restored frozen-skill wording remains unverified because the isolated CLI run rejected the local read call under `approval_policy=never`; its auto-review option requires a writable sandbox and was not used.
+
+### Multi-round document and sheet reply trajectory 405342
+
+The completed task has four Consumer/Audit cycles. All four Consumer runs reuse one native session, which has no compaction; each Audit run uses a fresh session. Audit returned the first three proposals with current-source corrections and approved the fourth. The feedback successively required grounding facts in available reads, distinguishing filled from missing sheet content, and refreshing current sheet state. This is evidence that the repeated Audit reads were serving a freshness check, not redundant transcript replay.
+
+Consumer reread the same frozen `dingtalk-chat` Skill five times (6,717 body characters each) and `ceo-message-triage` three times at 7,919 characters plus twice at a changed 8,941-character version. With one read retained for each exact Skill body hash, seven of these ten reads are redundant within the un-compacted session: 51,647 repeated body characters. This is within the same-session Skill reuse optimization already described above. Audit independently reads both Skills in its four fresh sessions; no cross-session reuse is justified by this trace.
+
+The Consumer first received document metadata with extension `able`, then called the document reader; that call returned an error-shaped two-item list rather than document content. An Audit pass encountered extension `axls`, made the same document-reader mistake, then discovered the sheets and read current ranges. This confirms a material-type/tool-route mismatch; it is separate from prompt redundancy. Later sheet reads returned different current ranges (about 24,000–46,000 characters), so retain them. The current shared development tree has a separately claimed AITable read route, but this older business trajectory has not been replayed against it. The trace also contains three same-argument reads of the `dingtalk-chat.reply_to_message` system action contract; its decoded contract body is identical at 3,997 characters each time. That is a possible static-input optimization, but it touches the action contract and must be assessed as its own explicitly scoped change under the repository's Agent rules. Do not suppress current document, sheet, message-window or independent Audit reads based on this example.
+
+### DingTalk chat/calendar reply trajectory 405346
+
+The completed Consumer session `01a13cfe-d79b-7252-abb8-1eb4dfc82a0e` has one native compaction boundary. It reads `ceo-message-triage` seven times and `dingtalk-chat` seven times. The message-triage body changes SHA-256 across the compaction, so the first read after compaction is necessary; after accounting for that boundary, seven reads repeat an unchanged body already visible in the current session: two 7,919-character repeats, three 8,941-character repeats, and two 6,717-character repeats (56,095 repeated body characters). This is covered by the same-session frozen Skill reuse condition above; changed content and post-compaction reads still require a read.
+
+Consumer also makes six recent-message reads. Three have identical arguments but return 24, 25, and 25 messages with different time ranges/results as the source conversation grows. Preserve those reads; argument equality alone does not establish stale-equivalent evidence. One calendar query covers `2026-10-16T00:00:00+08:00` through `2026-10-16T12:00:00+08:00` and returns six events whose timestamps retain both `+08:00` and `-07:00`. The execution environment is `America/Los_Angeles`; the injected conversation context and final answer use `Asia/Shanghai`. This trace therefore shows distinct environment and conversation time zones being carried through the read and response. It made no calendar or message write.
+
+The independent Audit session `01a1485f-77fb-7702-8883-cc36252102aa` has no compaction, reads one message window and two Skills, and contains no repeated tool call. The trajectory supports removing redundant unchanged frozen-Skill reads while retaining fresh conversation and calendar reads. It does not support collapsing repeated message reads by matching arguments.
+
+### Scheduled daily-report Consumer/Audit trajectory, 2026-10-17
+
+Scheduled run 405379 completed `done`. Consumer's Developer input is 38,182 characters; its two submitted User messages are 5,516 and 5,101 characters. Audit Developer is 37,401 characters; its two User messages are 4,852 and 13,882 characters. Consumer read five distinct frozen Skills once each; Audit read two Skills once each. Both read their own action contract in their independent sessions. Consumer made 15 `read_dingtalk_messages_in_window` calls for distinct conversations over the same report window; all argument digests and all result hashes differ, so this sample does not support deduplicating those reads. The run also used one `daily_report_facts` result, one conversation discovery, one prepared document write and Audit's profile/document evidence. No duplicate Skill or message-window read was found.
+
+Both native runtime-attempt rows have a non-empty result-schema fingerprint, but the Consumer/Audit CLI builder explicitly passes `output_schema_path=None` and `use_output_schema=False`. The Developer still contains a 9,656-character Consumer and 2,330-character Audit Pydantic wire schema. Keep it pending a compatible native-schema result: the previous provider probes rejected the RootModel `$ref`, then the Consumer `oneOf` and Audit optional-field forms under strict mode. These are real wire-shape constraints, not repeated ordinary prose. The exact route gate and compatibility evidence are recorded under `architecture.md`'s System Action Contracts and this document's native schema/provider sections.
+
+### Email classification and unsubscribe-page trajectories, 2026-10-16
+
+Email classification attempt 366613 maps to native session `01a14512-499a-7681-86d8-d99416d140f1`. It has two submitted User messages (7,061 and 12,761 characters), one final result, no compaction and no tool calls. The saved run input reports 39,112 Developer characters. Code inspection shows the classifier selects exactly `ceo-email-classifier`, places its required frozen body in the classification prompt, and disables the native copy through `inlined_skill_names`; it is not duplicated as a second Skill. The single-turn, tool-free path matches the classifier's read-only contract. The trace does not expose a source-by-source breakdown of the 39,112 Developer characters, so it does not establish which of those characters can be removed.
+
+Unsubscribe-page attempt 369141 maps to native session `01a147f2-3df7-7331-95e6-fcd39d7fa7b5`. It has two submitted User messages (7,061 and 1,406 characters), one final result, no compaction and no tool calls; the saved run input reports 18,716 Developer characters. This route has no Skill and uses a fixed page-judgement contract; page text is bounded at 6,000 characters and evidence at 400. Its one-shot, tool-free trajectory is consistent with the intended mechanism. The large Developer snapshot is not attributed to removable task prose by the available record.
+
+Neither sample supports collapsing classification logic or page evidence. The concrete optimization target remains exact unchanged frozen-Skill rereads in task sessions; reduction of these email routes' Developer messages requires a source-level input breakdown and a fixed-case output comparison first.
+
+### Additional workload trace availability recheck, 2026-10-17
+
+The configured read-only database contains 324 `weekly_okr`, 112 `email_description_optimization`, and 2 `workbench` runtime attempts. I checked the newest session ID for each family against local Codex sessions, `/Users/derek/Documents/memory`, both configured GPU4 user homes, and the Codex history API. No native source file was found; `read_thread` reports `missing source rollout` for all three. This confirms the latest source is unavailable in the checked stores, not that these task families have no runs or that every older session is unrecoverable. Keep their trajectory quality unassessed until a complete source is recovered; status and result metadata alone do not justify prompt changes.
+
+### Synthetic native AITable route check, 2026-10-17
+
+To check the `able` material-type failure without reopening production data, I ran one Codex OAuth Consumer and one independent Audit against the current shared-development `build_role_server` and AITable wrappers. Both received the real frozen `ceo-document-review` Skill and a fictional AITable link. In the test-only child server, `DwsClient` was replaced with a fake that returned a synthetic `able` document descriptor, one table, and one row with known owner, date, status, and blocker fields. Shell, web, production MCPs, and write actions were disabled.
+
+Consumer loaded the Skill and called the real registered `read_dingtalk_aitable_base`, `read_dingtalk_aitable_tables`, and `read_dingtalk_aitable_records` wrappers. It did not call `read_dingtalk_document` or `read_dingtalk_document_info`; its JSON output matched the synthetic `Blocked` row, `Ava`, `2026-11-02`, and pending API-key blocker. Audit loaded the Skill and independently called the same three AITable wrappers, did not call either document-reading wrapper, and approved the candidate with the same facts. Both completed the MCP handshake and returned valid JSON. Session IDs are `01a14a24-4b9e-77b1-a414-ee2e1db75e63` (Consumer) and `01a14a24-81c4-7891-8fd9-493ef6bc2684` (Audit).
+
+An earlier Audit attempt stopped before the model ran because Codex rejected the temporary workspace as untrusted; the same role completed when run from the trusted repository workspace. An earlier probe using manually duplicated fake tool declarations is superseded by this actual-server run. The role-specific tests pass (59 tests), Ruff and `git diff --check` pass. This is one synthetic record per role; it shows the current registered route works for this simple link and fake data, not that every real AITable URL, pagination case, permission failure, full service input, or production trajectory is covered. Native input usage was about 106k tokens for Consumer and 38k for Audit; these test-harness sessions are not saved service inputs, so that difference is not a production prompt-size comparison. No production source was read or changed, and no business action occurred.
+
+### Meeting transcript speaker-index comparison, full trace review, 2026-10-17
+
+The earlier comparison receipt reported zero tool calls, but that count omitted native `custom_tool_call` items. The raw-transcript arm used one generic `exec` call to read local shared Agent rules and the Meeting Skill; the indexed arm used one generic `exec` call to enumerate available tools. Neither read business records, connected to business MCP, or performed an external action, but the pair exceeded its approved no-tools boundary and is not valid as a no-tool result.
+
+The first restricted rerun still had the indexed arm attempt to inspect `ALL_TOOLS`; Code Mode blocked it before execution. I then reran both exact synthetic prompts cold with the same model and full `MeetingAlignmentDecision` schema, added an explicit instruction to make no tool calls, and disabled `tools.enabled_tools`, Code Mode, shell, web, plugins, and apps. The final full native sessions, `01a14a28-06cd-7bc3-8420-49e64ad8890d` and `01a14a28-40e4-7990-b3f1-66371bb3bfc9`, validate against the Pydantic decision model and contain no tool or MCP calls.
+
+The indexed form saves 466 characters of the 2,590-character source (18.0%) and 371 characters of the 19,498-character prompt (1.9%). Both arms select the same direct recipient, Lin, preserve the conditional release decision, and identify the action owners. On the final tool-free rerun both arms mark a topic as an unresolved disagreement, even though the fixture contains no opposing position. It contains only Kai-attributed transcript turns; its summary says Mira considers the full-release date undecided, which is consistent with Kai's explicit transcript statement that no date is set. The raw arm treats lack of Lin/Mira transcript confirmations as a reason for unresolved status; the indexed arm reaches the same label based on missing confirmation and unconfirmed positions. Silence alone is not a substantive conflict. The older pair's output difference is confounded by its generic tool calls; the strict rerun shows no format-caused difference in the disagreement label.
+
+Conclusion: the compact encoding preserves the source facts and reduces repeated speaker metadata, but this one-case result does not establish a net semantic improvement. Both outputs expose a broader false-positive risk: the model over-applies “silence is not alignment” as “missing confirmation means disagreement,” despite there being no contrary view. Test a genuinely conflicting, multi-speaker fixture with explicit opposing statements and an aligned follow-up before adopting the representation; score false unresolved topics as a failure. The final rerun logged the same non-fatal Code Mode unavailable and shortened Skill-description notices in both arms, but no tool execution. No project source, production data, business MCP, or external action was touched.
+
+### Meeting decision-context bundle audit, 2026-10-17
+
+The full Meeting session `01a148a9-0abd-72d0-8331-d2aa0925d5a2` has a 375,721-character source-bearing User message, including 289,925 characters of `核心发言提炼`, and no tool calls. That message also contains a 23,610-character frozen Skill bundle (36,186 UTF-8 bytes): 6,070 characters for `ceo-meeting-work`, 9,440 for `dingtalk-minutes`, and 8,100 for `dingtalk-calendar`. A literal-line scan found only 1,024 characters across repeated lines of at least 24 characters in the full message. This does not measure semantic repetition, but it provides no evidence that the large speaker-extraction block is duplicated verbatim or can be removed safely.
+
+The trace confirms that the source and precomputed audience candidates are supplied before the Meeting decision turn; it does not prove that upstream group discovery covered the meeting's full topic. Current code passes the title and up to 2,000 characters of summary to discovery, and records `source.title` as the candidate search query. The downstream contract asks for further searches by topic, owner and workstream. The configured service MCP manifest does not include a DWS server, but the Meeting command does not explicitly disable Codex's generic shell tool, so the absence of tool calls in this one trajectory does not establish that DWS CLI searches were unavailable or unnecessary.
+
+The current Meeting path inserts the exact frozen Skill bodies with `materialized_skill_protocol()`. It has no dedicated runtime capability to retrieve a selected frozen body on demand. The two DWS operation Skills were not used in this captured run, but removing them now would leave the downstream Agent without their documented workflows for the additional searches its prompt requires. The core Meeting Skill also contains unique business and audience guidance; its cross-workload `no_action`/`proposal` vocabulary may be confusing beside this route's `MeetingAlignmentDecision` action `send`, but there is not yet a fixed-case result proving that it caused an error.
+
+Conclusion: **do not prune these Skill bodies based on this trace alone.** The supported optimization path is to make upstream discovery cover the meeting's actual topics and attach enough current discussion, roster and authorization evidence for the decision; then compare a concise frozen-Skill entry against the current full bundle on fixed cases. Alternatively, add an exact frozen-body read capability to this route before switching to on-demand Skills. Preserve the complete source facts and unique Meeting rules. No prompt or business behavior change is accepted from the current measurement.
