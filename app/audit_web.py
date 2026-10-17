@@ -9871,6 +9871,15 @@ def handle_rerun_attempt_post(
                 "<p>OA Skill snapshot could not be refreshed; rerun was not queued.</p>",
             )
     try:
+        force_rotation = False
+        if attempt.oa_process_instance_id:
+            prior_payload = json.loads(existing_task.trigger_message_json)
+            refreshed_payload = json.loads(trigger_message_json)
+            force_rotation = json.dumps(
+                prior_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ) != json.dumps(
+                refreshed_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
         store.enqueue_manual_rerun_reply_task(
             conversation_id=attempt.conversation_id,
             conversation_title=conversation_title,
@@ -9883,6 +9892,7 @@ def handle_rerun_attempt_post(
             oa_url=attempt.oa_url,
             attempt_id=attempt.id,
             channel=channel,
+            force_rotation=force_rotation,
             expected_execution_generation=existing_task.execution_generation,
         )
     except ManualRerunConflict as exc:

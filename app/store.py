@@ -10603,7 +10603,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     (int(existing["id"]), str(existing["execution_generation"])),
                 ).fetchone()
                 if active_run is not None:
-                    raise ValueError(
+                    raise ManualRerunConflict(
                         "active agent run must finish before forced rerun"
                     )
             cls._supersede_running_agent_runs(

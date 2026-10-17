@@ -8,7 +8,9 @@ from app.agent_cron.commands import (
     ServiceCommandSkillMaterial,
 )
 from app.agent_cron.models import ScheduledTaskSkillRef
-from app.audit_web import refresh_oa_rerun_skill_snapshot
+from app.audit_web import handle_rerun_attempt_post, refresh_oa_rerun_skill_snapshot
+from app.dws_client import DingTalkMessage
+from app.store import AutoReplyStore
 
 
 class Options:
@@ -103,3 +105,72 @@ def test_manual_oa_rerun_refuses_to_copy_a_snapshot_when_refresh_is_unavailable(
             store=SimpleNamespace(get_scheduled_task=lambda _: None),
             skill_options=None,
         )
+
+
+def test_manual_oa_rerun_rotates_pending_generation_when_refreshed_skill_changes(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation("cid", title="OA", single_chat=False, codex_session_id="")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid", conversation_title="OA", trigger_message_id="trigger",
+        trigger_sender="Submitter", trigger_text="Review this OA", action="agent_run",
+        sensitivity_kind="normal", send_status="failed",
+    )
+    store.update_reply_attempt(
+        attempt_id, oa_process_instance_id="instance", send_error="codex_result_invalid"
+    )
+    original_context = ServiceCommandConsumerContext(
+        scheduled_task_id=3,
+        scheduled_task_run_id=20,
+        prompt="Review this OA event.",
+        skill_names=("stardust-oa-people-review",),
+        skill_protocol="read exact frozen Skills",
+        skill_materials=(ServiceCommandSkillMaterial(
+            name="stardust-oa-people-review", content="old people rules revision 11"
+        ),),
+        skill_protocol_source="generated_discovery",
+    )
+    trigger = DingTalkMessage(
+        open_conversation_id="cid", open_message_id="trigger", conversation_title="OA",
+        single_chat=False, sender_name="Submitter", create_time="2026-10-16 10:00:00",
+        content="Review this OA",
+    ).model_dump()
+    trigger["raw_payload"] = {"scheduled_consumer": original_context.to_payload()}
+    trigger_json = json.dumps(trigger)
+    task_id = store.ensure_reply_task(
+        conversation_id="cid", conversation_title="OA", single_chat=False,
+        trigger_message_id="trigger", trigger_create_time="2026-10-16 10:00:00",
+        trigger_sender="Submitter", trigger_text="Review this OA",
+        trigger_message_json=trigger_json,
+    )
+    store.enqueue_manual_rerun_reply_task(
+        conversation_id="cid", conversation_title="OA", single_chat=False,
+        trigger_message_id="trigger", trigger_create_time="2026-10-16 10:00:00",
+        trigger_sender="Submitter", trigger_text="Review this OA",
+        trigger_message_json=trigger_json, attempt_id=attempt_id,
+    )
+    current = store.get_reply_task(task_id.id)
+    claimed = store.claim_reply_task(task_id.id)
+    assert claimed.execution_generation == current.execution_generation
+    store.get_scheduled_task = lambda _: SimpleNamespace(
+        id=3,
+        command="scan-oa-approvals",
+        prompt="Review this OA event.",
+        skill_refs=(ScheduledTaskSkillRef(
+            skill_source="managed", skill_name="stardust-oa-people-review",
+            managed_skill_id=7, managed_revision_id=11, position=0,
+        ),),
+    )
+
+    status, _, _ = handle_rerun_attempt_post(
+        store, attempt_id, skill_options_factory=Options,
+    )
+
+    rerun = store.get_reply_task(task_id.id)
+    assert status == 303
+    assert rerun.execution_generation != current.execution_generation
+    assert rerun.status == "pending"
+    refreshed = ServiceCommandConsumerContext.from_payload(
+        json.loads(rerun.trigger_message_json)["raw_payload"]["scheduled_consumer"]
+    )
+    assert refreshed is not None
+    assert refreshed.skill_materials[0].content.endswith("People rules revision 12")
