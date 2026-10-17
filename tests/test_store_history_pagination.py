@@ -879,6 +879,18 @@ def test_unbound_failed_oa_attempts_close_only_for_exact_orphan_source(tmp_path)
             "send_status": "failed",
             "send_error": "codex_process_failed",
         })
+        later_completed_attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "oa_pending_scan:process-oa",
+            "conversation_title": "Completed OA task",
+            "trigger_message_id": "later-business-result",
+            "trigger_sender": "sender",
+            "trigger_text": "terminal source result",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-oa",
+            "oa_task_id": "task-oa",
+            "sensitivity_kind": "general",
+            "send_status": "completed",
+        })
 
     candidates = store.list_unbound_failed_oa_attempts()
     assert [attempt.id for attempt in candidates] == [older_attempt.lastrowid]
@@ -908,6 +920,8 @@ def test_unbound_failed_oa_attempts_close_only_for_exact_orphan_source(tmp_path)
     assert older.send_status == "skipped"
     assert older.send_error == "codex_process_failed"
     assert older.resolution == evidence
+    later = store.get_reply_attempt(later_completed_attempt.lastrowid)
+    assert later.send_status == "completed"
     assert store.list_unbound_failed_oa_attempts() == []
 
 

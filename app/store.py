@@ -26513,7 +26513,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
     def list_unbound_failed_oa_attempts(self, *, limit: int = 20) -> list[ReplyAttempt]:
-        """Return one oldest unresolved OA failure per exact process/task."""
+        """Return one oldest unresolved failed OA Attempt per process/task."""
         with self._connect() as db:
             rows = db.execute(
                 f"""
@@ -26529,6 +26529,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
                       where latest.oa_process_instance_id=attempts.oa_process_instance_id
                         and latest.oa_task_id=attempts.oa_task_id
+                        and latest.send_status='failed'
+                        and trim(coalesce(latest.resolved_at, ''))=''
                   )
                   and not exists (
                       select 1
@@ -26584,7 +26586,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return False
             latest = db.execute(
                 f"select max(id) from ({REPLY_ATTEMPT_COMMON_SQL}) "
-                "where oa_process_instance_id=? and oa_task_id=?",
+                "where oa_process_instance_id=? and oa_task_id=? "
+                "and send_status='failed' and trim(coalesce(resolved_at, ''))=''",
                 (process_id, task_id),
             ).fetchone()[0]
             if int(latest or 0) != attempt_id:
