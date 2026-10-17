@@ -130,6 +130,8 @@ Consumer 会话兼容键还绑定本轮实际选中的 Skill 正文：冻结 Ski
 若重刷后的完整触发输入与当前代际相同，重跑按原幂等键返回当前代际；若所选 Skill 导致输入变化，
 则在单一事务中轮换到新代际。轮换前会校验 Attempt 仍绑定原预期代际；若旧代际仍有运行中的
 Agent，则返回冲突，不报告已入队。旧输入、Attempt 和运行历史不改写。
+组织架构变动的业务理由或受影响工作等可补充事实，由 people-review Skill 指示向已核实的发起人/责任人留言询问并保留 OA 待办；审批人拥有普通最终审批节点本身不构成保留给个人的 `needs_human` 特殊裁量。
+默认 OA Consumer prompt 只负责选择通用审批与业务 Skill、按实时流程分类及提示执行后读回；审批阈值、可补充事实的问询和人工升级条件由所选 Skill 定义。启动迁移只替换与已知旧版内容完全相同的系统 OA prompt，并保留后续自定义改动。
 
 Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整会话、单封原文与发送状态读取：
 `list_dingtalk_mailboxes`、`read_dingtalk_mail_thread`、`read_dingtalk_mail_message`、

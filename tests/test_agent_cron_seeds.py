@@ -429,9 +429,9 @@ def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
     assert "$stardust-oa-people-review" in repeated.prompt
     assert "$stardust-oa-attendance-travel-review" in repeated.prompt
     assert "$stardust-oa-cloud-resource-review" in repeated.prompt
-    assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in repeated.prompt
-    assert "rule_coverage" in repeated.prompt
-    assert "needs_human" in repeated.prompt
+    assert "审批判断和动作映射使用通用 OA Skill 与适用业务 Skill" in repeated.prompt
+    assert "rule_coverage" not in repeated.prompt
+    assert "needs_human" not in repeated.prompt
     assert [ref.skill_name for ref in repeated.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
@@ -476,7 +476,7 @@ def test_oa_seed_binds_generic_and_stardust_finance_review_skills(
     assert "$stardust-oa-people-review" in task.prompt
     assert "$stardust-oa-attendance-travel-review" in task.prompt
     assert "$stardust-oa-cloud-resource-review" in task.prompt
-    assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in task.prompt
+    assert "审批判断和动作映射使用通用 OA Skill 与适用业务 Skill" in task.prompt
     assert [ref.skill_name for ref in task.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
@@ -1703,3 +1703,46 @@ def test_the_default_oa_prompt_names_no_document_and_no_personal_rule() -> None:
 
     assert ".md" not in OA_CONSUMER_PROMPT
     assert "Derek" not in OA_CONSUMER_PROMPT
+    assert "rule_coverage" not in OA_CONSUMER_PROMPT
+    assert "needs_human" not in OA_CONSUMER_PROMPT
+
+
+def test_oa_seed_migrates_only_the_known_stale_prompt_and_preserves_custom_edits(tmp_path: Path) -> None:
+    from app.agent_cron.seeds import (
+        LEGACY_OA_CONSUMER_PROMPT_20261017,
+        OA_CONSUMER_PROMPT,
+    )
+
+    store = AutoReplyStore(tmp_path / "oa-prompt-migration.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    seeded = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )
+    oa = _task_by_key(seeded, "dingtalk-oa-check-v1")
+    legacy = store.update_scheduled_task(
+        oa.id, expected_version=oa.version,
+        prompt=LEGACY_OA_CONSUMER_PROMPT_20261017, now=NOW + timedelta(minutes=1),
+    )
+
+    migrated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "dingtalk-oa-check-v1",
+    )
+    assert migrated.prompt == OA_CONSUMER_PROMPT
+    assert migrated.version == legacy.version + 1
+
+    custom = store.update_scheduled_task(
+        migrated.id, expected_version=migrated.version,
+        prompt="A newer administrator-authored OA instruction. "
+        + " ".join(f"${ref.skill_name}" for ref in migrated.skill_refs),
+        now=NOW + timedelta(minutes=2),
+    )
+    preserved = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "dingtalk-oa-check-v1",
+    )
+    assert preserved == custom

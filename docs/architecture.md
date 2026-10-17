@@ -2167,6 +2167,10 @@ Each newly enqueued OA review round re-materializes the currently selected Skill
 
 Manual OA rerun compares the refreshed trigger payload with the current task input. Identical input keeps the existing pending generation idempotently. When the selected Skill payload changed, rerun rotates to a new generation; an active Agent run makes that rotation unavailable and the request returns a conflict instead of claiming it was queued. The generation check and rotation are committed together, and prior inputs and runs remain immutable.
 
+For organization-change approvals, the people Skill treats missing business rationale and affected-work details as facts to clarify with a verified submitter or responsible party while the OA remains pending. Derek's ordinary final approval node alone does not turn that clarification into a reserved `needs_human` decision; only an explicit discretionary choice outside the normal approval decision or a genuine policy/authority gap uses that outcome.
+
+The scheduled OA Consumer prompt names the available operation and business Skills and directs the Agent to use their rules and the generic OA action table. Business thresholds and case-routing policy live in the selected Skills. Startup migrates only the exact known stale OA prompt; later administrator edits remain untouched.
+
 Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. OA instance/task identifiers passed to read tools come verbatim from the current pending/detail fields; parameter or response-shape errors trigger source-value verification before a safe same-target read retry, and are not treated as missing applicant evidence. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files.
 
 
