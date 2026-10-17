@@ -12084,6 +12084,8 @@ def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_pa
         "external-form": "email_unsubscribe_browser_failed: category=form_response_rejected",
         "external-form-operation": "email_unsubscribe_browser_failed: category=form_response_rejected;operation=submit_form",
         "external-op": "email_unsubscribe_browser_failed: category=operation_failed",
+        # Historical Attempts used this fixed, provider-page failure format.
+        "external-legacy-op": "failed_browser: category=operation_failed;detail=navigation timed out;operation=open_entry",
         "external-timeout": "unsubscribe_operation_rejected:TimeoutError",
         "ours-runtime": "email_unsubscribe_browser_failed: category=runtime_unavailable",
         "ours-unknown": "email_unsubscribe_browser_failed",
@@ -12132,7 +12134,7 @@ def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_pa
     with store._connect() as db:
         assert db.execute(
             "select count(*) from tasks where record_type='reply_tasks' and status='failed'"
-        ).fetchone()[0] == 6
+        ).fetchone()[0] == 7
 
 
 def test_attention_skips_an_expired_dingteam_okr_login(tmp_path: Path):

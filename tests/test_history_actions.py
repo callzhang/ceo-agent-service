@@ -99,6 +99,47 @@ def test_exhausted_failure_requires_manager_and_offers_safe_choices():
     ]
 
 
+def test_external_unsubscribe_page_failure_does_not_become_manager_attention():
+    error = (
+        "failed_browser: category=operation_failed;"
+        "detail=browser operation failed: navigation timed out;operation=open_entry"
+    )
+    attempt = _attempt(
+        action="direct_unsubscribe",
+        sensitivity_kind="email",
+        send_error=error,
+        audit_summary=error,
+    )
+    task = _task(status="failed", error=error)
+
+    state = reply_history_attention(
+        attempt,
+        task=task,
+        decision_options=(),
+    )
+
+    assert state is None
+
+
+def test_internal_unsubscribe_reconciliation_error_still_requires_manager():
+    error = "unsubscribe_operation_rejected:ValueError: unsubscribe execution requires reconciliation"
+    attempt = _attempt(
+        action="direct_unsubscribe",
+        sensitivity_kind="email",
+        send_error=error,
+        audit_summary=error,
+    )
+
+    state = reply_history_attention(
+        attempt,
+        task=_task(status="failed", error=error),
+        decision_options=(),
+    )
+
+    assert state is not None
+    assert state.kind == "needs_manager"
+
+
 def test_internal_retry_code_is_rendered_as_readable_failure_reason():
     attempt = _attempt(audit_summary="consumer_retry_exhausted")
 
