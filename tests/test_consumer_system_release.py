@@ -34,8 +34,11 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
-    assert entry["old_sha256"] == "766eb3a6a2432523e04c26182ccc0f39749f2f1f7ebb4d2958ebfa5b36686359"
+    assert entry["old_sha256"] == "0779fe3af74baad510950c5332391ee20fcf76ab624d432390448dc1cc265162"
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+    audit_source = "app/defaults/audit_rules.md"
+    audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
+    assert audit_entry["old_sha256"] == "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
 
 
 def test_release_manifest_pins_current_finance_card_and_active_managed_skill_hashes():
