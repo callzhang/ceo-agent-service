@@ -229,6 +229,15 @@ cycles, it stops as `failed_terminal` with `external_action_uncertain`. Exact
 live terminal OA reconciliation may still settle the follow-up as `skipped`,
 without changing or treating the original send as delivered.
 
+The OA scan also handles a legacy failed OA Attempt that has no owning local
+Reply Task or Consumer run. It reads the exact persisted OA process and task IDs
+through the native read-only detail API. Only an explicitly terminal process
+and that exact terminal task, followed by an in-transaction recheck that no
+local Task owns the trigger, can close the latest unresolved failure as
+`skipped`. The resolution records the source state and preserves the original
+failure reason; delivery remains unverified. Missing, partial, mismatched,
+nonterminal or failed reads do not change History or enable a replay.
+
 Audit handoff includes System-produced JSON type facts for each current action's
 target and payload fields, including human-option plans. The facts come from the
 exact validated candidate; they do not authorize an action or prove live

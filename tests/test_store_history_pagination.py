@@ -849,6 +849,85 @@ def test_history_does_not_call_unbound_oa_failure_recovered_without_a_task(tmp_p
     assert recovered_rows == []
 
 
+def test_unbound_failed_oa_attempt_closure_requires_latest_exact_orphan(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-unbound-oa-terminal.sqlite3")
+    with store._connect() as db:
+        failed_attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "orphan-oa",
+            "conversation_title": "Completed OA task",
+            "trigger_message_id": "trigger-oa",
+            "trigger_sender": "sender",
+            "trigger_text": "approval action",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-oa",
+            "oa_task_id": "task-oa",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+            "send_error": "codex_process_failed",
+            "codex_reason": "runtime failed before a Consumer result",
+        })
+
+    candidates = store.list_unbound_failed_oa_attempts()
+    assert [attempt.id for attempt in candidates] == [failed_attempt.lastrowid]
+    evidence = '{"process_status":"COMPLETED","oa_task_status":"COMPLETED"}'
+    assert store.skip_unbound_failed_oa_attempt(
+        failed_attempt.lastrowid,
+        process_instance_id="process-oa",
+        oa_task_id="task-oa",
+        terminal_evidence=evidence,
+    )
+    rows = store.list_operation_logs_with_count(
+        limit=10,
+        statuses=("skipped",),
+        history_types=(history_types.APPROVAL,),
+        source_tables=("reply_attempts",),
+    )[1]
+    assert [(row.source_id, row.status) for row in rows] == [
+        (failed_attempt.lastrowid, "skipped")
+    ]
+    attempt = store.get_reply_attempt(failed_attempt.lastrowid)
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "codex_process_failed"
+    assert attempt.codex_reason == "runtime failed before a Consumer result"
+    assert attempt.resolution == evidence
+    assert store.list_unbound_failed_oa_attempts() == []
+
+
+def test_unbound_failed_oa_attempt_closure_cannot_skip_when_local_task_exists(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-bound-oa-terminal.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="bound-oa",
+        conversation_title="Local task exists",
+        single_chat=False,
+        trigger_message_id="trigger-oa",
+        trigger_create_time="2026-10-17T00:00:00Z",
+        trigger_sender="sender",
+        trigger_text="approval action",
+        business_object_key="oa:process-oa:task-oa",
+    )
+    with store._connect() as db:
+        failed_attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "bound-oa",
+            "conversation_title": "Local task exists",
+            "trigger_message_id": "trigger-oa",
+            "trigger_sender": "sender",
+            "trigger_text": "approval action",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-oa",
+            "oa_task_id": "task-oa",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+        })
+
+    assert store.list_unbound_failed_oa_attempts() == []
+    assert not store.skip_unbound_failed_oa_attempt(
+        failed_attempt.lastrowid,
+        process_instance_id="process-oa",
+        oa_task_id="task-oa",
+        terminal_evidence='{"process_status":"COMPLETED"}',
+    )
+
+
 def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(tmp_path):
     store = AutoReplyStore(tmp_path / "history-uncertain-execution.sqlite3")
     store.enqueue_reply_task(

@@ -871,6 +871,7 @@ def scan_pending_oa_approvals(
         pending_business_object_keys.add(key)
 
     reconciled_reply_task_ids = reconcile_failed_oa_reply_tasks(store, dws)
+    reconciled_unbound_attempt_ids = reconcile_unbound_failed_oa_attempts(store, dws)
 
     # A partial scan or unreadable source cannot prove that a process is done.
     for key in previous_pending_keys:
@@ -934,6 +935,7 @@ def scan_pending_oa_approvals(
                     reconciled_completed_attempt_ids
                 ),
                 "reconciled_reply_task_ids": reconciled_reply_task_ids,
+                "reconciled_unbound_oa_attempt_ids": reconciled_unbound_attempt_ids,
                 "reconciled_legacy_oa_attempt_ids": sorted(
                     reconciled_legacy_oa_attempt_ids
                 ),
@@ -1071,6 +1073,68 @@ def reconcile_failed_oa_reply_tasks(store: AutoReplyStore, dws: Any) -> list[int
             if settled:
                 reconciled.append(task.id)
             break
+    return reconciled
+
+
+def reconcile_unbound_failed_oa_attempts(
+    store: AutoReplyStore, dws: Any, *, limit: int = 100
+) -> list[int]:
+    """Skip only failed OA Attempts whose exact process and task are terminal.
+
+    This covers legacy Attempts that predate a locally owning Reply Task or
+    Consumer run. The native read is read-only; any incomplete or mismatched
+    state leaves the original failure actionable.
+    """
+    read_detail = getattr(dws, "read_oa_process_instance_openapi", None)
+    if read_detail is None:
+        return []
+    reconciled: list[int] = []
+    for attempt in store.list_unbound_failed_oa_attempts(limit=limit):
+        process_id = str(attempt.oa_process_instance_id or "").strip()
+        oa_task_id = str(attempt.oa_task_id or "").strip()
+        if not process_id or not oa_task_id:
+            continue
+        try:
+            detail = read_detail(process_id)
+        except Exception:
+            continue
+        process_state = _oa_terminal_process_state(detail)
+        if process_state is None:
+            continue
+        exact_task = next(
+            (
+                row for row in _oa_task_records(detail)
+                if _oa_task_field(row, ("taskId", "taskid", "task_id", "id"))
+                == oa_task_id
+            ),
+            None,
+        )
+        if exact_task is None:
+            continue
+        task_state = _oa_task_field(
+            exact_task, ("status", "taskStatus", "task_status")
+        ).upper()
+        if task_state not in {
+            "COMPLETED", "FINISHED", "CANCELED", "CANCELLED", "TERMINATED"
+        }:
+            continue
+        evidence = json.dumps({
+            "source": "exact original DingTalk OA process and task readback",
+            "process_instance_id": process_id,
+            "oa_task_id": oa_task_id,
+            "process_status": process_state[0],
+            "process_result": process_state[1],
+            "oa_task_status": task_state,
+            "external_action_count": 0,
+            "delivery": "unverified; no delivery conclusion",
+        }, ensure_ascii=False, sort_keys=True)
+        if store.skip_unbound_failed_oa_attempt(
+            attempt.id,
+            process_instance_id=process_id,
+            oa_task_id=oa_task_id,
+            terminal_evidence=evidence,
+        ):
+            reconciled.append(attempt.id)
     return reconciled
 
 

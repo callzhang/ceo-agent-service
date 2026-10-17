@@ -2283,6 +2283,16 @@ external writes and no current principal tasks, and explicitly leaves chat deliv
 unverified. The original provider receipt and execution remain `uncertain`; `skipped`
 means the obsolete follow-up no longer needs action.
 
+Legacy failed OA Attempts that have no owning local Reply Task are reconciled
+by the scheduled OA scan using their exact persisted process and task IDs. The
+scan closes only the latest unresolved failed Attempt when live native
+readback confirms both the process and that exact OA task are terminal and a
+transactional recheck confirms no local Task owns the trigger. It records the
+readback as the resolution and marks the follow-up `skipped`, preserving the
+original failure reason; it does not infer message delivery or create a new
+Consumer/Audit run. Missing, partial, mismatched, nonterminal or failed reads
+leave the Attempt unchanged.
+
 
 ### 原始触发、当前来源和立项财务口径（2026-10-14）
 

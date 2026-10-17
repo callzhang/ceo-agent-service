@@ -17,10 +17,80 @@ from app.store import AutoReplyStore
 from app.task_scanners import (
     _pending_oa_task_ids_for_current_user,
     reconcile_failed_oa_reply_tasks,
+    reconcile_unbound_failed_oa_attempts,
     scan_ai_minutes,
     scan_meeting_todos,
     scan_pending_oa_approvals,
 )
+
+
+def test_unbound_failed_oa_attempt_is_skipped_only_after_exact_terminal_readback():
+    attempt = SimpleNamespace(
+        id=4594,
+        channel="dingtalk",
+        conversation_id="conversation-1",
+        trigger_message_id="message-1",
+        send_status="failed",
+        oa_process_instance_id="process-1",
+        oa_task_id="task-1",
+    )
+
+    class Store:
+        def list_unbound_failed_oa_attempts(self, *, limit):
+            assert limit == 100
+            return [attempt]
+
+        def skip_unbound_failed_oa_attempt(
+            self, attempt_id, *, process_instance_id, oa_task_id, terminal_evidence
+        ):
+            assert (attempt_id, process_instance_id, oa_task_id) == (
+                4594, "process-1", "task-1"
+            )
+            self.evidence = terminal_evidence
+            return True
+
+    class Dws:
+        def read_oa_process_instance_openapi(self, process_id):
+            assert process_id == "process-1"
+            return {"result": {
+                "status": "COMPLETED",
+                "processInstanceResult": "agree",
+                "tasks": [{"taskId": "task-1", "status": "COMPLETED"}],
+            }}
+
+    store = Store()
+    assert reconcile_unbound_failed_oa_attempts(store, Dws()) == [4594]
+    assert "process-1" in store.evidence
+    assert "task-1" in store.evidence
+    assert "COMPLETED" in store.evidence
+
+
+def test_unbound_failed_oa_attempt_stays_open_without_exact_terminal_evidence():
+    attempt = SimpleNamespace(
+        id=4595,
+        channel="dingtalk",
+        conversation_id="conversation-2",
+        trigger_message_id="message-2",
+        send_status="failed",
+        oa_process_instance_id="process-2",
+        oa_task_id="task-2",
+    )
+
+    class Store:
+        def list_unbound_failed_oa_attempts(self, *, limit):
+            return [attempt]
+
+        def skip_unbound_failed_oa_attempt(self, *args, **kwargs):
+            raise AssertionError("unverified OA state must not close the Attempt")
+
+    class Dws:
+        def read_oa_process_instance_openapi(self, process_id):
+            return {"result": {
+                "status": "RUNNING",
+                "tasks": [{"taskId": "other-task", "status": "COMPLETED"}],
+            }}
+
+    assert reconcile_unbound_failed_oa_attempts(Store(), Dws()) == []
 
 
 def test_failed_reply_task_closes_when_its_exact_oa_candidate_is_terminal():
