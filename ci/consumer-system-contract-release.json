@@ -70,7 +70,7 @@
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
       "target": "skills/stardust-oa-finance-review/SKILL.md",
-      "old_sha256": "dccb15b2d9b1cfef8bf9785352ec2831d37eea61aa442e26dafcacbacc3ca917",
+      "old_sha256": "e49ad811dcb01438854f9a3298d8045d6b80615b73eb227f2548d8219fc97ff3",
       "new_sha256": "e49ad811dcb01438854f9a3298d8045d6b80615b73eb227f2548d8219fc97ff3"
     },
     {
