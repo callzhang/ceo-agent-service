@@ -223,7 +223,7 @@ def test_terminal_oa_skip_message_does_not_claim_delivery():
     from app.web_api.attempts import _status_message
 
     attempt = SimpleNamespace(
-        send_status="failed",
+        send_status="skipped",
         send_error="external_action_uncertain",
         resolved_at="2026-10-15T10:37:10+00:00",
         resolution=json.dumps({

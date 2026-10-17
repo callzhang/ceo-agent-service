@@ -22,7 +22,7 @@ def terminal_oa_source_closure_is_skipped(attempt: Any) -> bool:
     """
     if (
         str(getattr(attempt, "send_status", "") or "").strip()
-        not in {"uncertain", "failed"}
+        not in {"uncertain", "failed", "skipped"}
         or str(getattr(attempt, "send_error", "") or "").strip()
         != "external_action_uncertain"
         or str(getattr(attempt, "channel", "") or "").strip() != "dingtalk"
