@@ -167,6 +167,14 @@ survives provider read failures. This does not retrospectively manufacture lost
 acceptance responses or rewrite historical failed executions. Comment and other
 action recovery retain their existing source/context fences.
 
+An uncertain DingTalk reply tied to a reviewed OA process is skipped only after
+live readback confirms both the exact process is terminal and the exact reviewed
+task is terminal. The skip records process/task identity and the observed
+terminal state, preserves the uncertain delivery error and original provider
+receipt, and removes the task from actionable Attention without claiming the
+message was sent. Nonterminal, mismatched, incomplete, or failed OA reads leave
+the task unresolved.
+
 Audit handoff includes System-produced JSON type facts for each current action's
 target and payload fields, including human-option plans. The facts come from the
 exact validated candidate; they do not authorize an action or prove live

@@ -33,6 +33,12 @@ its own status. Current unresolved System Execution uncertainty continues to
 override task closure; the projection does not modify the Attempt, candidate,
 or execution receipt.
 
+When live OA evidence proves that the exact source process and reviewed task are
+terminal, an unresolved delivery task may be closed as `skipped` with that
+source evidence. This closes current actionable Attention without asserting the
+message was delivered; its original uncertain Attempt and execution receipt
+remain unchanged for History and audit.
+
 任务 Skill 入口只展示名称、用途、读取入口及冻结来源标识。冻结内容指纹取已保存完整正文
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
 revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override

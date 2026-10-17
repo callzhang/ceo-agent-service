@@ -81,6 +81,55 @@ def test_failed_reply_task_closes_when_its_exact_oa_candidate_is_terminal():
     assert "COMPLETED" in store.evidence
 
 
+def test_uncertain_reply_is_skipped_without_attention_when_exact_oa_task_is_terminal():
+    task = SimpleNamespace(
+        id=46, channel="dingtalk", error="external_action_uncertain",
+        execution_generation="gen-6", status="failed",
+    )
+    run = SimpleNamespace(
+        id=93, role="consumer", status="completed", proposal_revision=1,
+        turn_attempt=0, adopted_result_json=json.dumps({
+            "outcome": "proposal",
+            "proposal": {"actions": [{
+                "capability": "dingtalk-oa", "operation": "approve",
+                "target": {"process_instance_id": "process-46", "task_id": "node-46"},
+            }]},
+        }),
+    )
+
+    class Store:
+        def list_reply_tasks(self, *, statuses, limit):
+            return [task]
+
+        def list_agent_runs_for_task_generation(self, *args, **kwargs):
+            return [run]
+
+        def skip_unresolved_reply_task_for_terminal_oa_source(
+            self, task_id, *, expected_execution_generation,
+            process_instance_id, oa_task_id, settled_evidence,
+        ):
+            assert (task_id, expected_execution_generation) == (46, "gen-6")
+            assert (process_instance_id, oa_task_id) == ("process-46", "node-46")
+            self.evidence = settled_evidence
+            return True
+
+        def close_unresolved_reply_task_already_settled(self, *args, **kwargs):
+            raise AssertionError("uncertain delivery is skipped, not marked delivered")
+
+    class Dws:
+        def read_oa_process_instance_openapi(self, process_id):
+            return {"result": {
+                "status": "TERMINATED", "processInstanceResult": "agree",
+                "tasks": [{"taskId": "node-46", "status": "CANCELED"}],
+            }}
+
+    store = Store()
+    assert reconcile_failed_oa_reply_tasks(store, Dws()) == [46]
+    assert "process-46" in store.evidence
+    assert "node-46" in store.evidence
+    assert "TERMINATED" in store.evidence
+
+
 def test_failed_reply_task_does_not_close_for_nonterminal_or_mismatched_oa():
     task = SimpleNamespace(
         id=45, channel="dingtalk", error="audit_revision_exhausted",

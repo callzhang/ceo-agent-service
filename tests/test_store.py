@@ -3637,6 +3637,71 @@ def test_expired_reply_task_can_be_skipped_with_generation_bound_evidence(
     assert "event has ended" in error[3]
 
 
+def test_uncertain_oa_reply_can_only_be_skipped_for_its_exact_terminal_source(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-oa-terminal",
+        conversation_title="OA follow-up",
+        single_chat=False,
+        trigger_message_id="msg-oa-terminal",
+        trigger_create_time="2026-10-16 09:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="Follow up",
+        business_object_key="oa:process-1:task-1",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    with store._connect() as db:
+        db.execute(
+            "update tasks set status='failed', error='external_action_uncertain' "
+            "where record_type='reply_tasks' and id=?",
+            (task.id,),
+        )
+
+    evidence = (
+        "Verified live DingTalk OA terminal state for exact reviewed candidate: "
+        "process_instance_id=process-1; task_id=task-1; process_status=TERMINATED; "
+        "task_status=CANCELED"
+    )
+    assert not store.skip_unresolved_reply_task_for_terminal_oa_source(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        process_instance_id="process-2",
+        oa_task_id="task-1",
+        settled_evidence=evidence,
+    )
+    assert not store.skip_unresolved_reply_task_for_terminal_oa_source(
+        task.id,
+        expected_execution_generation="stale-generation",
+        process_instance_id="process-1",
+        oa_task_id="task-1",
+        settled_evidence=evidence,
+    )
+    assert store.skip_unresolved_reply_task_for_terminal_oa_source(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        process_instance_id="process-1",
+        oa_task_id="task-1",
+        settled_evidence=evidence,
+    )
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "skipped"
+    assert updated.error == "external_action_uncertain"
+    assert store.count_current_unresolved_problem_attempts() == 0
+    with store._connect() as db:
+        error = db.execute(
+            "select kind, detail, resolved_at, resolution from errors "
+            "where conversation_id=? and message_id=? order by id desc limit 1",
+            (task.conversation_id, task.trigger_message_id),
+        ).fetchone()
+    assert error is not None
+    assert error[0] == "reply_task_skipped_terminal_oa"
+    assert error[1] == evidence == error[3]
+    assert error[2]
+
+
 def test_settlement_evidence_reconcile_commits_between_bounded_batches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
