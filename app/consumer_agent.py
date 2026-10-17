@@ -269,6 +269,49 @@ def consumer_wire_contract_hash(
     encoded = json.dumps(contract, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
 
+
+def consumer_selected_skill_source_fingerprints(
+    selected_names: tuple[str, ...], frozen_materials: tuple[object, ...]
+) -> tuple[dict[str, str], ...]:
+    """Fingerprint the exact selected Skill bodies visible to this Consumer turn."""
+    frozen_by_name: dict[str, list[str]] = {}
+    for material in frozen_materials:
+        frozen_by_name.setdefault(str(material.name), []).append(
+            sha256(str(material.content).encode("utf-8")).hexdigest()
+        )
+    fingerprints: list[dict[str, str]] = []
+    for name in sorted(set(selected_names)):
+        frozen_digests = sorted(frozen_by_name.get(name, ()))
+        if frozen_digests:
+            fingerprints.extend(
+                {"name": name, "source": "frozen_task_input", "sha256": digest}
+                for digest in frozen_digests
+            )
+            continue
+        sources = installed_runtime_skills(names=(name,))
+        if not sources:
+            fingerprints.append(
+                {"name": name, "source": "selected_source_unavailable", "sha256": ""}
+            )
+            continue
+        for source in sorted(sources, key=lambda entry: str(entry.skill_path)):
+            fingerprints.append({
+                "name": name,
+                "source": str(source.skill_path.resolve()),
+                "sha256": sha256(source.skill_path.read_bytes()).hexdigest(),
+            })
+    return tuple(fingerprints)
+
+
+def consumer_selected_skill_session_contract_hash(
+    fingerprints: tuple[dict[str, str], ...],
+) -> str:
+    """Build the narrow session key for selected Skill bodies, independent of other contract edits."""
+    if not fingerprints:
+        return ""
+    encoded = json.dumps(fingerprints, sort_keys=True, separators=(",", ":"))
+    return "selected-skills:" + sha256(encoded.encode("utf-8")).hexdigest()
+
 CONSUMER_ROLE_BOUNDARY = """
 You are Consumer Agent A. Complete the business preparation using the task's
 applicable Skills and permitted tools, including report and document work.
@@ -395,18 +438,20 @@ class ConsumerAgentRunner:
             return True
         return self.codex_session_exists(session_id)
 
-    def _consumer_route_sessions(self, conversation_id: str) -> dict[str, str]:
+    def _consumer_route_sessions(
+        self, conversation_id: str, session_contract_hash: str = ""
+    ) -> dict[str, str]:
         """Return live route sessions for one continuous business conversation.
 
-        The current Skill/contract revision is recorded on the next completed
-        turn, but it is not an identity boundary for the conversation.  A
-        revision must receive the facts already verified in this session.
+        Selected Skill turns reuse only the exact Skill-compatible session. Other
+        Consumer contract edits retain the existing continuous-conversation behavior.
         """
         sessions: dict[str, str] = {}
         for route_name in self._configured_route_names():
             session_id = self.store.get_conversation_runtime_session(
                 conversation_id,
                 route_name,
+                required_contract_hash=session_contract_hash or None,
             )
             if session_id:
                 sessions[route_name] = session_id
@@ -489,6 +534,14 @@ class ConsumerAgentRunner:
             context_skill_protocol_source == "explicit_custom"
         )
         configuration = load_prompt_configuration()
+        frozen_skill_materials = frozen_task_skill_binding(
+            task.trigger_message_json
+        ).materials
+        selected_skill_source_fingerprints = (
+            consumer_selected_skill_source_fingerprints(
+                context.skill_names, frozen_skill_materials
+            )
+        )
         contract_hash = consumer_wire_contract_hash(
             self.runtime_skill_snapshot,
             skill_protocol_override=(
@@ -496,7 +549,14 @@ class ConsumerAgentRunner:
             ),
             prompt_configuration=configuration,
         )
-        route_sessions = self._consumer_route_sessions(task.conversation_id)
+        skill_session_contract_hash = (
+            consumer_selected_skill_session_contract_hash(
+                selected_skill_source_fingerprints
+            )
+        )
+        route_sessions = self._consumer_route_sessions(
+            task.conversation_id, skill_session_contract_hash
+        )
         # A forced rerun changes the execution generation and prompt, but it
         # must keep the compatible conversation session so the agent sees the
         # original context plus the new feedback.  Route-specific session
@@ -640,7 +700,7 @@ class ConsumerAgentRunner:
             continuation=continuation_prompt,
             skill_names=context.skill_names,
             frozen_skill_names=frozen_skill_names_for_task,
-            frozen_skill_materials=frozen_task_skill_binding(task.trigger_message_json).materials,
+            frozen_skill_materials=frozen_skill_materials,
             skill_protocol=context_skill_protocol or "",
             skill_protocol_is_custom=skill_protocol_is_custom,
             skill_catalog=default_task_skill_catalog(context.skill_names),
@@ -680,7 +740,7 @@ class ConsumerAgentRunner:
                 on_progress=renew_session_lock,
                 image_paths=[Path(path) for path in context.image_paths],
                 required_capabilities=self._required_capabilities(context),
-                conversation_contract_hash=contract_hash,
+                conversation_contract_hash=skill_session_contract_hash or contract_hash,
                 force_new_session=force_new_session,
         )
         return result

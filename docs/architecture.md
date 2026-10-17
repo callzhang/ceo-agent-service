@@ -43,7 +43,15 @@ remain unchanged for History and audit.
 的 UTF-8 SHA-256，与 `read_task_skill` 返回的外层内容指纹一致，不是正文内部的 managed
 revision hash。Consumer/Audit 使用同一元数据渲染器，完整 Skill 仍按需读取，自定义 override
 保持原文。当前预览为旧无分段快照补充明确标记的当前入口；历史视图及已有分段快照保持
-实际保存的 Task 输入。任务入口元数据不进入稳定会话合同指纹，不因这次精简重置 session。
+实际保存的 Task 输入。任务入口的名称、用途和展示格式不进入稳定会话合同指纹，不因这次精简
+重置 session。
+
+Consumer 会话兼容键还绑定本轮实际选中的 Skill 正文：冻结 Skill 使用任务输入保存的完整正文摘要，
+非冻结 Skill 使用当前安装源文件的路径及内容摘要。带已选 Skill 的 Consumer 轮次仅复用 Skill 摘要
+完全匹配的持久化路由会话；已选 Skill 更新会让后续新轮次开启新会话，防止旧会话中的规则覆盖本轮
+输入。冻结轮次的重试仍按原始 Skill 正文计算，不因安装源后来更新而改写旧轮次。没有显式选中 Skill
+的 Consumer 会话仍按原连续会话行为处理。旧会话及历史运行保留，Audit 会话规则、审批权限和动作门槛
+不变。
 
 Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整会话、单封原文与发送状态读取：
 `list_dingtalk_mailboxes`、`read_dingtalk_mail_thread`、`read_dingtalk_mail_message`、
