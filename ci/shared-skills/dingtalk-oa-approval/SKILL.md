@@ -59,7 +59,7 @@ OA 操作使用从当前源对象核实的字符串 `process_instance_id`、`tas
    dws drive +download --space-id <spaceId> --node <fileId> --output <工作目录内的相对路径> --format json
    ```
 
-   授权之前 `drive +info` 会报 `forbidden.accessDenied`，授权之后同一 `fileId` 就能读元数据并下载正文；xlsx 用表格库读全表，pdf/docx 用文档读取，不得只看截图或文件名下结论。服务中的 Consumer/Audit 只有具名只读工具，`authorize-preview` 是会改变授权状态的写操作，当前没有提供给这两个角色；不得通过 shell、任意 DWS 命令或界面代为调用。服务角色对已授权且可读取的钉盘节点使用 `read_dingtalk_drive_file(node_id, space_id, file_name)` 获取受限正文和任务运行期间的临时文件路径；扫描件由 Consumer/Audit 使用其 MCP 工具目录中的 `ai_services.ocr_document` OCR 并读取返回全文、来源页码、摘要及可用的置信度/警告。超过内联输入上限的大 PDF 按原始页码逐页请求受限 JPEG；不需也不得从角色内部启动本地 OCR 命令。OCR 或解析失败是审阅端技术读取故障，应保留待办并排查或协调权限，不得归责申请人、当作未交材料或作为拒绝理由；不得未经授权切换到其他 OCR 服务。若此附件是决定性材料且没有其他已授权的只读正文来源，按技术能力不可用如实报告并保留待办，不能声称已经读完，也不能把技术阻塞伪装成申请人未交材料或请 Derek 作业务判断。
+   授权之前 `drive +info` 会报 `forbidden.accessDenied`，授权之后同一 `fileId` 就能读元数据并下载正文；xlsx 用表格库读全表，pdf/docx 用文档读取，不得只看截图或文件名下结论。服务中的 Consumer/Audit 只有具名只读工具，`authorize-preview` 是会改变授权状态的写操作，当前没有提供给这两个角色；不得通过 shell、任意 DWS 命令或界面代为调用。服务角色对已授权且可读取的钉盘节点使用 `read_dingtalk_drive_file(node_id, space_id, file_name)` 获取受限正文和任务运行期间的临时文件路径；该工具会对支持的图片附件及扫描 PDF 自动调用已配置的 Stardust OCR，并返回抽取文本、来源摘要及可用的置信度/警告，不需再从角色内部启动另一套 OCR 命令。OCR 或解析失败是审阅端技术读取故障，应保留待办并排查或协调权限，不得归责申请人、当作未交材料或作为拒绝理由；不得未经授权切换到其他 OCR 服务。若此附件是决定性材料且没有其他已授权的只读正文来源，按技术能力不可用如实报告并保留待办，不能声称已经读完，也不能把技术阻塞伪装成申请人未交材料或请 Derek 作业务判断。
    2026-09-17 长沙银行 POC 的 checklist 曾被两次判为“读不到”，实际按此路径 10,549 字节正常下载读全。
 
 5. **缺材料和读不到是两回事，处理完全不同（Derek, 2026-09-23）。** 两者都不得通过，不得用“同意后补”替代审批前审阅。
@@ -478,7 +478,7 @@ PDF 附件读取失败时，先判断是“真的不可读”还是“PDF 结构
 
 ### 审批 OCR 路径
 
-审批中的扫描 PDF、图片附件、发票/完税证明截图、合同扫描件、盖章扫描件、报销凭证、验收单等，如果没有可用文本层，Consumer 和 Audit 必须使用其 MCP 工具目录中的 `ai_services.ocr_document` 读取。`read_dingtalk_drive_file` 对可放入有界工具结果的扫描件返回精确来源的 `ocr_input_base64`、MIME 类型、PDF 页码和 SHA-256；大 PDF 会返回 OCR 页码列表，逐页传 `page_number` 重新读取原文件中的单页 JPEG，再传给 OCR MCP。保留原始一基页码、置信度和警告。不得改用本地 OCR 脚本或 `magick + tesseract` 绕过该 MCP 路径。
+审批中的扫描 PDF、图片附件、发票/完税证明截图、合同扫描件、盖章扫描件、报销凭证、验收单等，如果没有可用文本层，Consumer 和 Audit 必须使用其 MCP 工具目录中的 `ai_services.ocr_document` 读取。`read_dingtalk_drive_file` 对扫描件会返回精确来源的 `ocr_input_base64`、MIME 类型、PDF 页码和 SHA-256；将二进制传给 OCR MCP，保留返回的页码、置信度和警告。不得改用本地 OCR 脚本或 `magick + tesseract` 绕过该 MCP 路径。
 
 OCR 前提：
 
@@ -487,7 +487,7 @@ OCR 前提：
 3. OCR 结果要和审批表单、评论、合同/发票字段、历史审批编号交叉验证；不得只凭 OCR 单点通过财务、合同、录用、立项等高风险审批。
 4. OCR 失败或服务认证失败是真失败；不要未经授权上传到其他 OCR 服务，也不要用猜测补全文字。
 
-对可直接内联传输的 PDF，优先把 `ocr_page_numbers` 传给 `ai_services.ocr_document(page_numbers=...)`，使用一基页码；超出 700 KiB 的 PDF，按一基页码逐页调用 `read_dingtalk_drive_file(..., page_number=N)`，并把返回的 JPEG 输入 OCR MCP；将 OCR 页号映射回 `ocr_original_page_number`，不可把每张 JPEG 的单页编号 1 当成原 PDF 页码。表格、表单或复杂版面使用 `engine="qwen"`，普通扫描件使用默认 `rapidocr`。MCP 不可用、认证失败、输入超出受控读取上限或 OCR 返回空文本时，记录具体技术阻塞并保留 OA 待处理；不得回退到未授权的服务或把读取失败归责申请人。
+对 PDF，优先把 `ocr_page_numbers` 传给 `ai_services.ocr_document(page_numbers=...)`，使用一基页码；表格、表单或复杂版面使用 `engine="qwen"`，普通扫描件使用默认 `rapidocr`。MCP 不可用、认证失败、输入超出受控读取上限或 OCR 返回空文本时，记录具体技术阻塞并保留 OA 待处理；不得回退到未授权的服务或把读取失败归责申请人。
 
 审批审阅时要读取 OCR 输出全文，并在材料记录中说明“通过 OCR 读取扫描件”。如果 OCR 输出与表单/评论冲突，先回看对应原图并核对版面，区分识别错误与源文件中真实矛盾；只有原图也能确认存在实质矛盾时，才按事实矛盾规则要求解释或补充依据。OCR 不确定或工具识别错误属于审阅端限制，不得单独归责申请人或作为拒绝理由；不得自动同意。
 
