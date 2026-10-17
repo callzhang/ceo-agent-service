@@ -773,6 +773,8 @@ Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audi
 
 候选分为普通动作计划和任务类别规则问题。`needs_human` 只能针对可复用规则缺口，包含来源上下文、具体原因、证据及 2–4 个互斥规则选项，每项明确 `applies_to=task_class` 并说明后果；选项绑定在所选规则下继续当前事项的完整方案，停止选项写明 skipped 和原因。不能用 `requested_input` 将当前事实、偏好或业务决定转给 Derek；应由 Agent 先基于现有规则形成安全、有限承诺的普通回复，或向有该事实的来源人提出一个具体问题。不能混合立即执行的动作与尚未选择的条件分支。
 
+启动恢复只会保留满足当前 Consumer 结果合同的待选决策。旧式 `requested_input` 或缺少可复用规则选项的候选仍可在 History 只读查看；若它仍占据当前、经 Audit 批准且未选择的投影，`reconcile_invalid_needs_human_projections` 会把当前 Attempt/Task 投影转为 `failed`、清空可执行选项，并保留原候选、Audit 与 run 原文。之后须由正常 Consumer/Audit 闭环生成普通回复或向来源人追问；该对账不发送消息、不执行当前分支，也不把失败伪装成完成。有效的 task-class 规则问题保持 `needs_human`。
+
 若 DingTalk trigger 引用了一条本服务通过 provider 成功发送状态回读确认的 Agent 消息，系统将该关系作为结构化输入来源传给 Consumer；模型不得将其续接/恢复任务升级为 `needs_human`。此判定使用 conversation、quoted message ID 与发送回执的对应关系，不根据正文里是否有 AI 签名做字符串匹配。Consumer 结果校验和 Audit 对同一当前任务上下文独立执行该限制。
 
 通用消息受众契约由 Consumer/Audit 共用的固定审核规则注入，已保存或空的自定义规则均不会
