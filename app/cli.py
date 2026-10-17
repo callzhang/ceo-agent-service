@@ -14,6 +14,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, NonNegativeInt, PositiveInt, field_validator
 
@@ -356,6 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
         "process-work-items",
         "retry-work-summary-input",
         "reconcile-confirmed-meeting-delivery",
+        "import-meeting-asr-transcript",
         "reconcile-failed-reply-chat-readback",
         "retry-failed-email-unsubscribe",
         "release-failed-email-unsubscribe",
@@ -555,6 +557,10 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--input-id", type=_positive_int, required=True)
         if command == "reconcile-confirmed-meeting-delivery":
             subparser.add_argument("--job-id", type=_positive_int, required=True)
+            subparser.add_argument("--apply", action="store_true")
+        if command == "import-meeting-asr-transcript":
+            subparser.add_argument("--job-id", type=_positive_int, required=True)
+            subparser.add_argument("--input-json", type=Path, required=True)
             subparser.add_argument("--apply", action="store_true")
         if command == "reconcile-failed-reply-chat-readback":
             subparser.add_argument("--task-id", type=_positive_int, required=True)
@@ -3716,6 +3722,62 @@ def _create_meeting_dws(settings: WorkerSettings) -> DwsClient:
     )
 
 
+def import_meeting_asr_transcript_command(
+    settings: WorkerSettings,
+    *,
+    job_id: int,
+    input_json: Path,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Preview or atomically attach an ASR artifact to one failed meeting job."""
+    from app.meeting_alignment_source import MeetingAsrTranscript
+
+    try:
+        transcript = MeetingAsrTranscript.model_validate_json(
+            input_json.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"invalid ASR transcript input: {exc}") from exc
+    if apply:
+        if settings.dry_run:
+            raise SystemExit("--apply refused: dry-run is on")
+        recovered = AutoReplyStore(settings.db_path).attach_asr_transcript_and_rerun_meeting_job(
+            job_id,
+            transcript.model_dump(mode="json"),
+        )
+        report = {
+            "applied": recovered == job_id,
+            "job_id": job_id,
+            "recovered_job_id": recovered,
+            "audio_sha256": transcript.audio_sha256,
+            "model": transcript.model,
+        }
+    else:
+        with sqlite3.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True) as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute(
+                """select meeting_id, status, locked_at, send_result_json
+                   from tasks where record_type='meeting_alignment_jobs'
+                     and cast(legacy_key as integer)=?""",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            raise SystemExit(f"meeting job not found: {job_id}")
+        report = {
+            "applied": False,
+            "job_id": job_id,
+            "meeting_id": row["meeting_id"],
+            "status": row["status"],
+            "unlocked": not bool(row["locked_at"]),
+            "no_saved_delivery_result": row["send_result_json"] == "{}",
+            "audio_sha256": transcript.audio_sha256,
+            "model": transcript.model,
+            "segments": len(transcript.segments),
+        }
+    print(json.dumps(report, ensure_ascii=False), flush=True)
+    return report
+
+
 def scan_meetings_once_command(
     settings: WorkerSettings,
     *,
@@ -4983,6 +5045,13 @@ def main() -> None:
         process_work_items_command(settings)
     elif args.command == "retry-work-summary-input":
         retry_work_summary_input_command(settings, input_id=args.input_id)
+    elif args.command == "import-meeting-asr-transcript":
+        import_meeting_asr_transcript_command(
+            settings,
+            job_id=args.job_id,
+            input_json=args.input_json,
+            apply=args.apply,
+        )
     elif args.command == "reconcile-confirmed-meeting-delivery":
         from app.meeting_alignment import reconcile_confirmed_meeting_delivery
         if args.apply and settings.dry_run:
