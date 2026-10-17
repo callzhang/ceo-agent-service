@@ -247,3 +247,35 @@ def test_terminal_oa_skip_message_does_not_claim_delivery():
     assert "已跳过" in message
     assert "仍未核实" in message
     assert not requires_decision
+
+
+def test_execution_uncertainty_does_not_overwrite_terminal_skip_explanation():
+    import json
+
+    from app.web_api.attempts import _execution_status_message
+
+    attempt = SimpleNamespace(
+        send_status="skipped",
+        send_error="external_action_uncertain",
+        resolved_at="2026-10-15T10:37:10+00:00",
+        resolution=json.dumps({
+            "current_principal_task_ids": [],
+            "external_write_count": 0,
+            "historical_chat_delivery": "unverified; original uncertain delivery remains unchanged",
+            "native_and_openapi_business_id_match": True,
+            "original_message_id": "trigger-1",
+            "original_oa_task_id": "task-1",
+            "original_oa_task_status": "CANCELED",
+            "process_instance_id": "process-1",
+            "process_status": "TERMINATED",
+            "source": "exact original DingTalk message and native OA detail/OpenAPI readback",
+        }),
+        channel="dingtalk",
+        trigger_message_id="trigger-1",
+    )
+
+    message = _execution_status_message(
+        attempt, "uncertain", "已审核方案没有全部核验完成，外部结果仍待核验。"
+    )
+
+    assert message == "原 OA 流程已终止，此跟进已跳过；原消息送达情况仍未核实。"

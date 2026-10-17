@@ -63,6 +63,15 @@ def _status_message(
     return f"当前状态：{status or '未提供'}。", False
 
 
+def _execution_status_message(
+    attempt: Any, execution_status: str, fallback: str
+) -> str:
+    """Keep a verified source-terminal skip distinct from delivery uncertainty."""
+    if terminal_oa_source_closure_is_skipped(attempt):
+        return _status_message(attempt, None)[0]
+    return fallback
+
+
 def _run_role(run: Any) -> str:
     role = getattr(run, "role", None)
     return str(getattr(role, "value", role) or "")
@@ -909,7 +918,11 @@ def build_attempt_detail(
                 "done": "已审核方案的全部动作已核验完成。",
                 "skipped": "已按审核通过的停止方案结束，原因已记录。",
             }
-            status_message = execution_messages.get(system_execution["status"], status_message)
+            status_message = _execution_status_message(
+                attempt,
+                str(system_execution["status"]),
+                execution_messages.get(system_execution["status"], status_message),
+            )
     if rerun_block_reason:
         status_message = rerun_block_reason
     elif attempt.send_status == "failed" and rerun.explanation:
