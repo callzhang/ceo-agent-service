@@ -49,6 +49,8 @@ For each proposed refusal, demonstrate that a current sourced condition is actua
 
 **Disposition when submitted evidence is unreadable:** first decide whether the remaining independently readable, source-verified evidence establishes a sourced payment condition as met or unmet. Only independently readable and source-verified evidence may support that business conclusion; do not turn an unknown condition into non-compliance. If the only unresolved fact depends on an applicant-submitted item that the reviewer cannot read, keep the approval pending and take no terminal OA action (`no_action` with a reviewer-side access/OCR blocker); do not approve, reject or return because of the reading failure, do not describe the item as missing, and do not ask the applicant to resubmit the same unreadable file. Resume only after the source can be read through an authorized path or another readable source resolves the fact. A terminal decision remains available when other independently readable evidence establishes the applicable condition without relying on the unread item.
 
+**压力案例：表格记录‘已回复邮件’，但邮件正文尚不可读。** 客户验收属于未核实，而不是验收失败。若已提交结算图片也发生审阅端 OCR/读取失败，这不是申请人未提交。此前退回若混合了客户确认材料要求与盖章要求，必须逐轮拆开核验：因审阅端 OCR/读取失败要求重交的轮次不得计入三次拒绝阈值；仅要求盖章且没有可读、来源核验的独立实质缺口证据的轮次也不得计数。每个计入阈值的轮次都必须有可读、来源核验的证据证明同一项申请人可补正缺口，并核对申请人的回应。若没有其他独立可读证据证明付款条件未满足，保持待处理且不执行终局动作；不能把表格状态、未取得的邮件正文、无法读取的图片或累计退回次数转成拒绝结论。
+
 Actions: generic decision table (see the shared execution contract above).
 
 ## external_expense_payment

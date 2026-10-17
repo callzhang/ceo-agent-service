@@ -82,6 +82,15 @@ def test_three_return_threshold_requires_verified_per_return_evidence() -> None:
     assert "只有逐轮证据证明三轮都针对同一项真实、实质且由申请人或前序审批人可处理的缺口" in text
 
 
+def test_supplier_payment_pressure_case_does_not_convert_unknown_acceptance_to_refusal() -> None:
+    text = FINANCE_RULE_CARD_PATHS[0].read_text(encoding="utf-8")
+    assert "压力案例：表格记录‘已回复邮件’，但邮件正文尚不可读" in text
+    assert "客户验收属于未核实，而不是验收失败" in text
+    assert "因审阅端 OCR/读取失败要求重交的轮次不得计入三次拒绝阈值" in text
+    assert "仅要求盖章且没有可读、来源核验的独立实质缺口证据的轮次也不得计数" in text
+    assert "若没有其他独立可读证据证明付款条件未满足，保持待处理且不执行终局动作" in text
+
+
 def test_runtime_oa_skill_does_not_treat_reader_failure_as_applicant_material_gap() -> None:
     if not RUNTIME_OA_SKILL.is_file():
         return
