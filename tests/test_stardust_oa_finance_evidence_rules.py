@@ -20,20 +20,41 @@ def test_supplier_payment_distinguishes_email_reply_from_customer_acceptance() -
         assert "不能把审核方无法读取" in text
 
 
-def test_supplier_payment_never_uses_stamp_presence_as_a_review_condition() -> None:
-    required = (
-        "do not assess whether a stamp, chop, or signature is present",
-        "not request a stamp, chop, or signature",
-        "只核对实质付款条件",
+def test_supplier_payment_output_is_limited_to_sourced_material_conditions() -> None:
+    skill_text = FINANCE_SKILL.read_text(encoding="utf-8")
+    assert "limit every result ledger to the active card's sourced payment conditions" in skill_text
+    assert "Do not include or indirectly label material outside that scope" in skill_text
+    text = FINANCE_RULE_CARD_PATHS[0].read_text(encoding="utf-8")
+    assert "only include facts that verify a sourced payment condition" in text
+
+
+def test_supplier_payment_decision_output_omits_stamp_and_signature_observations() -> None:
+    skill_text = FINANCE_SKILL.read_text(encoding="utf-8")
+    assert "Prior history reports only the number of independently verified substantive-gap rounds" in skill_text
+    output_exclusion = (
+        "omit seals, stamps, signatures, signature/stamp blocks, and page-layout observations",
+        "Do not state that a seal/signature is present, absent, blank, unreadable, unverified, irrelevant, or “not a blocker”",
+        "do not quote, summarize, or enumerate excluded past rationale",
+        "Do not let any of these observations lower `information_completeness`, confidence, or the decision",
     )
+    assert all(rule in skill_text for rule in output_exclusion)
     for path in FINANCE_RULE_CARD_PATHS:
         text = path.read_text(encoding="utf-8")
-        for rule in required:
-            assert rule in text
-        assert "unless an applicable contract term or authoritative rule expressly makes that form a condition" not in text
-    skill_text = FINANCE_SKILL.read_text(encoding="utf-8")
-    assert "do not assess whether a stamp, chop, or signature is present or absent" in skill_text
-    assert "Do not request a stamp, chop, or signature" in skill_text
+        assert "only include facts that verify a sourced payment condition" in text
+        assert "historical rationale for excluded rounds is omitted" in text
+
+
+def test_historical_supplier_payment_review_is_analytical_only() -> None:
+    text = FINANCE_SKILL.read_text(encoding="utf-8")
+    assert "when the request is to assess a prior supplier-payment decision" in text
+    assert "outcome = no_action`, no `proposal`, no applicant-facing question" in text
+    assert "A newly submitted flow is a separate approval" in text
+
+
+def test_supplier_payment_rule_coverage_ignores_untriggered_branches() -> None:
+    text = FINANCE_RULE_CARD_PATHS[0].read_text(encoding="utf-8")
+    assert "未触及的未覆盖分支不得降低 rule_coverage" in text
+    assert "材料未核实只影响 information_completeness" in text
 
 
 def test_supplier_payment_unreadable_submitted_evidence_stays_a_reviewer_blocker() -> None:
@@ -44,8 +65,6 @@ def test_supplier_payment_unreadable_submitted_evidence_stays_a_reviewer_blocker
         assert "Only independently readable and source-verified evidence" in text
         assert "Prior return count is history, not an action rule" in text
         assert "do not ask the applicant to resubmit the same unreadable file" in text
-        assert "Do not request a stamp, chop, or signature" in text
-        assert "A blank stamp/signature area is not a defect to report" in text
         assert "only when independently verified as applicant-resolvable material omissions" in text
         assert "never because the reviewer cannot read a submitted item" in text
 
@@ -99,7 +118,7 @@ def test_supplier_payment_pressure_case_does_not_convert_unknown_acceptance_to_r
     assert "压力案例：表格记录‘已回复邮件’，但邮件正文尚不可读" in text
     assert "客户验收属于未核实，而不是验收失败" in text
     assert "因审阅端 OCR/读取失败要求重交的轮次不得计入三次拒绝阈值" in text
-    assert "仅要求盖章且没有可读、来源核验的独立实质缺口证据的轮次也不得计数" in text
+    assert "count only independently verified applicant-resolvable substantive-gap rounds" in text
     assert "若没有其他独立可读证据证明付款条件未满足，保持待处理且不执行终局动作" in text
 
 
