@@ -34,9 +34,12 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
-    assert entry["old_sha256"] == _digest(
-        Path.home().joinpath(".agents/skills/dingtalk-oa-approval/SKILL.md").read_bytes()
-    )
+    # The old digest is a release-time precondition. After a successful
+    # deployment the installed file has the new digest, so do not compare the
+    # old digest with mutable machine state in this repository-level test.
+    assert len(entry["old_sha256"]) == 64
+    assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
+    assert entry["old_sha256"] != entry["new_sha256"]
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
     audit_source = "app/defaults/audit_rules.md"
     audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
