@@ -69,6 +69,7 @@ from app.codex_history import (
 from app.codex_runner import _codex_home
 from app.native_trajectory import count_claude_session_lines, read_native_result_stream
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.service_codex_config import service_mcp_tool_approval_modes_for_agent_role
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
 from app.agent_runtime_router import _runtime_failure_from_friday_error
 from app.config import feedback_spike_vercel_base_url
@@ -1160,6 +1161,12 @@ class AgentTurnProcess(Generic[ResultT]):
                         developer_instructions=developer_instructions,
                         use_approval_bypass=True,
                         reasoning_effort=self.reasoning_effort or None,
+                        tool_approval_modes_by_server=(
+                            service_mcp_tool_approval_modes_for_agent_role(
+                                run.role.value
+                            )
+                            or None
+                        ),
                     )
                     configure_command(command)
                     if route.credential_mode is CredentialMode.SERVICE_API:

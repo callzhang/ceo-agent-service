@@ -26,6 +26,13 @@ DISABLED_SERVER_PLACEHOLDER_URL = "https://disabled.invalid/mcp"
 _REMOTE_DISABLED_SERVER_NAMES = frozenset(
     {"brightdata", "crm_connector", "fundflow"}
 )
+_AI_SERVICES_TOOL_NAMES = (
+    "health",
+    "ocr_document",
+    "transcribe_audio",
+    "synthesize_speech",
+)
+_AGENT_ROLES_WITH_AI_SERVICES = frozenset({"consumer", "audit"})
 _SERVER_FIELDS = frozenset(
     {
         "url",
@@ -291,6 +298,7 @@ def service_mcp_config_options(
     env: Mapping[str, str] = os.environ,
     servers: Iterable[ServiceMcpServer] | None = None,
     enabled_tools_by_server: Mapping[str, tuple[str, ...]] | None = None,
+    tool_approval_modes_by_server: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[str]:
     options: list[str] = []
     disabled_servers: tuple[str, ...] = ()
@@ -340,6 +348,15 @@ def service_mcp_config_options(
                 f"{prefix}.enabled_tools",
                 list(enabled_tools_by_server.get(server.name, ())),
             )
+        if tool_approval_modes_by_server is not None:
+            for tool_name, approval_mode in sorted(
+                tool_approval_modes_by_server.get(server.name, {}).items()
+            ):
+                _append_option(
+                    options,
+                    f"{prefix}.tools.{tool_name}.approval_mode",
+                    approval_mode,
+                )
     for name in disabled_servers:
         if name in _REMOTE_DISABLED_SERVER_NAMES:
             value = {
@@ -357,6 +374,23 @@ def service_mcp_config_options(
             value,
         )
     return options
+
+
+def service_mcp_tool_approval_modes_for_agent_role(
+    role: str,
+) -> dict[str, dict[str, str]]:
+    """Auto-approve only the AI Services tools explicitly assigned to review roles.
+
+    Codex's global approval policy remains unchanged. The Consumer and Audit
+    roles need these four user-authorized service tools for attachment OCR,
+    bounded ASR/TTS work, and capability checks; other roles receive no MCP
+    tool approval overrides.
+    """
+    if role not in _AGENT_ROLES_WITH_AI_SERVICES:
+        return {}
+    return {
+        "ai_services": {tool_name: "approve" for tool_name in _AI_SERVICES_TOOL_NAMES}
+    }
 
 
 def jwt_token_is_expired(token: str, *, now: float | None = None) -> bool:

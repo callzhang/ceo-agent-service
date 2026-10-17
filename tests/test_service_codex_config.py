@@ -9,6 +9,7 @@ from app.service_codex_config import (
     load_service_mcp_servers,
     read_service_mcp_manifest_document,
     service_mcp_config_options,
+    service_mcp_tool_approval_modes_for_agent_role,
     write_service_mcp_manifest,
 )
 
@@ -72,6 +73,40 @@ def test_default_service_manifest_exposes_ai_services_to_background_agents(
     assert server.url == "https://ai-services.preseen.ai/mcp"
     assert 'mcp_servers.ai_services.url="https://ai-services.preseen.ai/mcp"' in options
     assert "mcp_servers.ai_services.enabled=false" not in options
+
+
+def test_ai_services_approval_is_limited_to_consumer_and_audit_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.service_codex_config import DEFAULT_SERVICE_MCP_CONFIG_PATH
+
+    monkeypatch.delenv("CEO_SERVICE_MCP_CONFIG_PATH", raising=False)
+    document = json.loads(DEFAULT_SERVICE_MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+    configured = document["servers"]["ai_services"]
+    manifest = _write_manifest(tmp_path / "ai-services-only.json", {"ai_services": configured})
+
+    consumer_modes = service_mcp_tool_approval_modes_for_agent_role("consumer")
+    audit_modes = service_mcp_tool_approval_modes_for_agent_role("audit")
+    assert consumer_modes == audit_modes
+    assert set(consumer_modes["ai_services"]) == {
+        "health",
+        "ocr_document",
+        "transcribe_audio",
+        "synthesize_speech",
+    }
+    assert service_mcp_tool_approval_modes_for_agent_role("other") == {}
+
+    options = service_mcp_config_options(
+        path=manifest,
+        tool_approval_modes_by_server=consumer_modes,
+    )
+    for tool_name in consumer_modes["ai_services"]:
+        assert (
+            f'mcp_servers.ai_services.tools.{tool_name}.approval_mode="approve"'
+            in options
+        )
+    assert not any("approval_policy" in option for option in options)
 
 
 def test_service_manifest_resolves_environment_backed_command_transport(
