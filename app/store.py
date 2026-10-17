@@ -228,7 +228,8 @@ SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 TERMINAL_OA_SOURCE_SKIP_SQL = """
-    reply_attempts.send_status='uncertain'
+    reply_attempts.send_status in ('uncertain','failed')
+    and reply_attempts.send_error='external_action_uncertain'
     and reply_attempts.channel='dingtalk'
     and trim(coalesce(reply_attempts.resolved_at, ''))<>''
     and json_extract(case when json_valid(reply_attempts.resolution)

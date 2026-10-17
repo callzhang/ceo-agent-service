@@ -703,7 +703,7 @@ def test_history_projects_terminal_oa_closure_as_skipped_while_preserving_uncert
             "trigger_text": "催办已过期",
             "action": "agent_run",
             "sensitivity_kind": "general",
-            "send_status": "uncertain",
+            "send_status": "failed",
             "send_error": "external_action_uncertain",
             "agent_run_id": audit.lastrowid,
         }).lastrowid
@@ -750,7 +750,7 @@ def test_history_projects_terminal_oa_closure_as_skipped_while_preserving_uncert
     assert [(item.source_id, item.status) for item in history] == [(attempt_id, "skipped")]
     stored = store.get_reply_attempt(attempt_id)
     assert stored is not None
-    assert stored.send_status == "uncertain"
+    assert stored.send_status == "failed"
     assert stored.send_error == "external_action_uncertain"
 
 

@@ -17,11 +17,14 @@ _TERMINAL_OA_CLOSURE_SOURCE = "exact original DingTalk message and native OA det
 def terminal_oa_source_closure_is_skipped(attempt: Any) -> bool:
     """Recognize a verified closure of an obsolete OA follow-up, not delivery.
 
-    The immutable send status stays uncertain. Only the current handling status
-    becomes skipped when the exact OA source and canceled task were read back.
+    The stored delivery outcome and error remain unchanged. Only the current
+    handling status becomes skipped after the exact OA source/task readback.
     """
     if (
-        str(getattr(attempt, "send_status", "") or "").strip() != "uncertain"
+        str(getattr(attempt, "send_status", "") or "").strip()
+        not in {"uncertain", "failed"}
+        or str(getattr(attempt, "send_error", "") or "").strip()
+        != "external_action_uncertain"
         or str(getattr(attempt, "channel", "") or "").strip() != "dingtalk"
         or not str(getattr(attempt, "resolved_at", "") or "").strip()
     ):

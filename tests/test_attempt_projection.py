@@ -172,7 +172,7 @@ def test_expired_oa_source_projects_uncertain_follow_up_as_skipped_without_claim
         "source": "exact original DingTalk message and native OA detail/OpenAPI readback",
     })
     attempt = SimpleNamespace(
-        send_status="uncertain",
+        send_status="failed",
         send_error="external_action_uncertain",
         resolved_at="2026-10-15T10:37:10+00:00",
         resolution=resolution,
@@ -194,7 +194,8 @@ def test_expired_oa_projection_requires_exact_source_and_zero_external_writes():
     import json
 
     attempt = SimpleNamespace(
-        send_status="uncertain",
+        send_status="failed",
+        send_error="external_action_uncertain",
         resolved_at="2026-10-15T10:37:10+00:00",
         resolution=json.dumps({
             "external_write_count": 1,
@@ -222,7 +223,8 @@ def test_terminal_oa_skip_message_does_not_claim_delivery():
     from app.web_api.attempts import _status_message
 
     attempt = SimpleNamespace(
-        send_status="uncertain",
+        send_status="failed",
+        send_error="external_action_uncertain",
         resolved_at="2026-10-15T10:37:10+00:00",
         resolution=json.dumps({
             "current_principal_task_ids": [],
