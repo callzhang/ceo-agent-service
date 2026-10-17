@@ -298,16 +298,6 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
 ):
     import hashlib
     store.upsert_conversation(task.conversation_id, "Group", False, "session-selected")
-    store.set_codex_session_contract_hash(
-        task.conversation_id,
-        consumer_wire_contract_hash(
-            skill_protocol_override=(
-                "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED"
-                if protocol_present
-                else None
-            )
-        ),
-    )
     selected_context = replace(
         context,
         skill_names=("ceo-document-review",),
@@ -331,6 +321,18 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
             }
         })
     })
+    selected_skill_sources = consumer_agent.consumer_selected_skill_source_fingerprints(
+        selected_context.skill_names,
+        consumer_agent.frozen_task_skill_binding(
+            selected_task.trigger_message_json
+        ).materials,
+    )
+    store.set_codex_session_contract_hash(
+        task.conversation_id,
+        consumer_agent.consumer_selected_skill_session_contract_hash(
+            selected_skill_sources
+        ),
+    )
     executor = CapturingExecutor(_result_jsonl(session="session-selected"))
 
     result = ConsumerAgentRunner(

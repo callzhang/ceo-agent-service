@@ -49,8 +49,8 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     entries = {item["source"]: item for item in manifest["files"]}
     finance_source = "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
 
-    assert entries[finance_source]["old_sha256"] == (
-        "f56bb13b4e3540da3d3a8debfc62a1c725b2013d10cdce76ef0c4a23469eaf28"
+    assert entries[finance_source]["old_sha256"] == _digest(
+        Path.home().joinpath(".agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md").read_bytes()
     )
     assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
     assert {

@@ -894,7 +894,12 @@ def register_console_routes(
     @app.post("/api/console/history/{attempt_id}/rerun")
     async def console_history_rerun(attempt_id: int, request: Request):
         from app.audit_web import handle_rerun_attempt_post
-        status, _headers, body = handle_rerun_attempt_post(store_factory(), attempt_id, return_to="/history")
+        status, _headers, body = handle_rerun_attempt_post(
+            store_factory(),
+            attempt_id,
+            return_to="/history",
+            skill_options_factory=scheduled_task_option_service_factory,
+        )
         if status >= 400:
             return JSONResponse({"ok": False, "code": "rerun_failed", "message": "无法重跑该 Attempt", "details": {"technical": normalize_display_value(body)}}, status_code=status)
         return command_result(message="重跑已提交")

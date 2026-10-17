@@ -72,3 +72,14 @@ def test_preapproval_hiring_requisition_uses_business_line_decision_and_allows_n
         assert "the absence of a Xiaoqing record before approval is not contrary evidence" in text
         assert "The business-line owner's approval of the stated number is sufficient business approval" in text
         assert "project/budget evidence is consistent" in text
+
+
+def test_org_structure_material_gap_is_asked_of_responsible_party_before_human_escalation() -> None:
+    for path in [Path("ci/shared-skills/stardust-oa-people-review/SKILL.md")]:
+        text = path.read_text(encoding="utf-8")
+        assert "No basis: request the missing business rationale from the submitter" in text
+        assert "Do not escalate solely because the agent cannot independently verify" in text
+        assert "business need, affected work and people, receiving arrangement, and reporting line" in text
+        assert "Keep the approval pending and independently verify the response" in text
+        assert "Use `needs_human` only for a genuine policy or authority gap" in text
+        assert "If the given basis cannot be proven by evidence, `needs_human`" not in text
