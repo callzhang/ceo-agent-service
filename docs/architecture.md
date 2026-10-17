@@ -2287,7 +2287,9 @@ Legacy failed OA Attempts that have no owning local Reply Task are reconciled
 by the scheduled OA scan using their exact persisted process and task IDs. The
 scan closes unresolved failed Attempts for that exact process/task when live
 native readback confirms both the process and task are terminal and a
-transactional recheck confirms no local Task owns each trigger. It records the
+transactional recheck confirms no active local Task owns each trigger. A local
+Task already closed as `done` or `skipped` does not block the reconciliation.
+It records the
 readback as the resolution and marks each follow-up `skipped`, preserving the
 original failure reason; it does not infer message delivery or create a new
 Consumer/Audit run. Missing, partial, mismatched, nonterminal or failed reads

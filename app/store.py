@@ -26528,6 +26528,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       select 1
                       from ({REPLY_TASK_CURRENT_SQL}) as tasks
                       where tasks.channel=attempts.channel
+                        and tasks.status in ('pending', 'processing', 'needs_human', 'failed')
                         and ((tasks.conversation_id=attempts.conversation_id
                               and tasks.trigger_message_id=attempts.trigger_message_id)
                              or tasks.business_object_key='oa:' || attempts.oa_process_instance_id
@@ -26570,10 +26571,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return False
             owner = db.execute(
                 f"""select 1 from ({REPLY_TASK_CURRENT_SQL}) tasks
-                    where tasks.channel=? and (
-                        (tasks.conversation_id=? and tasks.trigger_message_id=?)
-                        or tasks.business_object_key=?
-                    ) limit 1""",
+                    where tasks.channel=?
+                      and tasks.status in ('pending', 'processing', 'needs_human', 'failed')
+                      and ((tasks.conversation_id=? and tasks.trigger_message_id=?)
+                           or tasks.business_object_key=?)
+                    limit 1""",
                 (
                     current["channel"],
                     current["conversation_id"],

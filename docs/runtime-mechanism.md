@@ -233,8 +233,9 @@ The OA scan also handles a legacy failed OA Attempt that has no owning local
 Reply Task or Consumer run. It reads the exact persisted OA process and task IDs
 through the native read-only detail API. Only an explicitly terminal process
 and that exact terminal task, followed by an in-transaction recheck that no
-local Task owns the trigger, it can close unresolved failures for that exact
-process/task as `skipped` (the source detail is read once per process per scan).
+active local Task owns the trigger, it can close unresolved failures for that
+exact process/task as `skipped` (the source detail is read once per process per
+scan). A local Task already closed as `done` or `skipped` is not active.
 Each resolution records the source state and preserves the original failure
 reason; delivery remains unverified. Missing, partial, mismatched, nonterminal
 or failed reads do not change History or enable a replay.
