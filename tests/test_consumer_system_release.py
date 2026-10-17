@@ -336,6 +336,42 @@ def test_loaded_readback_requires_the_new_config_and_exact_files(tmp_path: Path)
         receipt.verify_loaded()
 
 
+def test_loaded_readback_accepts_exact_active_descendant_of_published_config(tmp_path: Path):
+    root, skills, rules, manifest, old, _new = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    store, _old_config_id, _task_id = _store_with_refs(db, old)
+    receipt = prepare_consumer_system_contracts(
+        root=root, database_path=db, operation_id="descendant-release",
+        skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+    )
+    receipt.publish()
+    published = store.get_pending_or_active_runtime_skill_config()
+    bindings = store.list_runtime_skill_bindings(published.id)
+    descendant = store.create_runtime_skill_config(
+        [
+            {
+                "skill_id": item.skill_id,
+                "revision_id": item.revision_id,
+                "enabled": item.enabled,
+                "load_order": item.load_order,
+                "purpose": item.purpose,
+            }
+            for item in bindings
+        ],
+        expected_parent_id=published.id,
+    )
+    store.record_runtime_skill_load(
+        descendant.id, pid=os.getpid(),
+        loaded={
+            binding.skill_id: store.get_managed_skill_revision(binding.revision_id).sha256
+            for binding in store.list_runtime_skill_bindings(descendant.id)
+            if binding.enabled
+        },
+    )
+
+    receipt.verify_loaded()
+
+
 @pytest.mark.parametrize("mutation", ("remove_managed", "replace_source_and_name"))
 def test_loaded_readback_rejects_missing_or_replaced_scheduled_refs(
     tmp_path: Path, mutation: str,
