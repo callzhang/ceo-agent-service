@@ -123,6 +123,14 @@ def test_duplicate_acceptance_without_delivery_receipt_is_unknown():
     assert verified["state"] == "ambiguous"
 
 
+def test_message_identifier_without_provider_delivery_receipt_is_not_success():
+    verified = DwsClient().verify_message_send_result({
+        "success": True,
+        "result": {"openMessageId": "outgoing-without-receipt"},
+    })
+    assert verified["state"] == "ambiguous"
+
+
 def test_generic_finished_status_is_not_native_delivery_success():
     client = SequenceRecordingDwsClient([{"success": True, "result": {"status": "finished"}}])
     assert client.verify_message_send_result(reply_receipt())["state"] == "ambiguous"

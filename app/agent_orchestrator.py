@@ -213,6 +213,18 @@ class AgentOrchestrator:
                 if executed.error.code == "business_state_changed":
                     state = self._business_revision(state)
                 elif (
+                    executed.outcome == "failed"
+                    and executed.error.code == "external_action_uncertain"
+                    and (receipt_feedback := _message_receipt_feedback(state.consumer_result))
+                ):
+                    state = _NextConsumer(
+                        state.consumer_run.proposal_revision + 1,
+                        state.audit_run.id,
+                        receipt_feedback,
+                        stage_index=state.consumer_result.stage_index,
+                        predecessor_review_id=state.consumer_result.predecessor_review_id,
+                    )
+                elif (
                     executed.outcome != "executed"
                     or not state.consumer_result.continue_after_execution
                 ):
@@ -396,6 +408,20 @@ class AgentOrchestrator:
                 if parent and parent.status == "completed"
                 else None
             )
+            if feedback is None and parent and parent.status == "completed":
+                parent_review = self.store.get_candidate_review_for_audit_run(parent.id)
+                execution = (
+                    self.store.get_candidate_execution(parent_review["candidate_id"])
+                    if parent_review else None
+                )
+                if execution and execution["status"] == "uncertain":
+                    original = self.store.get_agent_run(
+                        parent.parent_agent_run_id, load_events=False
+                    ) if parent.parent_agent_run_id else None
+                    if original is not None:
+                        feedback = _message_receipt_feedback(
+                            self._consumer_result(original)
+                        )
             # Technical attempts stay in the same revision and use its original
             # parent; they do not spend a content feedback cycle.
             return _NextConsumer(
@@ -585,6 +611,16 @@ class AgentOrchestrator:
         if result.outcome is ConsumerOutcome.NO_ACTION:
             return self._candidate_terminal(state, "no_action", review_result.error)
         execution = self.store.get_candidate_execution(candidate["id"])
+        if execution and execution["status"] == "uncertain":
+            feedback = _message_receipt_feedback(result)
+            if feedback is not None:
+                return _NextConsumer(
+                    consumer.proposal_revision + 1,
+                    audit.id,
+                    feedback,
+                    stage_index=result.stage_index,
+                    predecessor_review_id=result.predecessor_review_id,
+                )
         if execution and execution["status"] in (
             "done",
             "skipped",
@@ -637,6 +673,17 @@ class AgentOrchestrator:
             result = SystemExecutionResult.model_validate_json(execution["result_json"])
             if result.error.code == "business_state_changed" and result.external_result:
                 changes = (*changes, result.external_result.live_result_reference)
+            elif result.error.code == "external_action_uncertain":
+                receipts[f"uncertain:{review['candidate_id']}"] = PriorReceipt(
+                    receipt_id=f"uncertain:{review['candidate_id']}",
+                    operation="dingtalk_message_delivery_verification",
+                    summary=json.dumps({
+                        "state": "uncertain",
+                        "instruction": "A prior accepted message send has no verified delivery receipt. Reconcile its provider task/readback before proposing any new send.",
+                        "execution_summary": result.summary,
+                    }, ensure_ascii=False),
+                    completed=False,
+                )
         return replace(context,
             prior_receipts=tuple(receipts.values()),
             prior_human_decisions=tuple(self.store.list_human_decision_evidence(task.id)),
@@ -964,6 +1011,38 @@ def _context_refresh_failure_detail(exc: Exception) -> str:
 
 def _operation_id(task: ReplyTask, revision: int) -> str:
     return f"agent-task:{task.id}:{task.execution_generation}:proposal:{revision}"
+
+
+def _message_receipt_feedback(result: ConsumerAgentResult) -> AuditFeedback | None:
+    proposal = result.proposal
+    if proposal is None or len(proposal.actions) != 1:
+        return None
+    action = proposal.actions[0]
+    if action.capability != "dingtalk-chat" or action.operation not in {
+        "send_message", "send_group_message", "send_direct_message", "reply_to_message",
+    }:
+        return None
+    return AuditFeedback(
+        rule="A message send without a verified provider receipt is not successful.",
+        observation=(
+            "System Execution accepted this message action but could not verify delivery. "
+            "Do not repeat or replace the send. First query the provider send task using its "
+            "openTaskId when available. If there is no queryable task, read the complete "
+            "original conversation window once with read_dingtalk_messages_in_window. "
+            "A unique exact message from the authenticated sender, with exact body and quoted "
+            "trigger identity, confirms delivery. A complete, failure-free negative readback "
+            "confirms non-delivery; an incomplete, truncated, failed, or ambiguous readback "
+            "leaves the outcome uncertain."
+        ),
+        requested_revision=(
+            "Return no_action when delivery is confirmed. If complete negative readback proves "
+            "non-delivery and the source request is still current, prepare a new proposal for "
+            "Audit to review before any send. If the source request has expired or its OA source "
+            "is terminal, return no_action so the system can skip the task without Attention. "
+            "If evidence is incomplete or ambiguous, return no_action and preserve uncertainty; "
+            "never claim sent or dispatch from this follow-up."
+        ),
+    )
 
 
 def _failure_status(error: AgentError) -> str:

@@ -185,6 +185,63 @@ def test_audit_reject_requires_changed_replacement(tmp_path):
     assert handler.calls == []
 
 
+def test_uncertain_dingtalk_send_returns_to_consumer_for_receipt_followup(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    proposal = ConsumerAgentResult.model_validate({
+        **candidate().model_dump(mode="python"),
+        "proposal": {
+            "objective": "Send the approved update",
+            "actions": [{
+                "description": "Send the approved update",
+                "action_identity": "oa-update",
+                "capability": "dingtalk-chat",
+                "operation": "send_group_message",
+                "target": {"conversation_id": "conversation"},
+                "payload": {"body": "Approved update"},
+            }],
+            "sourced_facts": [],
+            "authored_judgment": "Supported",
+        },
+    })
+    consumer = ScriptedConsumer(store, proposal, candidate(outcome="no_action"))
+    audit = ScriptedAudit(store, "approve", "approve")
+
+    class UncertainOnce(VerifiedHandler):
+        def dispatch(self, action, *, action_key, candidate):
+            self.calls.append((action.action_identity, action.payload))
+            return ActionOutcome("uncertain", {"receipt_state": "unknown"})
+
+    handler = UncertainOnce()
+    runtime = AgentOrchestrator(
+        store=store,
+        consumer=consumer,
+        audit=audit,
+        system_executor=SystemExecutor(
+            store,
+            {("dingtalk-chat", "send_group_message"): handler},
+            owner="test-executor",
+        ),
+    )
+
+    result = runtime.process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "no_action"
+    assert store.get_reply_task(task.id).status == "processing"
+    assert len(handler.calls) == 1
+    assert len(consumer.calls) == 2
+    followup = consumer.calls[1]
+    assert followup[1] == 1
+    assert followup[3] is not None
+    assert "complete" in followup[3].observation
+    assert "never claim sent" in followup[3].requested_revision
+    uncertain_receipts = [
+        receipt for receipt in followup[4].prior_receipts
+        if receipt.operation == "dingtalk_message_delivery_verification"
+    ]
+    assert len(uncertain_receipts) == 1
+    assert uncertain_receipts[0].completed is False
+
+
 @pytest.mark.parametrize("code", ["codex_provider_capacity_exhausted", "runtime_provider_unreachable"])
 def test_waiting_consumer_capacity_defers_without_same_process_retry(tmp_path, code):
     store, task, context = task_and_context(tmp_path)

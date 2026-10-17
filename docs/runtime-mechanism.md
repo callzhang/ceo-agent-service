@@ -175,6 +175,18 @@ receipt, and removes the task from actionable Attention without claiming the
 message was sent. Nonterminal, mismatched, incomplete, or failed OA reads leave
 the task unresolved.
 
+When an approved DingTalk message send has no verified provider receipt, the
+orchestrator routes a bounded follow-up revision to Consumer with explicit
+receipt-acquisition feedback and the prior uncertain execution marked
+`completed=false`. Consumer queries the existing `openTaskId`, or performs one
+complete native read of the original conversation when no queryable send task
+exists. A unique exact message readback confirms delivery; a complete,
+failure-free negative readback proves non-delivery and permits a newly audited
+proposal only while the source is still current. Incomplete, truncated, failed,
+or ambiguous readback preserves uncertainty. The follow-up may not dispatch the
+same candidate or claim success. Restart recovery recreates the same feedback
+from the persisted uncertain execution before retrying a failed Consumer turn.
+
 Audit handoff includes System-produced JSON type facts for each current action's
 target and payload fields, including human-option plans. The facts come from the
 exact validated candidate; they do not authorize an action or prove live
