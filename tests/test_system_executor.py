@@ -636,6 +636,93 @@ def test_native_dingtalk_handler_requires_exact_prepared_body_and_receipt():
     assert sender.calls[-1][2]["open_dingtalk_id"] is None
 
 
+def test_reply_reconciliation_recovers_only_exact_compacted_trigger_readback():
+    from app.dingtalk_models import DingTalkMessage
+    from app.outbound_postfix import PreparedOutboundMessage
+    from app.system_action_handlers import DingTalkMessageHandler
+    from app.service_message_sender import agent_message_delivery_key
+
+    class CompactTask:
+        id = 9
+        business_object_key = "object:9"
+        execution_generation = "gen-1"
+        conversation_id = "conversation-9"
+        conversation_title = "HR"
+        single_chat = False
+        trigger_message_id = "trigger-9"
+        trigger_message_json = '{"input_compacted":true,"context":{}}'
+        input_compacted = True
+        trigger_sender = "Mina"
+        trigger_sender_user_id = "user-9"
+        trigger_create_time = "2026-10-14 13:33:21"
+
+    class NativeStore:
+        def __init__(self):
+            self.task = CompactTask()
+            self.delivery_key = agent_message_delivery_key(
+                business_object_key=self.task.business_object_key,
+                action_identity="reply", execution_generation=self.task.execution_generation,
+                proposal_revision=0,
+            )
+
+        def get_reply_task_for_execution(self, task_id, generation):
+            assert (task_id, generation) == (9, "gen-1")
+            return self.task
+
+        def get_outbound_postfix(self, channel, delivery_key):
+            assert (channel, delivery_key) == ("dingtalk", self.delivery_key)
+            return PreparedOutboundMessage("dingtalk", delivery_key, "@Mina Status", "", "v1")
+
+        def get_outbound_postfix_receipt(self, channel, delivery_key):
+            return None
+
+        def record_outbound_postfix_receipt(self, channel, delivery_key, receipt):
+            self.recorded_receipt = (channel, delivery_key, receipt)
+
+    class Dws:
+        def __init__(self):
+            self.reads = []
+            self.reconciled = []
+
+        def read_message_by_id(self, conversation, message_id):
+            self.reads.append((conversation.open_conversation_id, message_id))
+            return DingTalkMessage(
+                open_conversation_id="conversation-9", open_message_id="trigger-9",
+                conversation_title="HR", single_chat=False, sender_name="Mina",
+                sender_user_id="user-9", create_time="2026-10-14 13:33:21", content="Review?",
+            )
+
+        def reconcile_reply_to_trigger(self, conversation, trigger, text):
+            self.reconciled.append((conversation, trigger, text))
+            return {"success": True, "result": {"openMessageId": "reply-9"},
+                    "readbackVerification": {"contractVersion": "dingtalk.reply-readback.v1"}}
+
+        def verify_message_send_result(self, receipt):
+            return {"state": "sent"}
+
+    store, dws = NativeStore(), Dws()
+    handler = DingTalkMessageHandler(store, dws)
+    action = _candidate(actions=[{
+        "description": "Reply", "action_identity": "reply", "capability": "dingtalk-chat",
+        "operation": "reply_to_message",
+        "target": {"conversation_id": "conversation-9", "message_id": "trigger-9"},
+        "payload": {"content": "@Mina Status"},
+    }]).proposal.actions[0]
+
+    result = handler.reconcile(action, action_key="action-key", candidate={
+        "task_id": 9, "execution_generation": "gen-1", "proposal_revision": 0,
+        "action_attempt": {"created_at": "2026-10-14T13:33:22Z"},
+    })
+
+    assert result.status == "verified"
+    assert dws.reads == [("conversation-9", "trigger-9")]
+    assert len(dws.reconciled) == 1
+    trigger = dws.reconciled[0][1]
+    assert (trigger.open_message_id, trigger.sender_name, trigger.create_time) == (
+        "trigger-9", "Mina", "2026-10-14 13:33:21",
+    )
+
+
 def test_calendar_response_requires_matching_provider_readback():
     from app.system_action_handlers import CalendarResponseHandler
 
