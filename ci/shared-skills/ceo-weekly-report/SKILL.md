@@ -87,8 +87,8 @@ disappears before the bound write, or the write cannot be read back.
    Skill's JSONML check and native document parser pass.
 9. The scheduled run is authorized to write the target meeting document
    (Derek 2026-09-24). Call task-bound `agent_cli.consumer_document_write` with
-   the rendered target JSONML. The service binds that exact rendered result to
-   the source snapshot and revision; for an existing target, the operation
+   the rendered target JSONML. The service binds the target existence and
+   revision from rendering; for an existing target, the operation
    saves a recoverable version and performs one revision-guarded overwrite.
    For a missing target, it creates the document in the resolved year page.
 10. Compare the complete readback returned by that operation with the rendered

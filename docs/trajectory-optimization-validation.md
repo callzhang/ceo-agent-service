@@ -1019,9 +1019,21 @@ failed test IDs were compared with the same-base main run's 48. One new failure
 was the generation-fence test's lightweight database fixture: it stubbed the
 writer but not the caller's task-type lookup. The production writer already
 opened the full Store. Completing that fixture preserved its old/new generation
-assertions; the focused test passed. The merged branch passed 86 CLI/release
+assertions; the focused test passed. Before review, the merged branch passed 86 CLI/release
 tests, 53 materials/receipt/boundary/artifact tests, and 34 Skill contract tests;
 Ruff and diff checks passed. Read-only publication preflight passed all 16
 manifest entries and found only the Weekly Report Skill plus its two validator
 scripts changing. The People OA Skill was already identical to the current
 repository source; only its stale manifest `old_sha256` was refreshed.
+
+PR review found that an exact rendered-content digest check would add a new
+publication gate beyond the missing-target repair, so it was removed. The
+service binds target existence and revision from rendering; the existing
+document content and JSONML validation remains in the writer. Review also
+found that business-line metrics were being required to carry `previous` and
+`change`, fields read only by the company-metric renderer. A separate field
+set now matches the business-line renderer. A valid synthetic Friday metric
+without those two fields passes validation and renders 32 managed nodes;
+the 58 Skill tests and 97 affected CLI/release tests pass after
+these corrections. The publication preflight still changes only the same
+three Weekly Report files.

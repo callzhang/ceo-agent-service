@@ -2044,12 +2044,6 @@ def build_role_server(
             weekly_render_binding = {
                 "expected_revision": expected_revision,
                 "target_exists": target_exists,
-                "target_title": target_title,
-                "content_sha256": hashlib.sha256(
-                    json.dumps(
-                        target_after, ensure_ascii=False, separators=(",", ":")
-                    ).encode("utf-8")
-                ).hexdigest(),
             }
             return {
                 "target_after": target_after,
@@ -2072,17 +2066,6 @@ def build_role_server(
             if kind == "weekly":
                 if weekly_render_binding is None:
                     raise ValueError("weekly report must be rendered before write")
-                try:
-                    submitted = json.loads(content)
-                except json.JSONDecodeError as exc:
-                    raise ValueError("weekly report JSONML is invalid") from exc
-                submitted_digest = hashlib.sha256(
-                    json.dumps(
-                        submitted, ensure_ascii=False, separators=(",", ":")
-                    ).encode("utf-8")
-                ).hexdigest()
-                if submitted_digest != weekly_render_binding["content_sha256"]:
-                    raise ValueError("weekly report write content differs from rendered result")
                 expected_revision = weekly_render_binding["expected_revision"]
             receipt = _write_bound_report_document(
                 db_path=db_path, task_id=task_id, content=content,

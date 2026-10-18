@@ -11,6 +11,7 @@ from scripts.report_contract import (
     validate_metric,
     validate_privacy,
 )
+from scripts.render_dingtalk_jsonml import render_managed_sections
 from scripts.validate_run import FIXED_METRICS, validate_run
 
 
@@ -370,6 +371,22 @@ class ReportContractTests(unittest.TestCase):
             "business_lines.Friday.milestones[0].owner is missing renderer field name",
             result["errors"],
         )
+
+    def test_business_line_metric_does_not_require_company_only_columns(self):
+        report = self.complete_report()
+        report["business_lines"]["Friday"]["metrics"] = [{
+            "name": "synthetic metric",
+            "target": "10",
+            "current": "8",
+            "status": "on track",
+            "data_date": "2026-09-27",
+            "source": "synthetic source",
+            "definition": "synthetic definition",
+            "definition_evidence": "synthetic source",
+        }]
+        result = validate_run(self.complete_manifest(), report, [])
+        self.assertTrue(result["publishable"], result["errors"])
+        self.assertTrue(render_managed_sections(report))
 
     def test_invalid_issue_deadline_returns_validation_error(self):
         errors = validate_issue({

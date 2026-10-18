@@ -54,6 +54,9 @@ METRIC_RENDER_FIELDS = (
     "name", "target", "previous", "current", "change", "status",
     "data_date", "definition_evidence",
 )
+BUSINESS_LINE_METRIC_RENDER_FIELDS = (
+    "name", "target", "current", "status", "data_date", "definition_evidence",
+)
 ISSUE_RENDER_FIELDS = (
     "question", "current_root_cause", "prior_state", "new_evidence",
     "status_icon", "weeks_open", "next_checkpoint", "closure_standard",
@@ -166,7 +169,7 @@ def validate_run(
                 errors.extend(
                     _missing_renderer_fields(
                         metric,
-                        METRIC_RENDER_FIELDS,
+                        BUSINESS_LINE_METRIC_RENDER_FIELDS,
                         f"business_lines.{line_name}.metrics[{index}]",
                     )
                 )

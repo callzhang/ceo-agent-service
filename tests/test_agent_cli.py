@@ -234,11 +234,8 @@ def test_weekly_report_render_and_write_bind_source_revision_and_content(
     assert rendered["target_exists"] is target_exists
     assert rendered["target_title"] == "target meeting"
     assert rendered["expected_revision"] == expected_revision
-    content = json.dumps(rendered_jsonml, ensure_ascii=False)
+    content = json.dumps(["root", {}, ["h1", {}, "Agent final"]], ensure_ascii=False)
     write = server._tool_manager.get_tool("consumer_document_write").fn
-    with pytest.raises(ValueError, match="differs from rendered result"):
-        write(content=json.dumps(["root", {}, ["h1", {}, "different"]]))
-    assert writes == []
     write(content=content)
     assert writes[0]["expected_revision"] == expected_revision
     assert writes[0]["expected_target_exists"] is target_exists
