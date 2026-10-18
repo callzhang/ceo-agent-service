@@ -996,9 +996,9 @@ The current `consumer-system-contract-release` manifest also omitted both
 validator scripts and had a stale Weekly Report Skill digest. The candidate
 release now includes `report_contract.py` and `validate_run.py` with the Skill;
 focused publication tests cover exact copy and rollback. Skill tests: 57 passed;
-release, materials and CLI tests: 97 passed. Production remains unchanged at
-HEAD `1fcbddda` with the old `validate_run.py` digest and no manifest entry.
-This is local candidate evidence only; no real report was written or deployed.
+release, materials and CLI tests: 97 passed. At that local checkpoint,
+production HEAD `1fcbddda` still had the old `validate_run.py` digest and no
+manifest entry. No real report was written in this validation.
 Receipt: `evals/trajectory_optimization/weekly_report_missing_target_render.native.v1.json`.
 
 Acceptance for this release is bounded to the missing-target mechanism: a
@@ -1037,3 +1037,28 @@ without those two fields passes validation and renders 32 managed nodes;
 the 58 Skill tests and 97 affected CLI/release tests pass after
 these corrections. The publication preflight still changes only the same
 three Weekly Report files.
+
+### Production readback (2026-10-18)
+
+PR #130 merged as `f9ea9b0c`. Formal deployment with
+`--publish-consumer-system-contracts` advanced the production checkout from
+`0376f4d4` to that commit. Release receipt
+`deploy-c4bbe4ce-634d-4ed0-8fd2-7293c1aea384` is `verified` and records
+only the Weekly Report Skill plus `report_contract.py` and `validate_run.py`
+as changed files. The installed SHA-256 values are respectively
+`6c510f3af2aa955008bcbbacc076c93956d7f6d5ee641c99fff09800159adb0c`,
+`bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a`,
+and `4c81e3de54a191655da8c899e2c50464108828a4be769014743f837b976bd6b5`.
+Active runtime config 343 binds the Weekly Report Skill to revision 196 and
+both new service PID 35611 and email-worker PID 35613 reported that exact
+Skill digest without an error. Scheduled task 13 remains enabled at version
+23, references revision 196, and has no pending old trigger.
+
+The new supervisor PID is 35601; `healthz` returned OK. Console scheduled
+queue had zero pending/running items; Attention remained at seven and History
+returned recent items. The existing overall `degraded` indicator is from a
+Work item last updated on 2026-10-17 with no terminal handling, not from this
+deployment. No post-release Weekly Report turn or real document write occurred
+at this checkpoint, so the production readback proves code, Skill and runtime
+binding, while actual publication awaits the next natural run and provider
+readback.
