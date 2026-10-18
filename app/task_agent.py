@@ -447,7 +447,7 @@ def _encode_task_agent_result(raw: str) -> str:
 
 
 def _task_result_validation_repair_prompt(raw_output: str) -> str:
-    """Tell the model which schema rules its last decision broke."""
+    """Return only the failed result's bounded validation errors for correction."""
     decision, problems = _validate_task_decision_candidates(raw_output)
     if decision is not None:
         # The schema held, so the rejection came from the codec leak check in
@@ -456,71 +456,31 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
             "- the decision satisfied the schema but a business field "
             "contained a runtime path"
         )
+        path_rule = (
+            "\nDo not include local filesystem paths, session paths, lock paths, "
+            "credentials, or runtime diagnostics in business fields. A source "
+            "path may appear only in an evidence field named source or source_ref."
+        )
     elif problems:
         detail = "\n".join(f"- {problem}" for problem in problems)
+        path_rule = ""
     else:
         detail = (
             "- the reply did not contain a TaskAgentDecision JSON object; "
             "return only the JSON object without prose or code fences"
         )
+        path_rule = ""
     return (
-        "The previous output was not accepted as a TaskAgentDecision. Resume "
-        "the same Agent turn and return exactly one valid TaskAgentDecision "
-        "JSON object.\n\n"
-        f"Problems in the previous output:\n{detail}\n\n"
-        "Rules that must hold:\n"
-        "- project_decisions, task_decisions and project_assessments are all required (0..N). Return exactly one assessment for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, including every separate Project row in a multi-Project report, whether or not this output emitted a selector for it. Return one outcome, concrete reason, and original evidence for each. Semantic coverage is not limited to structured selectors. Every attention_proposal belongs to its needs_attention assessment, with optional actual Task membership; zero Tasks is valid. Project selectors index project_decisions, never task_decisions. Use [] assessments only when there is no relevant Project or clue, with a nonblank update_summary.\n"
-        "- Every current-source citation must be an exact contiguous quote from the immutable Work Item (a visible raw range or one decoded JSON string leaf), with the exact current source_ref and null signal_id. Project registration.source_excerpt must itself quote the current passage that defines that Project; never paraphrase it or quote a different source. Assess every Project separately when a source contains multiple Projects.\n"
-        "- Historical Project/context/Attention evidence must use the exact quote and source_ref from the delivered original observed Signal. Do not reconstruct or paraphrase an earlier statement from a later summary. If the original quote is unavailable, omit that historical claim, use only verified current evidence, and state what cannot be confirmed.\n"
-        "- Project selector shape is exclusive: a new or re-registered Project uses registration only: omit anchor_id; a known existing Project uses anchor_id only: omit registration. For its assessment, if project_decisions contains that Project, use project_decision_index only: omit anchor_id. Use anchor_id only when assessing a known Project with no matching decision in this output.\n"
-        "- Every project_assessment must include at least one exact current-source evidence quote with signal_id=null and the current source_ref, even when assessment_basis is historical_comparison; that basis additionally requires verified positive-ID original evidence.\n"
-        "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
-        "- Include one matching assessment for every project_decisions index: project_decisions[i] must have exactly one project_assessment with project_decision_index=i. Do not use anchor_id for an assessment when a matching project_decisions entry exists. Do not omit a report row because another Project is also assessed.\n"
-        "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. When a Task decision updates the same concrete Project work described by the assessment, include that decision index as support, including for a not_needed progress assessment. An existing Task belongs in task_ids only when it directly supports the assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
-        "- When retaining an existing_attention_id, cite an exact stored evidence item from current_project_attention.assessment_json.evidence with the same signal_id, source_ref and source_excerpt; new current evidence must not replace the card's stored original proof. Copy supporting membership only from the actual current_project_attention card. If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty; do not add any Task to that existing card, even a same-risk candidate suggested on an earlier turn. This keeps the stored Attention membership unchanged; the Task may still remain a separate Project-linked candidate.\n"
-        "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
-        "- status and business_relevance may only change through update_fields: set transition=update_fields when either field changes. They remain top-level fields, not a nested update_fields object; never set them under another transition.\n"
-        "- New, record_candidate and skip decisions must leave status and business_relevance unset. For an existing Task, set transition=update_fields to change either field; do not try to set a status or relevance during creation.\n"
-        "- When promoting a suggestion, omit the suggestion field; the saved Task keeps its existing suggestion history. A suggestion field is valid only when recording or updating a candidate.\n"
-        "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
-        "- Return the TaskAgentDecision envelope with task_decisions (0..N); "
-        "every non-skip item needs a source_excerpt (a sentence of the source), source_ref and a locator (source_link when there is one, otherwise source_description) "
-        "(evidence_origin says whether it is the current Work Item, an earlier session turn, or memory provenance).\n"
-        "- A formal assignment requires an explicit owner and authorized "
-        "assignment source. Owner evidence alone does not prove authority.\n"
-        "- For an existing Task update, keep commitment_status unchanged unless the named owner explicitly accepts, disputes, completes or cancels it in the source. Work progress, continued handling, receiving materials or updating the Project does not prove acceptance. Set acceptance polarity only with apply_acceptance and verified owner/reply evidence; otherwise omit acceptance fields.\n"
-        "- For a display-only suggestion, keep owner_name/owner_user_id empty, owner_evidence empty, and owner_kind/owner_relation unset (null or omitted); also leave formal_basis, acceptance fields, dates, status and business_relevance unset. Put a proposed person only in suggestion.suggested_owner_name/user_id, backed by the cited Project responsibility.\n"
-        "- Return every list-valued field as an array; use [] when empty, never null (including decision_indexes, task_ids, todo_changes, follow_up_changes and search_trace).\n"
-        "- A concrete action and expected result stated by the current source is normally a source-origin Task, even if its metadata does not authorize a formal assignment. Exception: routine milestones and next steps in the normal Project sequence remain Project facts, not Task candidates, even when phrased as actions. A named person responsible to verify a specific, independently tracked matter and report back is an action; a bare duty-area description such as 'responsible for reconciliation' is not. Preserve a clearly named responsible person as source-reported owner evidence without inferring acceptance; do not relabel that human-stated action as an Agent suggestion. Use suggestion only when the action itself is inferred and absent from the source.\n"
-        "- When a needs_attention Project has a material unresolved impact and a directly relevant saved Project responsibility, create one display-only candidate next-step Task for that role even when the current message states no assignment or explicit action. Infer a concrete action from the risk; do not say there is no action merely because the source does not spell out the next step. An existing Task suppresses that suggestion only if it addresses the same unresolved risk; a completed or unrelated Project deliverable does not.\n"
-        "- A named person's assignment remaining unaccepted is not by itself a material Project risk when current evidence shows the work is progressing and no meaningful impact or dispute; preserve assigned_unaccepted without generating Attention solely for that status.\n"
-        "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
-        "- The clause X负责Y by itself remains a Project responsibility when Y is only a duty area (for example, 王五负责商务对账). When Y names a specific independently completable action and result (for example, 李四负责核实客户付款排期并反馈), preserve it as a source-origin Task; lack of an authorized meeting action record makes it a candidate, not a formal assignment.\n"
-        "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. State plainly in a Project fact that the owner remains in conflict; do not merely imply the conflict. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
-        "- State explicitly in a Project fact: 总体负责人存在冲突，仍待确认. Evidence that only says a transfer is not confirmed or must be verified is not enough; preserve the competing source claims as separate evidence.\n"
-        "- A person explicitly identified as the Project's overall accountable owner belongs in overall_owner, not responsibilities. In Chinese, an explicit description such as 张三总负责交付验收 denotes that role; keep 总 out of the person's name.\n"
-        "- Before suggesting another next-step Task for a Project risk, check current linked Tasks. If an existing actionable Task already addresses that risk, use its existing Task ID as the supporting next step and do not add a duplicate monitoring/evaluation suggestion.\n"
-        "- For project_link_evidence, when the Project title and Task action occur in different parts of the current source, cite one exact contiguous span from the title occurrence through the action and include the intervening source text verbatim; never splice nonadjacent excerpts into one quotation.\n"
-        "- Any non-empty owner_name or owner_user_id requires owner_evidence. "
-        "Normally it has source_ref and excerpt containing every named person. "
-        "When authoritative memory or session context is explicitly bound to "
-        "the current source, it may instead include linked_source_ref equal to "
-        "the current source_ref, a stable episode_id, and memory_excerpt with "
-        "the explicit owner-action relation. Topical similarity is insufficient.\n"
-        "- apply_acceptance requires accepted polarity, an explicitly cited "
-        "assignment signal, and a verified reply-to source reference; never "
-        "infer or manufacture that link.\n"
-        "- Memory is background only unless its provenance is explicitly bound "
-        "to this source. When memory_recall is available, follow the exact "
-        "episode or session provenance; for owner identity, use a live directory "
-        "read and keep only an ID that maps to the identified owner.\n"
-        "- When there is nothing to retain, return an empty task_decisions "
-        "list or an explicit skip item with a reason.\n\n"
-        "Do not include local filesystem paths, session paths, lock paths, "
-        "credentials, or runtime diagnostics in any business field. A source "
-        "path may appear only in an evidence field whose key is exactly source "
-        "or source_ref; summarize read failures without copying the runtime "
-        "path."
+        "The previous output was not accepted as a TaskAgentDecision. Continue "
+        "in this same Agent session and return exactly one complete "
+        "TaskAgentDecision JSON object. Repair the problems below using the "
+        "existing Work Item, Skill, and output schema. Preserve all valid "
+        "decisions, fields, Project assessments, owner assignments, and exact "
+        "source citations. Do not invent facts or remove a valid assessment "
+        "merely to satisfy a relationship check. Change only fields needed "
+        "to resolve the listed errors; leave other fields and empty optional "
+        "lists unchanged.\n\n"
+        f"Problems in the previous output:\n{detail}{path_rule}"
     )
 
 
