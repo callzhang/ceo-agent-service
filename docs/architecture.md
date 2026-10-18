@@ -71,7 +71,9 @@ Consumer 收到 Audit 的 return/reject 后，只有原候选、审核、任务�
 指纹绑定 Developer 指令、稳定 Task 输入、结果契约和图片来源。条件不满足、找不到可信轨迹或
 线路不是该 Codex session 时，一律提交完整 Consumer 输入。轨迹尾部行数、marker 与实际输入
 解析共用同一个已解析的 Codex home，避免不同目录中的同名 session 交叉验证。本轮反馈、时间和
-必要修正每轮提交；实际提交输入及 prompt snapshot 记录所选版本。此优化不改变 Audit 独立审核、
+必要修正每轮提交；实际提交输入及 prompt snapshot 记录所选版本。精简许可仅用于首次提交；
+若该次原生调用失败，同一运行的后续重试提交完整输入，因为失败也可能改写或压缩 session。
+此优化不改变 Audit 独立审核、
 反馈预算、候选校验或任务状态。
 
 人工重跑 OA Attempt 会创建新执行代际，并从当前选中的 OA 定时任务 Skill 重新冻结输入；若无法读取

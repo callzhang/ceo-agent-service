@@ -134,7 +134,8 @@ Codex session 均匹配，上一候选回答有原生完成记录，且 transcri
 复用该 session 的源上下文，并提交本轮时间、完整 Audit feedback、必要的 runtime correction 与
 完整替代候选要求。指纹绑定 Developer 指令、稳定 Task 输入、输出契约及图片来源。轨迹缺失、检查
 失败、session 被其他 turn 追加或路线不匹配时，回退到完整输入。轨迹尾部行数、marker 和实际输入
-解析共用同一个已解析的 Codex home，不交叉使用不同目录中的同名 session。运行快照记录本轮实际选用的 prompt；
+解析共用同一个已解析的 Codex home，不交叉使用不同目录中的同名 session。首次精简提交若失败，
+同一运行的后续重试使用完整输入；运行快照记录每次实际选用的 prompt。
 Audit 独立性、结果校验、反馈次数及任务生命周期均不变。
 
 人工重跑 OA Attempt 会创建新执行代际，并从当前选中的 OA 定时任务 Skill 重新冻结输入；若无法读取

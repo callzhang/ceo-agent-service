@@ -1208,12 +1208,17 @@ class AgentTurnProcess(Generic[ResultT]):
                 from app.prompt_composition import append_runtime_context
 
                 rendered_at = datetime.now().astimezone().isoformat()
+                # A failed native attempt can grow or compact its session. The
+                # original context proof only permits the first submission;
+                # any retry carries the complete current task input.
+                scoped_prompt_for_attempt = session_scoped_prompt
+                session_scoped_prompt = None
                 turn_prompt, turn_invocation_facts = _prompt_for_runtime_route(
                     route,
                     route_session_id,
                     prompt,
                     invocation_facts or {},
-                    session_scoped_prompt,
+                    scoped_prompt_for_attempt,
                 )
                 context_facts = {
                     **turn_invocation_facts,

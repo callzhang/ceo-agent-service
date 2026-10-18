@@ -24,7 +24,9 @@ other routes, current source facts and external action rules must not change.
 The fixed cases are: cold start, a same-session Audit-feedback revision,
 changed source/Skill or contract, wrong session/route, grown or missing native
 transcript, compaction, and a production-shaped anonymous source with facts in
-the beginning, middle and end. Local affected tests and the fixed native
+the beginning, middle and end. A provider-full failure after a compact first
+submission must retry the same route/session with the full input; the native
+session may have grown or compacted during the failed attempt. Local affected tests and the fixed native
 comparison establish behavior; GitHub Quality is supplementary. After merge,
 formal deployment must read back the checkout commit, new service PID,
 health, queues, Attention and History, and inspect the installed prompt choice
@@ -44,9 +46,16 @@ and broad business quality are not established by it. The recorded result is
 
 After applying only the Consumer portion of PR #125 to current main and binding
 all trajectory reads to the same resolved Codex home, the Consumer,
-turn-runner, route and native-input tests passed: 290 passed, 4 skipped.
-Ruff and whitespace checks passed. The PR #125 Task Agent reuse change was not
-included in this branch.
+turn-runner, route and native-input tests passed: 290 passed, 4 skipped before
+the retry correction. The retry regression first failed with two compact
+submissions on the same route/session, then passed with compact followed by
+full input. The affected suite after that correction produced 267 passed,
+4 skipped and one unrelated existing failure: the `needs_human` fixture in
+`test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_atomic`
+uses current-instance options, which the present wire validator rejects as
+not task-class options. That fixture and validator match current main and
+were not changed here. Ruff and whitespace checks passed. The PR #125 Task
+Agent reuse change was not included in this branch.
 
 Review found that the first version could accept a native record containing
 only the bound User marker without an assistant answer. A focused regression
