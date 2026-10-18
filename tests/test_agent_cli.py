@@ -77,6 +77,26 @@ def test_weekly_report_render_and_write_use_service_bound_snapshot_schema():
     assert set(write.fn_metadata.arg_model.model_fields) == {"content"}
 
 
+def test_weekly_report_write_requires_a_current_render(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_cli, "_current_task_generation", lambda *_: "generation")
+    monkeypatch.setattr(
+        agent_cli, "_bound_report", lambda *_: (object(), object(), "weekly")
+    )
+    writes = []
+    monkeypatch.setattr(
+        agent_cli, "_write_bound_report_document", lambda **kwargs: writes.append(kwargs)
+    )
+    server = agent_cli.build_role_server(
+        "consumer", task_id=1, db_path=tmp_path / "db.sqlite",
+        execution_generation="generation",
+    )
+
+    write = server._tool_manager.get_tool("consumer_document_write").fn
+    with pytest.raises(ValueError, match="must be rendered before write"):
+        write(content='["root", {}]')
+    assert writes == []
+
+
 @pytest.mark.parametrize(
     ("target_exists", "expected_source", "expected_revision"),
     [(True, "target-node", 42), (False, "previous-node", None)],

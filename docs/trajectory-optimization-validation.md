@@ -1000,3 +1000,28 @@ release, materials and CLI tests: 97 passed. Production remains unchanged at
 HEAD `1fcbddda` with the old `validate_run.py` digest and no manifest entry.
 This is local candidate evidence only; no real report was written or deployed.
 Receipt: `evals/trajectory_optimization/weekly_report_missing_target_render.native.v1.json`.
+
+Acceptance for this release is bounded to the missing-target mechanism: a
+missing current document must use the complete previous meeting document as
+the render base and must not require a nonexistent target ID or revision;
+validator success must imply that every field read by the renderer is present.
+An existing target must retain its revision-guarded overwrite and readback,
+and the daily-report write path must continue to accept its existing content.
+The fixed anonymous new-target case and affected local tests verify those
+behaviors without writing a real document. Production acceptance additionally
+requires the published Skill and both validator scripts, the exact scheduled
+Skill binding and worker load receipt, a healthy new process, and queue,
+Attention and History readback. A real post-release document publication is
+not claimed without its own provider receipt.
+
+After merging `origin/main` at `3039eb159`, the prior PR Quality run's 48
+failed test IDs were compared with the same-base main run's 48. One new failure
+was the generation-fence test's lightweight database fixture: it stubbed the
+writer but not the caller's task-type lookup. The production writer already
+opened the full Store. Completing that fixture preserved its old/new generation
+assertions; the focused test passed. The merged branch passed 86 CLI/release
+tests, 53 materials/receipt/boundary/artifact tests, and 34 Skill contract tests;
+Ruff and diff checks passed. Read-only publication preflight passed all 16
+manifest entries and found only the Weekly Report Skill plus its two validator
+scripts changing. The People OA Skill was already identical to the current
+repository source; only its stale manifest `old_sha256` was refreshed.
