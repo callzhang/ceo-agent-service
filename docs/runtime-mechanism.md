@@ -4136,6 +4136,17 @@ A same-second relabel invalidates the existing in-memory index and is detected
 across source reads; retiring the same input bytes preserves the stamp. This
 uses no new database fields, stored index, input cache or provider reads for
 stamp comparison.
+Finite multi-message reads use native UID-set FETCH grouped by mailbox and
+UIDVALIDITY, with at most 50 identities per group. Metadata records bind each
+complete literal to its own UID, including UID suffixes after the literal;
+literal bytes are never parsed as metadata. The existing complete selected
+text/HTML decoder and attachment exclusion remain shared with scalar reads.
+Each group checks UIDVALIDITY before and after; each message checks its stable
+identity and optional Message-ID. SourceReader retains the existing exact-folder
+relocation and post-read location checks. Missing, ambiguous or changed originals
+remain explicit errors; there is no partial Console response or persisted cache.
+Native-only proof lookup is also available separately so an explicit historical
+audit can check actual native records before grouping necessary provider reads.
 The schema inverse prepares both exact input components before opening its write
 lease and restores original bytes with current business facts and inclusion.
 Historical input retirement and final release acceptance remain incomplete.

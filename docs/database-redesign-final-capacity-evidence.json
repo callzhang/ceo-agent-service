@@ -30922,5 +30922,53 @@
     "ranking_changes": false,
     "independent_read": "no concrete finding; root verified _now second precision and regressions",
     "production_writes": false
+  },
+  "exact_native_imap_batch": {
+    "status": "local_verified_not_deployed_performance_acceptance_open",
+    "body_and_native_imap_tests": {
+      "passed": 107,
+      "seconds": 18.88
+    },
+    "exact_source_console_tests": {
+      "passed": 80,
+      "seconds": 35.73
+    },
+    "exact_batch_model_tests": {
+      "passed": 32,
+      "seconds": 19.12
+    },
+    "test_batches_overlap": true,
+    "mixed_actual_provider_compare": {
+      "scope": "same exact verified pilot sources; full normalized native batch/scalar equality; provider read-only; no originals saved",
+      "real_sends": 0,
+      "provider_mutations": 0,
+      "production_writes": false,
+      "accounts": [
+        {
+          "ordinal": 0,
+          "messages": 3,
+          "full_normalized_fields_exact": true,
+          "batch_seconds": 8.481,
+          "scalar_seconds": 11.944
+        },
+        {
+          "ordinal": 1,
+          "messages": 3,
+          "full_normalized_fields_exact": true,
+          "batch_seconds": 12.316,
+          "scalar_seconds": 10.333
+        }
+      ],
+      "passed": true,
+      "fetch_calls": {
+        "bulk": 21,
+        "scalar": 21
+      }
+    },
+    "same_folder_compare": "bulk source read returned; scalar control failed TimeoutError during readonly SELECT; no complete comparison result, no latency benefit claimed",
+    "independent_read": "initial late-UID finding withdrawn after root verified scalar-only validator call path; no concrete finding remains",
+    "native_first_history": "native-only helper extracted without changing locate_original order; explicit account1 batch continuation checks actual native attempts before necessary provider reads",
+    "production_writes": false,
+    "new_schema_or_persistent_cache": false
   }
 }

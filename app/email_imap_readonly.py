@@ -579,6 +579,69 @@ class ImapReadonlyAdapter:
         select_generation()
         return message
 
+    def fetch_messages(self, requests):
+        """Read finite exact originals with native UID sets, retaining no cache.
+
+        Missing/changed individual originals return LookupError at that identity;
+        malformed batch responses and generation changes fail the whole read.
+        """
+        groups = {}
+        for locator, identity in requests:
+            if locator.account_id != self.account_id:
+                raise ValueError("email source account mismatch")
+            groups.setdefault((locator.folder, locator.uidvalidity), []).append((locator, identity))
+        result = {}
+        for (folder, generation), items in groups.items():
+            for start in range(0, len(items), 50):
+                batch = items[start:start + 50]
+                by_uid = {locator.uid: (locator, identity) for locator, identity in batch}
+                if len(by_uid) != len(batch):
+                    raise ValueError("email source batch has duplicate UID")
+                mailbox = encode_imap_mailbox_argument(folder)
+
+                def select_generation():
+                    status, _ = self.session.select(mailbox, readonly=True)
+                    _require_ok(status, "IMAP readonly select failed")
+                    if _uidvalidity(self.session.response("UIDVALIDITY")) != generation:
+                        raise LookupError("email source generation changed")
+
+                def fetch(uids, query):
+                    sequence = ','.join(str(uid) for uid in sorted(uids)).encode('ascii')
+                    status, data = self.session.uid('FETCH', sequence, query)
+                    _require_ok(status, "IMAP exact batch fetch failed")
+                    return _split_exact_fetch_records(data, set(uids))
+
+                select_generation()
+                structures = fetch(by_uid, '(BODYSTRUCTURE)')
+                headers = fetch(by_uid, _HEADER_FETCH)
+                sections = {}
+                for uid in by_uid.keys() & structures.keys() & headers.keys():
+                    structure = _parse_bodystructure(structures[uid])
+                    for part in (*_selected_text_parts(structure), *_selected_html_parts(structure)):
+                        sections.setdefault(f'(BODY.PEEK[{part.section}])', set()).add(uid)
+                body_data = {query: fetch(uids, query) for query, uids in sections.items()}
+                for uid, (locator, identity) in by_uid.items():
+                    def source_data(query, error):
+                        records = (structures if query == '(BODYSTRUCTURE)' else
+                                   headers if query == _HEADER_FETCH else body_data[query])
+                        if uid not in records:
+                            raise LookupError("email source UID is unavailable")
+                        return records[uid]
+
+                    try:
+                        message = self._decode_selected_message(
+                            str(uid).encode('ascii'), mailbox=folder,
+                            uidvalidity=generation, complete=True, fetch=source_data)
+                        if (message['stableMessageIdentity'] != identity or
+                            (locator.rfc_message_id is not None and
+                             message['messageId'] != locator.rfc_message_id)):
+                            raise LookupError("email source identity mismatch")
+                        result[identity] = message
+                    except LookupError as exc:
+                        result[identity] = exc
+                select_generation()
+        return result
+
     def _fetch_one_message(
         self, uid: bytes, *, mailbox: str, uidvalidity: int, complete: bool = False
     ) -> dict[str, object]:
@@ -589,6 +652,10 @@ class ImapReadonlyAdapter:
                 _require_exact_fetch_uid(data, uid)
             return data
 
+        return self._decode_selected_message(
+            uid, mailbox=mailbox, uidvalidity=uidvalidity, complete=complete, fetch=fetch)
+
+    def _decode_selected_message(self, uid, *, mailbox, uidvalidity, complete, fetch):
         structure_data = fetch("(BODYSTRUCTURE)", "IMAP BODYSTRUCTURE fetch failed")
         structure = _parse_bodystructure(structure_data)
         header_data = fetch(_HEADER_FETCH, "IMAP header fetch failed")
@@ -1473,6 +1540,48 @@ def _search_uids(data: object) -> list[bytes]:
         return []
     values = {int(uid) for uid in data[0].split() if uid.isdigit() and int(uid) > 0}
     return [str(uid).encode("ascii") for uid in sorted(values)]
+
+
+def _split_exact_fetch_records(data, requested):
+    """Bind complete response records to UID, never parsing literal bytes.
+
+    imaplib may put UID after the literal, so accumulate only record metadata
+    until the existing IMAP parser sees the closing attribute list.
+    """
+    if not isinstance(data, (list, tuple)):
+        raise LookupError("email source batch metadata is unavailable")
+    result = {}
+    record = []
+    metadata_parts = []
+    for item in data:
+        metadata = item[0] if isinstance(item, tuple) and item else item
+        if metadata is None and not record:
+            continue
+        if not isinstance(metadata, bytes):
+            raise LookupError("email source batch metadata is invalid")
+        record.append(item)
+        metadata_parts.append(metadata)
+        metadata = b' '.join(metadata_parts)
+        sequence, separator, attributes = metadata.partition(b' ')
+        if not separator or not sequence.isdigit() or not attributes.startswith(b'('):
+            raise LookupError("email source batch record is invalid")
+        try:
+            values, end = _parse_imap_value(attributes, 0)
+        except (IndexError, ValueError):
+            # A literal prefix ends before the attribute-list terminator.
+            continue
+        if attributes[end:].strip():
+            raise LookupError("email source batch record has trailing metadata")
+        uids = [values[index + 1] for index, token in enumerate(values[:-1])
+                if isinstance(token, str) and token.upper() == 'UID']
+        if (len(uids) != 1 or type(uids[0]) is not int or
+            uids[0] not in requested or uids[0] in result):
+            raise LookupError("email source batch UID is missing, unexpected or duplicated")
+        result[uids[0]] = record
+        record, metadata_parts = [], []
+    if record:
+        raise LookupError("email source batch record is incomplete")
+    return result
 
 
 def _require_exact_fetch_uid(data: object, expected: bytes) -> None:

@@ -52,9 +52,8 @@ def read_referenced_original(reference, *, read_message):
     raise ValueError("unknown Email original source kind")
 
 
-def locate_original(body, *, attempts, read_message,
-                    representations=("provider_body", "scan_normalized_message")):
-    """Prove a complete native field first, then the accurate provider original."""
+def locate_native_original(body, *, attempts):
+    """Check actual native attempts without fetching or copying an upstream source."""
     if not body:
         return None
     digest = {"sha256": sha256(body.encode("utf-8")).hexdigest(),
@@ -72,6 +71,19 @@ def locate_original(body, *, attempts, read_message,
         except (native.NativeSourceMissing, native.NativeSourceVersionChanged, OSError, UnicodeError):
             continue
         return {**digest, "kind": "native", "native_provenance": locator}
+    return None
+
+
+def locate_original(body, *, attempts, read_message,
+                    representations=("provider_body", "scan_normalized_message")):
+    """Prove a complete native field first, then the accurate provider original."""
+    if not body:
+        return None
+    reference = locate_native_original(body, attempts=attempts)
+    if reference is not None:
+        return reference
+    digest = {"sha256": sha256(body.encode("utf-8")).hexdigest(),
+              "utf8_bytes": len(body.encode("utf-8"))}
     try:
         message = read_message()
     except (LookupError, OSError, ValueError, imaplib.IMAP4.error):

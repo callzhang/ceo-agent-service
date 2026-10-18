@@ -284,17 +284,17 @@ def batch_source(stored):
     original = session.uid
 
     def uid(command, *args):
-        if command == "FETCH":
-            second = args[0] == b"2"
-            session.headers = (
-                HEADERS.replace(b"source@example.test", b"second@example.test")
-                if second
-                else HEADERS
-            )
-            session.section_payloads["1"] = (
-                b"second body" if second else b"complete body"
-            )
-        return original(command, *args)
+        if command != "FETCH":
+            return original(command, *args)
+        records = []
+        for requested_uid in args[0].split(b','):
+            second = requested_uid == b"2"
+            session.headers = (HEADERS.replace(b"source@example.test", b"second@example.test")
+                               if second else HEADERS)
+            session.section_payloads["1"] = b"second body" if second else b"complete body"
+            status, data = original(command, requested_uid, args[1])
+            records.extend(data)
+        return status, records
 
     session.uid = uid
     factories = []
@@ -354,14 +354,14 @@ def test_empty_account_batch_does_not_open_a_source(stored):
 def test_batch_source_failure_closes_without_returning_partial_results(stored):
     identity = second_message(stored)
     reads, adapter, session, factories, metadata = batch_source(stored)
-    original = adapter.fetch_message
+    original = adapter.fetch_messages
 
-    def fetch(locator, **kwargs):
-        if locator.uid == 2:
-            raise LookupError("second original unavailable")
-        return original(locator, **kwargs)
+    def fetch(requests):
+        result = original(requests)
+        result[identity] = LookupError("second original unavailable")
+        return result
 
-    adapter.fetch_message = fetch
+    adapter.fetch_messages = fetch
     with pytest.raises(LookupError, match="second original unavailable"):
         reads.read_many("a", [LOCATOR.stable_message_identity, identity])
     assert factories == ["a"] and session.calls.count(("logout",)) == 1
@@ -370,20 +370,17 @@ def test_batch_source_failure_closes_without_returning_partial_results(stored):
 def test_batch_rechecks_prior_rows_after_all_source_reads(stored):
     identity = second_message(stored)
     reads, adapter, session, factories, metadata = batch_source(stored)
-    original = adapter.fetch_message
+    original = adapter.fetch_messages
 
-    def fetch(locator, **kwargs):
-        message = original(locator, **kwargs)
-        if locator.uid == 2:
-            with sqlite3.connect(stored.path, timeout=0) as db:
-                db.execute("begin immediate")
-                db.execute(
-                    "update emails set uid=3 where stable_message_identity=?",
-                    (LOCATOR.stable_message_identity,),
-                )
-        return message
+    def fetch(requests):
+        result = original(requests)
+        with sqlite3.connect(stored.path, timeout=0) as db:
+            db.execute("begin immediate")
+            db.execute("update emails set uid=3 where stable_message_identity=?",
+                       (LOCATOR.stable_message_identity,))
+        return result
 
-    adapter.fetch_message = fetch
+    adapter.fetch_messages = fetch
     with pytest.raises(LookupError, match="location changed"):
         reads.read_many("a", [LOCATOR.stable_message_identity, identity])
     assert session.calls.count(("logout",)) == 1

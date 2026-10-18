@@ -81,12 +81,7 @@ class EmailSourceReader:
             raise LookupError("email source account is unavailable")
         source = self.source_factory(account)
         try:
-            messages = {
-                identity: self._read_location(
-                    source, locations[(account_id, identity)], identity
-                )
-                for identity in identities
-            }
+            messages = self._read_locations(source, account_id, locations, identities)
             from app.email_body_source import original_from_message
 
             for identity, message in messages.items():
@@ -101,8 +96,29 @@ class EmailSourceReader:
             raise LookupError("email source location changed during read")
         return messages
 
+    @classmethod
+    def _read_locations(cls, source, account_id, locations, identities):
+        if len(identities) == 1:
+            identity = identities[0]
+            return {identity: cls._read_location(source, locations[(account_id, identity)], identity)}
+        resolved = {identity: cls._resolve_location(source, locations[(account_id, identity)])
+                    for identity in identities}
+        try:
+            messages = source.fetch_messages([(resolved[identity][0], identity) for identity in identities])
+        except LookupError as exc:
+            messages = dict.fromkeys(identities, exc)
+        for identity in identities:
+            message = messages[identity]
+            if isinstance(message, LookupError):
+                locator, same_folder_lookup, folder = resolved[identity]
+                if not same_folder_lookup:
+                    raise message
+                current = source.locate_message(locator, folder=folder)
+                messages[identity] = source.fetch_message(current, stable_message_identity=identity)
+        return messages
+
     @staticmethod
-    def _read_location(source, location, stable_message_identity):
+    def _resolve_location(source, location):
         locator = EmailProviderLocator(
             account_id=location["account_id"],
             folder=location["folder"],
@@ -121,6 +137,11 @@ class EmailSourceReader:
         )
         if folder and folder != locator.folder:
             locator = source.locate_message(locator, folder=folder)
+        return locator, same_folder_lookup, folder
+
+    @classmethod
+    def _read_location(cls, source, location, stable_message_identity):
+        locator, same_folder_lookup, folder = cls._resolve_location(source, location)
         try:
             return source.fetch_message(
                 locator, stable_message_identity=stable_message_identity
