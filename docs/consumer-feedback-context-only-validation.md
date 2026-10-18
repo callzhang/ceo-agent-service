@@ -64,3 +64,29 @@ requires a nonempty assistant output followed by native `task_complete` after
 the bound User input. An actual anonymous Codex session confirmed the complete
 turn passes and a slice without its completion event does not; no production
 business session was replayed.
+
+PR #134 merged as `8b480c30d013ce3c38e7d96b5ffb5968c7e31a2f` at
+2026-10-18 11:02:57 UTC after the automated review of the final head
+`aa4ea8279` found no new issues. The earlier provider-full retry finding was
+fixed by the red/green same-route, same-session regression and its review
+thread was resolved. GitHub Quality was still running at deployment; it is
+supplementary to the focused behavior checks above.
+
+Formal `python -m app.deploy` completed the quiet-window, backup, checkout and
+restart flow, moving the production checkout `0937013c` to `8b480c30`.
+The checkout was clean; installed `agent_turn_runner.py`, `consumer_agent.py`,
+`native_trajectory.py` and `native_prompt_input.py` matched the tested branch
+byte-for-byte by Git blob hash. launchd supervisor PID changed 54978 to
+64278. `/healthz`, Status, Attention and History all returned HTTP 200 after
+restart. Status showed 13 queues, 6 pending, 0 processing, 15 failed and 0
+retryable. Attention had 7 rows; History returned 5 rows on page 1 with total
+36002. System health was `degraded` with one existing work-item terminal-
+handling violation, which was also present before this deployment. These are
+production installation and service-readback facts, not evidence that a
+natural post-deployment Consumer feedback revision has occurred.
+
+A read-only fictional prompt-choice probe in the development checkout
+confirmed exact Codex route/session selects the compact input and a different
+session selects full input. The installed prompt-choice module had the same
+Git blob hash as that probed module; no tests were run in the production
+checkout and no production Agent turn was triggered.
