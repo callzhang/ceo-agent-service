@@ -141,7 +141,7 @@ def _checks(name: str, decision: object) -> dict[str, bool]:
     if name == "personal_timezone":
         return {**common, "direct_counterpart": decision.audience_scope == "personal" and target is not None and target.direct_user_id == "alex", "both_timezones": "太平洋" in message and "纽约" in message}
     if name == "business_alignment":
-        return {**common, "business_group": decision.audience_scope == "business" and target is not None and target.conversation_id == "synthetic-group-1", "aligned": any(topic.state == "aligned" for topic in decision.topics), "agreed_rollout": "10%" in message}
+        return {**common, "business_group": decision.audience_scope == "business" and target is not None and target.conversation_id == "synthetic-group-1", "aligned": any(topic.state == "aligned" for topic in decision.topics), "agreed_rollout": "10%" in message, "only_assigned_owners": set(decision.mention_names) == {"Avery"}}
     return {**common, "business_group": decision.audience_scope == "business" and target is not None and target.conversation_id == "synthetic-group-2", "business_assignments": "验收" in message and "付款" in message, "no_sensitive_hint": not any(term in decision.message_title + message for term in ("裁员", "减员", "人员优化", "人员事项"))}
 
 
@@ -193,7 +193,10 @@ def _run(prompt: str, *, directory: str, config: str | None, schema: Path) -> di
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--repetitions", type=int, default=1)
     args = parser.parse_args()
+    if args.repetitions < 1:
+        parser.error("repetitions must be positive")
     root = Path.home() / ".agents" / "skills"
     materials, hashes = _materials(root)
     candidate_config = codex_skill_config_override(())
@@ -201,26 +204,28 @@ def main() -> None:
     results = []
     with tempfile.TemporaryDirectory(prefix="meeting-skill-scope-", dir="/tmp") as directory:
         for name, source, groups in _cases():
-            for arm, protocol, config in (
-                ("full", "\n\n".join(materials), None),
-                ("managed_only", materials[0], candidate_config),
-            ):
-                prompt = build_meeting_alignment_prompt(
-                    source, work_profile="", work_profile_source="",
-                    group_candidates=groups, consumer_prompt="只依据本次虚构会议和给定的虚构证据判断。",
-                    skill_protocol=protocol,
-                )
-                result = _run(prompt, directory=directory, config=config, schema=schema)
-                decision = result.pop("decision")
-                result.update(case=name, arm=arm, checks=_checks(name, parse_meeting_alignment_decision(json.dumps(decision, ensure_ascii=False))) if decision is not None else {}, decision=decision)
-                results.append(result)
-                print(json.dumps({"case": name, "arm": arm, "checks": result["checks"], "valid": result["pydantic_valid"]}, ensure_ascii=False), flush=True)
+            for repetition in range(1, args.repetitions + 1):
+                for arm, protocol, config in (
+                    ("full", "\n\n".join(materials), None),
+                    ("managed_only", materials[0], candidate_config),
+                ):
+                    prompt = build_meeting_alignment_prompt(
+                        source, work_profile="", work_profile_source="",
+                        group_candidates=groups, consumer_prompt="只依据本次虚构会议和给定的虚构证据判断。",
+                        skill_protocol=protocol,
+                    )
+                    result = _run(prompt, directory=directory, config=config, schema=schema)
+                    decision = result.pop("decision")
+                    result.update(case=name, repetition=repetition, arm=arm, checks=_checks(name, parse_meeting_alignment_decision(json.dumps(decision, ensure_ascii=False))) if decision is not None else {}, decision=decision)
+                    results.append(result)
+                    print(json.dumps({"case": name, "repetition": repetition, "arm": arm, "checks": result["checks"], "valid": result["pydantic_valid"]}, ensure_ascii=False), flush=True)
     output = {
         "model": MODEL,
         "skill_sha256": hashes,
         "baseline_catalog": "native_default",
         "candidate_catalog_config_sha256": hashlib.sha256(candidate_config.encode("utf-8")).hexdigest(),
         "scope": "Anonymous read-only Codex OAuth; no Work Profile, business MCP or external action",
+        "repetitions": args.repetitions,
         "results": results,
     }
     args.output.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n")
