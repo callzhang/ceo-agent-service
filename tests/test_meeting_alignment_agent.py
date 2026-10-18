@@ -12,6 +12,7 @@ from app.meeting_alignment_agent import (
     MeetingAlignmentCodexRunner,
     MeetingAlignmentTargetError,
     MeetingOrganizerIdentityError,
+    _meeting_decision_skill_protocol,
     build_meeting_alignment_prompt,
     parse_meeting_alignment_decision,
 )
@@ -141,6 +142,36 @@ def source(*, participant_count: int = 3) -> MeetingSource:
             "source_url": "https://example.test/minutes-1",
         }
     )
+
+
+def test_meeting_decision_keeps_only_frozen_managed_skill():
+    from app.agent_cron.commands import ServiceCommandSkillMaterial
+
+    managed = ServiceCommandSkillMaterial(
+        name="ceo-meeting-work",
+        content="## Managed Skill: ceo-meeting-work\nrevision_id: 4\nsha256: frozen\n\nMeeting judgment",
+    )
+    operation = ServiceCommandSkillMaterial(
+        name="dingtalk-calendar",
+        content="## Operation Skill: dingtalk-calendar\nsha256: frozen\n\nCalendar procedure",
+    )
+
+    assert _meeting_decision_skill_protocol((managed, operation)) == managed.content
+    assert _meeting_decision_skill_protocol((operation,)) is None
+
+
+def test_meeting_runner_routes_compact_prompt_only_to_codex():
+    from app.agent_runtime_contracts import RuntimeKind
+
+    routed = FakeRoutedMeetingExecution(json.dumps(summary_payload(), ensure_ascii=False))
+    runner = MeetingAlignmentCodexRunner(routed_execution=routed)
+
+    runner.decide(prompt="FULL FROZEN PROTOCOL", compact_prompt="MEETING RULE", run_id=9)
+
+    call = routed.calls[0]
+    assert call["prompt"] == "FULL FROZEN PROTOCOL"
+    assert call["route_prompt_overrides"] == {RuntimeKind.CODEX_CLI: "MEETING RULE"}
+    assert call["command_factory"].skill_names == ()
 
 
 def source_with_unresolved_one_to_one_counterpart() -> MeetingSource:
