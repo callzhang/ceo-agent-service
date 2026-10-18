@@ -48,3 +48,14 @@ Focused verification in the isolated worktree:
 The same 297 focused tests and Ruff passed after merging `origin/main` into the
 PR branch on 2026-10-18. The older PR Quality run failed in unrelated
 repository-wide tests; it does not replace the fixed-case behavior check.
+
+PR #128 merged as `0937013c3` and `python -m app.deploy` fast-forwarded the
+production checkout from `f9ea9b0c` to that commit on 2026-10-18. Readback:
+the checkout is clean at `0937013c3`, service PID `54978` is running,
+`/healthz` returned OK, queue processing is zero, Attention totals 7, and
+the most recent failed History item predates the deployment. A read-only
+anonymous projection call from the installed production checkout resolved
+the second document to the first and retained both signal mappings. System
+health still reports the pre-existing Work item terminal-handling violation;
+this release did not change that mechanism. A future natural Task run is
+still needed to observe the new representation in a live business trajectory.
