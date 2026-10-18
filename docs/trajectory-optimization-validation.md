@@ -1230,3 +1230,43 @@ readback and is supplementary to the local and fixed-case evidence.
 This release verifies that the new diagnostic is installed and the service
 restarted cleanly. No natural post-release Consumer correction turn has yet
 confirmed a business outcome.
+
+## Recent Audit native-input inventory: no change, 2026-10-18
+
+The complete saved native turns for 96 production Audit runs created from
+2026-10-16 through the 2026-10-18 07:15 UTC run are available in paginated
+Codex history. The run ledger has 95 completed role runs and one failed role
+run; completion alone does not prove the business judgment. The failed run
+returned extra fields outside the Audit result contract and its same-task
+retry completed. These runs contain 470 MCP calls, of which 14 report tool
+failure. Seven thread-reply reads report that the message detail has no
+conversation/thread identity; four document reads report a spreadsheet or
+AI table rather than an online document (three are retries on one task).
+The remaining three are a forbidden text path, a Drive byte limit, and a
+forbidden Skill path. All runs with those tool failures nevertheless reached a
+completed Audit result. This is a tool-selection inventory, not proof that the
+result was correct or that treating a tool error as an empty source is safe.
+
+The saved Audit task inputs range from 12,701 to 53,300 characters, median
+27,096. All 96 include candidate source bindings. In 93 inputs, the exact
+Task source matches the captured candidate binding and the original trigger
+uses a source reference instead of copying its text a second time. The three
+nonmatching inputs retain the complete original source and candidate binding,
+as the released equality gate requires. Candidate source bindings themselves
+have median serialized length 8,621 characters; current scalar-field evidence
+has median 3,205 characters. Those evidence sections were introduced for
+specific Audit correctness failures. Their size and overlap with the full
+candidate are not sufficient grounds to remove them or alter an audit rule.
+
+No repeated, high-impact Audit failure mechanism is established by this
+bounded inventory. The seven thread-reply errors and four wrong-type reads
+are concrete candidates for later trajectory review, but this sample does
+not show a wrong decision caused by either tool error. The three scheduled
+Audit turns predate PR #133's production release, so they cannot validate its
+new Consumer document-return handoff; its fixed anonymous case and deployment
+receipt remain the current evidence. No prompt, Skill, tool, result contract,
+audit policy or provider behavior changes in this inventory. The next Task
+input investigation must start with a natural post-PR #128 native input and
+measure row-level overlap without counting PR #128's already-shipped
+within-input source sharing a second time. Any removal needs fixed cases
+preserving current-source facts, Project/Task decisions and exact citations.
