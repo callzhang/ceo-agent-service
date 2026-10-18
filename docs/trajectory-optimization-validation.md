@@ -1465,3 +1465,42 @@ History reported 36,080 total records. A real business Sheet run after this
 release has not yet been observed, so no production judgment outcome is claimed.
 GitHub Quality remained in progress at the time of this readback; it is a
 supplemental check, not the basis for the behavior acceptance above.
+
+## Next trajectory selection gate, 2026-10-18 14:46 UTC
+
+The current production database has 91 Consumer and 63 Audit role runs created
+since 2026-10-17. Their exact native attempt ranges were checked against the
+Codex session files, not rebuilt from today's configuration. Only the three
+Consumer and three Audit runs for tasks 405419 and 405421 still have readable
+complete native records; their ranges include terminal `task_complete`
+markers. Older session files referenced by the run records are currently
+absent. The latest Task Agent run remains on 2026-10-17, before PR #128, and
+the latest Meeting planner native session is also no longer available. These
+are availability facts at this checkpoint, not a conclusion that older runs
+failed or that their decisions were wrong.
+
+The six available role trajectories cover a scheduled Daily Report and a
+message-triage task. Their service-submitted Developer sections are about
+36–37 thousand characters each; Task sections range from 1,196 to 20,930.
+No exact paragraph of at least 120 characters was repeated between Developer
+and Task in these inputs, and the exact Skill bodies read through
+`read_task_skill` were not already embedded in either submitted section. This
+does not rule out semantic overlap or CLI-injected material. In the scheduled
+Consumer turn, all five selected Skills were read before the 22,288-byte
+compact service-facts result, including the optional Minutes Skill; this is
+one observed run, not repeated evidence of a generic scheduled-task defect.
+The Audit turns reread their selected Skills and facts for separate proposal
+revisions; their independent source verification is part of the current
+review behavior and cannot be removed based on byte overlap alone.
+
+No new runtime change passes the next selection gate today. The Task
+historical-row candidate above has repeated byte overlap but still lacks a
+natural post-#128 full trajectory and fixed cases proving that current-source
+facts, Project/Task decisions and exact citations survive narrower retrieval.
+Draft PR #127's speaker-index arm failed its fixed sensitive-audience case;
+the separate native Skill duplication it also addresses has not been shown to
+remain after PR #132. PR #129 changes only one Daily Report seed and its two
+synthetic comparisons show mixed token totals, so it does not establish a
+general scheduled-task improvement. Keep both candidates unreleased; do not
+add a prompt rule, remove historical rows, or broaden a task-specific edit to
+scheduled tasks without the missing trajectory and behavior evidence.
