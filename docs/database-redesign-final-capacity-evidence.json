@@ -30727,6 +30727,16 @@
       "repeat_progress": "/tmp/db-redesign-final-guard.3LeMgv/model-input-roundtrip-progress.json",
       "production_writes": false,
       "real_sends": 0
+    },
+    "real_owner_feature_readback": {
+      "passed": true,
+      "owner_examples": 956,
+      "retired_owner_inputs_before_read": 9,
+      "all_features_and_labels_exact_to_same_source_backup": true,
+      "seconds": 27.578,
+      "scope": "one current source-backed owner example rebuild; full historical retirement has not finished, so this is not final all-retired latency",
+      "real_sends": 0,
+      "production_writes": false
     }
   }
 }
