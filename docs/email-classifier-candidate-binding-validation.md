@@ -91,10 +91,25 @@ other scheduled task settings are not part of this release.
 
 This validates the service-side binding path, repository Skill contract, and
 one anonymous native classifier case. The native case calls Codex directly; it
-does not prove the full routed worker path or a production result. It does not
-measure classification quality across diverse mail. The production checkout
-remains unchanged until the normal release path deploys a reviewed commit.
-Post-release readback must confirm the new commit, loaded managed Skill digest,
-updated classifier task reference, healthy worker and queue state; a later real
-candidate-bearing trajectory is needed to claim that production completed the
-end-to-end binding path.
+does not prove the full routed worker path or measure classification quality
+across diverse mail.
+
+## Production readback (2026-10-18)
+
+PR #131 merged as `0376f4d4`; `python -m app.deploy` advanced the production
+checkout from `af80f093` to that commit and restarted the service. `healthz`
+returned OK with supervisor PID 1534 and email-worker PID 1557. Runtime Skill
+config 342 is active with classifier revision 182 (`5ba8cb23…`), and the
+email-worker load receipt for PID 1557 reports that same digest without error.
+The previously queued old trigger 375144 dispatched before deploy, with no
+open classification task. Scheduled task 10 was re-enabled at version 4 with
+revision 182; its first new trigger 375153 dispatched. The email-classification
+queue held 1,379 `done` and no pending, processing, or failed items on readback.
+Console Attention had seven existing items; overall system health was degraded
+by a pre-existing Work item terminal-handling alert. The 10:00 weekly OKR
+collection run 375134 separately failed with source collection errors. Neither
+condition establishes a regression in this classifier release.
+
+No new candidate-bearing email classification occurred during this readback,
+so the full routed production behavior remains unverified until a real
+candidate-bearing trajectory is inspected.
