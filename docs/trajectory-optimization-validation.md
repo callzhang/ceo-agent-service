@@ -1270,3 +1270,32 @@ input investigation must start with a natural post-PR #128 native input and
 measure row-level overlap without counting PR #128's already-shipped
 within-input source sharing a second time. Any removal needs fixed cases
 preserving current-source facts, Project/Task decisions and exact citations.
+
+## Next selection gate: Task historical-row scope, 2026-10-18
+
+Read-only current-run lookup still finds no Task Agent run created on
+2026-10-18 after PR #128. To separate its shipped within-input sharing from
+the remaining inter-turn overlap, 47 complete native Task inputs from six
+pre-release sessions were passed through the current pure
+`share_source_document_projections` function, without invoking an Agent or
+rebuilding a source from today's database. All 47 simulated inputs became
+smaller, by a median 20,917 characters. Across 34 adjacent turn pairs with
+different current source IDs, the simulated payloads still share median
+83,099 characters of exact `source_documents` rows, 59,089 of
+`source_signals`, and 11,210 of `project_contexts`. These 47 turns include
+runtime attempts and are not 47 independent business decisions. The numbers
+are a deterministic counterfactual on old inputs, **not** measured production
+input savings or evidence that the shared rows may be omitted.
+
+This candidate meets the repeated-size screen but not the safe-removal gate.
+Before changing retrieval, inspect a natural post-#128 Task input and its
+complete trajectory to identify which historical rows were needed for its
+current-source assessment, prior Task matching, owner evidence and citations.
+Then freeze paired cases that preserve those decisions and exact cited source
+IDs while testing a narrower row selection under the same model and facts.
+The change should be limited to Task retrieval/projection and its necessary
+documentation; report submitted-length reduction and any lost or changed
+business result. If the fixed cases cannot prove those invariants, keep the
+present complete historical rows. Do not reuse an earlier turn's rows merely
+because their bytes match: native compaction may have removed them from the
+model-visible session.
