@@ -2096,7 +2096,7 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 
 Status API 与前端 SystemHealth 解码器均声明 native_delivery_coverage（checked、unavailable）：允许省略或 null；存在时只接受这两个非负整数，仍拒绝未知字段。该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
 
-已完成的邮件分类任务不长期保存分类输入正文：`email_agent_classification_tasks.status=done` 在既有租约／代际校验的完成事务内，将 `input_json` 改为明确标记的来源记录，保留原始 JSON 摘要和字节数、去除 `scheduled_consumer` 后的不可变输入摘要、稳定邮件身份、provider locator、配置版本及脱敏退订候选引用。定时配置与 Skill 只保留运行／版本／摘要引用；模型输入、邮件正文和冻结 Skill 正文不再复制。重复发现以既有不可变输入语义核对摘要，不补回正文；内容变化仍按既有错误处理。pending／running／failed 保留完整输入以便恢复，分类结果、任务状态和执行回执保持原样。历史精简由显式维护命令执行，不在初始化时扫描。`email_classifications.model_text` 仍是训练／人工标注使用的准确特征文本，与邮件原文不同，本阶段保留。
+已完成的邮件分类任务不长期保存分类输入正文：`email_agent_classification_tasks.status=done` 在既有租约／代际校验的完成事务内，将 `input_json` 改为明确标记的来源记录，保留原始 JSON 摘要和字节数、去除 `scheduled_consumer` 后的不可变输入摘要、稳定邮件身份、provider locator、配置版本及脱敏退订候选引用。定时配置与 Skill 只保留运行／版本／摘要引用；模型输入、邮件正文和冻结 Skill 正文不再复制。重复发现以既有不可变输入语义核对摘要，不补回正文；内容变化仍按既有错误处理。pending／running／failed 保留完整输入以便恢复，分类结果、任务状态和执行回执保持原样。历史精简由显式维护命令执行，不在初始化时扫描。该历史分期保留了与邮件原文不同的模型特征文本。最终结构中的 `emails.class_model_text` 仅在活动或原文尚未证明时保留；终态且完整字节已由原生／provider 证明后，改用已有 `message_source_reference_json.model_input` 引用。人工相似案例仍读取准确特征，具体生命周期以下文最终合同为准。
 
 存储 schema 升级迁移业务对象映射时，只插入新键、删除已不存在的键或更新变化的任务绑定；绑定未变的 `business_object_tasks` 原行及创建／更新时间保持不变，最新任务与 OA 别名选择规则不变。
 
@@ -3226,6 +3226,17 @@ The schema inverse prepares both exact input components before opening its write
 lease and restores original bytes with current business facts and inclusion.
 Historical input retirement and final release acceptance remain incomplete.
 This candidate is not deployed.
+
+Historical retirement can explicitly publish already verified input references
+with `python -m scripts.retire_verified_email_inputs --source <audited-copy>
+--target <current-db>`; `--apply` performs the writes and the default is a
+read-only preview. Both databases use the final pair. Each target identity and
+its existing completion predicate are read again inside a short write transaction;
+only complete matching input bytes are retired. Existing references and current
+labels, inclusion, results, receipts and allocator waters remain. The tool reads
+reference metadata from the copy and does not fetch original sources or copy
+business facts. Original-source verification precedes this explicit operation;
+it is not a runtime sweep or a replacement for source verification.
 
 Email schema inverse prepares exact original bytes before its schema write lease.
 An explicitly supplied existing backup contributes only matching original bytes;

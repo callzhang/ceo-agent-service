@@ -30695,7 +30695,7 @@
       "seconds": 20.59
     },
     "current_data_roundtrip": {
-      "status": "repeat_running_after_verified_fixture_repair",
+      "status": "passed_after_fixture_repair",
       "initial_inverse": {
         "emails": 9403,
         "body_inputs": 46,
@@ -30726,7 +30726,36 @@
       },
       "repeat_progress": "/tmp/db-redesign-final-guard.3LeMgv/model-input-roundtrip-progress.json",
       "production_writes": false,
-      "real_sends": 0
+      "real_sends": 0,
+      "repeat": {
+        "passed": true,
+        "stages": [
+          {
+            "stage": "retired_inputs_and_new_native_task_inverse_started",
+            "elapsed_seconds": 3.022,
+            "bodies": 0,
+            "model_inputs": 0,
+            "emails": 9403
+          },
+          {
+            "stage": "current_inputs_results_receipts_and_old_code_verified",
+            "elapsed_seconds": 268.862,
+            "all_named_email_fields_exact": true,
+            "no_reexecution": true
+          },
+          {
+            "stage": "actual_child_reforward_and_cold_readback_verified",
+            "elapsed_seconds": 645.788
+          }
+        ],
+        "all_named_email_fields_exact": true,
+        "new_native_task_results_receipts_unchanged": true,
+        "cold_old_code_readback": true,
+        "no_reexecution": true,
+        "quick_check": "ok",
+        "fk_baseline_only": true,
+        "old_code_commit": "2246d5184de62a4f629967fc0effbdb2b6504d10"
+      }
     },
     "real_owner_feature_readback": {
       "passed": true,
@@ -30761,5 +30790,113 @@
     "retired_container_aliases_and_clocks_verified": true,
     "actual_shared_provenance_fk": "actions.ba_task_signals_provenance_id -> provenance.id",
     "runtime_changes": false
+  },
+  "email_verified_reference_publication": {
+    "status": "focused_and_whole_copy_passed_not_production",
+    "focused_tests": {
+      "passed": 9,
+      "seconds": 14.33
+    },
+    "independent_read": "no finding within current identity/input/completion predicate and fact preservation scope; no tests or provider access by reviewer",
+    "copy": {
+      "passed": true,
+      "preview": {
+        "dry_run": true,
+        "source_rows": 1045,
+        "missing_or_ineligible": 0,
+        "body_matches": 1037,
+        "model_matches": 681,
+        "body_retired": 0,
+        "model_inputs_retired": 0,
+        "changed_rows": 0
+      },
+      "apply": {
+        "dry_run": false,
+        "source_rows": 1060,
+        "missing_or_ineligible": 0,
+        "body_matches": 1052,
+        "model_matches": 692,
+        "body_retired": 1052,
+        "model_inputs_retired": 692,
+        "changed_rows": 1060
+      },
+      "all_other_physical_fields_and_schema_unchanged": true,
+      "including_tables": {
+        "schema": {
+          "sha256": "781220a51d5b47f277c80c521bd7bcb8d2522817125e049e95d362bb9c3287b8"
+        },
+        "actions": {
+          "count": 99229,
+          "sha256": "8f3e7e0b7005722cd5738a744e9a7839726bb91663a4ceff8e8ed4c00edfa804"
+        },
+        "business": {
+          "count": 5135,
+          "sha256": "83dfdf361bf862c893413be191a34ce48d0979925648017d99c4c7303f8ad256"
+        },
+        "configs": {
+          "count": 6028,
+          "sha256": "f93b7a8398123b0b0a91b23f82e1b6a85274f03f1f176175792d28551c97c16d"
+        },
+        "email_schema_migrations": {
+          "count": 39,
+          "sha256": "bed607f89f5e88b1bfc071735252970c6b895d86f3f67da2f3011e9ba5aba528"
+        },
+        "emails": {
+          "count": 9403,
+          "sha256": "001c92c7eea5f726e1089a0de06ef4913f46386a3a67c60d53c06c37c321706c"
+        },
+        "provenance": {
+          "count": 141,
+          "sha256": "f97f85aed1d366d424add981111fa159b4b60a788176973d6c3e4886aad3243c"
+        },
+        "provider_state": {
+          "count": 72333,
+          "sha256": "5606753688d0331d1347bab12bba245aca864c93ebee05c0d3bc50a43b050c3c"
+        },
+        "runs": {
+          "count": 248599,
+          "sha256": "4c0cf3d670fb341956a6dbebea8046318b3fefd3f5b7be0d9a66001f42e6df36"
+        },
+        "schedules": {
+          "count": 15,
+          "sha256": "d8e2cc8399ba090fac80a44e0cc422b10448cb7f44725631c983a1831075a5d0"
+        },
+        "sqlite_sequence": {
+          "count": 51,
+          "sha256": "e9f33df99f7145d2694584ebae85cc31d2496d00162d12e548531b5ddd975f8c"
+        },
+        "state": {
+          "count": 23596,
+          "sha256": "c1bc872141d4e48ccb04b24ec195914aab7da210c5e9419fac4ca9ab2e6ac558"
+        },
+        "tasks": {
+          "count": 36251,
+          "sha256": "87776c9e08d3b8831b2b255a6a6cb95778a2eda67e3850e4a28e1acfd438623f"
+        }
+      },
+      "quick_check": "ok",
+      "fk_baseline_only": true,
+      "real_sends": 0,
+      "provider_reads": 0,
+      "production_writes": false,
+      "scope": "current native-task roundtrip copy; source proof audit still adding later references, so repeat counts are not a frozen full-history total",
+      "seconds": 61.447,
+      "current_native_task_cold_readback_unchanged": true,
+      "no_reexecution": true
+    },
+    "schema_changes": false,
+    "runtime_sweep_added": false,
+    "provider_reads": 0,
+    "production_writes": false
+  },
+  "production_readonly_release_preflight": {
+    "passed": true,
+    "source_store": "2026-10-13.5",
+    "source_email": 51,
+    "target_store": "2026-10-14.1",
+    "target_email": 52,
+    "source_versions": 229,
+    "production_writes": false,
+    "scope": "real coordinator selected paired release and prepared exact source metadata, without publish or constructors"
   }
 }
