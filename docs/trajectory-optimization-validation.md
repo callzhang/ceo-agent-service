@@ -1160,6 +1160,12 @@ prompt savings: a changed current source makes the full context differ, and
 compaction or missing model-visible history can make old rows unavailable.
 It identifies a separate row-level retrieval/projection question, not grounds
 to reactivate #125 or suppress prior source facts.
+These native turns predate PR #128's within-one-input sharing of exact duplicate
+`visible_ranges` and `decoded_excerpts`, which is already deployed. The row
+overlap above measures identical rows **between** different inputs; it must
+not be counted again as the within-input saving from #128 or presented as a
+post-#128 production input length. No natural Task run after that release was
+available in this readback.
 
 Acceptance for this specific optimization would require a complete, repeated
 production trajectory showing byte-identical context across adjacent Tasks,
