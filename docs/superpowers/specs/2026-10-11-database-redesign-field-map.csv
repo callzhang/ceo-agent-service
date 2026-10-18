@@ -272,7 +272,7 @@ business_task_signals,conversation_id,TEXT,1,0,actions,actions.signal_fact.conve
 business_task_signals,conversation_title,TEXT,1,0,actions,actions.signal_fact.conversation_title,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。
 business_task_signals,author_user_id,TEXT,1,0,actions,actions.signal_fact.author_user_id,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。
 business_task_signals,author_name,TEXT,1,0,actions,actions.signal_fact.author_name,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。
-business_task_signals,source_document_id,INTEGER,1,0,actions,取消旧 source_document_id；来源独有时内联，真实共享时为 actions.provenance_id FK,最终不保留 business_source_documents 容器；保留 Signal 原公开身份及事实，来源版本由完整定位和校验信息证明。
+business_task_signals,source_document_id,INTEGER,1,0,actions,取消旧 source_document_id；来源独有时内联，真实共享时为 actions.ba_task_signals_provenance_id FK,最终不保留 business_source_documents 容器；保留 Signal 原公开身份及事实，来源版本由完整定位和校验信息证明。
 business_task_signals,context_json,TEXT,1,0,actions,采用的业务事实→actions；可溯源原文/上下文副本取消,字段内容逐项区分业务结果与原文复制；作者/角色/已采用日期保留，原话正文通过准确来源读取。
 business_task_signals,dedupe_key,TEXT,1,0,actions,actions.signal_fact.dedupe_key,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。
 business_task_signals,created_at,TEXT,1,0,actions,actions.signal_fact.created_at,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。

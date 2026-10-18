@@ -41,6 +41,8 @@
 
 最终目标为 **10 张核心表 + 1 张已有迁移账本**。正常空库直接创建最终声明，不再先建 116 张旧表。完整物理控制和完整配对副本均实际达到该表清单；仅物理表数达标不足以证明全部生命周期完成。
 
+原 1,611 字段方向清单已按实际最终声明校正 53 项：49 个 Email 公共字段映射到真实 canonical 列，明确正文／模型输入的条件退休引用；原正文容器 id／created_at 退休，来源 identity 与 Signal 的旧文档 FK 改为实际内联／共享 provenance 关系。共享 FK 的准确生成列为 actions.ba_task_signals_provenance_id，已对当前副本 table_xinfo／FK 核验；不新增字段。其余 typed payload 的物理槽位以 storage_payload／各域有限声明为准，CSV 的 payload.<原字段> 是业务字段含义，不是 JSON 对象存储格式。
+
 | 现有字段／结构 | 最终去向或删除 | 必须保持 |
 | --- | --- | --- |
 | business_source_documents.body | 退休正文容器；不搬进 Actions、provenance、缓存或 trajectory | 精确来源版本、原生／上游定位、hash、字节数 |

@@ -30737,6 +30737,29 @@
       "scope": "one current source-backed owner example rebuild; full historical retirement has not finished, so this is not final all-retired latency",
       "real_sends": 0,
       "production_writes": false
+    },
+    "deploy_path_read_review": {
+      "result": "no finding within bounded path/metadata scope; root reread verified",
+      "live_database_path_preserved": true,
+      "backup_is_recovery_source_only": true,
+      "complete_inverse_received_before_child_error_rethrow": true,
+      "updater_uses_current_data_inverse_on_failure": true,
+      "references": [
+        "app/deploy.py:279-293",
+        "app/repository_updater.py:577-618",
+        "app/store_schema_release.py:128-137",
+        "app/action_email_schema_release.py:431-486",
+        "app/action_email_schema_release.py:789-805"
+      ]
     }
+  },
+  "final_field_map_corrections": {
+    "rows": 1611,
+    "corrected": 53,
+    "email_public_fields": 49,
+    "actual_canonical_columns_verified": true,
+    "retired_container_aliases_and_clocks_verified": true,
+    "actual_shared_provenance_fk": "actions.ba_task_signals_provenance_id -> provenance.id",
+    "runtime_changes": false
   }
 }
