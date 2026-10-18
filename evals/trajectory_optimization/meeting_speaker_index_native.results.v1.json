@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-17",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "fixture": "fictional-meeting-no-tools",
+  "arms": {
+    "ordinary": {
+      "source_chars": 2590,
+      "prompt_chars": 19498,
+      "decision_valid": true,
+      "action": "send",
+      "recipient_user_id": "lin-id",
+      "tool_calls": 0,
+      "captured_session": "01a149a5-ec86-77f1-a03c-1a3f8cfa5810"
+    },
+    "speaker_index": {
+      "source_chars": 2124,
+      "prompt_chars": 19127,
+      "decision_valid": true,
+      "action": "send",
+      "recipient_user_id": "lin-id",
+      "tool_calls": 0,
+      "captured_session": "01a149a6-2ea7-7100-94f8-c1d5c3a6bbe7"
+    }
+  },
+  "source_chars_saved": 466,
+  "prompt_chars_saved": 371,
+  "result": "Both arms preserved the same direct recipient and structured decision contract. The indexed arm surfaced an explicit unresolved launch-path question and added action ownership already supported by the fictional fixture; no source attribution or date was lost.",
+  "scope": "Two isolated cold-start Codex OAuth calls. Output schema enabled. Read-only sandbox, no MCP/tools, no Work Profile, no production records, no external actions."
+}

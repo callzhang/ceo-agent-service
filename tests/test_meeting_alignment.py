@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -818,10 +819,14 @@ class FakeMeetingRunner:
         self.decision = decision
         self.calls = 0
         self.prompts: list[str] = []
+        self.inlined_skill_hashes: list[tuple[tuple[str, str], ...]] = []
 
-    def decide(self, *, prompt: str, run_id=None) -> MeetingAlignmentDecision:
+    def decide(
+        self, *, prompt: str, run_id=None, inlined_skill_hashes=()
+    ) -> MeetingAlignmentDecision:
         self.calls += 1
         self.prompts.append(prompt)
+        self.inlined_skill_hashes.append(tuple(inlined_skill_hashes))
         return self.decision
 
 
@@ -1435,23 +1440,28 @@ def test_consumer_delivers_summary_when_there_is_no_disagreement(tmp_path):
 def test_tool_free_meeting_planner_preserves_all_frozen_skill_requirements(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
+    bodies = {
+        "ceo-meeting-work": "FROZEN MEETING SKILL BODY",
+        "dingtalk-minutes": "FROZEN MINUTES SKILL BODY",
+        "dingtalk-calendar": "FROZEN CALENDAR SKILL BODY",
+    }
+    materials = tuple(
+        ServiceCommandSkillMaterial(
+            name=name,
+            content=(
+                f"## Operation Skill: {name}\nsource: /tmp/{name}\n"
+                f"sha256: {hashlib.sha256(body.encode()).hexdigest()}\n\n{body}"
+            ),
+        )
+        for name, body in bodies.items()
+    )
     context = ServiceCommandConsumerContext(
         scheduled_task_id=3,
         scheduled_task_run_id=5,
         prompt="使用 $ceo-meeting-work 处理真实会议。",
         skill_names=("ceo-meeting-work", "dingtalk-minutes", "dingtalk-calendar"),
         skill_protocol="SHORT CATALOG MUST NOT SUBSTITUTE",
-        skill_materials=(
-            ServiceCommandSkillMaterial(
-                name="ceo-meeting-work", content="FROZEN MEETING SKILL BODY"
-            ),
-            ServiceCommandSkillMaterial(
-                name="dingtalk-minutes", content="FROZEN MINUTES SKILL BODY"
-            ),
-            ServiceCommandSkillMaterial(
-                name="dingtalk-calendar", content="FROZEN CALENDAR SKILL BODY"
-            ),
-        ),
+        skill_materials=materials,
     )
     implementations = {
         option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS
@@ -1471,6 +1481,12 @@ def test_tool_free_meeting_planner_preserves_all_frozen_skill_requirements(tmp_p
     assert "FROZEN MINUTES SKILL BODY" in prompt
     assert "FROZEN CALENDAR SKILL BODY" in prompt
     assert "SHORT CATALOG MUST NOT SUBSTITUTE" not in prompt
+    assert runner.inlined_skill_hashes == [
+        tuple(
+            (name, hashlib.sha256(body.encode()).hexdigest())
+            for name, body in bodies.items()
+        )
+    ]
 
 
 def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):

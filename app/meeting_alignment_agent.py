@@ -86,7 +86,13 @@ class MeetingAlignmentCodex(Protocol):
     last_transcript_end_line: int
     last_audit_tool_events: list[dict[str, str]]
 
-    def decide(self, *, prompt: str, run_id: int) -> MeetingAlignmentDecision: ...
+    def decide(
+        self,
+        *,
+        prompt: str,
+        run_id: int,
+        inlined_skill_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> MeetingAlignmentDecision: ...
 
 
 class MeetingAlignmentAgent:
@@ -104,6 +110,7 @@ class MeetingAlignmentAgent:
         run_id: int | None = None,
         consumer_prompt: str = "",
         skill_protocol: str = "",
+        inlined_skill_hashes: tuple[tuple[str, str], ...] = (),
     ) -> MeetingAlignmentDecision:
         profile = work_profile_instruction()
         profile_source = (
@@ -120,11 +127,12 @@ class MeetingAlignmentAgent:
             skill_protocol=skill_protocol,
         )
         for repair_attempt in range(MEETING_SOURCE_TARGET_REPAIR_LIMIT + 1):
-            decision = (
-                self.codex.decide(prompt=prompt, run_id=run_id)
-                if run_id is not None
-                else self.codex.decide(prompt=prompt)
-            )
+            codex_options = {"prompt": prompt}
+            if run_id is not None:
+                codex_options["run_id"] = run_id
+            if inlined_skill_hashes:
+                codex_options["inlined_skill_hashes"] = inlined_skill_hashes
+            decision = self.codex.decide(**codex_options)
             try:
                 _validate_source_aware_target(
                     source, decision, group_candidates=group_candidates or []
@@ -166,7 +174,13 @@ class MeetingAlignmentCodexRunner:
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
 
-    def decide(self, *, prompt: str, run_id: int) -> MeetingAlignmentDecision:
+    def decide(
+        self,
+        *,
+        prompt: str,
+        run_id: int,
+        inlined_skill_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> MeetingAlignmentDecision:
         # Meeting decisions are intentionally isolated: never resume a reply,
         # task, or earlier meeting session.
         self.last_session_id = None
@@ -185,6 +199,7 @@ class MeetingAlignmentCodexRunner:
                     ),
                     output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,
+                    inlined_skill_hashes=inlined_skill_hashes,
                 ),
                 parser=_encode_meeting_alignment_result,
                 result_codec=MEETING_RESULT_CODEC,

@@ -981,3 +981,22 @@ and uncertain retries did not dispatch again. This independent external-action
 confirmation issue remains unresolved; it is not evidence that the input fix failed,
 and uncertain is not proof that the external comment was never written. No replay
 or incidental effect-reconciliation policy change was made.
+### Meeting frozen Skill duplicate suppression (2026-10-17)
+
+Read-only trajectory review found exact repeated frozen Skill bodies in all 28
+readable Meeting sessions; the repeated bodies totaled 605,661 characters.
+Those sessions are only 28 of 656 distinct local sessions, so this does not
+establish a workload-wide rate. The production-shaped example had 1,508
+transcript lines and five speaker identities, and a separate lossless index
+projection reduced its serialized source by 79,142 characters. The anonymous
+cold-start output comparison receipt is
+`evals/trajectory_optimization/meeting_speaker_index_native.results.v1.json`.
+
+The local candidate keeps the full frozen Skill text in the service prompt and
+passes its verified SHA-256 to Codex. Native Skill files are disabled by exact
+path only when their full file hash matches that frozen digest; changed,
+unreadable, or invalid copies stay enabled. The focused Meeting and Skill suite
+passes 232 tests, with Ruff and `git diff --check` clean. Production HEAD
+`1fcbddda` does not forward Meeting frozen digests, so this is not live behavior.
+No meeting source text was copied, and no provider action, publish, or deploy
+occurred.

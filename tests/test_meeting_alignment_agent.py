@@ -930,6 +930,19 @@ def test_runner_always_starts_fresh_and_uses_schema(tmp_path: Path):
     assert runner.last_transcript_start_line == 0
 
 
+def test_runner_passes_frozen_skill_hashes_to_native_command():
+    routed = FakeRoutedMeetingExecution(
+        json.dumps(summary_payload(), ensure_ascii=False)
+    )
+    runner = MeetingAlignmentCodexRunner(routed_execution=routed)
+    hashes = (("ceo-meeting-work", "a" * 64), ("dingtalk-minutes", "b" * 64))
+
+    runner.decide(prompt="decide", run_id=8, inlined_skill_hashes=hashes)
+
+    factory = routed.calls[0]["command_factory"]
+    assert factory.inlined_skill_hashes == hashes
+
+
 def test_runner_normalizes_mechanical_trigger_mismatch(tmp_path: Path):
     payload = derek_view_payload(historical_sources=[])
     payload["topics"] = [
