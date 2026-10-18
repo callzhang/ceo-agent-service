@@ -839,6 +839,20 @@ def _seed_weekly_report_task(
 
 
 def daily_report_prompt() -> str:
+    minutes_sequence = (
+        "若服务事实显示某场会议的会后消息不足以提供相关管理细节，读取听记前先调用 "
+        '`agent_cli.read_task_skill(name="dingtalk-minutes")` 读取本任务冻结的 Skill，再查听记摘要；'
+        "否则跳过该 Skill。"
+    )
+    return _daily_report_prompt(minutes_sequence)
+
+
+def _daily_report_prompt_before_conditional_minutes() -> str:
+    """Exact prompt stored before the conditional Minutes Skill sequence."""
+    return _daily_report_prompt("按需用 $dingtalk-minutes 补读会议摘要；")
+
+
+def _daily_report_prompt(minutes_sequence: str) -> str:
     facts_command = (
         f"{shlex.quote(str(central_python()))} -m app.cli daily-report-facts "
         "--scheduled-run <本次触发的 scheduled_task_run_id>"
@@ -846,7 +860,7 @@ def daily_report_prompt() -> str:
     return (
         "按 $ceo-daily-report 生成 CEO 每日总结。"
         f"先运行 `{facts_command}` 取得报告窗口和服务记录的事实，再用 $dingtalk-chat 扫描窗口内全部群消息，"
-        "按需用 $dingtalk-minutes 补读会议摘要；写成报告后用 $dingtalk-wiki 与 $dingtalk-doc "
+        f"{minutes_sequence}写成报告后用 $dingtalk-wiki 与 $dingtalk-doc "
         "发布到钉钉文档并读回核对，最后提出 dingtalk-chat 单聊动作；"
         "审核轮只能调用服务提供的 send_approved_dingtalk_message 发送，不能用机器人或 dws 绕过投递台账。"
         "某个来源读不到时写进覆盖说明，照常发布，不要向 Derek 追问材料。"
@@ -884,7 +898,10 @@ def _seed_daily_report_task(
     if existing is not None:
         # This is a repository-owned delivery-contract migration.  Only
         # replace the exact legacy seed; preserve any operator-edited prompt.
-        if existing.prompt == _legacy_daily_report_prompt():
+        if existing.prompt in {
+            _legacy_daily_report_prompt(),
+            _daily_report_prompt_before_conditional_minutes(),
+        }:
             return store.update_scheduled_task(
                 existing.id,
                 expected_version=existing.version,
