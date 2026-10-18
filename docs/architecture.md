@@ -1756,6 +1756,8 @@ Consumer 完成候选准备时，把原 trigger、消息/材料和计划涉及�
 
 Attempt 详情的 system_execution 按 candidate、review、selection 绑定显示当前及历史阶段、声明顺序、未开始动作、失败/不确定状态和 provider 回执。只有 canonical action ledger 中核验成功的动作计为 verified；Audit approve 和用户选择都不能显示为已经执行。
 
+Attempt History 的外部效果摘要进一步区分本执行代首次产生的 verified effect 与本代复用的旧回执。当前代的 effect 必须由回执记录的原始 Agent run 归属；复用回执单列为“已复用”，不把旧操作归到本轮或本轮 acting run。动作时间取 provider 结构化操作记录中的原始时间；不以本次复用或 Attempt 更新时间替代。该区分只影响只读 History 投影，不改变 verified receipt、幂等复用或任何 provider 操作。
+
 失败 Reply task 的 Attention 诊断只读取本对象本 generation 的当前 run，显示原 source_code（无则 code）与明确标为“Agent 说明”的 reported_summary；缺少或坏 JSON 时保留 task error，不将 Agent 自述当作已证实的 provider 拒绝。History、Attempt 详情和 Reply attempts queue 对微信分别读取本对象当前 generation 最新 delivery：failed/send_unknown 不能被只表示候选完成的 task done 遮蔽。旧 generation 或其他对象的 delivery 不影响当前结果；这些展示不更新任务、投递或授权状态。
 
 独立 Email 退订仍使用原有 direct executor、浏览器步骤和回执；所有结构化 `action_type=unsubscribe` 失败都保留真实 `failed` 状态和 History 记录，但不进入管理者 Attention。已识别的可重试外部页面/网络失败按指数退避重试；旧格式 `failed_browser: category=<名称>` 与当前错误格式共享外部错误分类。服务自身的执行围栏错误（如 `unsubscribe_operation_rejected:ValueError`）仍归类为内部技术错误，但结果不确定时只保留失败并等回读，不重放操作或清除标记；不确定性不改变 Attention 投影规则。效果零副作用的旧失败任务也只有在 ActionPlan 完整且没有执行中标记、claim、receipt、effect、浏览器 step 或 Agent run 时才会自动重新入队。无运行时调用者的旧 Agent continuation driver 已删除；Agent finalizer 不再从历史 Audit 声明触发退订、切换渠道或伪造执行成功。默认 developer prompt 和 OA 规则种子统一为新角色合同；既有自定义规则、managed Skill 配置与 runtime-only Skill 必须在安静的正式发布窗口中逐项发布并记录版本，部署代码本身不会覆盖它们。

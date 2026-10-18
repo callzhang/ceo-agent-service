@@ -580,6 +580,7 @@ def _external_effect_sentence(what_happened: dict[str, Any]) -> str:
     """
 
     actions = what_happened.get("external_actions") or []
+    reused_actions = what_happened.get("reused_external_actions") or []
     commands = [
         action["what"] for action in actions if action.get("recorded_by") == "turn"
     ]
@@ -590,8 +591,18 @@ def _external_effect_sentence(what_happened: dict[str, Any]) -> str:
     if recorded:
         parts.append(f"服务记录了 {recorded} 项写操作回执")
     at = next((action.get("at") for action in actions if action.get("at")), "")
-    when = f"（{at}）" if at else ""
-    return "外部动作已完成" + when + ("：" + "；".join(parts) if parts else "")
+    when = f"（本轮操作时间：{at}）" if at else ""
+    sentences = []
+    if actions:
+        sentences.append("本轮外部动作已完成" + when + ("：" + "；".join(parts) if parts else ""))
+    if reused_actions:
+        reused_count = len([action for action in reused_actions if action.get("recorded_by") == "system"])
+        reused_times = list(dict.fromkeys(
+            action["at"] for action in reused_actions if action.get("at")
+        ))
+        original_time = f"（原始操作时间：{'、'.join(reused_times)}）" if reused_times else ""
+        sentences.append(f"已复用此前完成的 {reused_count} 项外部动作回执{original_time}")
+    return "；".join(sentences)
 
 
 def _consumer_result_with_deciding_scores(
@@ -1008,7 +1019,10 @@ def build_attempt_detail(
                 # what the page showed for a leave that was already approved.
                 "external_effect": (
                     _external_effect_sentence(what_happened)
-                    if what_happened["reached_the_outside_world"]
+                    if (
+                        what_happened["reached_the_outside_world"]
+                        or what_happened.get("reused_external_actions")
+                    )
                     else normalize_display_value(getattr(attention, "external_effect", "")) if attention else ""
                 ),
                 "retry_at": normalize_display_value(getattr(attention, "retry_at", "")) if attention else "",

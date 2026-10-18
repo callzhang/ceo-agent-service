@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Sequence
+from datetime import datetime, timezone
 from typing import Any
 
 #: Failure codes that mean the environment did not deliver a result. Anything
@@ -74,8 +75,53 @@ def _loads(raw: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _provider_operation_time(receipt: dict[str, Any]) -> str:
+    provider_result = _loads(receipt.get("provider_result_json"))
+    operation_record = provider_result.get("operation_record")
+    value = operation_record.get("date") if isinstance(operation_record, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return ""
+    try:
+        return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat(
+            timespec="milliseconds"
+        ).replace("+00:00", "Z")
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
+def _system_receipt_action(receipt: dict[str, Any]) -> dict[str, str]:
+    operation = str(receipt.get("operation") or "external action").strip()
+    action_key = str(receipt.get("external_action_key") or "").strip()
+    return {
+        "what": f"{operation} ({action_key})",
+        "at": _provider_operation_time(receipt),
+        "recorded_by": "system",
+    }
+
+
+def _receipt_run_partitions(
+    runs: Sequence[Any], *, store: Any
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Separate current effects from receipts whose original effect is older."""
+    current_run_ids = {
+        run_id for run in runs
+        if (run_id := getattr(run, "id", None)) is not None
+    }
+    current: list[dict[str, Any]] = []
+    reused: list[dict[str, Any]] = []
+    for receipt in _verified_system_receipts(runs, store=store):
+        origin_run_id = receipt.get("receipt_first_agent_run_id")
+        if origin_run_id is None:
+            # Test doubles and legacy receipt providers may expose the source
+            # field without the projection alias.
+            origin_run_id = receipt.get("first_agent_run_id")
+        target = current if origin_run_id in current_run_ids else reused
+        target.append(receipt)
+    return current, reused
+
+
 def external_actions(runs: Sequence[Any], *, store: Any = None) -> list[dict[str, str]]:
-    """Every action of this generation that reached the outside world.
+    """Actions first performed by this generation that reached outside world.
 
     Empty is itself an answer, and a true one: nothing left the service.
     """
@@ -83,17 +129,12 @@ def external_actions(runs: Sequence[Any], *, store: Any = None) -> list[dict[str
     from app.dingtalk_send_evidence import completed_provider_writes
     from app.outbound_text_authority import delivered_shell_send_commands
 
-    found: list[dict[str, str]] = []
-    for receipt in _verified_system_receipts(runs, store=store):
-        operation = str(receipt.get("operation") or "external action").strip()
-        action_key = str(receipt.get("external_action_key") or "").strip()
-        if not action_key:
-            continue
-        found.append({
-            "what": f"{operation} ({action_key})",
-            "at": str(receipt.get("updated_at") or ""),
-            "recorded_by": "system",
-        })
+    current_receipts, _ = _receipt_run_partitions(runs, store=store)
+    found: list[dict[str, str]] = [
+        _system_receipt_action(receipt)
+        for receipt in current_receipts
+        if str(receipt.get("external_action_key") or "").strip()
+    ]
     for run in runs:
         events = list(getattr(run, "tool_events", None) or [])
         if not events:
@@ -115,6 +156,18 @@ def external_actions(runs: Sequence[Any], *, store: Any = None) -> list[dict[str
                     {"what": str(identifier), "at": at, "recorded_by": "service"}
                 )
     return found
+
+
+def reused_external_actions(
+    runs: Sequence[Any], *, store: Any = None
+) -> list[dict[str, str]]:
+    """Verified prior effects whose immutable receipts were reused this generation."""
+    _, reused_receipts = _receipt_run_partitions(runs, store=store)
+    return [
+        _system_receipt_action(receipt)
+        for receipt in reused_receipts
+        if str(receipt.get("external_action_key") or "").strip()
+    ]
 
 
 def _verified_system_receipts(runs: Sequence[Any], *, store: Any) -> list[dict[str, Any]]:
@@ -219,7 +272,8 @@ def deciding_scores(runs: Sequence[Any], *, acting_run_id: int | None = None) ->
 def acting_run_id(runs: Sequence[Any], *, store: Any = None) -> int | None:
     """The proposal run behind the first verified action, if available."""
 
-    for receipt in _verified_system_receipts(runs, store=store):
+    current_receipts, _ = _receipt_run_partitions(runs, store=store)
+    for receipt in current_receipts:
         candidate_id = receipt.get("candidate_id")
         get_candidate = getattr(store, "get_review_candidate", None)
         if not callable(get_candidate) or type(candidate_id) is not int:
@@ -290,10 +344,12 @@ def build_what_happened(
 
     ordered = list(runs)
     actions = external_actions(ordered, store=store)
+    reused_actions = reused_external_actions(ordered, store=store)
     stopped = stop_reason if stop_reason is not None else stopped_because(ordered)
     acted_in = acting_run_id(ordered, store=store)
     return {
         "external_actions": actions,
+        "reused_external_actions": reused_actions,
         "reached_the_outside_world": bool(actions),
         "acted_in_run_id": acted_in,
         "stopped_because": stopped,
@@ -301,5 +357,5 @@ def build_what_happened(
         "proposed_text": proposed_text(ordered),
         # An action already completed is not a question. Only say a person is
         # needed when something is genuinely still undecided.
-        "open_for_human": not actions and stopped["kind"] != "none",
+        "open_for_human": not actions and not reused_actions and stopped["kind"] != "none",
     }

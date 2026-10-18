@@ -2612,6 +2612,8 @@ Consumer 完成候选准备时，把原 trigger、消息/材料和计划涉及�
 
 Attempt 详情的 system_execution 按 candidate、review、selection 绑定显示当前及历史阶段、声明顺序、未开始动作、失败/不确定状态和 provider 回执。只有 canonical action ledger 中核验成功的动作计为 verified；Audit approve 和用户选择都不能显示为已经执行。
 
+History 的“外部动作”摘要按 receipt 的 `first_agent_run_id` 归属：属于当前 Attempt 所含运行的 verified receipt 才算本轮新产生的效果；本轮继续处理时复用的较早 receipt 单独显示为已复用，不冒充本轮操作或本轮 acting run。时间从 provider 结构化操作记录读取，以 UTC 毫秒精度呈现；Attempt 更新时刻不能替代原始操作时间。此规则只修正只读展示，保留不可变 receipt、原 done 状态和现有幂等复用语义。
+
 失败 Reply task 的 Attention 诊断只读取本对象本 generation 的当前 run，显示原 source_code（无则 code）与明确标为“Agent 说明”的 reported_summary；缺少或坏 JSON 时保留 task error，不将 Agent 自述当作已证实的 provider 拒绝。History、Attempt 详情和 Reply attempts queue 对微信分别读取本对象当前 generation 最新 delivery：failed/send_unknown 不能被只表示候选完成的 task done 遮蔽。旧 generation 或其他对象的 delivery 不影响当前结果；这些展示不更新任务、投递或授权状态。
 
 独立 Email 退订仍使用原有 direct executor、浏览器步骤和回执。无运行时调用者的旧 Agent continuation driver 已删除；Agent finalizer 不再从历史 Audit 声明触发退订、切换渠道或伪造执行成功。默认 developer prompt 和 OA 规则种子统一为新角色合同；既有自定义规则、managed Skill 配置与 runtime-only Skill 必须在安静的正式发布窗口中逐项发布并记录版本，部署代码本身不会覆盖它们。
