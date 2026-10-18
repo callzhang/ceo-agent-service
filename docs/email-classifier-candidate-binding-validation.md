@@ -62,6 +62,13 @@ managed revision 10 (`816012c2…`). Startup imports revision 182 (`5ba8cb23…`
 then reconciles the enabled task's old exact revision and loads the old one.
 Production therefore cannot pass until the scheduled task reference is updated.
 
+Before release, confirm no pending or claimed email classification task carries
+frozen revision 10 material and no pending classifier trigger can still produce
+one; a paused schedule does not discard an already queued trigger. The read-only
+check at 2026-10-18 10:04 UTC found all 1,379 classification tasks `done`, but
+scheduled task 10 still had an unclaimed 10:00 UTC pending trigger. Let it drain
+through the normal dispatcher and recheck before changing the binding.
+
 For a bounded release, pause only scheduled task 10 through its versioned API,
 update its single Skill reference to revision 182 while preserving every other
 task field, deploy the merged code through `python -m app.deploy`, verify the
