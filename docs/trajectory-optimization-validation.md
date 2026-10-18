@@ -1111,3 +1111,35 @@ deployment. No post-release Weekly Report turn or real document write occurred
 at this checkpoint, so the production readback proves code, Skill and runtime
 binding, while actual publication awaits the next natural run and provider
 readback.
+
+## Task semantic-context reuse draft: no-go, 2026-10-18
+
+Draft PR #125 combines two changes. Its Consumer feedback-revision mechanism
+was delivered separately in PR #134. Its remaining Task mechanism omits
+semantic context only when the immediately preceding Task input has an exact
+semantic-context fingerprint in the same native session and runner lifetime.
+The fingerprint includes `current_work_item`, so a new source or Work Item is
+unlikely to match. The anonymous native comparison in #125 proves one
+constructed matching case saved 8,974 submitted characters and preserved that
+case's Project assessment; it does not establish repeated production benefit.
+
+Read-only production metadata yielded 8,921 completed Task Agent runs with a
+Codex session ID, 340 adjacent completed-run pairs sharing a session, and only
+eight of those pairs sharing both `summary_input_id` and source identity. This
+is a metadata proxy, not the count or an upper bound of exact fingerprint
+matches: different input IDs could still render identical content, while even
+the eight same-input pairs can differ in semantic context, runner lifetime, or
+native tail. In the
+most recent observed shared session, 19 completed runs had 19 distinct input
+IDs and source identities. The associated native session files were unavailable
+under the configured Codex home, so this review cannot establish the complete
+production trajectory for an applicable repeated-context case.
+
+Acceptance for this specific optimization would require a complete, repeated
+production trajectory showing byte-identical context across adjacent Tasks,
+measured input savings, and a fixed case preserving Task/Project decisions,
+source citations, and no cross-item omission. The current evidence does not
+meet the first condition. Do not merge or deploy the Task half of #125, or add
+fallback/prompt rules to make the draft fire more often. Revisit only when a
+complete native trajectory and a real matching workload justify a new bounded
+change.
