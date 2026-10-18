@@ -1322,11 +1322,18 @@ nonreconstructable raw field fails the gate.
 tool results reconstructed each of the 3,553 original `raw_payload` objects
 from the projected form, including key order, and preserved every original
 top-level field. Of those messages, 3,031 had a shorter projected form.
-Compact UTF-8 JSON length fell from 8,317,652 to 5,820,948 characters across
-the 120 result objects, saving 2,496,704 characters (median 15,436 per call,
-maximum 98,908). These are replay measurements, not post-deployment live
-token or latency measurements. The focused tool/projection tests passed
-(83 tests), as did Ruff. Four anonymous, no-tool, read-only Codex OAuth
+In the initial compact-JSON replay, length fell from 8,317,652 to 5,820,948
+characters across the 120 result objects, saving 2,496,704 characters
+(median 15,436 per call, maximum 98,908). Independent review found that a
+compact-JSON size gate could let short duplicates enlarge FastMCP's actual
+indented tool text. The gate now measures the message inside the `messages`
+array with FastMCP's real JSON formatting. The pre-correction compact savings
+are a size baseline, **not** a final model-visible saving claim; the corrected
+gate may retain more short raw values. A regression invokes `FastMCP.call_tool`
+at the short-value boundary and confirms the original result is retained;
+additional lengths and Unicode confirm non-growth and lossless expansion under
+the actual format. The focused tool/projection tests passed (91 tests), as did
+Ruff. Four anonymous, no-tool, read-only Codex OAuth
 comparisons checked the original and projected forms of two Consumer message
 cases and two Audit candidate cases. Both Consumer forms returned `no_action`
 for a previously handled confirmation, and targeted the same unanswered

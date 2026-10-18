@@ -3,9 +3,16 @@
 import json
 from typing import Any
 
+import pydantic_core
+
 
 def _json_bytes(value: object) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _model_visible_chars(value: object) -> int:
+    # Match FastMCP's indented text at this tool's actual nesting depth.
+    return len(pydantic_core.to_json({"messages": [value]}, fallback=str, indent=2).decode())
 
 
 def share_message_raw_payload(message: dict[str, Any]) -> dict[str, Any]:
@@ -43,4 +50,4 @@ def share_message_raw_payload(message: dict[str, Any]) -> dict[str, Any]:
         },
         "raw_payload_field_refs": references,
     }
-    return projected if _json_bytes(projected) < _json_bytes(message) else message
+    return projected if _model_visible_chars(projected) < _model_visible_chars(message) else message

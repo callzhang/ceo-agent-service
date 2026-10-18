@@ -1,12 +1,15 @@
 """Lossless sharing of repeated fields in a DingTalk message tool result."""
 
+import asyncio
 import json
 from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
+import pydantic_core
 
 from app.agent_cli import build_role_server
+from app.dingtalk_models import DingTalkMessage
 from app.dingtalk_message_payload_sharing import share_message_raw_payload
 
 
@@ -83,3 +86,40 @@ def test_recent_message_tool_returns_lossless_projection_for_both_roles(monkeypa
     assert len(json.dumps(result, ensure_ascii=False)) < len(
         json.dumps({"messages": [original]}, ensure_ascii=False)
     )
+
+
+def test_short_duplicate_does_not_grow_fastmcp_model_visible_text(monkeypatch):
+    source = DingTalkMessage(
+        open_conversation_id="cid-synthetic-1",
+        open_message_id="msg-synthetic-1",
+        conversation_title="Synthetic",
+        single_chat=False,
+        sender_name="Sender",
+        create_time="2026-10-18T00:00:00Z",
+        content="x" * 47,
+        raw_payload={"text": "x" * 47},
+    )
+
+    class FakeDwsClient:
+        def read_recent_messages(self, _conversation, *, limit):
+            assert limit == 50
+            return [source]
+
+    monkeypatch.setattr("app.dws_client.DwsClient", FakeDwsClient)
+    server = build_role_server("consumer")
+    content, _structured = asyncio.run(
+        server.call_tool("read_dingtalk_messages", {"conversation_id": "cid-synthetic-1"})
+    )
+    assert len(content) == 1
+    assert json.loads(content[0].text)["messages"] == [source.model_dump(mode="json")]
+
+
+@pytest.mark.parametrize("body", ["x" * length for length in (1, 20, 47, 65, 100, 1000)] + ["中文" * 100])
+def test_projection_never_enlarges_actual_indented_tool_result(body):
+    original = _message(body)
+    projected = share_message_raw_payload(original)
+    before = pydantic_core.to_json({"messages": [original]}, fallback=str, indent=2)
+    after = pydantic_core.to_json({"messages": [projected]}, fallback=str, indent=2)
+
+    assert len(after.decode()) <= len(before.decode())
+    assert _expanded_raw_payload(projected) == original["raw_payload"]
