@@ -147,6 +147,19 @@ def test_repository_consumer_release_manifest_includes_current_attendance_review
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 
+@pytest.mark.parametrize("script", ("report_contract.py", "validate_run.py"))
+def test_repository_consumer_release_manifest_tracks_weekly_report_scripts(script):
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    source = f"ci/shared-skills/ceo-weekly-report/scripts/{script}"
+    entry = next(item for item in manifest["files"] if item["source"] == source)
+
+    assert entry["target"] == f"skills/ceo-weekly-report/scripts/{script}"
+    assert entry["new_sha256"] == _digest((root / source).read_bytes())
+
+
 def _skill(name: str, marker: bool, suffix: str) -> bytes:
     metadata = "metadata:\n  managed_by: ceo-agent-service\n" if marker else ""
     return (
@@ -196,6 +209,22 @@ def _fixture(tmp_path: Path):
         "source": f"ci/shared-skills/{rel}", "target": f"skills/{rel}",
         "old_sha256": _digest(old[rel]), "new_sha256": _digest(new[rel]),
     })
+    for rel in (
+        "ceo-weekly-report/scripts/report_contract.py",
+        "ceo-weekly-report/scripts/validate_run.py",
+    ):
+        old[rel] = f"old {Path(rel).name}\n".encode()
+        new[rel] = f"new {Path(rel).name}\n".encode()
+        target = skills / rel
+        source = root / "ci/shared-skills" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(old[rel])
+        source.write_bytes(new[rel])
+        entries.append({
+            "source": f"ci/shared-skills/{rel}", "target": f"skills/{rel}",
+            "old_sha256": _digest(old[rel]), "new_sha256": _digest(new[rel]),
+        })
     rel = "stardust-oa-finance-review/references/finance-rule-cards.md"
     old[rel], new[rel] = b"old finance rules\n", b"new finance rules\n"
     target = skills / rel
@@ -289,6 +318,11 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
 
     assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == new["ceo-daily-report/SKILL.md"]
     assert rules.read_bytes() == new["audit_rules"]
+    for rel in (
+        "ceo-weekly-report/scripts/report_contract.py",
+        "ceo-weekly-report/scripts/validate_run.py",
+    ):
+        assert (skills / rel).read_bytes() == new[rel]
     assert untouched.read_text() == "keep me"
     updated = store.get_scheduled_task(task_id)
     assert updated.skill_refs[-1].skill_source == "operation"
@@ -306,6 +340,11 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
 
     assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == old["ceo-daily-report/SKILL.md"]
     assert rules.read_bytes() == old["audit_rules"]
+    for rel in (
+        "ceo-weekly-report/scripts/report_contract.py",
+        "ceo-weekly-report/scripts/validate_run.py",
+    ):
+        assert (skills / rel).read_bytes() == old[rel]
     assert untouched.read_text() == "keep me"
     assert store.get_scheduled_task(task_id).skill_refs == _store_refs(store, old_config_id)
     rollback_config = store.get_pending_or_active_runtime_skill_config()

@@ -981,3 +981,59 @@ and uncertain retries did not dispatch again. This independent external-action
 confirmation issue remains unresolved; it is not evidence that the input fix failed,
 and uncertain is not proof that the external comment was never written. No replay
 or incidental effect-reconciliation policy change was made.
+
+### Weekly Report validator and runtime publication alignment (2026-10-17)
+
+The synthetic new-target native trace exposed a validator/render contract
+mismatch: the installed validator returned `publishable=true`, followed by nine
+failed render calls for fields the renderer reads. The candidate validator
+reports the missing metric, issue, owner and business-line fields before
+rendering; after correction, rendering and the in-memory fake-sink readback
+passed. A matched prompt-only reuse hint did not remove a second identical
+successful render call, so no new Skill instruction was added.
+
+The current `consumer-system-contract-release` manifest also omitted both
+validator scripts and had a stale Weekly Report Skill digest. The candidate
+release now includes `report_contract.py` and `validate_run.py` with the Skill;
+focused publication tests cover exact copy and rollback. Skill tests: 57 passed;
+release, materials and CLI tests: 97 passed. Production remains unchanged at
+HEAD `1fcbddda` with the old `validate_run.py` digest and no manifest entry.
+This is local candidate evidence only; no real report was written or deployed.
+Receipt: `evals/trajectory_optimization/weekly_report_missing_target_render.native.v1.json`.
+
+Acceptance for this release is bounded to the missing-target mechanism: a
+missing current document must use the complete previous meeting document as
+the render base and must not require a nonexistent target ID or revision;
+validator success must imply that every field read by the renderer is present.
+An existing target must retain its revision-guarded overwrite and readback,
+and the daily-report write path must continue to accept its existing content.
+The fixed anonymous new-target case and affected local tests verify those
+behaviors without writing a real document. Production acceptance additionally
+requires the published Skill and both validator scripts, the exact scheduled
+Skill binding and worker load receipt, a healthy new process, and queue,
+Attention and History readback. A real post-release document publication is
+not claimed without its own provider receipt.
+
+After merging `origin/main` at `3039eb159`, the prior PR Quality run's 48
+failed test IDs were compared with the same-base main run's 48. One new failure
+was the generation-fence test's lightweight database fixture: it stubbed the
+writer but not the caller's task-type lookup. The production writer already
+opened the full Store. Completing that fixture preserved its old/new generation
+assertions; the focused test passed. Before review, the merged branch passed 86 CLI/release
+tests, 53 materials/receipt/boundary/artifact tests, and 34 Skill contract tests;
+Ruff and diff checks passed. Read-only publication preflight passed all 16
+manifest entries and found only the Weekly Report Skill plus its two validator
+scripts changing. The People OA Skill was already identical to the current
+repository source; only its stale manifest `old_sha256` was refreshed.
+
+PR review found that an exact rendered-content digest check would add a new
+publication gate beyond the missing-target repair, so it was removed. The
+service binds target existence and revision from rendering; the existing
+document content and JSONML validation remains in the writer. Review also
+found that business-line metrics were being required to carry `previous` and
+`change`, fields read only by the company-metric renderer. A separate field
+set now matches the business-line renderer. A valid synthetic Friday metric
+without those two fields passes validation and renders 32 managed nodes;
+the 58 Skill tests and 97 affected CLI/release tests pass after
+these corrections. The publication preflight still changes only the same
+three Weekly Report files.

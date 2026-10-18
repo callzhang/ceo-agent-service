@@ -45,19 +45,21 @@ Keep the existing revision-guarded publication and section-ownership contract.
   `未提交` in the manifest's `business_reports`, gets a coverage warning and
   a native mention in the report, and does not block the run.
 
-Publication is blocked only when the materials command fails, the target's
-revision changes under the write, or the write cannot be read back.
+Publication is blocked if the materials command cannot resolve the unique
+target, an existing target changes after rendering, a target appears or
+disappears before the bound write, or the write cannot be read back.
 
 ## Workflow
 
 1. Read the task-bound service materials. Keep the target, previous document,
    meeting index, coverage and source identifiers in the report's manifest.
 2. Read the target and previous documents with
-   `agent_cli.read_dingtalk_document_full`; retain the target revision and
-   complete JSONML as the before state. When the target does not exist, prepare
-   its required section headings and `重点问题及待办跟踪` table from the previous
-   document; the task-bound document operation creates it in the resolved year
-   page, creating that page under the meeting folder when needed.
+   `agent_cli.read_dingtalk_document_full` and inspect their identities and
+   contents. Do not construct or shorten the JSONML passed to the render tool:
+   `agent_cli.render_weekly_report` reads the complete current target as its
+   render base, or the complete previous meeting document when the target does
+   not exist. The task-bound write creates a missing target in the resolved
+   year page, creating that page under the meeting folder when needed.
 3. Screen every meeting in the materials from its title, participants and
    follow-up message; read the archived transcript file of each one relevant to
    Derek's management responsibilities or a business line, using
@@ -79,14 +81,16 @@ revision changes under the write, or the write cannot be read back.
 7. Draft the seven-section `report.json` with `as_of` set to the cutoff's
    Beijing date. Classify every consequential claim and retain evidence IDs.
 8. Call `agent_cli.validate_weekly_report` with the manifest, report and prior
-   issues; fix blockers. Call `agent_cli.render_weekly_report` with the complete
-   before JSONML and report. It returns the target body and complete seven-section
-   draft after the Skill's JSONML check and native document parser pass.
+   issues; fix blockers. Call `agent_cli.render_weekly_report` with the report.
+   The service resolves and reads the complete render base, then returns the
+   target body, source revision and complete seven-section draft after the
+   Skill's JSONML check and native document parser pass.
 9. The scheduled run is authorized to write the target meeting document
    (Derek 2026-09-24). Call task-bound `agent_cli.consumer_document_write` with
-   the rendered target JSONML and the exact revision read in step 2. For an
-   existing target, the operation saves a recoverable version and performs one
-   revision-guarded overwrite; any revision change blocks the write.
+   the rendered target JSONML. The service binds the target existence and
+   revision from rendering; for an existing target, the operation
+   saves a recoverable version and performs one revision-guarded overwrite.
+   For a missing target, it creates the document in the resolved year page.
 10. Compare the complete readback returned by that operation with the rendered
     target and verify the unchanged places and issue table before reporting
     completion. Unknown write status requires readback, never a blind second
