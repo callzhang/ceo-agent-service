@@ -1,5 +1,16 @@
 # Task same-input source projection sharing
 
+Acceptance for this change is limited to one Task semantic context. A repeated
+projection must appear once with later documents pointing to it only when the
+complete serialized bundle becomes shorter. Expanding every pointer must
+reproduce the original bundle exactly; document identity, per-document
+metadata, signal and citation bindings, retrieval selection, and the fixed
+Project/Task/Attention decisions must not change. Cold and same-session
+continuation are both required. After release, verify the deployed commit and
+new service process, health, queues, Attention, and History, plus a read-only
+projection check against the installed code. A synthetic result does not prove
+future production Task decisions.
+
 The Task semantic context can include separate source documents whose visible
 ranges and decoded excerpts are identical. Serializing those same character
 ranges on every document repeats input bytes without adding evidence.
@@ -33,3 +44,7 @@ Focused verification in the isolated worktree:
 
 - `CEO_USER_PROMPT_TEMPLATE_PATH=app/defaults/user_prompt.md pytest -q tests/test_task_source_projection_sharing.py tests/test_task_retrieval.py tests/test_task_source_documents.py tests/test_task_agent.py` — 297 passed.
 - Ruff and `git diff --check` passed.
+
+The same 297 focused tests and Ruff passed after merging `origin/main` into the
+PR branch on 2026-10-18. The older PR Quality run failed in unrelated
+repository-wide tests; it does not replace the fixed-case behavior check.
