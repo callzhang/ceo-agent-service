@@ -996,7 +996,14 @@ The local candidate keeps the full frozen Skill text in the service prompt and
 passes its verified SHA-256 to Codex. Native Skill files are disabled by exact
 path only when their full file hash matches that frozen digest; changed,
 unreadable, or invalid copies stay enabled. The focused Meeting and Skill suite
-passes 232 tests, with Ruff and `git diff --check` clean. Production HEAD
-`1fcbddda` does not forward Meeting frozen digests, so this is not live behavior.
-No meeting source text was copied, and no provider action, publish, or deploy
-occurred.
+passes 236 tests, with Ruff and `git diff --check` clean. The serializer now
+uses the same deterministic speaker-index format only when the compact source
+JSON plus its format note is shorter than the original source and note; a
+boundary regression confirms smaller JSON alone is not enough. Every other
+source field and transcript row is retained, and the indexed form round-trips
+to the original MeetingSource. The paired anonymous cold-start receipt records
+the synthetic output comparison; the production-shaped 1,508-line example is
+only a projection-size measurement, not a production trajectory. Production
+HEAD `1fcbddda` does not forward Meeting frozen digests, so this is not live
+behavior. No meeting source text was copied, and no provider action, publish,
+or deploy occurred.

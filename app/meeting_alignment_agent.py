@@ -356,6 +356,62 @@ def _raw_message_json_objects(raw: str) -> list[object]:
     ]
 
 
+_MEETING_SOURCE_INDEX_NOTE = (
+    "（说话人只在 transcript_speakers 定义一次，transcript[].speaker_index 从 0 开始；"
+    "转录顺序、时间戳及文本保持不变）"
+)
+_MEETING_SOURCE_ORIGINAL_NOTE = "（转录行保留原始 speaker_name 与 speaker_user_id）"
+
+
+def _meeting_source_prompt_projection(source: MeetingSource) -> dict[str, Any]:
+    """Index repeated transcript identities only when the JSON becomes smaller."""
+    source_data = source.model_dump(mode="json")
+    speaker_indexes: dict[tuple[str, str], int] = {}
+    transcript_speakers: list[dict[str, str]] = []
+    transcript: list[dict[str, Any]] = []
+    for line in source_data["transcript"]:
+        identity = (line["speaker_name"], line["speaker_user_id"])
+        index = speaker_indexes.get(identity)
+        if index is None:
+            index = len(transcript_speakers)
+            speaker_indexes[identity] = index
+            transcript_speakers.append(
+                {
+                    "speaker_name": identity[0],
+                    "speaker_user_id": identity[1],
+                }
+            )
+        transcript.append(
+            {
+                "speaker_index": index,
+                **{
+                    key: value
+                    for key, value in line.items()
+                    if key not in {"speaker_name", "speaker_user_id"}
+                },
+            }
+        )
+
+    projected: dict[str, Any] = {}
+    for key, value in source_data.items():
+        if key == "transcript":
+            projected["transcript_speakers"] = transcript_speakers
+            projected["transcript"] = transcript
+        else:
+            projected[key] = value
+    original_size = len(
+        json.dumps(source_data, ensure_ascii=False, separators=(",", ":"))
+    )
+    projected_size = len(
+        json.dumps(projected, ensure_ascii=False, separators=(",", ":"))
+    )
+    if projected_size + len(_MEETING_SOURCE_INDEX_NOTE) < original_size + len(
+        _MEETING_SOURCE_ORIGINAL_NOTE
+    ):
+        return projected
+    return source_data
+
+
 def build_meeting_alignment_prompt(
     source: MeetingSource,
     *,
@@ -366,8 +422,14 @@ def build_meeting_alignment_prompt(
     consumer_prompt: str = "",
     skill_protocol: str = "",
 ) -> str:
+    source_projection = _meeting_source_prompt_projection(source)
     source_json = json.dumps(
-        source.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
+        source_projection, ensure_ascii=False, separators=(",", ":")
+    )
+    source_format_note = (
+        _MEETING_SOURCE_INDEX_NOTE
+        if "transcript_speakers" in source_projection
+        else _MEETING_SOURCE_ORIGINAL_NOTE
     )
     target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
 - 业务内容返回 audience_scope=business。使用 DWS 做群发现，以实际内容、业务目的和披露范围决定 target.kind=group 或 target.kind=direct；人数和群名称不决定受众。
@@ -447,6 +509,7 @@ MeetingAlignmentDecision Pydantic JSON schema:
 实时钉钉群搜索候选（仅供进一步核验，不是直接发送授权）：
 {group_candidates_text}
 
+{source_format_note}
 完整会议来源 JSON：
 {source_json}
 """
