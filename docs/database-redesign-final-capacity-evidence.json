@@ -30186,7 +30186,7 @@
   "upstream_merge_validation": {
     "checkpoint": "7ecee0a6927e385143a70358acb41ee652a719e8",
     "upstream": "b3f59f3ae56419d1bf397346a476382a363041e7",
-    "status": "merge conflict and targeted integration verification passed; local merge commit being recorded; not pushed or deployed",
+    "status": "committed locally as 628d61b58bb84507e97759014194c757a6db7716; merged-code real CLI full chain passed; not pushed or deployed",
     "preserved_upstream_behaviors": [
       "bounded direct unsubscribe retry and pending-marker exclusion",
       "ASR same-identity recovery",
@@ -30245,6 +30245,76 @@
         "seconds": 50.7
       }
     },
-    "quality_correction": "strict existing Memory Action check selects final declaration instead of retired intermediate shape; current schema accepted and unknown Action index rejected"
+    "quality_correction": "strict existing Memory Action check selects final declaration instead of retired intermediate shape; current schema accepted and unknown Action index rejected",
+    "merge_commit": "628d61b58bb84507e97759014194c757a6db7716",
+    "merged_code_native_approve": {
+      "root": "/tmp/ceo-native-copy.merge-lmpkj9fv",
+      "task_id": 5715333616543262,
+      "passed": true,
+      "native_calls": 2,
+      "fake_provider_calls": 1,
+      "fake_verification_calls": 1,
+      "receipts": 1,
+      "sent_replies": 1,
+      "business_attempts": 1,
+      "original_tables_unchanged": 11,
+      "cold_reopen_without_reexecution": true,
+      "email_direct": {
+        "context_messages": 1,
+        "prior_context_receipts": 0,
+        "direct_attempts": 1,
+        "direct_status": "done",
+        "provider_result_persisted": true,
+        "history_locator_valid": true
+      },
+      "runs": [
+        {
+          "id": 379572,
+          "role": "consumer",
+          "status": "completed",
+          "revision": 0,
+          "parent_id": null,
+          "session_id": "01a1508a-0226-7490-a879-b534adc63f74",
+          "start": 0,
+          "end": 38,
+          "native_exists": true,
+          "tool_events": 5,
+          "error": "",
+          "attempts": [
+            {
+              "id": 379573,
+              "status": "completed",
+              "session_id": "01a1508a-0226-7490-a879-b534adc63f74",
+              "start": 0,
+              "end": 38
+            }
+          ]
+        },
+        {
+          "id": 379574,
+          "role": "audit",
+          "status": "completed",
+          "revision": 0,
+          "parent_id": 379572,
+          "session_id": "01a1508a-45f8-7b43-a9b2-00979cffc968",
+          "start": 0,
+          "end": 31,
+          "native_exists": true,
+          "tool_events": 4,
+          "error": "",
+          "attempts": [
+            {
+              "id": 379575,
+              "status": "completed",
+              "session_id": "01a1508a-45f8-7b43-a9b2-00979cffc968",
+              "start": 0,
+              "end": 31
+            }
+          ]
+        }
+      ],
+      "real_sends": 0,
+      "production_writes": false
+    }
   }
 }
