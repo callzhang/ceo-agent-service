@@ -13568,19 +13568,43 @@ class EmailStore:
                 "and class_included_in_model_id is null"
             ).fetchone()[0])
 
-    def owner_labelled_stamp(self) -> str:
-        """Changes whenever the owner labels or relabels a message; cheap to read."""
-
+    def _owner_labelled_rows(self):
         with self._connect() as db:
-            count, latest = db.execute(
-                f"""
-                select count(*), coalesce(max(updated_at), '')
-                from ({EMAIL_CLASSIFICATION_SQL})
-                where classification_source='user'
-                  and coalesce(confirmed_category, '') != ''
+            return db.execute(
                 """
-            ).fetchone()
-        return f"{count}:{latest}"
+                select classification_id, account_id, stable_message_identity,
+                       class_sender as sender, class_subject as subject,
+                       class_model_text as model_text,
+                       class_confirmed_category as confirmed_category,
+                       class_updated_at as updated_at, message_source_reference_json
+                from emails
+                where classification_id is not null and class_classification_source='user'
+                  and coalesce(class_confirmed_category, '') != ''
+                order by classification_id
+                """
+            ).fetchall()
+
+    @staticmethod
+    def _owner_labelled_rows_stamp(rows) -> str:
+        """Same original bytes have the same identity before and after retirement."""
+        digest = sha256()
+        for row in rows:
+            text = str(row["model_text"])
+            reference = json.loads(row["message_source_reference_json"] or '{}')
+            model_reference = reference.get('model_input')
+            input_hash = (sha256(text.encode('utf-8')).hexdigest()
+                          if text or model_reference is None
+                          else model_reference['sha256'])
+            fields = [row[key] for key in (
+                'classification_id', 'account_id', 'stable_message_identity',
+                'sender', 'subject', 'confirmed_category', 'updated_at')]
+            digest.update(json.dumps([*fields, input_hash], ensure_ascii=False).encode('utf-8'))
+            digest.update(b'\n')
+        return digest.hexdigest()
+
+    def owner_labelled_stamp(self) -> str:
+        """Digest the existing owner facts; second-resolution clocks can coincide."""
+        return self._owner_labelled_rows_stamp(self._owner_labelled_rows())
 
     def owner_labelled_examples(self, *, source_reader=None) -> tuple[list[dict[str, str]], str]:
         """Messages the owner has labelled, and the stamp they were read at.
@@ -13588,21 +13612,8 @@ class EmailStore:
         The Agent is shown the ones most like the message it is classifying, so
         it files mail the way the owner does.
         """
-
-        stamp = self.owner_labelled_stamp()
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select account_id, stable_message_identity, class_sender as sender,
-                       class_subject as subject, class_model_text as model_text,
-                       class_confirmed_category as confirmed_category,
-                       message_source_reference_json
-                from emails
-                where classification_id is not null and class_classification_source='user'
-                  and coalesce(class_confirmed_category, '') != ''
-                order by classification_id
-                """
-            ).fetchall()
+        rows = self._owner_labelled_rows()
+        stamp = self._owner_labelled_rows_stamp(rows)
         from app.email_model_input_reader import read_owner_model_inputs
 
         inputs = read_owner_model_inputs(self, rows, source_reader=source_reader)

@@ -284,3 +284,26 @@ def test_inverse_never_replaces_a_current_nonempty_model_input_with_old_referenc
         read_model_input=lambda *args: pytest.fail('current input must not be rewound'))
     assert db.execute('select model_text from email_classifications').fetchone() == ('current new input',)
     db.close()
+
+
+def test_owner_relabel_same_second_invalidates_example_stamp(body_store):
+    store = body_store
+    _model_fixture(store)
+    before = store.owner_labelled_stamp()
+    with store._connect() as db:
+        db.execute("update emails set class_confirmed_category='legal'")
+    assert store.owner_labelled_stamp() != before
+
+
+def test_owner_relabel_during_source_read_same_second_is_not_returned(body_store):
+    store = body_store
+    message, _ = _model_fixture(store)
+    assert store.compact_email_inputs(101, source_reader=_reader(message))
+
+    def read_many(account, identities):
+        with store._connect() as db:
+            db.execute("update emails set class_confirmed_category='legal'")
+        return {identity: message for identity in identities}
+
+    with pytest.raises(ValueError, match='labels changed during input read'):
+        store.owner_labelled_examples(source_reader=SimpleNamespace(read_many=read_many))

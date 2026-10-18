@@ -30898,5 +30898,29 @@
     "source_versions": 229,
     "production_writes": false,
     "scope": "real coordinator selected paired release and prepared exact source metadata, without publish or constructors"
+  },
+  "owner_input_snapshot_consistency": {
+    "status": "local_verified_not_deployed",
+    "root_cause": "count:max(updated_at) misses a relabel under second-resolution _now; source reads run outside SQLite",
+    "red_regressions": 2,
+    "model_lifecycle_tests": {
+      "passed": 22,
+      "seconds": 18.28
+    },
+    "similar_and_learning_tests": {
+      "passed": 24,
+      "seconds": 27.07
+    },
+    "real_copy_stamp_only": {
+      "owner_examples": 956,
+      "seconds": 0.0434,
+      "provider_calls": 0
+    },
+    "change": "digest existing ordered example fields plus exact original input identity from one snapshot; retirement-equivalent raw/ref hash; recheck after source read",
+    "schema_changes": false,
+    "new_persistent_caches": false,
+    "ranking_changes": false,
+    "independent_read": "no concrete finding; root verified _now second precision and regressions",
+    "production_writes": false
   }
 }

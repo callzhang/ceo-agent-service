@@ -38,8 +38,8 @@ def _index(store: object) -> _Index | None:
     key = Path(getattr(store, "path"))
     with _LOCK:
         cached = _INDEXES.get(key)
-    # Reading one count and one timestamp is cheap; the rows and the index are
-    # only rebuilt when the owner has labelled something new.
+    # Compare owner facts and original input identities without reading providers.
+    # Rebuild only when the examples change; input retirement preserves the stamp.
     if cached is not None and cached.stamp == store.owner_labelled_stamp():  # type: ignore[attr-defined]
         return cached
     examples, stamp = store.owner_labelled_examples()  # type: ignore[attr-defined]

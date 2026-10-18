@@ -3222,6 +3222,12 @@ only its old model proof, and an actual body update preserves an independent mod
 proof. No-op input updates keep their proof. Owner-labelled similar examples read
 exact retired features from their native/provider source outside SQLite, retaining
 the existing ranking and snippets; missing or changed sources remain explicit.
+Owner example stamps digest the existing identity, sender, subject, confirmed
+category, update clock and complete model-input hash from one row snapshot.
+A same-second relabel invalidates the existing in-memory index and is detected
+across source reads; retiring the same input bytes preserves the stamp. This
+uses no new database fields, stored index, input cache or provider reads for
+stamp comparison.
 The schema inverse prepares both exact input components before opening its write
 lease and restores original bytes with current business facts and inclusion.
 Historical input retirement and final release acceptance remain incomplete.
