@@ -274,12 +274,12 @@ scheduled_tasks
 ```
 
 Scheduled Agent Audit also receives a compact service projection of any completed
-`consumer_document_write` result from its exact Consumer parent run. The projection
-contains the service tool's document identity, provider verification/readback
-status, and whether the read-back body matches the submitted body, plus a digest;
-it omits the report body itself. This is execution evidence, not proof that report
-claims are correct. The behavior is shared by scheduled Agent tasks and does not
-change Audit's independent review standard.
+`consumer_document_write` return from its exact Consumer parent run. The projection
+contains the returned document identity and a digest and byte count of the
+returned readback object; it omits the report body itself. An empty list means
+no matching return was captured for that parent. This establishes what the
+service tool returned, not whether the document or its claims are correct. The
+behavior is shared by scheduled Agent tasks and does not change Audit's review standard.
 
 定时任务有两种执行形式，由 `scheduled_tasks.command` 区分。`command` 为空的是 Agent 任务，
 走上面的完整路径。`command` 非空的是服务命令任务：它只声明服务命令目录中的一个名字（当前是

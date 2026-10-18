@@ -415,11 +415,12 @@ class AuditTurnContext:
                     (
                         "Service-recorded scheduled work receipts (Consumer tool output; metadata only)\n"
                         + _json(self.scheduled_work_receipts)
-                        + "\nThese values are projected from the exact completed Consumer parent run by the service. "
-                        "They establish only what the service tool returned and read back; they do not establish "
-                        "that the report content is correct. Review the candidate against its source facts."
+                        + "\nThese values come from the exact completed Consumer parent run. "
+                        "They identify a returned document readback, not whether the report content or its claims are correct. "
+                        "No matching Consumer document readback was captured when this list is empty. "
+                        "Review the candidate against its source facts."
                     ,)
-                    if self.scheduled_work_receipts else ()
+                    if self.task.channel == "scheduled" else ()
                 ),
                 "Service-prepared outbound message postfix\n"
                 "DingTalk message bodies in this candidate are prepared by the service before Audit: "

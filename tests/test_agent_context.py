@@ -775,11 +775,6 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
         candidate=_candidate(proposal),
         candidate_digest="b" * 64,
         audit_rules="Only publish supported facts.",
-        scheduled_work_receipts=({
-            "node_id": "doc-1", "provider_verified": True,
-            "readback_success": True, "content_matches": True,
-            "content_sha256": "a" * 64,
-        },),
     ).render()
 
     assert "Audit reads and judges it" in audit_developer_instructions("Only publish supported facts.")
@@ -791,8 +786,7 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert "Audit reads and judges it without executing actions" in audit_developer_instructions("Only publish supported facts.")
     assert _has_json_field(rendered, "candidate_digest", "b" * 64)
     assert "Candidate revision" in rendered
-    assert "Service-recorded scheduled work receipts" in rendered
-    assert _has_json_field(rendered, "node_id", "doc-1")
+    assert "Service-recorded scheduled work receipts" not in rendered
     assert "report body" not in rendered
     assert "group-send candidate" not in rendered
     assert "OA factual gap" not in rendered
@@ -800,3 +794,28 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert "Effective Audit Rules" not in rendered
     assert "Only publish supported facts." in rendered
     _assert_no_service_oa_resolution_fields(rendered)
+
+
+def test_scheduled_audit_context_shows_empty_receipt_boundary():
+    proposal = ConsumerProposal.model_validate({
+        "objective": "Review report",
+        "actions": [{
+            "description": "Send report", "action_identity": "send-report",
+            "capability": "dingtalk-chat", "operation": "send_message",
+            "target": {"conversation_id": "cid"},
+            "payload": {"text": "Report ready"},
+        }],
+        "sourced_facts": [], "authored_judgment": "Review report",
+    })
+    context = AuditTurnContext(
+        task=replace(_context(), channel="scheduled"),
+        proposal_revision=0, operation_id="scheduled-op",
+        candidate=_candidate(proposal), candidate_digest="a" * 64,
+        audit_rules="Review facts",
+    )
+
+    rendered = context.render()
+
+    assert "Service-recorded scheduled work receipts" in rendered
+    assert "[]" in rendered
+    assert "No matching Consumer document readback was captured" in rendered

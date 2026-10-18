@@ -149,6 +149,7 @@ def test_persisted_terminal_read_needs_no_context_or_new_effect(tmp_path, outcom
 def test_scheduled_audit_receives_compact_service_report_receipt_only():
     task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
     run = type("Run", (), {
+        "id": 77,
         "reply_task_id": 42,
         "execution_generation": "generation-1",
         "role": AgentRole.CONSUMER,
@@ -156,12 +157,13 @@ def test_scheduled_audit_receives_compact_service_report_receipt_only():
         "tool_events": [{
             "type": "item.completed",
             "item": {
-                "type": "mcp_tool_call", "tool": "consumer_document_write",
+                "type": "mcp_tool_call", "server": "agent_cli",
+                "tool": "consumer_document_write", "id": "write-1",
                 "arguments": {"content": "report body"},
                 "result": {"structuredContent": {
-                    "operation": "write_report_document", "node_id": "doc-7", "title": "Report",
-                    "provider_result": {"verified": True},
-                    "readback": {"success": True, "nodeId": "doc-7", "markdown": "report body"},
+                    "operation": "updated", "node_id": "doc-7", "title": "Report",
+                    "provider_result": {"nodeId": "doc-7"},
+                    "readback": {"content": "report body"},
                 }},
             },
         }],
@@ -170,12 +172,36 @@ def test_scheduled_audit_receives_compact_service_report_receipt_only():
     receipts = _scheduled_consumer_work_receipts(task, run)
 
     assert receipts == ({
-        "operation": "write_report_document", "node_id": "doc-7", "title": "Report",
-        "provider_verified": True, "readback_success": True,
-        "readback_node_id": "doc-7", "content_matches": True,
-        "content_sha256": hashlib.sha256(b"report body").hexdigest(),
+        "consumer_run_id": 77, "tool_call_id": "write-1",
+        "operation": "updated", "document_node_id": "doc-7",
+        "document_title": "Report",
+        "readback_sha256": hashlib.sha256(b'{"content":"report body"}').hexdigest(),
+        "readback_bytes": len(b'{"content":"report body"}'),
     },)
     assert "report body" not in str(receipts)
+
+
+def test_scheduled_receipts_ignore_other_server_and_failed_tool_result():
+    task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
+    item = {
+        "type": "mcp_tool_call", "tool": "consumer_document_write",
+        "id": "write-1", "arguments": {"content": "report body"},
+        "result": {"structuredContent": {
+            "operation": "updated", "node_id": "doc-7", "title": "Report",
+            "provider_result": {"nodeId": "doc-7"},
+            "readback": {"content": "report body"},
+        }},
+    }
+    run = type("Run", (), {
+        "id": 77, "reply_task_id": 42, "execution_generation": "generation-1",
+        "role": AgentRole.CONSUMER, "status": "completed",
+        "tool_events": [
+            {"type": "item.completed", "item": {**item, "server": "other_server"}},
+            {"type": "item.completed", "item": {**item, "server": "agent_cli", "result": {**item["result"], "isError": True}}},
+        ],
+    })()
+
+    assert _scheduled_consumer_work_receipts(task, run) == ()
 
 
 @pytest.mark.parametrize("channel,status,tool,task_id,generation,role", [
@@ -191,6 +217,7 @@ def test_scheduled_audit_receipt_projection_excludes_unbound_events(
 ):
     task = type("Task", (), {"id": 42, "channel": channel, "execution_generation": "generation-1"})()
     run = type("Run", (), {
+        "id": 77,
         "reply_task_id": task_id,
         "execution_generation": generation,
         "role": role,
@@ -198,8 +225,12 @@ def test_scheduled_audit_receipt_projection_excludes_unbound_events(
         "tool_events": [{
             "type": "item.completed",
             "item": {
-                "type": "mcp_tool_call", "tool": tool, "arguments": {"content": "x"},
-                "result": {"structuredContent": {"provider_result": {"verified": True}}},
+                "type": "mcp_tool_call", "server": "agent_cli", "tool": tool,
+                "id": "write-1", "arguments": {"content": "x"},
+                "result": {"structuredContent": {
+                    "operation": "updated", "node_id": "doc-7", "title": "Report",
+                    "readback": {"content": "x"},
+                }},
             },
         }],
     })()

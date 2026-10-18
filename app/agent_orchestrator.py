@@ -55,43 +55,43 @@ def _scheduled_consumer_work_receipts(
             event.get("type") != "item.completed"
             or not isinstance(item, dict)
             or item.get("type") != "mcp_tool_call"
+            or item.get("server") != "agent_cli"
             or item.get("tool") != "consumer_document_write"
+            or item.get("error")
+            or item.get("status") == "failed"
         ):
             continue
-        arguments = item.get("arguments")
-        result = item.get("result")
-        result = result.get("structuredContent", result.get("structured_content")) if isinstance(result, dict) else None
-        if not isinstance(arguments, dict) or not isinstance(result, dict):
+        envelope = item.get("result")
+        if not isinstance(envelope, dict) or envelope.get("isError") is True:
             continue
-        provider = result.get("provider_result")
-        if not isinstance(provider, dict):
+        result = envelope.get("structuredContent", envelope.get("structured_content"))
+        if not isinstance(result, dict):
             continue
-        provider_data = provider.get("data")
-        provider_verified = provider.get("verified") is True or (
-            isinstance(provider_data, dict) and provider_data.get("verified") is True
-        )
+        operation = result.get("operation")
+        node_id = result.get("node_id")
+        title = result.get("title")
         readback = result.get("readback")
-        if not isinstance(readback, dict):
+        if (
+            operation not in {"created", "updated"}
+            or not isinstance(node_id, str) or not node_id
+            or not isinstance(title, str) or not title
+            or not isinstance(readback, dict)
+        ):
             continue
-        content = arguments.get("content")
-        readback_content = readback.get("markdown")
-        receipts.append({
-            "operation": result.get("operation"),
-            "node_id": result.get("node_id"),
-            "title": result.get("title"),
-            "provider_verified": provider_verified,
-            "readback_success": readback.get("success") is True,
-            "readback_node_id": readback.get("nodeId"),
-            "content_matches": (
-                content == readback_content
-                if isinstance(content, str) and isinstance(readback_content, str)
-                else None
-            ),
-            "content_sha256": (
-                hashlib.sha256(content.encode("utf-8")).hexdigest()
-                if isinstance(content, str) else None
-            ),
-        })
+        readback_bytes = json.dumps(
+            readback, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        receipt = {
+            "consumer_run_id": run.id,
+            "tool_call_id": str(item.get("call_id") or item.get("id") or ""),
+            "operation": operation,
+            "document_node_id": node_id,
+            "document_title": title,
+            "readback_sha256": hashlib.sha256(readback_bytes).hexdigest(),
+            "readback_bytes": len(readback_bytes),
+        }
+        if receipt not in receipts:
+            receipts.append(receipt)
     return tuple(receipts)
 
 
