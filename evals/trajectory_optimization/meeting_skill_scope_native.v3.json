@@ -1,0 +1,1288 @@
+{
+  "model": "gpt-5.6-luna",
+  "skill_sha256": {
+    "ceo-meeting-work": "bded378210a24cedf4fc0464ccd5cecc416bba4291164f66f96f5332f476686e",
+    "dingtalk-minutes": "153cf6e6bcaf3c8af045e001b10457b02d69f7bfd13a3da782189a6e5d952c87",
+    "dingtalk-calendar": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c"
+  },
+  "baseline_catalog": "native_default",
+  "candidate_catalog_config_sha256": "146043b03c7c2ce7c7809c8d3d5e9ce2bc4d07db720462b40785ddbde6ed11ae",
+  "scope": "Anonymous read-only Codex OAuth; no Work Profile, business MCP or external action",
+  "repetitions": 3,
+  "results": [
+    {
+      "exit_code": 0,
+      "prompt_chars": 40708,
+      "prompt_sha256": "9f18dc3b282ae9076c428edb33cd48bf4a8be28738ff9be0e974aecab6f5213b",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": true,
+      "tool_calls": 0,
+      "case": "personal_timezone",
+      "repetition": 1,
+      "arm": "full",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "direct_counterpart": true,
+        "both_timezones": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "personal",
+        "trigger_reasons": [
+          "meeting_summary"
+        ],
+        "topics": [],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [],
+        "target": {
+          "kind": "direct",
+          "conversation_id": "",
+          "direct_user_id": "alex",
+          "title": "Alex",
+          "candidates": []
+        },
+        "message_title": "下次通话时间确认",
+        "final_message": "已确认下次通话时间：Derek 这边为太平洋时间 7 月 20 日 09:00；Alex 在纽约对应为当地时间 12:00。日历日程暂未创建，后续再安排。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次为完整日历证据支持的两人 1:1 交流，参会人为 Derek 和 Alex，且当前用户 Derek。会议明确确认了下次通话的双方时区对应关系，并说明日历日程尚未创建。依据个人事项受众规则，向另一位参会人 Alex 发送一条直接总结；没有群候选，也没有人员敏感内容。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 23293,
+      "prompt_sha256": "2aee8a1a523616cb142f3d579d6e9b08b96a2a3d527a488191b6fc2ad1aa3af4",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": false,
+      "tool_calls": 0,
+      "case": "personal_timezone",
+      "repetition": 1,
+      "arm": "managed_only",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "direct_counterpart": true,
+        "both_timezones": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "personal",
+        "trigger_reasons": [
+          "meeting_summary"
+        ],
+        "topics": [],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Alex"
+        ],
+        "target": {
+          "kind": "direct",
+          "conversation_id": "",
+          "direct_user_id": "alex",
+          "title": "Alex",
+          "candidates": []
+        },
+        "message_title": "下次通话时间确认",
+        "final_message": "**已确认**\n\n@Alex 下次通话安排为 **2026 年 7 月 20 日**：太平洋时间 09:00；纽约时间 12:00。日程暂不创建，后续再建。",
+        "sensitive_private_message": null,
+        "audit_summary": "会议为完整日历 1:1，仅有 Derek 与 Alex 两名参会人，且 attendee_evidence=calendar、attendee_roster_complete=true。会议内容是双方确认下次通话时间及各自时区，Alex 明确要求在总结中写清双方时区。直接发送给唯一另一位参会人 Alex（稳定 user_id=alex）；不是当前用户 Derek。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 0.99,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 40708,
+      "prompt_sha256": "9f18dc3b282ae9076c428edb33cd48bf4a8be28738ff9be0e974aecab6f5213b",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": true,
+      "tool_calls": 0,
+      "case": "personal_timezone",
+      "repetition": 2,
+      "arm": "full",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "direct_counterpart": true,
+        "both_timezones": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "personal",
+        "trigger_reasons": [
+          "meeting_summary"
+        ],
+        "topics": [],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [],
+        "target": {
+          "kind": "direct",
+          "conversation_id": "",
+          "direct_user_id": "alex",
+          "title": "Alex",
+          "candidates": []
+        },
+        "message_title": "下次通话安排确认",
+        "final_message": "**已确认**\n\n下次通话安排为 2026 年 7 月 20 日：Derek 按太平洋时间 09:00，Alex 按纽约时间 12:00。日历日程尚未创建，后续如需安排再创建。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次为完整日历 1:1，参会人仅 Derek 与 Alex，且 attendee_evidence=calendar、attendee_roster_complete=true。会议内容是个人通话时间确认，未涉及业务、人员敏感信息或其他受众。目标为另一位参会人 Alex，稳定 user_id 为 alex；当前用户 Derek 的 user_id 为 derek，未向本人发送副本。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 23293,
+      "prompt_sha256": "2aee8a1a523616cb142f3d579d6e9b08b96a2a3d527a488191b6fc2ad1aa3af4",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": false,
+      "tool_calls": 0,
+      "case": "personal_timezone",
+      "repetition": 2,
+      "arm": "managed_only",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "direct_counterpart": true,
+        "both_timezones": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "personal",
+        "trigger_reasons": [
+          "meeting_summary"
+        ],
+        "topics": [],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Alex"
+        ],
+        "target": {
+          "kind": "direct",
+          "conversation_id": "",
+          "direct_user_id": "alex",
+          "title": "Alex",
+          "candidates": []
+        },
+        "message_title": "下次通话时间确认",
+        "final_message": "**已确认**\n\n@Alex 下次通话安排为太平洋时间 7 月 20 日 09:00，对应纽约时间 12:00。双方时区已确认，日程暂未创建。",
+        "sensitive_private_message": null,
+        "audit_summary": "会议为完整日历 1:1，仅有 Derek 与 Alex 两名参会人；内容是个人通话时间确认，无业务事项或人员敏感内容。依据来源中的稳定 user_id，将总结定向给 Alex，未将 Derek 作为收件人。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 40708,
+      "prompt_sha256": "9f18dc3b282ae9076c428edb33cd48bf4a8be28738ff9be0e974aecab6f5213b",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": true,
+      "tool_calls": 0,
+      "case": "personal_timezone",
+      "repetition": 3,
+      "arm": "full",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "direct_counterpart": true,
+        "both_timezones": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "personal",
+        "trigger_reasons": [
+          "meeting_summary"
+        ],
+        "topics": [],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Alex"
+        ],
+        "target": {
+          "kind": "direct",
+          "conversation_id": "",
+          "direct_user_id": "alex",
+          "title": "Alex",
+          "candidates": []
+        },
+        "message_title": "下次通话时间确认",
+        "final_message": "**确认事项**\n\n@Alex 下次通话安排为：2026 年 7 月 20 日太平洋时间 09:00，对应纽约时间 12:00。\n\n**后续**\n\n日历日程尚未创建，后续再安排。",
+        "sensitive_private_message": null,
+        "audit_summary": "本场为完整日历 1:1 个人交流，仅有 Derek 与 Alex 两名参会人，且参会名单完整。会议内容仅涉及双方下次通话的时区确认，适合直接发送给另一位参会人 Alex；未发现业务群或其他受众证据。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 0.99,
+        "information_completeness": 0.98
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 23293,
+      "prompt_sha256": "2aee8a1a523616cb142f3d579d6e9b08b96a2a3d527a488191b6fc2ad1aa3af4",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": false,
+      "tool_calls": 0,
+      "case": "personal_timezone",
+      "repetition": 3,
+      "arm": "managed_only",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "direct_counterpart": true,
+        "both_timezones": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "personal",
+        "trigger_reasons": [
+          "meeting_summary"
+        ],
+        "topics": [],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [],
+        "target": {
+          "kind": "direct",
+          "conversation_id": "",
+          "direct_user_id": "alex",
+          "title": "Alex",
+          "candidates": []
+        },
+        "message_title": "下次通话时间确认",
+        "final_message": "**已确认**\n\n下次通话时间为太平洋时间 7 月 20 日 09:00；对应纽约时间为 7 月 20 日 12:00。日程尚未创建，后续再建。",
+        "sensitive_private_message": null,
+        "audit_summary": "会议为完整日历 1:1，参会人仅 Derek 与 Alex，且两人均明确确认了时间换算和后续安排。整场仅涉及个人通话安排，无人员敏感或业务群内容。因当前用户为 Derek，按个人事项规则将总结发送给另一位参会人 Alex。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 0.99,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 41608,
+      "prompt_sha256": "16399e5970564750207df9b8f058d644ee1cd4b27c6e60020da54b2a01847568",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": true,
+      "tool_calls": 0,
+      "case": "business_alignment",
+      "repetition": 1,
+      "arm": "full",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "aligned": true,
+        "agreed_rollout": true,
+        "only_assigned_owners": false
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "aligned_disagreement",
+          "meeting_summary"
+        ],
+        "topics": [
+          {
+            "title": "上线范围与风险控制",
+            "state": "aligned",
+            "views": [
+              {
+                "speaker": "Alex",
+                "view": "主张全量上线，以尽快验证收入。",
+                "reason": "希望缩短验证周期并尽快获得收入反馈。"
+              },
+              {
+                "speaker": "Avery",
+                "view": "主张先进行 10% 灰度，以控制故障面。",
+                "reason": "认为灰度可以降低上线故障影响范围。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "以可接受故障面为准，先进行 10% 灰度。",
+                "reason": "将故障风险预算作为上线范围的决策标准。"
+              }
+            ],
+            "conclusion": "先按 10% 灰度上线，再根据指标扩大范围；Avery 负责核对故障指标。",
+            "alignment_reason": "Derek 明确设定以可接受故障面为准的标准后，Alex 同意先 10% 灰度并按指标扩大，Avery 也明确同意并承接故障指标核对。"
+          }
+        ],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Alex",
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-1",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-1",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期群消息具体讨论星桥项目上线范围与灰度指标，且由本次会议参会人承接。",
+                "完整当前群成员为 Derek、Alex、Avery，对应稳定身份为 derek、alex、mina。",
+                "群内三位成员均有明确的星桥项目业务上线内容授权；群可发送。",
+                "成员匹配精度为 3/3，且该群业务承接关系与本次上线评审结论一致。"
+              ]
+            }
+          ]
+        },
+        "message_title": "虚构星桥项目上线评审",
+        "final_message": "**结论**\n\n会议已对上线策略达成一致：先按 10% 灰度上线，以控制故障面；后续根据指标结果决定是否扩大范围。\n\n**后续行动**\n\n- @Avery 负责核对故障指标，并以指标结果作为后续扩大上线范围的依据。\n- @Alex 已同意先执行 10% 灰度，后续按指标扩大范围。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次内容仅包含星桥项目上线范围、风险控制和故障指标核对，属于业务上线信息。候选群“星桥项目交付组”近期具体讨论上线范围与灰度指标，由本次参会人承接本次行动；完整当前成员为 Derek（derek）、Alex（alex）和 Avery（mina），成员名单完整。群内授权证据显示三位成员均获授权了解星桥项目业务上线内容，且群可发送。成员匹配精度为 3/3；该精度仅作为业务承接证据，不单独替代披露授权。未发现人员敏感内容，无需拆分私聊。",
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 24193,
+      "prompt_sha256": "bcd1155a955120dedeb2ceb9e84a6dd20e70132d5a7fdcfc68e772c86b85f6b0",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": false,
+      "tool_calls": 0,
+      "case": "business_alignment",
+      "repetition": 1,
+      "arm": "managed_only",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "aligned": true,
+        "agreed_rollout": true,
+        "only_assigned_owners": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "aligned_disagreement",
+          "meeting_summary"
+        ],
+        "topics": [
+          {
+            "title": "上线发布范围与风险控制",
+            "state": "aligned",
+            "views": [
+              {
+                "speaker": "Alex",
+                "view": "主张全量上线，以尽快验证收入。",
+                "reason": "希望缩短验证周期并快速获得收入反馈。"
+              },
+              {
+                "speaker": "Avery",
+                "view": "主张先进行 10% 灰度。",
+                "reason": "认为可控故障面更重要。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "以可接受故障面为准，先进行 10% 灰度。",
+                "reason": "将风险预算作为发布范围的约束。"
+              }
+            ],
+            "conclusion": "先进行 10% 灰度，再根据指标扩大范围。",
+            "alignment_reason": "Derek 明确设定风险约束后，Alex 和 Avery 均明确同意该方案；Avery 负责核对故障指标。"
+          }
+        ],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-1",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-1",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期群内讨论上线范围与灰度指标，且由本次会议参会人承接。",
+                "完整当前群成员为 Derek、Alex、Avery，稳定身份分别为 derek、alex、mina；群成员均已授权接收星桥项目业务上线内容。",
+                "本群可发送，成员匹配精度为 3/3。"
+              ]
+            }
+          ]
+        },
+        "message_title": "虚构星桥项目上线评审",
+        "final_message": "**结论**\n\n会议明确先进行 10% 灰度上线，再根据指标扩大范围。该方案兼顾了尽快验证收入与控制故障面的目标。\n\n**后续行动**\n\n- @Avery 负责核对灰度阶段的故障指标，并据此支持后续扩大范围的判断。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次总结包含上线范围、灰度方案及故障指标核对，属于星桥项目业务上线内容。候选群“星桥项目交付组”近期持续讨论上线范围与灰度指标，由本次参会人承接；完整当前群成员为 Derek、Alex、Avery，稳定身份为 derek、alex、mina，成员匹配精度为 3/3。三名成员均有明确的星桥项目业务上线内容披露授权，群可发送。未发现人员敏感内容，因此不生成私聊。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 41608,
+      "prompt_sha256": "16399e5970564750207df9b8f058d644ee1cd4b27c6e60020da54b2a01847568",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": true,
+      "tool_calls": 0,
+      "case": "business_alignment",
+      "repetition": 2,
+      "arm": "full",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "aligned": true,
+        "agreed_rollout": true,
+        "only_assigned_owners": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "aligned_disagreement",
+          "meeting_summary"
+        ],
+        "topics": [
+          {
+            "title": "星桥项目上线范围与发布方式",
+            "state": "aligned",
+            "views": [
+              {
+                "speaker": "Alex",
+                "view": "建议全量上线",
+                "reason": "希望尽快验证收入"
+              },
+              {
+                "speaker": "Avery",
+                "view": "建议先进行 10% 灰度",
+                "reason": "可控制故障影响范围"
+              },
+              {
+                "speaker": "Derek",
+                "view": "以可接受故障面为准，先进行 10% 灰度",
+                "reason": "优先控制上线风险"
+              }
+            ],
+            "conclusion": "各方明确同意先进行 10% 灰度，再依据指标扩大范围。",
+            "alignment_reason": "在风险预算和故障面约束下，Alex 接受先灰度并按指标扩大，Avery 同意并承担故障指标核对。"
+          }
+        ],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-1",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-1",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期群内讨论上线范围与灰度指标，与本次会议议题一致",
+                "会议参会人承接相关工作，Avery 负责核对故障指标",
+                "完整当前群成员为 Derek、Alex、Avery，三人均获授权接收星桥项目业务上线内容",
+                "群成员身份与参会人稳定身份匹配，member_precision=3/3，群当前可发送"
+              ]
+            }
+          ]
+        },
+        "message_title": "虚构星桥项目上线评审",
+        "final_message": "**结论**\n\n各方已对齐：星桥项目先进行 10% 灰度上线，再根据指标扩大范围。该方案兼顾了收入验证速度与故障面的可控性。\n\n**后续行动**\n\n- @Avery 负责核对故障指标，并以指标结果作为后续扩大上线范围的依据。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次会议包含全量上线与 10% 灰度上线的实质分歧，最终各方明确同意先进行 10% 灰度。业务总结内容仅涉及上线范围、风险控制和故障指标核对。候选群“星桥项目交付组”近期具体讨论过上线范围与灰度指标，且由本次参会人承接相关工作；完整当前成员为 Derek、Alex、Avery，稳定身份分别为 derek、alex、mina，三人均明确获授权接收“星桥项目业务上线内容”，群可发送。未发现需要拆分披露的人员敏感内容。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 24193,
+      "prompt_sha256": "bcd1155a955120dedeb2ceb9e84a6dd20e70132d5a7fdcfc68e772c86b85f6b0",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": false,
+      "tool_calls": 0,
+      "case": "business_alignment",
+      "repetition": 2,
+      "arm": "managed_only",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "aligned": true,
+        "agreed_rollout": true,
+        "only_assigned_owners": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "aligned_disagreement"
+        ],
+        "topics": [
+          {
+            "title": "上线发布范围",
+            "state": "aligned",
+            "views": [
+              {
+                "speaker": "Alex",
+                "view": "主张全量上线",
+                "reason": "希望尽快验证收入。"
+              },
+              {
+                "speaker": "Avery",
+                "view": "主张先进行 10% 灰度",
+                "reason": "可控制故障面。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "以可接受故障面为准，先进行 10% 灰度",
+                "reason": "将风险预算作为发布范围判断依据。"
+              }
+            ],
+            "conclusion": "各方明确同意先进行 10% 灰度，后续按指标扩大范围。",
+            "alignment_reason": "Derek 设定以可接受故障面为准的风险标准后，Alex 明确同意先 10% 灰度再按指标扩大，Avery 也明确同意并承接故障指标核对。"
+          }
+        ],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-1",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-1",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期群消息讨论上线范围与灰度指标，明确由本次会议参会人承接。",
+                "与本次会议的星桥项目上线议题匹配度为 1.0，共享主题词 4 个。",
+                "完整当前群成员为 Derek、Alex、Avery，成员身份已核验，member_precision 为 3/3。",
+                "三名成员均被核验授权接收星桥项目业务上线内容。",
+                "群历史已读取，具备发送条件。"
+              ]
+            }
+          ]
+        },
+        "message_title": "虚构星桥项目上线评审",
+        "final_message": "**结论**\n\n各方已对齐：星桥项目先进行 10% 灰度上线，以可接受故障面为风险标准，后续根据指标扩大范围。\n\n**后续行动**\n\n- @Avery 负责核对故障指标，作为后续扩大上线范围的依据。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次业务总结仅包含上线范围、风险标准、对齐结论及故障指标核对行动，不包含人员敏感信息。候选群“星桥项目交付组”近期明确讨论上线范围与灰度指标，且由本次参会人承接本次行动；完整当前群成员为 Derek（user_id=derek）、Alex（user_id=alex）、Avery（user_id=mina），成员身份和当前业务职责范围已核验，三名成员均获授权接收星桥项目业务上线内容。该群与本次议题直接匹配且可发送，因此排序第一并选用。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 41608,
+      "prompt_sha256": "16399e5970564750207df9b8f058d644ee1cd4b27c6e60020da54b2a01847568",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": true,
+      "tool_calls": 0,
+      "case": "business_alignment",
+      "repetition": 3,
+      "arm": "full",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "aligned": true,
+        "agreed_rollout": true,
+        "only_assigned_owners": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "meeting_summary",
+          "aligned_disagreement"
+        ],
+        "topics": [
+          {
+            "title": "星桥项目上线范围与发布节奏",
+            "state": "aligned",
+            "views": [
+              {
+                "speaker": "Alex",
+                "view": "建议全量上线",
+                "reason": "希望尽快验证收入。"
+              },
+              {
+                "speaker": "Avery",
+                "view": "建议先进行 10% 灰度",
+                "reason": "可控故障面。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "以可接受故障面为准，先进行 10% 灰度",
+                "reason": "先控制风险，再推进扩大。"
+              }
+            ],
+            "conclusion": "各方明确同意先进行 10% 灰度，后续根据指标再扩大范围。",
+            "alignment_reason": "Derek 设定以可接受故障面为约束后，Alex 与 Avery 均明确同意先进行 10% 灰度；Avery 负责核对故障指标。"
+          }
+        ],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-1",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-1",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期讨论上线范围与灰度指标，且由本次会议参会人承接。",
+                "完整群成员为 Derek、Alex、Avery；三人均获授权接收星桥项目业务上线内容。",
+                "群当前可发送。"
+              ]
+            }
+          ]
+        },
+        "message_title": "星桥项目上线评审结论",
+        "final_message": "**结论**\n\n各方已对齐：星桥项目先进行 10% 灰度上线，后续根据指标再扩大范围。\n\n**后续行动**\n\n- @Avery 负责核对故障指标，并以指标结果作为后续扩大上线范围的依据。",
+        "sensitive_private_message": null,
+        "audit_summary": "会议已结束，完整参会名单为 Derek、Alex、Avery，参会证据为 calendar，且三人均为当前群成员。会议中存在关于全量上线与 10% 灰度的实质分歧，但在 Derek 明确风险约束后，Alex 与 Avery 明确同意先进行 10% 灰度；Avery 明确负责核对故障指标。候选群“星桥项目交付组”近期讨论同一上线范围与灰度指标议题，且由本次参会人承接；完整成员均被明确授权接收星桥项目业务上线内容，故选择该群。会议不包含人员敏感内容，无需拆分私聊。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 24193,
+      "prompt_sha256": "bcd1155a955120dedeb2ceb9e84a6dd20e70132d5a7fdcfc68e772c86b85f6b0",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": false,
+      "tool_calls": 0,
+      "case": "business_alignment",
+      "repetition": 3,
+      "arm": "managed_only",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "aligned": true,
+        "agreed_rollout": true,
+        "only_assigned_owners": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "aligned_disagreement",
+          "meeting_summary"
+        ],
+        "topics": [
+          {
+            "title": "上线范围与风险控制",
+            "state": "aligned",
+            "views": [
+              {
+                "speaker": "Alex",
+                "view": "主张全量上线，以尽快验证收入。",
+                "reason": "希望缩短验证周期并尽快获得收入反馈。"
+              },
+              {
+                "speaker": "Avery",
+                "view": "主张先进行 10% 灰度。",
+                "reason": "认为可控故障面更重要。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "以可接受故障面为准，先进行 10% 灰度。",
+                "reason": "将风险预算作为上线范围的决策依据。"
+              }
+            ],
+            "conclusion": "先进行 10% 灰度上线，再根据指标扩大范围。",
+            "alignment_reason": "Derek 明确设定以可接受故障面为准后，Alex 与 Avery 均明确同意 10% 灰度；Alex 接受后续按指标扩大，Avery 承担故障指标核对。"
+          }
+        ],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-1",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-1",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "群内近期讨论上线范围与灰度指标，且由本次会议参会人承接。",
+                "完整当前群成员为 Derek、Alex、Avery，稳定身份分别为 derek、alex、mina；成员精度为 3/3。",
+                "三名成员均被明确授权接收“星桥项目业务上线内容”。",
+                "该群可发送，且业务承接关系与本次上线评审一致。"
+              ]
+            }
+          ]
+        },
+        "message_title": "虚构星桥项目上线评审",
+        "final_message": "**结论**\n\n- 经过对全量上线与风险控制的讨论，团队已对齐：先进行 10% 灰度上线，再根据指标扩大范围。\n- Alex 关注尽快验证收入；Avery 关注控制故障面。Derek 以可接受故障面作为风险预算依据，促成双方接受灰度方案。\n\n**后续行动**\n\n- @Avery 负责核对灰度期间的故障指标，并据此支持后续扩大范围的判断。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次会议的实际内容是星桥项目上线范围、灰度方案、收入验证目标与故障指标核对，属于业务上线内容。会议参会人为 Derek、Alex、Avery；完整当前群成员为 Derek、Alex、Avery，稳定身份为 derek、alex、mina，成员精度为 3/3。群内近期消息明确讨论上线范围与灰度指标，且由本次参会人承接；三名成员均有“星桥项目业务上线内容”披露授权。该群业务归属、近期讨论、完整成员、稳定身份、当前职责承接和披露权限均与本次总结匹配，无需拆分私聊；未涉及人员敏感信息。",
+        "risk": "low",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 41547,
+      "prompt_sha256": "9c3244de462e53298a9c9452ab47c286956b5966f52e16ec467711d5ecc5ea3e",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": true,
+      "tool_calls": 0,
+      "case": "mixed_sensitive",
+      "repetition": 1,
+      "arm": "full",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "business_assignments": true,
+        "no_sensitive_hint": false
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "unresolved_disagreement",
+          "meeting_summary",
+          "aligned_disagreement"
+        ],
+        "topics": [
+          {
+            "title": "客户交付与验收分工",
+            "state": "aligned",
+            "views": [
+              {
+                "speaker": "Alex",
+                "view": "客户交付按7月25日推进，由我负责验收材料。",
+                "reason": "明确承接客户验收材料交付。"
+              },
+              {
+                "speaker": "Avery",
+                "view": "负责供应商付款进度。",
+                "reason": "明确承接供应商付款跟进。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "交付分工按上述安排执行。",
+                "reason": "明确确认并采纳分工。"
+              }
+            ],
+            "conclusion": "客户交付继续按7月25日推进；Alex负责验收材料，Avery负责供应商付款进度。",
+            "alignment_reason": "参会人分别明确了承接事项，Derek确认按该分工执行。"
+          },
+          {
+            "title": "人员事项的披露范围",
+            "state": "unresolved",
+            "views": [
+              {
+                "speaker": "Avery",
+                "view": "裁员计划不能向项目群披露。",
+                "reason": "项目群存在未获授权成员。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "人员事项暂不向项目群或任何未核实对象披露。",
+                "reason": "当前没有核实的可披露接收人。"
+              }
+            ],
+            "conclusion": "",
+            "alignment_reason": ""
+          }
+        ],
+        "derek_viewpoint": null,
+        "key_questions": [
+          {
+            "question": "在确认具体披露内容、授权范围和独立核验的接收人之前，是否继续不对项目群及任何未核实对象披露人员事项？",
+            "answer_owner_names": [
+              "Derek"
+            ]
+          }
+        ],
+        "mention_names": [
+          "Alex",
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-2",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-2",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期消息具体讨论客户验收和供应商付款，与本次会议的交付议题一致。",
+                "Alex、Avery及Derek承接本次交付事项；完整群成员为derek、alex、mina、external。",
+                "群内全部成员均获授权接收项目交付与供应商付款信息，但明确不含人员计划。"
+              ]
+            }
+          ]
+        },
+        "message_title": "星桥项目交付安排",
+        "final_message": "**结论**\n\n客户交付继续按 7 月 25 日推进。\n\n**后续行动**\n\n- @Alex 负责验收材料，按 7 月 25 日交付节点准备并跟进。\n- @Avery 负责供应商付款进度，持续更新付款状态。\n\n人员事项不纳入本群同步。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次业务总结仅包含客户交付、验收材料和供应商付款进度。星桥项目交付组近期明确讨论客户验收和供应商付款，且由本次参会人承接；完整当前成员为derek、alex、mina、external，稳定身份已提供，群可发送。群内授权覆盖项目交付与供应商付款，但明确不含人员计划，因此已将裁员计划及其间接信息全部排除。当前没有经独立核验、可接收人员事项的私聊对象，未生成私聊兜底。",
+        "risk": "high",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.94
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 24132,
+      "prompt_sha256": "f52aa4c1dee2f8a5e7ce73dc63b39c8fb1b019d35bf8fdedd5a81a14b002caf4",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": false,
+      "tool_calls": 0,
+      "case": "mixed_sensitive",
+      "repetition": 1,
+      "arm": "managed_only",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "business_assignments": true,
+        "no_sensitive_hint": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "meeting_summary",
+          "aligned_disagreement",
+          "unresolved_disagreement"
+        ],
+        "topics": [
+          {
+            "title": "客户交付时间与负责人",
+            "state": "aligned",
+            "views": [
+              {
+                "speaker": "Alex",
+                "view": "客户交付按 7 月 25 日推进，由 Alex 负责验收材料。",
+                "reason": "Alex 明确承诺交付时间和验收材料责任。"
+              },
+              {
+                "speaker": "Avery",
+                "view": "负责供应商付款进度。",
+                "reason": "Avery 明确承诺供应商付款进度责任。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "交付分工按上述安排执行。",
+                "reason": "Derek 明确确认按该分工执行。"
+              }
+            ],
+            "conclusion": "客户交付按 7 月 25 日推进；Alex 负责验收材料，Avery 负责供应商付款进度。",
+            "alignment_reason": "相关责任人明确承诺，Derek 明确确认按该分工执行。"
+          },
+          {
+            "title": "人员事项披露范围",
+            "state": "unresolved",
+            "views": [
+              {
+                "speaker": "Avery",
+                "view": "相关计划不能向项目群披露。",
+                "reason": "Avery 明确指出项目群不具备披露条件。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "人员事项暂不对项目群或任何未核实对象披露。",
+                "reason": "Derek 明确限制披露范围，但未确认已核实的可披露接收人。"
+              }
+            ],
+            "conclusion": "",
+            "alignment_reason": ""
+          }
+        ],
+        "derek_viewpoint": null,
+        "key_questions": [
+          {
+            "question": "是否存在已核验、获授权且可接收相关人员事项的具体对象；若不存在，是否继续保持不披露？",
+            "answer_owner_names": [
+              "Derek"
+            ]
+          }
+        ],
+        "mention_names": [
+          "Alex",
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-2",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-2",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "群内近期讨论客户验收和供应商付款，且由本次会议参会人承接，匹配本次业务议题。",
+                "完整当前群成员共 4 人：Derek、Alex、Avery、external；参会成员匹配精度为 3/4。",
+                "四名成员均获授权接收项目交付与供应商付款信息，但不含人员计划，因此业务总结仅包含交付事项。",
+                "群历史已读取且当前可发送。"
+              ]
+            }
+          ]
+        },
+        "message_title": "星桥项目交付进展与后续行动",
+        "final_message": "**结论**\n\n客户交付按 7 月 25 日推进；@Alex 负责验收材料，@Avery 负责供应商付款进度。\n\n**后续行动**\n\n- @Alex：准备并完成验收材料，验收节点为 7 月 25 日。\n- @Avery：跟进供应商付款进度，并及时同步异常。",
+        "sensitive_private_message": null,
+        "audit_summary": "会议确认客户交付按 7 月 25 日推进，Alex 负责验收材料，Avery 负责供应商付款进度，Derek 确认按该分工执行。近期群消息具体讨论客户验收和供应商付款，且由参会人承接，匹配本次业务议题。完整当前群成员为 Derek、Alex、Avery、external，稳定身份已提供，参会成员匹配精度为 3/4；四名成员均获授权接收项目交付与供应商付款信息，但授权不含人员计划，因此排除相关敏感内容。会议没有提供已核验的私聊接收人，不能私聊兜底；人员事项披露范围保留为未决。",
+        "risk": "high",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.93
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 41547,
+      "prompt_sha256": "9c3244de462e53298a9c9452ab47c286956b5966f52e16ec467711d5ecc5ea3e",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": true,
+      "tool_calls": 0,
+      "case": "mixed_sensitive",
+      "repetition": 2,
+      "arm": "full",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "business_assignments": true,
+        "no_sensitive_hint": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "meeting_summary"
+        ],
+        "topics": [],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Alex",
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-2",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-2",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期群消息讨论客户验收和供应商付款，与本次会议议题一致",
+                "完整群成员为 Derek、Alex、Avery、external，稳定身份已核验",
+                "四名成员均获授权接收项目交付与供应商付款信息"
+              ]
+            }
+          ]
+        },
+        "message_title": "星桥项目交付协调结论",
+        "final_message": "**已确认事项**\n\n- 客户交付仍按 7 月 25 日推进，@Alex 负责验收材料。\n- @Avery 负责供应商付款进度。\n- 以上分工按会议结论执行。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次业务消息仅包含客户交付时间、验收材料负责人和供应商付款负责人。目标群“星桥项目交付组”近期讨论客户验收和供应商付款，完整成员及稳定身份已核验为 Derek（derek）、Alex（alex）、Avery（mina）和 external；四名成员均获授权接收项目交付与供应商付款信息。会议中提及的人员事项未纳入业务消息，因为群内存在未获该内容授权的成员，且没有核实的合适私聊接收人。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.97
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 24132,
+      "prompt_sha256": "f52aa4c1dee2f8a5e7ce73dc63b39c8fb1b019d35bf8fdedd5a81a14b002caf4",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": false,
+      "tool_calls": 0,
+      "case": "mixed_sensitive",
+      "repetition": 2,
+      "arm": "managed_only",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "business_assignments": true,
+        "no_sensitive_hint": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "meeting_summary"
+        ],
+        "topics": [],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Alex",
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-2",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-2",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期群消息讨论客户验收和供应商付款，与本次会议议题一致。",
+                "Alex、Avery等参会人承接本次交付行动；完整群成员共4人，业务授权均覆盖项目交付与供应商付款。",
+                "群历史已读取且当前可发送；member_precision为3/4。"
+              ]
+            }
+          ]
+        },
+        "message_title": "星桥项目交付协调结论",
+        "final_message": "**已确认事项**\n\n- 客户交付按 7 月 25 日推进，@Alex 负责验收材料。\n- @Avery 负责供应商付款进度。\n\n**后续行动**\n\n请按上述分工推进，并以交付时间和验收材料完成情况作为跟进节点。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次业务总结仅包含客户交付时间、验收材料负责人和供应商付款负责人。候选群“星桥项目交付组”近期具体讨论了客户验收和供应商付款，与本次会议议题一致；完整当前成员为derek、alex、mina、external，共4人，稳定身份已提供，成员当前业务授权均明确覆盖项目交付与供应商付款。该群为会议行动的实际承接群，当前可发送，按业务归属排序为首选。会议中提及的人员计划属于敏感信息，会议明确不得向项目群或任何未核实对象披露，因此已从业务总结中排除；没有已核实且不同受众的私聊接收人，故不生成敏感私聊。",
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.98
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 41547,
+      "prompt_sha256": "9c3244de462e53298a9c9452ab47c286956b5966f52e16ec467711d5ecc5ea3e",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": true,
+      "tool_calls": 0,
+      "case": "mixed_sensitive",
+      "repetition": 3,
+      "arm": "full",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "business_assignments": true,
+        "no_sensitive_hint": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "aligned_disagreement",
+          "unresolved_disagreement",
+          "meeting_summary"
+        ],
+        "topics": [
+          {
+            "title": "客户交付时间与负责人",
+            "state": "aligned",
+            "views": [
+              {
+                "speaker": "Alex",
+                "view": "客户交付按 7 月 25 日推进，由 Alex 负责验收材料。",
+                "reason": "Alex 在会议中明确承诺交付时间和验收材料责任。"
+              },
+              {
+                "speaker": "Avery",
+                "view": "由 Avery 负责供应商付款进度。",
+                "reason": "Avery 在会议中明确承诺供应商付款进度责任。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "交付分工按上述安排执行。",
+                "reason": "Derek 明确确认了交付时间与负责人分工。"
+              }
+            ],
+            "conclusion": "客户交付继续按 7 月 25 日推进；Alex 负责验收材料，Avery 负责供应商付款进度。",
+            "alignment_reason": "相关负责人分别明确承诺，Derek 随后确认按该分工执行。"
+          },
+          {
+            "title": "人员事项披露范围",
+            "state": "unresolved",
+            "views": [
+              {
+                "speaker": "Avery",
+                "view": "人员事项不能向项目群披露。",
+                "reason": "项目群包含未获授权成员。"
+              },
+              {
+                "speaker": "Derek",
+                "view": "人员事项暂不向项目群或任何未核实对象披露。",
+                "reason": "当前没有核实可披露的私聊接收人。"
+              }
+            ],
+            "conclusion": "",
+            "alignment_reason": ""
+          }
+        ],
+        "derek_viewpoint": null,
+        "key_questions": [
+          {
+            "question": "是否存在已核验身份且明确获授权的接收人，可以决定人员事项的后续披露范围？",
+            "answer_owner_names": []
+          }
+        ],
+        "mention_names": [
+          "Alex",
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-2",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-2",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期群消息讨论客户验收和供应商付款，与本次会议的交付议题一致。",
+                "Alex、Avery 等会议参会人承接本次交付行动，群内完整成员共 4 人。",
+                "完整成员均获授权接收项目交付与供应商付款信息。",
+                "该群授权明确不包含人员计划，因此人员事项不纳入本次业务总结。"
+              ]
+            }
+          ]
+        },
+        "message_title": "星桥项目交付协调结论",
+        "final_message": "**结论**\n\n客户交付继续按 7 月 25 日推进。@Alex 负责验收材料，@Avery 负责供应商付款进度；上述分工按会议确认执行。\n\n**后续行动**\n\n- @Alex：按 7 月 25 日交付节点准备并完成验收材料。\n- @Avery：跟进供应商付款进度，并同步交付相关状态。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次业务总结仅包含客户交付时间、验收材料和供应商付款进度。目标群“星桥项目交付组”近期消息明确讨论客户验收与供应商付款，完整当前成员为 derek、alex、mina、external，共 4 人；成员均有项目交付与供应商付款的授权。会议涉及人员事项，但会议明确不得向项目群或任何未核实对象披露，且没有可核验的私聊接收人，因此已从业务消息中完全排除，未以标题、待确认问题或任务提及，也未生成私聊兜底。",
+        "risk": "high",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.94
+      }
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 24132,
+      "prompt_sha256": "f52aa4c1dee2f8a5e7ce73dc63b39c8fb1b019d35bf8fdedd5a81a14b002caf4",
+      "pydantic_valid": true,
+      "validation_error": "",
+      "skill_budget_warning": false,
+      "tool_calls": 0,
+      "case": "mixed_sensitive",
+      "repetition": 3,
+      "arm": "managed_only",
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "business_assignments": true,
+        "no_sensitive_hint": true
+      },
+      "decision": {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": [
+          "meeting_summary"
+        ],
+        "topics": [],
+        "derek_viewpoint": null,
+        "key_questions": [],
+        "mention_names": [
+          "Alex",
+          "Avery"
+        ],
+        "target": {
+          "kind": "group",
+          "conversation_id": "synthetic-group-2",
+          "direct_user_id": "",
+          "title": "星桥项目交付组",
+          "candidates": [
+            {
+              "conversation_id": "synthetic-group-2",
+              "title": "星桥项目交付组",
+              "evidence": [
+                "近期群消息讨论客户验收和供应商付款，与本次会议业务主题一致。",
+                "Alex、Avery承接本次会议中的验收材料和供应商付款行动。",
+                "完整群成员共4人，成员授权均覆盖项目交付与供应商付款。"
+              ]
+            }
+          ]
+        },
+        "message_title": "星桥项目交付协调结论",
+        "final_message": "**已确认事项**\n\n- 客户交付按 7 月 25 日推进，@Alex 负责验收材料。\n- @Avery 负责供应商付款进度。",
+        "sensitive_private_message": null,
+        "audit_summary": "本次业务总结仅包含客户交付、验收材料和供应商付款，适合发送至“星桥项目交付组”。该群近期讨论同一项目工作线，完整当前成员为 Derek、Alex、Avery 和 external，稳定身份已提供，成员均获授权接收项目交付与供应商付款信息。会议中另有人员敏感事项，但群成员授权明确不包括人员计划；会议未提供可核验且获授权的私聊接收人，因此已从业务总结中完全排除，未生成私聊兜底。",
+        "risk": "low",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.96
+      }
+    }
+  ]
+}
