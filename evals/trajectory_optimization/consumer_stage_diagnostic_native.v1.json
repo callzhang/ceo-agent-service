@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "scope": "Anonymous read-only Codex CLI correction of a Consumer stage binding error",
+  "runtime": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "low",
+    "route": "local Codex OAuth",
+    "session_id": "01a14ebf-ff5e-7cd0-8d66-a3947ddff7db",
+    "configuration": "ignore-user-config, apps and multi-agent disabled, read-only sandbox, no output-schema option",
+    "executed_tool_calls": 0
+  },
+  "fixture": {
+    "business_case": "fictional request with no external action",
+    "service_stage_binding": {
+      "stage_index": 0,
+      "predecessor_review_id": null
+    },
+    "deliberately_invalid_first_result": {
+      "stage_index": 0,
+      "predecessor_review_id": 1
+    },
+    "correction_detail": "result: Value error, stage_index=0 requires predecessor_review_id=null"
+  },
+  "result": {
+    "cold_first_result": "The model returned the deliberately invalid stage pair as requested.",
+    "same_session_correction": "The model returned stage_index=0 and predecessor_review_id=null.",
+    "validated_by": "ConsumerAgentWireResult.model_validate(...).to_result()",
+    "all_other_json_fields_identical": true,
+    "cold_cli_events": 5,
+    "resume_cli_events": 5
+  },
+  "limits": [
+    "This is one anonymous correction case, not a live business outcome or a general model success-rate estimate.",
+    "The service still validates the full Consumer result and its expected execution-stage binding; no external action was attempted."
+  ]
+}
