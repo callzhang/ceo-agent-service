@@ -122,6 +122,17 @@ def test_provider_failure_payload_is_not_projected():
     assert share_sheet_cell_styles(failure) is failure
 
 
+@pytest.mark.parametrize("success_field", [{}, {"success": None}, {"success": 0}, {"success": "true"}])
+def test_unknown_provider_success_status_is_not_projected(success_field):
+    style = {"fontColor": "#ff0000", "numberFormat": "yyyy-mm-dd"}
+    response = {
+        **success_field,
+        "cells": [[{"value": index, "cellStyles": deepcopy(style)} for index in range(100)]],
+    }
+
+    assert share_sheet_cell_styles(response) is response
+
+
 def test_unexpected_provider_shape_remains_untouched():
     response = ["provider payload"]
 

@@ -11,7 +11,7 @@ def share_sheet_cell_styles(result: Any) -> Any:
     if not isinstance(result, dict):
         return result
     rows = result.get("cells")
-    if result.get("success") is False or "sharedCellStyles" in result or not isinstance(rows, list):
+    if result.get("success") is not True or "sharedCellStyles" in result or not isinstance(rows, list):
         return result
 
     styles: list[dict[str, Any]] = []

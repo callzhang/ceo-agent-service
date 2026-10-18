@@ -1428,7 +1428,10 @@ or policy change was made.
 
 The focused regression started with two failing Consumer/Audit tool-boundary
 cases, then passed after the edit. The failure-receipt preservation case also
-failed before the explicit success check and passed after it. A synthetic
+failed before the explicit success check and passed after it. Independent
+review found that missing, null and nonboolean success fields also needed to
+remain unchanged; four new cases failed before the strict `success is True`
+check, then passed. All 111 affected local tests and Ruff pass. A synthetic
 66-by-74 range exceeds 1 MiB in the old representation, falls below 1 MiB
 after sharing, and reconstructs to identical ordered JSON serialization. In the fixed
 anonymous Codex OAuth comparison, original and shared outputs both identified
