@@ -1342,9 +1342,18 @@ grounded `no_action` candidate and returned a reply containing unsupported
 backend claims. These small cases check interpretation of this representation;
 they do not prove the full production role workflow or a new business outcome.
 
-**Release gate.** Review the isolated diff, merge after review and checks,
-deploy through `python -m app.deploy`, then read back the new PID, health,
-queues, Attention and History. This candidate has not yet been merged or
-deployed. Natural post-release Consumer/Audit reads will be further evidence
-of operational behavior; the local replay establishes the lossless output
-contract under the saved sample.
+**Production readback.** Independent review found no remaining Critical or
+Important issue after the FastMCP size-gate correction. PR #136 merged as
+`808f5579`; `python -m app.deploy` advanced the production checkout from
+`3ab4f2fe` to that commit after its normal quiet wait and backup. At the
+2026-10-18 12:22 UTC readback, launchd supervisor PID 819 was running from
+the new checkout and `/healthz` returned HTTP 200 with `status=ok`. Console
+Status, Attention and History returned HTTP 200. The queue view had no
+processing items; its six pending items were Email provider actions. The
+scheduled dispatcher showed two running scans, while other dispatchers showed
+zero running; Attention totaled seven, and the five latest History items were
+`done`. The existing overall health `degraded` indicator remained. GitHub
+Quality was still in progress at this checkpoint and is supplementary to the
+focused behavior validation. No natural post-release Consumer/Audit message
+read has yet established a production business judgment; the local replay and
+fixed cases establish the lossless output contract under their tested inputs.
