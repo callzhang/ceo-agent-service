@@ -1404,3 +1404,50 @@ comparison. The exact-input result strengthens the no-go: removing the table
 reliably changes an importance decision in this fixed case. No Skill or runtime
 change follows. The compact, sanitized repeat receipt is
 `evals/trajectory_optimization/email_classifier_category_table_repeat.v2.json`.
+
+### DingTalk Sheet range style sharing, 2026-10-18
+
+**Observed failure boundary.** Four production tasks' native trajectories had
+28 `read_dingtalk_sheet_range` calls; ten in one task produced about 3.69 million
+characters of tool output. Its `A1:BV66` return reached the native 1 MiB text
+boundary twice, leaving saved MCP text unparsable, while a separate read-only
+DWS command for the same range returned valid JSON. A 534,380-character saved
+partial-range result had 1,970 styled cells but only 28 distinct style objects;
+styles occupied 253,873 compact JSON characters. This supports a tool-output
+transport/representation issue, not a DWS JSON defect. The saved native result
+does not by itself prove exactly what the model retained after truncation.
+
+**Finite gate and edit.** Preserve every row, column, value, style, order,
+provider status and failure; a small response must not grow. A large anonymous
+range must remain parseable at the native tool boundary, and fixed value/style
+judgments must match the original format. Only the range tool's returned
+representation changed: exact repeated `cellStyles` objects use
+`cellStyleRef` plus a top-level `sharedCellStyles` array when the actual
+FastMCP serialization shrinks. No query, budget, prompt, role, route, session
+or policy change was made.
+
+The focused regression started with two failing Consumer/Audit tool-boundary
+cases, then passed after the edit. The failure-receipt preservation case also
+failed before the explicit success check and passed after it. Independent
+review found that missing, null and nonboolean success fields also needed to
+remain unchanged; four new cases failed before the strict `success is True`
+check, then passed. All 111 affected local tests and Ruff pass. A synthetic
+66-by-74 range exceeds 1 MiB in the old representation, falls below 1 MiB
+after sharing, and reconstructs to identical ordered JSON serialization. In the fixed
+anonymous Codex OAuth comparison, original and shared outputs both identified
+the same three red-font cells, their 161 sum, and D12's value/color; the MCP
+text fell from 22,491 to 7,036 bytes. A separate large candidate run delivered
+all 66 rows and 74 columns as valid 346,039-byte JSON; the model read the
+bottom-right value 4,884 and style color `#000003`. A 352,640-character native
+transport probe also retained its final marker. Compact results and hashes are
+in `evals/trajectory_optimization/sheet_style_sharing.native.v1.json`.
+
+A read-only repeat of the real 66-by-74 DWS range through the implemented
+helper returned `success=true` and 79 unique styles. Its FastMCP-formatted
+result fell from 1,327,319 to 367,854 bytes; expanding every reference
+restored identical ordered JSON, and the projected JSON parsed. This probe did
+not submit business cells to a model or change the source workbook.
+
+These anonymous runs verify representation and model visibility in the fixed
+cases. They do not establish a real post-release business outcome; production
+version, health and queue readback belong to the release step.
