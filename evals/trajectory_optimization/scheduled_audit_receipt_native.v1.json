@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.6-luna",
+  "scope": "Fictional read-only diagnostic; no Work Profile, business MCP or action",
+  "repetitions": 3,
+  "results": [
+    {
+      "exit_code": 0,
+      "tool_calls": 0,
+      "prompt_sha256": "e7435551abc710f2684c15802bae8fd8f5276c69dc06176fb3543f27b64f2189",
+      "prompt_chars": 6048,
+      "result": {
+        "returned_readback_identified": false,
+        "report_content_verified": false,
+        "tool_call_id": ""
+      },
+      "case": "empty",
+      "repetition": 1
+    },
+    {
+      "exit_code": 0,
+      "tool_calls": 0,
+      "prompt_sha256": "e7435551abc710f2684c15802bae8fd8f5276c69dc06176fb3543f27b64f2189",
+      "prompt_chars": 6048,
+      "result": {
+        "returned_readback_identified": false,
+        "report_content_verified": false,
+        "tool_call_id": ""
+      },
+      "case": "empty",
+      "repetition": 2
+    },
+    {
+      "exit_code": 0,
+      "tool_calls": 0,
+      "prompt_sha256": "e7435551abc710f2684c15802bae8fd8f5276c69dc06176fb3543f27b64f2189",
+      "prompt_chars": 6048,
+      "result": {
+        "returned_readback_identified": false,
+        "report_content_verified": false,
+        "tool_call_id": ""
+      },
+      "case": "empty",
+      "repetition": 3
+    },
+    {
+      "exit_code": 0,
+      "tool_calls": 0,
+      "prompt_sha256": "0a554d5e10bb062e67a58b1d1a1d28dd356226f5b7ccbe20cb04d2f8e940ef70",
+      "prompt_chars": 6305,
+      "result": {
+        "returned_readback_identified": true,
+        "report_content_verified": false,
+        "tool_call_id": "synthetic-call-1"
+      },
+      "case": "returned",
+      "repetition": 1
+    },
+    {
+      "exit_code": 0,
+      "tool_calls": 0,
+      "prompt_sha256": "0a554d5e10bb062e67a58b1d1a1d28dd356226f5b7ccbe20cb04d2f8e940ef70",
+      "prompt_chars": 6305,
+      "result": {
+        "returned_readback_identified": true,
+        "report_content_verified": false,
+        "tool_call_id": "synthetic-call-1"
+      },
+      "case": "returned",
+      "repetition": 2
+    },
+    {
+      "exit_code": 0,
+      "tool_calls": 0,
+      "prompt_sha256": "0a554d5e10bb062e67a58b1d1a1d28dd356226f5b7ccbe20cb04d2f8e940ef70",
+      "prompt_chars": 6305,
+      "result": {
+        "returned_readback_identified": true,
+        "report_content_verified": false,
+        "tool_call_id": "synthetic-call-1"
+      },
+      "case": "returned",
+      "repetition": 3
+    }
+  ]
+}

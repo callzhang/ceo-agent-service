@@ -374,6 +374,7 @@ class AuditTurnContext:
     candidate_digest: str
     audit_rules: str
     previous_revision_review: AuditAgentResult | None = None
+    scheduled_work_receipts: tuple[dict[str, object], ...] = ()
 
     def render(self, *, current_time: str | None = None) -> str:
         from app.reviewed_sources import context_source
@@ -409,6 +410,17 @@ class AuditTurnContext:
                     current_time=current_time,
                     include_heading=False,
                     source_reference=source_reference,
+                ),
+                *(
+                    (
+                        "Service-recorded scheduled work receipts (Consumer tool output; metadata only)\n"
+                        + _json(self.scheduled_work_receipts)
+                        + "\nThese values come from the exact completed Consumer parent run. "
+                        "They identify a returned document readback, not whether the report content or its claims are correct. "
+                        "No matching Consumer document readback was captured when this list is empty. "
+                        "Review the candidate against its source facts."
+                    ,)
+                    if self.task.channel == "scheduled" else ()
                 ),
                 "Service-prepared outbound message postfix\n"
                 "DingTalk message bodies in this candidate are prepared by the service before Audit: "

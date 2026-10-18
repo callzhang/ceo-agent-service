@@ -970,6 +970,80 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
 
 
+def test_scheduled_audit_receives_exact_consumer_document_return(tmp_path, monkeypatch):
+    store, scheduled_run, options = fixture(tmp_path)
+    execution_id = int(dispatch(store, scheduled_run, options).execution_id)
+    captured_events = {}
+
+    class ConsumerWithDocumentReturn(Consumer):
+        def run(self, task, _context, *, proposal_revision, parent_agent_run_id, feedback=None):
+            claimed = self.store.claim_agent_run(
+                task.id, task.execution_generation, role=AgentRole.CONSUMER,
+                proposal_revision=proposal_revision, turn_attempt=0,
+                parent_agent_run_id=parent_agent_run_id, operation_id="", owner="consumer",
+            )
+            event = {"type": "item.completed", "item": {
+                "type": "mcp_tool_call", "server": "agent_cli",
+                "tool": "consumer_document_write", "id": "write-1",
+                "result": {"structuredContent": {
+                    "operation": "updated", "node_id": "document-9", "title": "Report",
+                    "provider_result": {"nodeId": "document-9"},
+                    "readback": {"content": "private synthetic report body"},
+                }},
+            }}
+            captured_events[claimed.run.id] = event
+            result = self.results.popleft()
+            self.store.complete_agent_run(
+                claimed.run.id, result.model_dump(mode="json"), owner="consumer"
+            )
+            return AgentTurnRunResult(claimed.run.id, result, 0, 1)
+
+    get_agent_run = store.get_agent_run
+
+    def get_agent_run_with_native_events(run_id, *, load_events=True):
+        run = get_agent_run(run_id, load_events=load_events)
+        if load_events and run_id in captured_events:
+            return run.model_copy(update={"tool_events": [captured_events[run_id]]})
+        return run
+
+    monkeypatch.setattr(store, "get_agent_run", get_agent_run_with_native_events)
+
+    class CapturingAudit(Audit):
+        def __init__(self, store, *results):
+            super().__init__(store, *results)
+            self.contexts = []
+
+        def run(self, task, context, *, turn_attempt, parent_agent_run_id):
+            self.contexts.append(context)
+            return super().run(
+                task, context, turn_attempt=turn_attempt,
+                parent_agent_run_id=parent_agent_run_id,
+            )
+
+    audit_runner = CapturingAudit(store, "approve")
+    orchestrator = AgentOrchestrator(
+        store=store, consumer=ConsumerWithDocumentReturn(store, proposal("Report")),
+        audit=audit_runner,
+    )
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, execution_id, "execution")
+    ScheduledAgentConsumer(
+        store=store, option_service=options,
+        orchestrator_factory=lambda _built: orchestrator, now=lambda: NOW,
+    )(envelope, guard)
+
+    task = store.get_reply_task(execution_id)
+    consumer_run = next(
+        run for run in store.list_agent_runs_for_task_generation(
+            execution_id, task.execution_generation
+        ) if run.role is AgentRole.CONSUMER
+    )
+    [receipt] = audit_runner.contexts[0].scheduled_work_receipts
+    assert receipt["consumer_run_id"] == consumer_run.id
+    assert receipt["document_node_id"] == "document-9"
+    assert "private synthetic report body" not in audit_runner.contexts[0].render()
+
+
 class FailingAudit:
     """An Audit turn that always reports the same failure the service cannot classify."""
 
