@@ -1198,6 +1198,11 @@ def _analyze_meeting_job(
                 if scheduled_consumer is not None
                 else ""
             ),
+            skill_materials=(
+                scheduled_consumer.skill_materials
+                if scheduled_consumer is not None
+                else ()
+            ),
         )
     except MeetingOrganizerIdentityError as exc:
         if exc.decision is not None:
