@@ -1247,6 +1247,26 @@ def test_stage_requires_predecessor_and_immediate_plan_excludes_question():
         ConsumerAgentResult.model_validate({**base, "decision_options": [] , "requested_input": "Choose"})
 
 
+def test_consumer_wire_stage_error_identifies_the_invalid_field():
+    with pytest.raises(
+        ValidationError,
+        match="stage_index=0 requires predecessor_review_id=null",
+    ):
+        ConsumerAgentWireResult.model_validate(
+            _consumer_wire_payload(stage_index=0, predecessor_review_id=1)
+        )
+    with pytest.raises(
+        ValidationError,
+        match="stage_index>0 requires predecessor_review_id",
+    ):
+        ConsumerAgentWireResult.model_validate(
+            _consumer_wire_payload(stage_index=1, predecessor_review_id=None)
+        )
+    assert ConsumerAgentWireResult.model_validate(
+        _consumer_wire_payload(stage_index=1, predecessor_review_id=7)
+    ).to_result().predecessor_review_id == 7
+
+
 def test_audit_review_only_and_system_execution_result():
     from app.agent_contracts import SystemExecutionResult
 

@@ -1129,17 +1129,53 @@ eight of those pairs sharing both `summary_input_id` and source identity. This
 is a metadata proxy, not the count or an upper bound of exact fingerprint
 matches: different input IDs could still render identical content, while even
 the eight same-input pairs can differ in semantic context, runner lifetime, or
-native tail. In the
-most recent observed shared session, 19 completed runs had 19 distinct input
-IDs and source identities. The associated native session files were unavailable
-under the configured Codex home, so this review cannot establish the complete
-production trajectory for an applicable repeated-context case.
+native tail. In the most recent observed shared session, 19 completed runs had 19 distinct input
+IDs and source identities. The JSONL file was unavailable under the configured
+Codex home. A later read-only check found this session in Codex's paginated
+native history with 48 turns and 294 items. The original file-only lookup was
+therefore insufficient; this review has not yet compared exact rendered Task
+context fingerprints from that history, so repeated production benefit remains
+unproved. Reassess this draft only after the current scoped issue is delivered.
 
 Acceptance for this specific optimization would require a complete, repeated
 production trajectory showing byte-identical context across adjacent Tasks,
 measured input savings, and a fixed case preserving Task/Project decisions,
 source citations, and no cross-item omission. The current evidence does not
 meet the first condition. Do not merge or deploy the Task half of #125, or add
-fallback/prompt rules to make the draft fire more often. Revisit only when a
-complete native trajectory and a real matching workload justify a new bounded
-change.
+fallback/prompt rules to make the draft fire more often. Revisit only after
+comparing the available native turns against exact context fingerprints and
+finding a real matching workload that justifies a new bounded change.
+
+## Consumer stage-pair correction diagnostic, 2026-10-18
+
+Read-only production records show nine Consumer result failures across three
+reply tasks with the same `later stage requires predecessor_review_id` detail.
+The latest task had six failed revision attempts after one completed Consumer
+candidate and one Audit return. Its complete native trajectory is available in
+Codex's paginated thread history even though the JSONL files are absent: the
+original Consumer session has 34 projected items across four turns, the Audit
+session 16 items, and two fresh retry sessions nine and ten items. The stored
+inputs, tool calls and returns, model outputs, and terminal run records were
+compared. All 18 business MCP reads in these four sessions report completed.
+
+The service input told the revision to echo
+`{"stage_index":0,"predecessor_review_id":null}`. Each failed output instead
+returned stage 0 with predecessor ID 1. The result validator rejected this
+invalid pair but described it as a *missing* predecessor for a later stage;
+the correction prompt repeated that misleading detail. Subsequent same-session
+and fresh-session attempts repeated the same invalid pair. The binding itself,
+Audit feedback, stage budget, and business decision are not changed here.
+
+Acceptance for this one defect: stage 0 with any predecessor ID must still
+fail with a diagnostic saying that stage 0 requires a null predecessor; a later
+stage without an ID must still fail with the opposite diagnostic; valid pairs
+must still parse; and an anonymous same-session correction must remove only
+the extra ID while preserving the other JSON fields. The new wire-boundary
+regression failed against the old message and passed after the change. The
+affected Agent contract and turn-runner tests pass (144). One read-only native
+Codex OAuth fixture with the configured `gpt-5.6-luna` model returned the
+deliberately invalid pair on its first turn, then returned a Pydantic-valid
+stage-0/null pair on resume with every other JSON field identical and no tool
+calls; the receipt is
+`evals/trajectory_optimization/consumer_stage_diagnostic_native.v1.json`.
+This is controlled correction evidence, not a real post-release business turn.

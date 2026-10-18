@@ -513,8 +513,10 @@ class ConsumerAgentResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_payload(self, info: ValidationInfo) -> "ConsumerAgentResult":
-        if (self.stage_index > 0) != (self.predecessor_review_id is not None):
-            raise ValueError("later stage requires predecessor_review_id")
+        if self.stage_index == 0 and self.predecessor_review_id is not None:
+            raise ValueError("stage_index=0 requires predecessor_review_id=null")
+        if self.stage_index > 0 and self.predecessor_review_id is None:
+            raise ValueError("stage_index>0 requires predecessor_review_id")
         if (self.outcome is ConsumerOutcome.PROPOSAL) != (self.proposal is not None):
             raise ValueError("proposal is required only for proposal outcome")
         if self.outcome is ConsumerOutcome.NEEDS_HUMAN:
