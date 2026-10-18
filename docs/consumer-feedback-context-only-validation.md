@@ -12,8 +12,9 @@ Acceptance requires a shorter submitted task input only after an Audit
 return/reject when its completed Consumer parent, task generation, exact Codex
 route/session and stable source, Developer, output-contract, image and Skill
 inputs match. The initial complete User input must still be readable in that
-session, the transcript tail must equal the persisted last Consumer attempt,
-and no compaction may have intervened. Any missing or changed evidence keeps
+session, the preceding candidate answer and native turn completion must be
+present after its bound User input, the transcript tail must equal the persisted
+last Consumer attempt, and no compaction may have intervened. Any missing or changed evidence keeps
 the complete input. The new input must carry the current time, complete Audit
 feedback, runtime correction if present, and a complete replacement-result
 request. Saved prompt snapshots must represent the actual submitted input.
@@ -43,6 +44,14 @@ and broad business quality are not established by it. The recorded result is
 
 After applying only the Consumer portion of PR #125 to current main and binding
 all trajectory reads to the same resolved Codex home, the Consumer,
-turn-runner, route and native-input tests passed: 287 passed, 4 skipped.
+turn-runner, route and native-input tests passed: 290 passed, 4 skipped.
 Ruff and whitespace checks passed. The PR #125 Task Agent reuse change was not
 included in this branch.
+
+Review found that the first version could accept a native record containing
+only the bound User marker without an assistant answer. A focused regression
+failed on that incomplete record before the guard change. The guard now
+requires a nonempty assistant output followed by native `task_complete` after
+the bound User input. An actual anonymous Codex session confirmed the complete
+turn passes and a slice without its completion event does not; no production
+business session was replayed.

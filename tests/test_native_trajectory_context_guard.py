@@ -17,6 +17,21 @@ def _user_message(text):
     }
 
 
+def _completed_answer(text):
+    return [
+        _user_message(text),
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Complete candidate"}],
+            },
+        },
+        {"type": "event_msg", "payload": {"type": "task_complete"}},
+    ]
+
+
 def _write_session(path, records):
     path.write_text(
         "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records),
@@ -24,7 +39,7 @@ def _write_session(path, records):
     )
 
 
-def _guard(path, monkeypatch, *, start=0, end=1, session_end=None):
+def _guard(path, monkeypatch, *, start=0, end=3, session_end=None):
     monkeypatch.setattr(
         native_trajectory,
         "find_codex_session_path",
@@ -44,15 +59,47 @@ def test_context_reuse_requires_exact_single_final_user_prompt(tmp_path, monkeyp
     path = tmp_path / "session.jsonl"
     _write_session(
         path,
-        [
-            _user_message(
-                "full task context\n\n"
-                "<!-- consumer-source-context-sha256:abc123 -->"
-            )
-        ],
+        _completed_answer(
+            "full task context\n\n<!-- consumer-source-context-sha256:abc123 -->"
+        ),
     )
 
     assert _guard(path, monkeypatch)
+
+
+def test_context_reuse_rejects_missing_native_answer(tmp_path, monkeypatch):
+    path = tmp_path / "session.jsonl"
+    _write_session(
+        path,
+        [
+            _user_message("full task context\n\n<!-- consumer-source-context-sha256:abc123 -->"),
+            {"type": "event_msg", "payload": {"type": "task_complete"}},
+        ],
+    )
+
+    assert not _guard(path, monkeypatch, end=2)
+
+
+def test_context_reuse_rejects_unfinished_native_answer(tmp_path, monkeypatch):
+    path = tmp_path / "session.jsonl"
+    _write_session(
+        path,
+        _completed_answer(
+            "full task context\n\n<!-- consumer-source-context-sha256:abc123 -->"
+        )[:-1],
+    )
+
+    assert not _guard(path, monkeypatch, end=2)
+
+
+def test_context_reuse_rejects_answer_before_bound_user_input(tmp_path, monkeypatch):
+    path = tmp_path / "session.jsonl"
+    complete = _completed_answer(
+        "full task context\n\n<!-- consumer-source-context-sha256:abc123 -->"
+    )
+    _write_session(path, [complete[1], complete[0], complete[2]])
+
+    assert not _guard(path, monkeypatch)
 
 
 def test_later_user_prompt_invalidates_context_reuse(tmp_path, monkeypatch):
@@ -60,15 +107,14 @@ def test_later_user_prompt_invalidates_context_reuse(tmp_path, monkeypatch):
     _write_session(
         path,
         [
-            _user_message(
-                "full task context\n\n"
-                "<!-- consumer-source-context-sha256:abc123 -->"
+            *_completed_answer(
+                "full task context\n\n<!-- consumer-source-context-sha256:abc123 -->"
             ),
             _user_message("later input in same invocation"),
         ],
     )
 
-    assert not _guard(path, monkeypatch, end=2)
+    assert not _guard(path, monkeypatch, end=4)
 
 
 def test_context_reuse_fails_after_native_compaction(tmp_path, monkeypatch):
@@ -76,15 +122,14 @@ def test_context_reuse_fails_after_native_compaction(tmp_path, monkeypatch):
     _write_session(
         path,
         [
-            _user_message(
-                "full task context\n\n"
-                "<!-- consumer-source-context-sha256:abc123 -->"
+            *_completed_answer(
+                "full task context\n\n<!-- consumer-source-context-sha256:abc123 -->"
             ),
             {"type": "compacted", "payload": {"thread_id": "session-a"}},
         ],
     )
 
-    assert not _guard(path, monkeypatch, end=1, session_end=2)
+    assert not _guard(path, monkeypatch, end=3, session_end=4)
 
 
 def test_context_reuse_reads_the_explicit_codex_home_for_duplicate_session_ids(
@@ -98,12 +143,9 @@ def test_context_reuse_reads_the_explicit_codex_home_for_duplicate_session_ids(
     _write_session(default_path, [_user_message("stale default-home copy")])
     _write_session(
         configured_path,
-        [
-            _user_message(
-                "full task context\n\n"
-                "<!-- consumer-source-context-sha256:abc123 -->"
-            )
-        ],
+        _completed_answer(
+            "full task context\n\n<!-- consumer-source-context-sha256:abc123 -->"
+        ),
     )
     resolved_homes = []
 
@@ -122,8 +164,8 @@ def test_context_reuse_reads_the_explicit_codex_home_for_duplicate_session_ids(
         "consumer-source-context-sha256:abc123",
         context_start_line=0,
         attempt_start_line=0,
-        attempt_end_line=1,
-        session_end_line=1,
+        attempt_end_line=3,
+        session_end_line=3,
         codex_home=configured_home,
     )
     assert resolved_homes == [configured_home, configured_home]

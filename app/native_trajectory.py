@@ -314,6 +314,33 @@ def codex_session_has_final_user_marker_without_compaction(
         or any(record.get("type") == "compacted" for record in context_records)
     ):
         return False
+    saw_user = saw_answer = completed_answer = False
+    for record in attempt_records:
+        body = record.get("payload")
+        if not isinstance(body, dict):
+            continue
+        if record.get("type") == "response_item" and body.get("type") == "message":
+            metadata = body.get("internal_chat_message_metadata_passthrough")
+            kinds = metadata.get("content_item_kinds", []) if isinstance(metadata, dict) else []
+            if body.get("role") == "user" and "user.text" in kinds:
+                saw_user, saw_answer = True, False
+            elif saw_user and body.get("role") == "assistant":
+                content = body.get("content")
+                saw_answer = isinstance(content, list) and any(
+                    isinstance(block, dict)
+                    and block.get("type") == "output_text"
+                    and isinstance(block.get("text"), str)
+                    and block["text"].strip()
+                    for block in content
+                )
+        elif (
+            record.get("type") == "event_msg"
+            and body.get("type") == "task_complete"
+            and saw_answer
+        ):
+            completed_answer = True
+    if not completed_answer:
+        return False
 
     from types import SimpleNamespace
 

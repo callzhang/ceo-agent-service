@@ -65,7 +65,7 @@ Consumer 会话兼容键还绑定本轮实际选中的 Skill 正文：冻结 Ski
 不变。
 
 Consumer 收到 Audit 的 return/reject 后，只有原候选、审核、任务代次及 Codex session
-精确匹配，原始完整输入指纹仍在同一 transcript 中，且 session 自上一 Consumer turn 后没有
+精确匹配，原始完整输入指纹和上一候选的原生完成回答仍在同一 transcript 中，且 session 自上一 Consumer turn 后没有
 新增内容或 compaction 时，才在该 session 里提交精简修订指令：本轮时间、完整 Audit feedback、
 必要的 runtime correction，以及要求返回完整替代候选。原始事实和候选由同一 session 继续承载，
 指纹绑定 Developer 指令、稳定 Task 输入、结果契约和图片来源。条件不满足、找不到可信轨迹或
