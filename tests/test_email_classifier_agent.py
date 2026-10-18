@@ -12,9 +12,11 @@ from app.agent_cron.commands import (
 )
 from app.email_classifier_agent import (
     AgentClassificationResult,
+    AgentClassificationWireResult,
     EmailClassifierAgent,
     EmailClassifierRoutedBackend,
     _parse_agent_classification_json,
+    bind_agent_classification_candidate,
     build_agent_classification_prompt,
     validate_agent_classification_result,
 )
@@ -58,6 +60,88 @@ def _result(**overrides):
     }
     value.update(overrides)
     return value
+
+
+def _wire_result(**overrides):
+    value = {
+        "category": "work",
+        "important": False,
+        "certainty": "certain",
+        "confidence": 0.91,
+        "reason": "A real customer project needs discussion.",
+        "unsubscribe_candidate_index": None,
+    }
+    value.update(overrides)
+    return value
+
+
+def test_wire_result_selects_index_only_and_binding_uses_current_candidate():
+    wire = AgentClassificationWireResult.model_validate(
+        _wire_result(category="junk", unsubscribe_candidate_index=1)
+    )
+    bound = bind_agent_classification_candidate(
+        wire,
+        allowed_category_keys=ALLOWED,
+        unsubscribe_candidates=CANDIDATES,
+    )
+
+    assert bound.unsubscribe_candidate_index == 1
+    assert bound.unsubscribe_url == CANDIDATES[1]
+    with pytest.raises(ValidationError):
+        AgentClassificationWireResult.model_validate(
+            _wire_result(
+                category="junk",
+                unsubscribe_candidate_index=1,
+                unsubscribe_url=CANDIDATES[1],
+            )
+        )
+
+
+def test_wire_candidate_binding_rejects_out_of_range_and_ineligible_selection():
+    with pytest.raises(ValueError, match="out of range"):
+        bind_agent_classification_candidate(
+            _wire_result(category="junk", unsubscribe_candidate_index=2),
+            allowed_category_keys=ALLOWED,
+            unsubscribe_candidates=CANDIDATES,
+        )
+    with pytest.raises(ValueError, match="only certain junk"):
+        bind_agent_classification_candidate(
+            _wire_result(category="work", unsubscribe_candidate_index=0),
+            allowed_category_keys=ALLOWED,
+            unsubscribe_candidates=CANDIDATES,
+        )
+
+
+def test_routed_backend_binds_exact_url_and_persists_only_digest_reference():
+    persisted = []
+    command_factories = []
+
+    class RoutedExecution:
+        def execute(self, **kwargs):
+            command_factories.append(kwargs["command_factory"])
+            parsed = kwargs["parser"](
+                json.dumps(
+                    _wire_result(category="junk", unsubscribe_candidate_index=1)
+                )
+            )
+            persisted.append(parsed)
+            return SimpleNamespace(value=parsed)
+
+    output = EmailClassifierRoutedBackend(RoutedExecution()).classify(
+        prompt="synthetic classifier input",
+        task_id="email-classification:wire-binding",
+        allowed_category_keys=ALLOWED,
+        unsubscribe_candidates=CANDIDATES,
+    )
+    result = AgentClassificationResult.model_validate_json(output)
+
+    assert result.unsubscribe_candidate_index == 1
+    assert result.unsubscribe_url == CANDIDATES[1]
+    assert CANDIDATES[1] not in persisted[0]
+    assert sha256(CANDIDATES[1].encode("utf-8")).hexdigest() in persisted[0]
+    [factory] = command_factories
+    assert "AgentClassificationWireResult" in factory.developer_instructions
+    assert "do not return or rewrite its URL" in factory.developer_instructions
 
 
 def test_agent_result_accepts_exact_allowed_category_and_strict_bool() -> None:
@@ -189,7 +273,7 @@ def test_agent_transport_parser_accepts_fenced_json_but_keeps_strict_contract() 
 def test_routed_backend_validates_exact_invocation_context_before_persistence() -> None:
     class RoutedExecution:
         def execute(self, **kwargs):
-            value = kwargs["parser"](json.dumps(_result(category="financing")))
+            value = kwargs["parser"](json.dumps(_wire_result(category="financing")))
             return SimpleNamespace(value=value)
 
     backend = EmailClassifierRoutedBackend(RoutedExecution())
@@ -210,11 +294,7 @@ def test_routed_backend_persists_redacted_result_and_rehydrates_ephemeral_url() 
         def execute(self, **kwargs):
             value = kwargs["parser"](
                 json.dumps(
-                    _result(
-                        category="junk",
-                        unsubscribe_candidate_index=0,
-                        unsubscribe_url=CANDIDATES[0],
-                    )
+                    _wire_result(category="junk", unsubscribe_candidate_index=0)
                 )
             )
             persisted.append(value)
@@ -432,7 +512,7 @@ def test_scheduled_classifier_uses_only_trigger_revision_and_keeps_prompt_additi
     assert prompt.count("Managed Skill: ceo-email-classifier") == 1
     assert "Scheduled trigger classification guidance" in prompt
     assert "cannot authorize actions" in prompt
-    assert prompt.index("Return only one AgentClassificationResult") < prompt.index(
+    assert prompt.index("Return only one AgentClassificationWireResult") < prompt.index(
         "Scheduled trigger classification guidance"
     )
 

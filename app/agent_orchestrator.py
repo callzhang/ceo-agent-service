@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -31,6 +32,87 @@ EXTERNAL_DEPENDENCY_WAIT_ERRORS = frozenset(
     {"dependency_read_unavailable", "agent_context_refresh_failed"}
 )
 MAX_EXECUTION_STAGES = 16
+
+
+def _scheduled_consumer_work_receipts(
+    task: ReplyTask, run: AgentRun,
+) -> tuple[dict[str, object], ...]:
+    """Project service-owned receipts from the exact scheduled Consumer parent."""
+    if (
+        task.channel != "scheduled"
+        or run.reply_task_id != task.id
+        or run.execution_generation != task.execution_generation
+        or run.role is not AgentRole.CONSUMER
+        or run.status != "completed"
+    ):
+        return ()
+    receipts: list[dict[str, object]] = []
+    for event in run.tool_events:
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item")
+        if (
+            event.get("type") != "item.completed"
+            or not isinstance(item, dict)
+            or item.get("type") != "mcp_tool_call"
+            or item.get("server") != "agent_cli"
+            or item.get("tool") != "consumer_document_write"
+            or item.get("error")
+            or item.get("status") == "failed"
+        ):
+            continue
+        envelope = item.get("result")
+        if isinstance(envelope, str):
+            try:
+                result = json.loads(envelope)
+            except json.JSONDecodeError:
+                continue
+        elif isinstance(envelope, dict):
+            if envelope.get("isError") is True:
+                continue
+            result = envelope.get("structuredContent", envelope.get("structured_content"))
+            if result is None:
+                blocks = envelope.get("content")
+                if (
+                    isinstance(blocks, list) and len(blocks) == 1
+                    and isinstance(blocks[0], dict)
+                    and blocks[0].get("type") == "text"
+                    and isinstance(blocks[0].get("text"), str)
+                ):
+                    try:
+                        result = json.loads(blocks[0]["text"])
+                    except json.JSONDecodeError:
+                        continue
+        else:
+            continue
+        if not isinstance(result, dict):
+            continue
+        operation = result.get("operation")
+        node_id = result.get("node_id")
+        title = result.get("title")
+        readback = result.get("readback")
+        if (
+            operation not in {"created", "updated"}
+            or not isinstance(node_id, str) or not node_id
+            or not isinstance(title, str) or not title
+            or not isinstance(readback, dict)
+        ):
+            continue
+        readback_bytes = json.dumps(
+            readback, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        receipt = {
+            "consumer_run_id": run.id,
+            "tool_call_id": str(item.get("call_id") or item.get("id") or ""),
+            "operation": operation,
+            "document_node_id": node_id,
+            "document_title": title,
+            "readback_sha256": hashlib.sha256(readback_bytes).hexdigest(),
+            "readback_bytes": len(readback_bytes),
+        }
+        if receipt not in receipts:
+            receipts.append(receipt)
+    return tuple(receipts)
 
 
 class ConsumerRunner(Protocol):
@@ -295,6 +377,10 @@ class AgentOrchestrator:
                     )
                 else:
                     consumer_parent = self._validate_audit_parent(task, state)
+                    if task.channel == "scheduled":
+                        consumer_parent = self.store.get_agent_run(
+                            consumer_parent.id, load_events=True
+                        ) or consumer_parent
                     previous_review = (
                         self.store.get_candidate_review_for_audit_run(consumer_parent.parent_agent_run_id)
                         if consumer_parent.parent_agent_run_id else None
@@ -312,6 +398,7 @@ class AgentOrchestrator:
                             candidate=state.candidate,
                             candidate_digest=state.candidate_digest,
                             audit_rules="",
+                            scheduled_work_receipts=_scheduled_consumer_work_receipts(task, consumer_parent),
                             previous_revision_review=(
                                 previous_result if previous_result is not None
                                 and previous_result.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT)

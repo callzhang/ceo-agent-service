@@ -159,6 +159,10 @@ def test_old_consumer_server_cannot_write_report_after_generation_changes(tmp_pa
         "app.agent_cli._write_bound_report_document",
         lambda **kwargs: called.append(kwargs) or {"operation": "updated"},
     )
+    monkeypatch.setattr(
+        "app.agent_cli._bound_report",
+        lambda db_path, task_id: (object(), object(), "daily"),
+    )
     old = build_role_server("consumer", task_id=7, db_path=db)
     write_report = old._tool_manager.get_tool("consumer_document_write").fn
 

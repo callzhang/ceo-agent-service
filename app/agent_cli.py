@@ -1269,7 +1269,7 @@ def _weekly_skill_module(name: str):
 
 def _write_bound_report_document(
     *, db_path: Path | None, task_id: int | None, content: str,
-    expected_revision: int | None,
+    expected_revision: int | None, expected_target_exists: bool | None = None,
 ) -> dict[str, object]:
     """Write only the report document resolved from this scheduled run."""
     from app.config import workspace_path
@@ -1362,7 +1362,15 @@ def _write_bound_report_document(
          if node.get("name") == title],
         "current report document",
     )
+    if (
+        kind == "weekly"
+        and expected_target_exists is not None
+        and (found is not None) != expected_target_exists
+    ):
+        raise ValueError("weekly report target existence changed after rendering")
     if found is None:
+        if kind == "weekly" and expected_revision is not None:
+            raise ValueError("weekly report target disappeared after rendering")
         result = dws.create_report_document(
             name=title, content=content, doc_format=doc_format,
             folder_id=folder_id,
@@ -1396,6 +1404,56 @@ def _write_bound_report_document(
     if kind == "daily":
         receipt["folder"] = folder
     return receipt
+
+
+def _weekly_report_render_source(
+    run, dws, materials: dict[str, object] | None = None,
+):
+    """Fetch the full, service-resolved JSONML base for one weekly render."""
+    from app.weekly_report_materials import resolve_meeting_documents, weekly_window
+
+    documents = (
+        materials["documents"]
+        if materials is not None
+        else resolve_meeting_documents(dws, weekly_window(run.scheduled_for))
+    )
+    target = documents["target"]
+    if type(target.get("exists")) is not bool:
+        raise ValueError("weekly report target existence is unavailable")
+    target_exists = target["exists"]
+    source = target if target_exists else documents["previous"]
+    source_node_id = source.get("node_id")
+    if not source.get("exists") or not isinstance(source_node_id, str) or not source_node_id:
+        raise ValueError("weekly report render source document is unavailable")
+
+    payload = dws.fetch_report_document_full(source_node_id)
+    if payload.get("complete") is not True:
+        raise ValueError("weekly report render source document is incomplete")
+    content = payload.get("content")
+    if (
+        not isinstance(content, dict)
+        or content.get("success") is not True
+        or content.get("nodeId") != source_node_id
+    ):
+        raise ValueError("weekly report render source identity changed")
+    raw_jsonml = content.get("jsonml")
+    try:
+        before = json.loads(raw_jsonml) if isinstance(raw_jsonml, str) else raw_jsonml
+    except json.JSONDecodeError as exc:
+        raise ValueError("weekly report render source JSONML is invalid") from exc
+    if not isinstance(before, list) or len(before) < 3 or before[0] != "root":
+        raise ValueError("weekly report render source must be a complete JSONML document")
+
+    revision = None
+    if target_exists:
+        raw_revision = content.get("revision")
+        try:
+            revision = int(raw_revision)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("weekly report target revision is unavailable") from exc
+        if revision < 0 or str(revision) != str(raw_revision):
+            raise ValueError("weekly report target revision is invalid")
+    return before, target_exists, revision, target["title"]
 
 
 def build_role_server(
@@ -1825,6 +1883,9 @@ def build_role_server(
             "--page-limit", "50", "--max-items", "1000", "--format", "json",
         ])
 
+    weekly_materials_snapshot: dict[str, object] | None = None
+    weekly_render_binding: dict[str, object] | None = None
+
     def daily_report_facts() -> dict[str, object]:
         """Read the fixed service facts for this scheduled daily report."""
         from app.daily_report_facts import collect_daily_report_facts, report_window_for_run
@@ -1840,6 +1901,7 @@ def build_role_server(
 
     def weekly_report_materials() -> dict[str, object]:
         """Read the fixed inputs for this scheduled CEO weekly report."""
+        nonlocal weekly_materials_snapshot
         from app.config import workspace_path
         from app.dws_client import DwsClient
         from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
@@ -1847,10 +1909,11 @@ def build_role_server(
         store, run, kind = _bound_report(db_path, task_id)
         if kind != "weekly":
             raise AgentReadOnlyViolationError("weekly_report_task_required")
-        return collect_weekly_report_materials(
+        weekly_materials_snapshot = collect_weekly_report_materials(
             store, DwsClient(), workspace_path() / MINUTES_ARCHIVE_DIRECTORY,
             run.scheduled_for,
         )
+        return weekly_materials_snapshot
 
     def read_weekly_report_archive(path: str) -> dict[str, object]:
         """Read one transcript named in this run's meeting archive index."""
@@ -1947,42 +2010,73 @@ def build_role_server(
                 manifest, report, previous_issues
             )
 
-        def render_weekly_report(
-            report: WeeklyReport, before: list,
-        ) -> dict[str, object]:
-            """Render and validate weekly report JSONML and its full draft."""
+        def render_weekly_report(report: WeeklyReport) -> dict[str, object]:
+            """Render against the service-resolved current or previous meeting document."""
+            nonlocal weekly_render_binding
             from app.dws_client import DwsClient
             _store, _run, kind = _bound_report(db_path, task_id)
             if kind != "weekly":
                 raise AgentReadOnlyViolationError("weekly_report_task_required")
             renderer = _weekly_skill_module("render_dingtalk_jsonml")
             checker = _weekly_skill_module("jsonml_check")
+            dws = DwsClient()
+            before, target_exists, expected_revision, target_title = (
+                _weekly_report_render_source(
+                    _run, dws,
+                    weekly_materials_snapshot,
+                )
+            )
+            source_errors = checker.check_document(before)
+            if source_errors:
+                raise ValueError(
+                    "weekly report render source JSONML invalid: "
+                    + "; ".join(source_errors)
+                )
             target_after = renderer.render_meeting_document(before, report)
             draft = renderer.render_draft(report)
             errors = checker.check_document(target_after) + checker.check_document(draft)
             if errors:
                 raise ValueError("weekly report JSONML invalid: " + "; ".join(errors))
-            native_parse = DwsClient().validate_report_jsonml(
-                json.dumps(target_after, ensure_ascii=False)
-            )
+            target_content = json.dumps(target_after, ensure_ascii=False)
+            native_parse = dws.validate_report_jsonml(target_content)
+            if target_exists and expected_revision is None:
+                raise ValueError("weekly report target revision is unavailable")
+            weekly_render_binding = {
+                "expected_revision": expected_revision,
+                "target_exists": target_exists,
+            }
             return {
                 "target_after": target_after,
                 "draft": draft,
                 "native_parse": native_parse,
+                "target_exists": target_exists,
+                "target_title": target_title,
+                "expected_revision": expected_revision,
             }
 
-        def consumer_document_write(
-            content: str, expected_revision: int | None = None,
-        ) -> dict[str, object]:
+        def consumer_document_write(content: str) -> dict[str, object]:
             """Publish this scheduled CEO report to its service-resolved document."""
+            nonlocal weekly_render_binding
             if artifact_generation is None:
                 raise ValueError("task file binding is missing")
             if _current_task_generation(db_path, task_id) != artifact_generation:
                 raise ValueError("task file generation changed")
-            return _write_bound_report_document(
+            store, _run, kind = _bound_report(db_path, task_id)
+            expected_revision = None
+            if kind == "weekly":
+                if weekly_render_binding is None:
+                    raise ValueError("weekly report must be rendered before write")
+                expected_revision = weekly_render_binding["expected_revision"]
+            receipt = _write_bound_report_document(
                 db_path=db_path, task_id=task_id, content=content,
                 expected_revision=expected_revision,
+                expected_target_exists=(
+                    weekly_render_binding["target_exists"] if kind == "weekly" else None
+                ),
             )
+            if kind == "weekly":
+                weekly_render_binding = None
+            return receipt
 
         bound.add_tool(validate_weekly_report, name="validate_weekly_report", annotations=read)
         bound.add_tool(render_weekly_report, name="render_weekly_report", annotations=read)

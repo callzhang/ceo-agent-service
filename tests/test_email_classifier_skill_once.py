@@ -38,7 +38,6 @@ def test_classifier_preserves_managed_skill_and_suppresses_only_native_copy(
                             "confidence": 0.9,
                             "reason": "Source-backed project discussion.",
                             "unsubscribe_candidate_index": None,
-                            "unsubscribe_url": None,
                         }
                     )
                 )

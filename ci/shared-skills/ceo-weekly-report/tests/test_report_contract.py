@@ -11,6 +11,7 @@ from scripts.report_contract import (
     validate_metric,
     validate_privacy,
 )
+from scripts.render_dingtalk_jsonml import render_managed_sections
 from scripts.validate_run import FIXED_METRICS, validate_run
 
 
@@ -21,6 +22,7 @@ class ReportContractTests(unittest.TestCase):
                 "title": "2026年9月14日管理层周会",
                 "node_id": "node",
                 "revision": 7,
+            "exists": True,
             },
             "previous": {
                 "title": "2026年9月7日管理层周会",
@@ -49,7 +51,14 @@ class ReportContractTests(unittest.TestCase):
         metrics = [
             {
                 "key": key,
+                "name": key,
+                "target": "无数据",
+                "previous": "无数据",
                 "current": "无数据",
+                "change": "无数据",
+                "status": "❓",
+                "data_date": "2026-09-27",
+                "definition_evidence": "synthetic fixture",
                 "decision_critical": False,
             }
             for key in FIXED_METRICS
@@ -99,6 +108,42 @@ class ReportContractTests(unittest.TestCase):
 
     def test_complete_manifest_has_no_errors(self):
         self.assertEqual(validate_manifest(self.complete_manifest()), [])
+
+    def test_missing_target_needs_title_and_resolved_creation_parent(self):
+        manifest = self.complete_manifest()
+        manifest["target"] = {
+            "title": "2026年9月14日管理层周会",
+            "exists": False,
+            "year_page_id": "parent",
+        }
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_missing_target_requires_resolved_creation_parent(self):
+        manifest = self.complete_manifest()
+        manifest["target"] = {
+            "title": "2026年9月14日管理层周会",
+            "exists": False,
+        }
+        self.assertIn(
+            "target creation parent is incomplete", validate_manifest(manifest)
+        )
+
+    def test_existing_target_requires_integer_revision_and_identity(self):
+        manifest = self.complete_manifest()
+        manifest["target"] = {
+            "title": "2026年9月14日管理层周会",
+            "node_id": "node",
+            "revision": -1,
+            "exists": True,
+        }
+        self.assertIn(
+            "target identity or revision is incomplete", validate_manifest(manifest)
+        )
+
+    def test_existing_target_accepts_provider_revision_string(self):
+        manifest = self.complete_manifest()
+        manifest["target"]["revision"] = "7"
+        self.assertEqual(validate_manifest(manifest), [])
 
     def test_manifest_rejects_incomplete_pagination(self):
         manifest = self.complete_manifest()
@@ -285,6 +330,71 @@ class ReportContractTests(unittest.TestCase):
         self.assertFalse(result["publishable"])
         self.assertIn(
             "fixed metric new_signed_orders is missing", result["errors"]
+        )
+
+    def test_complete_run_requires_fields_used_by_company_metric_renderer(self):
+        report = self.complete_report()
+        del report["company_metrics"][0]["name"]
+        result = validate_run(self.complete_manifest(), report, [])
+        self.assertIn(
+            "company_metrics[0] is missing renderer field name", result["errors"]
+        )
+
+    def test_complete_run_requires_fields_used_by_issue_renderer(self):
+        report = self.complete_report()
+        report["issues"] = [{
+            "id": "COMP-ANON-1", "status": "open", "as_of": "2026-09-27",
+            "severity": "yellow", "deadline": None, "owner": {},
+            "weeks_without_gate_movement": 0, "weeks_without_evidence": 0,
+            "management_decision": "continue",
+        }]
+        result = validate_run(self.complete_manifest(), report, [])
+        self.assertIn("issues[0] is missing renderer field question", result["errors"])
+        self.assertIn("issues[0].owner is missing renderer field name", result["errors"])
+
+    def test_complete_run_requires_business_line_renderer_fields(self):
+        report = self.complete_report()
+        report["business_lines"]["Friday"]["metrics"] = [
+            {"name": "synthetic metric", "current": "无数据"}
+        ]
+        report["business_lines"]["Friday"]["milestones"] = [{"owner": {}}]
+        result = validate_run(self.complete_manifest(), report, [])
+        self.assertIn(
+            "business_lines.Friday.metrics[0] is missing renderer field target",
+            result["errors"],
+        )
+        self.assertIn(
+            "business_lines.Friday.milestones[0] is missing renderer field date",
+            result["errors"],
+        )
+        self.assertIn(
+            "business_lines.Friday.milestones[0].owner is missing renderer field name",
+            result["errors"],
+        )
+
+    def test_business_line_metric_does_not_require_company_only_columns(self):
+        report = self.complete_report()
+        report["business_lines"]["Friday"]["metrics"] = [{
+            "name": "synthetic metric",
+            "target": "10",
+            "current": "8",
+            "status": "on track",
+            "data_date": "2026-09-27",
+            "source": "synthetic source",
+            "definition": "synthetic definition",
+            "definition_evidence": "synthetic source",
+        }]
+        result = validate_run(self.complete_manifest(), report, [])
+        self.assertTrue(result["publishable"], result["errors"])
+        self.assertTrue(render_managed_sections(report))
+
+    def test_invalid_issue_deadline_returns_validation_error(self):
+        errors = validate_issue({
+            "id": "COMP-ANON-1", "status": "open", "deadline": "无数据",
+            "as_of": "2026-09-27",
+        })
+        self.assertIn(
+            "issue COMP-ANON-1 deadline must be an ISO date", errors
         )
 
     def test_complete_run_requires_all_business_line_views(self):

@@ -16,6 +16,8 @@ from app.agent_runtime_router import (
     RoutedResultValidationError,
     RoutedResultValidationRetry,
 )
+from app.agent_runtime_contracts import RuntimeKind
+from app.agent_cron.commands import ServiceCommandSkillMaterial
 from app.config import principal_display_name
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
@@ -86,7 +88,21 @@ class MeetingAlignmentCodex(Protocol):
     last_transcript_end_line: int
     last_audit_tool_events: list[dict[str, str]]
 
-    def decide(self, *, prompt: str, run_id: int) -> MeetingAlignmentDecision: ...
+    def decide(
+        self, *, prompt: str, run_id: int, compact_prompt: str | None = None
+    ) -> MeetingAlignmentDecision: ...
+
+
+def _meeting_decision_skill_protocol(
+    materials: tuple[ServiceCommandSkillMaterial, ...],
+) -> str | None:
+    """Keep the frozen managed judgment rule, omitting completed operation guides."""
+    managed = [
+        material.content
+        for material in materials
+        if material.content.startswith(f"## Managed Skill: {material.name}\n")
+    ]
+    return "\n\n".join(managed) if managed else None
 
 
 class MeetingAlignmentAgent:
@@ -104,6 +120,7 @@ class MeetingAlignmentAgent:
         run_id: int | None = None,
         consumer_prompt: str = "",
         skill_protocol: str = "",
+        skill_materials: tuple[ServiceCommandSkillMaterial, ...] = (),
     ) -> MeetingAlignmentDecision:
         profile = work_profile_instruction()
         profile_source = (
@@ -119,12 +136,27 @@ class MeetingAlignmentAgent:
             consumer_prompt=consumer_prompt,
             skill_protocol=skill_protocol,
         )
-        for repair_attempt in range(MEETING_SOURCE_TARGET_REPAIR_LIMIT + 1):
-            decision = (
-                self.codex.decide(prompt=prompt, run_id=run_id)
-                if run_id is not None
-                else self.codex.decide(prompt=prompt)
+        managed_skill_protocol = _meeting_decision_skill_protocol(skill_materials)
+        compact_prompt = (
+            build_meeting_alignment_prompt(
+                source,
+                work_profile=profile,
+                work_profile_source=profile_source,
+                similar_sessions=similar_sessions or [],
+                group_candidates=group_candidates or [],
+                consumer_prompt=consumer_prompt,
+                skill_protocol=managed_skill_protocol,
             )
+            if managed_skill_protocol is not None
+            else None
+        )
+        for repair_attempt in range(MEETING_SOURCE_TARGET_REPAIR_LIMIT + 1):
+            options: dict[str, Any] = {"prompt": prompt}
+            if run_id is not None:
+                options["run_id"] = run_id
+            if compact_prompt is not None:
+                options["compact_prompt"] = compact_prompt
+            decision = self.codex.decide(**options)
             try:
                 _validate_source_aware_target(
                     source, decision, group_candidates=group_candidates or []
@@ -140,6 +172,12 @@ class MeetingAlignmentAgent:
                     decision=decision,
                     problem=str(exc),
                 )
+                if compact_prompt is not None:
+                    compact_prompt = _meeting_alignment_target_repair_prompt(
+                        original_prompt=compact_prompt,
+                        decision=decision,
+                        problem=str(exc),
+                    )
                 continue
             return decision
         raise RuntimeError("meeting alignment target repair did not return a decision")
@@ -166,7 +204,9 @@ class MeetingAlignmentCodexRunner:
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
 
-    def decide(self, *, prompt: str, run_id: int) -> MeetingAlignmentDecision:
+    def decide(
+        self, *, prompt: str, run_id: int, compact_prompt: str | None = None
+    ) -> MeetingAlignmentDecision:
         # Meeting decisions are intentionally isolated: never resume a reply,
         # task, or earlier meeting session.
         self.last_session_id = None
@@ -185,10 +225,16 @@ class MeetingAlignmentCodexRunner:
                     ),
                     output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,
+                    skill_names=() if compact_prompt is not None else None,
                 ),
                 parser=_encode_meeting_alignment_result,
                 result_codec=MEETING_RESULT_CODEC,
                 conversation_id=None,
+                route_prompt_overrides=(
+                    {RuntimeKind.CODEX_CLI: compact_prompt}
+                    if compact_prompt is not None
+                    else None
+                ),
                 required_capabilities=MEETING_RUNTIME_CAPABILITIES,
                 # Providers that ignore the output schema (third-party APIs)
                 # get one same-session correction naming the schema errors.

@@ -41,8 +41,24 @@ def reporting_window(
 def validate_manifest(manifest: dict) -> list[str]:
     errors: list[str] = []
     target = manifest.get("target", {})
-    if not all(target.get(key) for key in ("title", "node_id", "revision")):
-        errors.append("target identity or revision is incomplete")
+    if target.get("exists") is False:
+        if not target.get("title") or not any(
+            target.get(key) for key in ("year_page_id", "meeting_folder_id")
+        ):
+            errors.append("target creation parent is incomplete")
+    elif target.get("exists") is True or "exists" not in target:
+        revision = target.get("revision")
+        valid_revision = (
+            type(revision) is int and revision >= 0
+        ) or (isinstance(revision, str) and revision.isdecimal())
+        if (
+            not target.get("title")
+            or not target.get("node_id")
+            or not valid_revision
+        ):
+            errors.append("target identity or revision is incomplete")
+    else:
+        errors.append("target existence is missing")
 
     previous = manifest.get("previous", {})
     if not all(previous.get(key) for key in ("title", "node_id")):
@@ -104,7 +120,7 @@ def validate_claim(claim: dict) -> list[str]:
 
 def validate_metric(metric: dict) -> list[str]:
     errors: list[str] = []
-    key = metric.get("key")
+    key = metric.get("key") or metric.get("name") or "metric"
     if (
         metric.get("current") == "无数据"
         and metric.get("decision_critical")
@@ -147,10 +163,24 @@ def validate_issue(issue: dict) -> list[str]:
         "closure_evidence"
     ):
         errors.append(f"closed issue {issue_id} lacks outcome evidence")
-    if issue.get("deadline") and issue.get("as_of"):
-        overdue = date.fromisoformat(issue["deadline"]) < date.fromisoformat(
-            issue["as_of"]
-        )
+    deadline = issue.get("deadline")
+    as_of = issue.get("as_of")
+    deadline_valid = True
+    as_of_valid = True
+    if deadline:
+        try:
+            parsed_deadline = date.fromisoformat(deadline)
+        except (TypeError, ValueError):
+            deadline_valid = False
+            errors.append(f"issue {issue_id} deadline must be an ISO date")
+    if as_of:
+        try:
+            parsed_as_of = date.fromisoformat(as_of)
+        except (TypeError, ValueError):
+            as_of_valid = False
+            errors.append(f"issue {issue_id} as_of must be an ISO date")
+    if deadline and as_of and deadline_valid and as_of_valid:
+        overdue = parsed_deadline < parsed_as_of
         if (
             overdue
             and issue.get("status") != "closed"

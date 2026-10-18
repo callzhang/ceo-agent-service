@@ -1618,8 +1618,7 @@ consumer、训练三个组件都至少成功完成一轮后才发布 `ready`。
 业务类别移动完成后在变更后的 locator 上执行 flag/read 动作，以服务器应答为结果；用户在 provider 中再次移动
 邮件时，下一份 snapshot 立即以该文件夹作为训练标签。旧的 staged/manual 历史评测入口仍用于候选
 验证；生产历史整理由上述定时模型窗口自动、小批量、可恢复地推进，不会一次性读取整个邮箱。
-`junk` 先由代码发现标准退订候选；unsubscribe 使用独立的系统直接
-网页流程，最终再移动到系统 Trash。连接邮箱 OTP 仅允许站点、收件人、挑战上下文和时间窗全部
+`junk` 先由代码发现标准退订候选；分类 Agent 只返回本次候选序号，服务按该次调用的候选列表绑定精确 URL，并继续执行既有类别、索引和持久化校验。之后 unsubscribe 使用独立的系统直接网页流程，最终再移动到系统 Trash。连接邮箱 OTP 仅允许站点、收件人、挑战上下文和时间窗全部
 匹配的临时读取；普通 CAPTCHA 在隔离 profile 中有限尝试，不能完成的密码/MFA/CAPTCHA 保存不含
 秘密的有界 continuation 并交给用户，恢复时不重放已经审计的 operation prefix。
 
@@ -1864,6 +1863,13 @@ fallback 换到其余配置线路（Derek 2026-09-24，此前定时任务固定�
 同样记 `skipped`：配置性原因（未配置、缺能力、认证暂停）每次写 Attention，
 provider 暂时不可用造成的路由暂停只留下 run 记录和路由暂停状态，不逐次写 Attention。
 
+创建 Audit 输入时，编排器从当前代次、当前 reply task 且已完成的 Consumer 父运行中，读取
+`agent_cli.consumer_document_write` 已完成调用的结构化返回，或 Claude 轨迹中单个文本块／字符串承载的同一 JSON 对象，并投影文档身份、读回对象摘要和
+字节数；不把报告正文重复注入。无匹配返回时 Audit 明确看到空列表。该证据只证明服务工具
+返回了什么，不证明文档已被独立核实或报告事实正确。该交接适用于 `channel=scheduled` 的
+Agent 任务，不增加日报或周报专属规则，也不改变 Audit 的独立审查标准。
+本轮交接与真实写入回执形状的验证见 `docs/scheduled-audit-receipt-validation.md`。
+
 服务命令任务（`scheduled_tasks.command` 非空）只有第一阶段：`scheduled` adapter 领取 trigger
 后，在同一个 claim 内直接运行服务命令目录中的实现（例如 `produce-once` 是 DingTalk 消息
 producer 的一次增量读取，与 `app.cli produce-once` 相同），成功后把
@@ -1954,7 +1960,7 @@ OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；�
 另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，所以这里没有自己保存的会话，也没有过期和续期一说；副本里没有钉钉登录态时命令直接失败，补救办法是在 Chrome 里重新登录钉钉并等当天的 `sync-chrome-cookies` 跑过，而不是在这里扫码。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此发现与同步类种子任务都不是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。只有两个报告是 Agent 种子任务，走标准 Consumer → Audit 生命周期：每周六 `12:00`（`America/Los_Angeles`）的“准备 CEO 管理周报”（`ceo-weekly-report`），和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入全部来自服务自己的记录：Agent 先运行只读命令 `python -m app.cli daily-report-facts --scheduled-run <触发记录 id>`（`app/daily_report_facts.py`）。报告窗口由服务算：终点是本次触发的 `scheduled_for`，起点是同一任务报告日期更早、且真正发出了报告（执行任务 `done` 且最后一次处理结果为 `completed`；无需处理或线路不可用被跳过的也是 `done`，不算）的最近一次运行的触发时刻（断掉的日子并入下一份，同日重跑沿用原起点），从未成功过则回看 24 小时；报告日期是终点的北京日期。命令取得窗口内结束的会议及其已发会后跟进、当天有活动的 Task-first 业务 Task 及其当天事件、全部未解决的业务需关注项（`business_attention_items`）、当天在邮箱里被标为重要的邮件（已执行的 `flag_important` 动作；Agent 只摘有管理含义的，其余计数）、当天处理过的事项（不含 skipped，只计数），以及 Attention 口径下等 Derek 处理的事项；截止日期不从 `deadline_at` 自行推算（见 `docs/task-semantic-storage.md`）；再扫描窗口内群消息、按需补读听记，写成七段报告，发布到知识库“🎯  目标与执行”/“CEO 每日总结”下的同日文档（同日重跑覆盖同一篇）并读回，最后以 Derek 本人身份单聊发给「磊哥」（不用机器人）：要点、需介入条数、当天文档标题和「CEO 每日总结」文件夹链接（正文在执行轮就由服务定稿，那时文档还不存在，所以放文件夹链接）。这条消息走服务的已审核消息通道：执行轮提 `dingtalk-chat` 单聊动作（`target.user_id` 为 Derek 的 userId），服务加签名并记投递台账，Audit 只读审核，审核通过后由 System Executor 使用原生 sender 执行精确持久化动作。该通道接受的任务频道为 `DINGTALK_MESSAGE_CHANNELS`（钉钉消息与定时任务，Derek 2026-09-24）；此前只接受钉钉消息任务，定时任务没有合规的发送方式（运行 84467 因此改用命令行发送并被判不合规）。某个来源读不到只写进报告的覆盖说明，不向 Derek 追问材料。该命令登记在 `app/native_cli_metadata.py` 的服务只读命令中。周报的必需输入同样来自服务：Agent 先运行只读命令 `python -m app.cli weekly-report-materials --scheduled-run <触发记录 id>`（`app/weekly_report_materials.py`，同样登记为服务只读命令）。目标周一是运行时刻（按北京日期）之后的第一个周一（周六跑就是后天的周会，绝不是已开完的那次），窗口为其前一个周一 00:00 到目标周一 00:00（北京），截止取运行时刻与窗口终点的较早者。命令在知识库“🎯  目标与执行”/“1. 管理层周会”下找“{年} 年：管理层周会”（是一篇文档，每周的周会文档是它的子页面；名字比较忽略空白），按标题 `{年}年{月}日管理层周会`（月日不补零）找目标与上期文档，找不到只报 `exists: false` 不猜，同名多篇、列表不完整都直接报错；会议清单来自会议队列（`meeting_alignment_jobs`）里窗口内结束的会议，附参与人、会后跟进和听记链接，归档转写文件在才给路径。周报**只写进目标周会文档的三处**：“二、CEO本周判断”、“三、公司级重点指标”表，以及往“一、重点问题及待办跟踪”表追加本周新问题的新行（已有行、各业务线小节、主题讨论、周报链接都归会议参与人，不动）；目标文档不存在时先照上期文档建；完整七段版留作运行目录里的草稿。业务线还没提交的报告写进覆盖说明，不阻塞发布。周报任务经保存版本 → revision 守卫的一次覆盖写入 → 全文读回核对发布，授权来自 Derek 2026-09-24 对该定时任务的批准。Lark 没有
 访问申请页需等待申请按钮实际可用；按钮仍禁用时保留为申请人未解析，下一轮继续尝试。页面仅显示加载壳或其他非权限内容时不能当作已可读，只有听记读取 API 能确认可读。
 默认 seed。
-周报校验与渲染工具的参数结构由 `app/weekly_report_contracts.py` 声明。原生工具 schema 展示 manifest 的对象结构、company_metrics 的对象数组及报告其他容器；SDK 在调用前返回格式错误的字段路径。保留额外字段和原始值，不补默认内容、不转换错误容器，也不将结构规范全量加入 prompt。缺失业务章节及发布要求继续由原有安装 Skill 校验。
+周报校验与渲染工具的参数结构由 `app/weekly_report_contracts.py` 声明。原生工具 schema 展示 manifest 的对象结构、company_metrics 的对象数组及报告其他容器；SDK 在调用前返回格式错误的字段路径。目标文档存在时，manifest 必须含完整 node ID 与非负整数 revision（可为 provider 返回的十进制字符串）；目标不存在时必须含目标标题和已解析的创建父节点，revision 不适用。保留额外字段和原始值，不补默认业务内容、不转换错误容器，也不将结构规范全量加入 prompt。渲染工具自行读取服务解析出的目标文档完整 JSONML；目标缺失时改用上期周会完整 JSONML。Skill validator 在渲染前核对业务约束及 renderer 实际读取的指标、问题、负责人和业务线字段，避免校验通过后才因缺字段在渲染器内逐项失败。`consumer-system-contract-release` 将 `report_contract.py`、`validate_run.py` 与 Weekly Report Skill 一起原子发布。渲染通过后，服务将目标存在状态和 revision 绑定在当前 Consumer turn；写入沿用内容与 JSONML 校验，并对已有目标使用绑定 revision 做版本守卫，对缺失目标执行创建。若目标在渲染后出现或消失，写入阻止继续，需重新读取和渲染。
 内部投递、发送状态确认、错误恢复仍是内部机制，不外化为 Cron；催办不自动发送，只由 Derek 点按钮发送。
 
 Task Agent 的正常 liveness 由结构化 provider stdout 事件驱动：执行器在完整事件行被消费后续租
@@ -2742,7 +2748,7 @@ OA 评论出现未知效果后，System 只读原实例的正式 detail；摘要
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
 
-精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。会议来源预装配不能代替冻结 Skill 中的业务要求；在具备按需读取能力并验证规则完整性前，不把这些正文替换为名称提示。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具；Email 和 WeChat 保留完整冻结正文。Meeting Alignment 的 Codex 路线在有冻结托管会议 Skill 时保留其完整正文，省去已执行的操作 Skill 正文；其他路线及没有托管会议 Skill 的运行保留完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。会议来源预装配不能代替冻结托管 Skill 中的业务要求，因此 Codex 的精简输入仍包含该 Skill 的完整正文，不能只提交名称提示。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
@@ -3212,6 +3218,8 @@ Attempt detail 的 System Execution 只对当前审核候选，或已有执行�
 
 
 会议工作人格来源引用（2026-10-14）：Meeting Alignment 每轮只取得一次实际注入的工作人格正文，来源引用为该正文的 `work_profile:sha256:<digest>`；历史来源按该引用回写，完整原生输入可重算摘要。会议结果不再被提示词要求回写本地文件路径。现有 codec 的本地路径和凭据限制不变。
+
+会议 Skill 范围（2026-10-18）：服务仍保存并组装本轮全部冻结材料。仅 Codex CLI 路线在存在冻结托管会议 Skill 时，使用该完整托管规则构造实际提交输入，过滤原生 Skill 目录中的重复正文；服务已完成听记、日历等操作读取后，不再将对应操作 Skill 全文交给会议判断轮。Claude/Friday 及缺少托管会议 Skill 的旧任务保持原输入。原生输出纠错沿本路线的实际输入继续，切换路线时改用目标路线的输入；会议结果、受众和投递契约不变。匿名固定对照及早期校验漏判见 `docs/meeting-managed-skill-scope-validation.md`；修正校验后的三轮结果见 `evals/trajectory_optimization/meeting_skill_scope_native.v3.json`。
 
 
 已有外部动作的核验（2026-10-14）：System Executor 对已有 dispatched/uncertain journal 先调用具名处理器只读 reconcile；旧动作造成的来源变化不能阻止读取实际回执。该路径不再次 dispatch。所有尚未派发的新动作仍先检查原审批候选绑定的当前来源，已完成动作的身份和正文冲突检查继续执行。原生发送回执只从明确的发送返回结构读取 send-task 身份，引用的入站消息 ID 不能作为投递凭证。

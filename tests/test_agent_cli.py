@@ -69,7 +69,265 @@ def test_weekly_report_tool_preserves_nullable_business_values():
     assert tool.fn_metadata.arg_model.model_validate(arguments).model_dump() == arguments
 
 
-def test_weekly_report_complete_skill_fixture_remains_publishable():
+def test_weekly_report_render_and_write_use_service_bound_snapshot_schema():
+    server = agent_cli.build_role_server("consumer")
+    render = server._tool_manager.get_tool("render_weekly_report")
+    write = server._tool_manager.get_tool("consumer_document_write")
+    assert set(render.fn_metadata.arg_model.model_fields) == {"report"}
+    assert set(write.fn_metadata.arg_model.model_fields) == {"content"}
+
+
+def test_weekly_report_write_requires_a_current_render(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_cli, "_current_task_generation", lambda *_: "generation")
+    monkeypatch.setattr(
+        agent_cli, "_bound_report", lambda *_: (object(), object(), "weekly")
+    )
+    writes = []
+    monkeypatch.setattr(
+        agent_cli, "_write_bound_report_document", lambda **kwargs: writes.append(kwargs)
+    )
+    server = agent_cli.build_role_server(
+        "consumer", task_id=1, db_path=tmp_path / "db.sqlite",
+        execution_generation="generation",
+    )
+
+    write = server._tool_manager.get_tool("consumer_document_write").fn
+    with pytest.raises(ValueError, match="must be rendered before write"):
+        write(content='["root", {}]')
+    assert writes == []
+
+
+@pytest.mark.parametrize(
+    ("target_exists", "expected_source", "expected_revision"),
+    [(True, "target-node", 42), (False, "previous-node", None)],
+)
+def test_weekly_report_render_source_uses_complete_bound_document(
+    monkeypatch, target_exists, expected_source, expected_revision,
+):
+    import app.weekly_report_materials as materials_module
+
+    materials = {
+        "documents": {
+            "target": {
+                "title": "target meeting",
+                "exists": target_exists,
+                "node_id": "target-node" if target_exists else None,
+            },
+            "previous": {
+                "title": "previous meeting",
+                "exists": True,
+                "node_id": "previous-node",
+            },
+        }
+    }
+    monkeypatch.setattr(
+        materials_module,
+        "resolve_meeting_documents",
+        lambda _dws, _window: materials["documents"],
+    )
+    monkeypatch.setattr(materials_module, "weekly_window", lambda _run_at: "window")
+
+    class Dws:
+        def __init__(self):
+            self.requested = []
+
+        def fetch_report_document_full(self, node_id):
+            self.requested.append(node_id)
+            return {
+                "complete": True,
+                "content": {
+                    "success": True,
+                    "nodeId": node_id,
+                    "revision": "42",
+                    "jsonml": json.dumps(["root", {}, ["h1", {}, "Heading"]]),
+                },
+            }
+
+    dws = Dws()
+    before, actual_exists, revision, title = agent_cli._weekly_report_render_source(
+        type("Run", (), {"scheduled_for": object()})(), dws
+    )
+    assert dws.requested == [expected_source]
+    assert before[0] == "root"
+    assert actual_exists is target_exists
+    assert revision == expected_revision
+    assert title == "target meeting"
+
+
+@pytest.mark.parametrize(
+    ("target_exists", "expected_source", "expected_revision"),
+    [(True, "target-node", 42), (False, "previous-node", None)],
+)
+def test_weekly_report_render_and_write_bind_source_revision_and_content(
+    monkeypatch, tmp_path, target_exists, expected_source, expected_revision,
+):
+    import types
+    import app.dws_client as dws_module
+    import app.weekly_report_materials as materials_module
+
+    materials = {
+        "target": {
+            "title": "target meeting",
+            "exists": target_exists,
+            "node_id": "target-node" if target_exists else None,
+        },
+        "previous": {
+            "title": "previous meeting",
+            "exists": True,
+            "node_id": "previous-node",
+        },
+    }
+    monkeypatch.setattr(
+        materials_module, "resolve_meeting_documents", lambda *_args: materials
+    )
+    monkeypatch.setattr(materials_module, "weekly_window", lambda _run_at: "window")
+
+    class Dws:
+        requested = None
+
+        def fetch_report_document_full(self, node_id):
+            self.requested = node_id
+            return {
+                "complete": True,
+                "content": {
+                    "success": True,
+                    "nodeId": node_id,
+                    "revision": "42",
+                    "jsonml": json.dumps(["root", {}, ["h1", {}, "Heading"]]),
+                },
+            }
+
+        def validate_report_jsonml(self, _content):
+            return {"assessment": "passed"}
+
+    dws = Dws()
+    monkeypatch.setattr(dws_module, "DwsClient", lambda: dws)
+    monkeypatch.setattr(
+        agent_cli,
+        "_bound_report",
+        lambda *_args: (object(), type("Run", (), {"scheduled_for": "now"})(), "weekly"),
+    )
+    monkeypatch.setattr(agent_cli, "_current_task_generation", lambda *_args: "generation")
+    rendered_jsonml = ["root", {}, ["h1", {}, "Rendered"]]
+    renderer = types.SimpleNamespace(
+        render_meeting_document=lambda before, _report: rendered_jsonml,
+        render_draft=lambda _report: ["root", {}],
+    )
+    checker = types.SimpleNamespace(check_document=lambda _document: [])
+    monkeypatch.setattr(
+        agent_cli,
+        "_weekly_skill_module",
+        lambda name: renderer if name == "render_dingtalk_jsonml" else checker,
+    )
+    writes = []
+    monkeypatch.setattr(
+        agent_cli,
+        "_write_bound_report_document",
+        lambda **kwargs: writes.append(kwargs) or {"operation": "created"},
+    )
+
+    server = agent_cli.build_role_server(
+        "consumer", task_id=1, db_path=tmp_path / "db.sqlite", execution_generation="generation"
+    )
+    rendered = server._tool_manager.get_tool("render_weekly_report").fn(report={})
+    assert dws.requested == expected_source
+    assert rendered["target_exists"] is target_exists
+    assert rendered["target_title"] == "target meeting"
+    assert rendered["expected_revision"] == expected_revision
+    content = json.dumps(["root", {}, ["h1", {}, "Agent final"]], ensure_ascii=False)
+    write = server._tool_manager.get_tool("consumer_document_write").fn
+    write(content=content)
+    assert writes[0]["expected_revision"] == expected_revision
+    assert writes[0]["expected_target_exists"] is target_exists
+    assert writes[0]["content"] == content
+
+
+@pytest.mark.parametrize(
+    ("expected_exists", "currently_exists"), [(True, False), (False, True)]
+)
+def test_weekly_report_write_rejects_target_existence_change(
+    monkeypatch, tmp_path, expected_exists, currently_exists,
+):
+    import types
+    import app.config as config_module
+    import app.dws_client as dws_module
+    import app.weekly_report_materials as materials_module
+
+    target = {
+        "title": "target meeting",
+        "year_page_id": "year-page",
+        "year_page_name": "2026 年：管理层周会",
+        "exists": currently_exists,
+    }
+    materials = {
+        "documents": {
+            "workspace_id": "workspace",
+            "meeting_folder_id": "meeting-folder",
+            "target": target,
+            "previous": {"exists": True},
+        },
+    }
+    monkeypatch.setattr(config_module, "workspace_path", lambda: tmp_path)
+    monkeypatch.setattr(
+        materials_module,
+        "collect_weekly_report_materials",
+        lambda *_args: materials,
+    )
+    monkeypatch.setattr(
+        agent_cli,
+        "_bound_report",
+        lambda *_args: (object(), type("Run", (), {"scheduled_for": "now"})(), "weekly"),
+    )
+    monkeypatch.setattr(
+        agent_cli,
+        "_weekly_skill_module",
+        lambda _name: types.SimpleNamespace(check_document=lambda _document: []),
+    )
+
+    class Dws:
+        dws_bin = "dws"
+
+        def __init__(self):
+            self.commands = []
+
+        def run_json(self, command):
+            self.commands.append(command)
+            return {
+                "data": {
+                    "nodes": ([{"nodeId": "target-node", "name": "target meeting"}]
+                              if currently_exists else [])
+                }
+            }
+
+        def validate_report_jsonml(self, _content):
+            return {"assessment": "passed"}
+
+    dws = Dws()
+    monkeypatch.setattr(dws_module, "DwsClient", lambda: dws)
+    with pytest.raises(ValueError, match="target existence changed"):
+        agent_cli._write_bound_report_document(
+            db_path=None,
+            task_id=None,
+            content='["root",{}]',
+            expected_revision=42 if expected_exists else None,
+            expected_target_exists=expected_exists,
+        )
+    assert len(dws.commands) == 1
+
+
+@pytest.mark.parametrize("exists", [True, False])
+def test_weekly_report_manifest_schema_exposes_target_existence(exists):
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    arguments = {
+        "manifest": {"target": {"title": "Meeting", "exists": exists, "year_page_id": None}},
+        "report": {},
+        "previous_issues": [],
+    }
+    validated = tool.fn_metadata.arg_model.model_validate(arguments).model_dump()
+    assert validated["manifest"]["target"]["exists"] is exists
+
+
+def test_weekly_report_skill_fixture_requires_renderer_fields():
     # Isolate the standalone Skill's `scripts` package from the service package.
     code = '''
 import pathlib, runpy, sys
@@ -80,13 +338,14 @@ fixture = runpy.run_path(str(root / "tests/test_report_contract.py"))
 sample = fixture["ReportContractTests"]()
 report = sample.complete_report()
 report["company_metrics"][0]["data_date"] = None
-report["issues"] = [{"id": "COMP-001", "deadline": None}]
 report["claims"] = [{"type": "hypothesis_pending_validation", "evidence": None}]
 arguments = {"manifest": sample.complete_manifest(), "report": report, "previous_issues": []}
 tool = build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
 validated = tool.fn_metadata.arg_model.model_validate(arguments).model_dump()
 assert validated == arguments
-assert fixture["validate_run"](**arguments) == fixture["validate_run"](**validated) == {"publishable": True, "errors": []}
+result = fixture["validate_run"](**arguments)
+assert result == fixture["validate_run"](**validated)
+assert result == {"publishable": False, "errors": ["company_metrics[0] is missing renderer field data_date"]}
 '''
     subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1], check=True, capture_output=True, text=True)
 
