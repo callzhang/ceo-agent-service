@@ -52,6 +52,14 @@ and one opaque unsubscribe candidate. Both read-only Codex OAuth runs returned
 valid `junk` results with candidate index 0 and no URL field; service binding
 recovered the exact candidate in each run. There were zero tool calls.
 
+The earlier PR Quality run exposed six Skill-catalog tests still supplying the
+removed seventh `unsubscribe_url` field. Those tests failed locally against the
+new strict wire result, then all **6** passed after their fixture returned the
+six-field result. The catalog assertions and route matrix are unchanged. The
+other 47 failures in the latest merged-main Quality run were all present in
+the prior main baseline; CI is supplementary to the focused behavior checks
+above.
+
 ## Release binding
 
 The installed `~/.agents/skills/ceo-email-classifier/SKILL.md` is the managed
