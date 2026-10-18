@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "date": "2026-10-18",
+  "status": "not_reproduced",
+  "purpose": "Test a stage-0 Consumer replacement after Audit return without real business data or external action.",
+  "route_controls": {
+    "model": "gpt-5.6-luna",
+    "codex_cli": "read-only",
+    "session_pattern": "cold start then exact same session resume",
+    "native_output_schema": false,
+    "business_mcp": false,
+    "hooks": false,
+    "apps": false,
+    "plugins": false
+  },
+  "fixture": {
+    "first_prompt": "Fictional task: prepare a concise message to Alex. Confirm receipt of the draft project memo, say the review is in progress, and do not give a completion date. No message will be sent in this test.\n\n### Execution stage\n{\"stage_index\":0,\"predecessor_review_id\":null}\nEcho these stage bindings unchanged.\n\nReturn one complete ConsumerAgentWireResult JSON object.",
+    "revision_prompt": "Use the original task, source context, and immediately preceding proposal already present in this same Consumer session. Apply all Audit feedback for proposal revision 1, then return a complete replacement Consumer candidate. Preserve supported facts, uncertainty, and valid source references.\n\n## Current turn execution time\n2026-10-18 05:45 -0700\n\n## Audit Feedback\n{\"candidate_field_assertions\":[],\"observation\":\"The reply should explicitly say the review is in progress.\",\"observation_basis\":\"business\",\"requested_revision\":\"Return a complete replacement candidate with that wording and no completion date.\",\"rule\":\"message precision\"}\n\n<!-- consumer-source-context-sha256:anonymous-fixture -->"
+  },
+  "production_metadata": {
+    "task_id": 405417,
+    "initial_invalid_run": 374604,
+    "completed_consumer_run": 374609,
+    "audit_return_run": 374612,
+    "later_invalid_consumer_runs": [
+      374616,
+      374619,
+      374627,
+      374629,
+      374642,
+      374644
+    ],
+    "later_error": "result: Value error, later stage requires predecessor_review_id",
+    "native_source_available": false
+  },
+  "recent_native_availability": {
+    "since": "2026-10-17",
+    "distinct_service_sessions": 106,
+    "indexed_sessions": 106,
+    "present_in_sessions_or_archived_sessions": 0
+  },
+  "variants": [
+    {
+      "name": "slim_contract",
+      "developer_sha256": "571f06c495623c20f3ae2fc6c8611aed4f73c8f0e24e69781b29ee2d77ea47de",
+      "developer_chars": 9898,
+      "turns": [
+        {
+          "turn": "first",
+          "session_id": "01a14f0c-470e-7fa1-9125-09847af27c4c",
+          "model_output_sha256": "6fe347b5fc5f6f8e454be024c1ffc234fe32156441d13537342dd027c542b5a1",
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "outcome": "proposal",
+          "wire_valid": true,
+          "completed_command_reads": [],
+          "item_types": {
+            "error": 1,
+            "agent_message": 1
+          }
+        },
+        {
+          "turn": "revision",
+          "session_id": "01a14f0c-470e-7fa1-9125-09847af27c4c",
+          "model_output_sha256": "97ddb189be491936ce1bbde2134fb22972e2bc640eece37e208eefe998d1aff8",
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "outcome": "proposal",
+          "wire_valid": true,
+          "completed_command_reads": [],
+          "item_types": {
+            "agent_message": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "full_role_developer",
+      "developer_sha256": "d1b9a18e2705f158a80f2914783cbece9a82e16b3e48f06f23ae8b37e32c374f",
+      "developer_chars": 25822,
+      "turns": [
+        {
+          "turn": "full.first",
+          "session_id": "01a14f0d-048d-7390-8f0e-a92fcc8ec4d1",
+          "model_output_sha256": "6d453d16bc75114d1c2597c1fbc6985dafaf0f6f497b94c0f8ece8f649b3c847",
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "outcome": "no_action",
+          "wire_valid": true,
+          "completed_command_reads": [
+            {
+              "command_sha256": "21562b03307e80129ca9245077ad29a10f80030533f7a7539cd1af31f1897b51",
+              "exit_code": 0
+            },
+            {
+              "command_sha256": "2185e6343bbfd7ff0d20f575db1eb27ffd24719bf625bc0388574090c86ad24e",
+              "exit_code": 0
+            },
+            {
+              "command_sha256": "0902e908b647a227faf8619639bc9fd897dcf3da10777e648afdba62bfead2fc",
+              "exit_code": 0
+            }
+          ],
+          "item_types": {
+            "error": 1,
+            "agent_message": 3,
+            "command_execution": 6
+          }
+        },
+        {
+          "turn": "full.revision",
+          "session_id": "01a14f0d-048d-7390-8f0e-a92fcc8ec4d1",
+          "model_output_sha256": "d70546f411762f1d4d565f2037733e421cbc1361d16f85d2364c9e25f28dbfc2",
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "outcome": "no_action",
+          "wire_valid": true,
+          "completed_command_reads": [],
+          "item_types": {
+            "agent_message": 1
+          }
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Production native inputs, tool returns and raw model outputs for the failed runs were unavailable; the path index only proves the rollouts once existed.",
+    "The synthetic task did not reproduce the stage error, so it does not establish root cause or justify a parser/prompt change."
+  ]
+}
