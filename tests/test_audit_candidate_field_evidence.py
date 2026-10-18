@@ -32,6 +32,7 @@ def test_candidate_field_evidence_escapes_json_pointer_keys_and_keeps_numbers_di
 def test_audit_turn_context_includes_field_evidence_for_exact_candidate(monkeypatch):
     monkeypatch.setattr("app.reviewed_sources.context_source", lambda _task: {})
     task = SimpleNamespace(
+        channel="dingtalk",
         trigger_message_id="source-1",
         render_business_context=lambda **_kwargs: "Current source facts.",
     )
