@@ -34,6 +34,7 @@ from app.provider_state_schema_release import provider_state_schema_is_current
 from app.state_schema_release import (SOURCE_TABLES as STATE_SOURCE_TABLES,
     capture_state_source, state_schema_is_current)
 from app.state_definitions import state_projection
+from app.deferral_receipt_storage import capture_native_receipts
 from app.state_storage import insert_state, update_state_rows
 from app.task20_schema_release import capture_task20_source
 from app.runs11_schema_release import capture_run11_source
@@ -844,6 +845,7 @@ def test_prepare_is_readonly_and_captures_exact_pair_schema_aliases_and_ledger(s
         expected["provider"] = capture_provider_state_source(db)
         expected["configs"] = release_module._project_config_source(db, expected["action_variant"])
         expected["state"] = capture_state_source(db)
+        expected["deferral_receipts"] = capture_native_receipts(db)
         expected["confirmation"] = capture_confirmation_source(db)
         expected["tasks"] = capture_task20_source(db)
         expected["runs11"] = capture_run11_source(db)
@@ -908,7 +910,8 @@ def test_publish_commits_both_markers_with_complete_target_then_inverse_is_repea
             include_business_sync=True, include_task_delivery=True,
             include_errors=True, include_feedback=True,
             include_business_actions=True, include_email_history=True,
-            canonical_email=True)
+            canonical_email=True, inline_legacy_owner=True,
+            physical_provenance=True, compact_payload=True)
         assert not set(email_storage.SOURCE_TABLES).intersection(
             row[0] for row in db.execute("select name from sqlite_schema where type='table'"))
     release.rollback()
@@ -1093,7 +1096,7 @@ def test_unsupported_current_inverse_preserves_entire_database(source, damage):
         elif damage == "provider_index":
             db.execute("drop index idx_provider_state_observation_folder")
         elif damage == "external_trigger":
-            db.execute("drop trigger trg_email_reply_dispatch_blocks_plan_switch")
+            db.execute("drop trigger trg_emails_reply_dispatch_blocks_plan_switch")
         elif damage == "account_guard":
             db.execute("drop trigger trg_configs_direct_account_delete")
         else:

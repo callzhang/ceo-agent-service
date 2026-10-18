@@ -388,9 +388,17 @@ def update_email_message(db: sqlite3.Connection, message_id: int, values: dict) 
     mapped = {canonical_column(KINDS[1], field):
               actions._native_integer_primary_key(value, update=True) if field == "id" else value
               for field, value in values.items()}
-    cursor = db.execute("update emails set "
-                        + ",".join(_quote(column) + "=?" for column in mapped)
-                        + " where message_id=?", (*mapped.values(), message_id))
+    assignments = [_quote(column) + "=?" for column in mapped]
+    reference_parameters = ()
+    if 'normalized_text' in values:
+        assignments.append("message_source_reference_json=case when message_normalized_text is ? "
+            "then message_source_reference_json "
+            "when json_type(message_source_reference_json,'$.model_input')='object' "
+            "then json_object('model_input',json_extract(message_source_reference_json,'$.model_input')) "
+            "else null end")
+        reference_parameters = (values['normalized_text'],)
+    cursor = db.execute("update emails set " + ",".join(assignments)
+                        + " where message_id=?", (*mapped.values(), *reference_parameters, message_id))
     return cursor.rowcount
 
 
@@ -412,9 +420,16 @@ def update_email_classification(db: sqlite3.Connection, classification_id: int,
                              + ") from emails where classification_id=?", (classification_id,)).fetchone()
         if current is not None and tuple(current) != converted:
             raise ValueError("classification shared fact differs from canonical message")
+    assignments = [_quote(column) + "=?" for column in mapped]
+    reference_parameters = ()
+    if 'model_text' in values:
+        assignments.append("message_source_reference_json=case when class_model_text is ? "
+                           "then message_source_reference_json else "
+                           "json_remove(message_source_reference_json,'$.model_input') end")
+        reference_parameters = (values['model_text'],)
     cursor = db.execute("update emails set "
-                        + ",".join(_quote(column) + "=?" for column in mapped)
-                        + " where classification_id=?", (*mapped.values(), classification_id))
+                        + ",".join(assignments)
+                        + " where classification_id=?", (*mapped.values(), *reference_parameters, classification_id))
     return cursor.rowcount
 
 
@@ -532,7 +547,8 @@ def migrate_email_canonical_schema(
     return metadata
 
 
-def restore_email_canonical_schema(db: sqlite3.Connection, metadata: dict, *, read_body=None) -> dict:
+def restore_email_canonical_schema(db: sqlite3.Connection, metadata: dict, *, read_body=None,
+                                   read_model_input=None) -> dict:
     """Restore the exact source profile using current canonical facts."""
     _require_fk_off(db)
     _validate_metadata(metadata)
@@ -546,15 +562,30 @@ def restore_email_canonical_schema(db: sqlite3.Connection, metadata: dict, *, re
     cursor = db.execute("select * from emails where message_source_reference_json is not null")
     names = tuple(item[0] for item in cursor.description)
     restored_bodies = []
+    restored_models = []
     for values in cursor.fetchall():
         row = dict(zip(names, values, strict=True))
-        if read_body is None:
-            raise ValueError("Email original reader required for schema inverse")
         reference = json.loads(row['message_source_reference_json'])
-        body = read_body(row, reference)
-        verify_original(body, reference)
-        restored_bodies.append((body, row["id"]))
+        if reference.get('kind') is not None:
+            if read_body is None:
+                raise ValueError("Email original reader required for schema inverse")
+            body = read_body(row, reference)
+            verify_original(body, reference)
+            restored_bodies.append((body, row["id"]))
+        model_reference = reference.get('model_input')
+        if model_reference is not None and row['class_model_text'] == '':
+            if read_model_input is None:
+                raise ValueError("Email model input reader required for schema inverse")
+            model_text = read_model_input(row, model_reference)
+            verify_original(model_text, model_reference)
+            restored_models.append((model_text, row['id'], row['class_included_in_model_id']))
     db.executemany("update emails set message_normalized_text=? where id=?", restored_bodies)
+    db.executemany("update emails set class_model_text=? where id=?",
+                   [(text, identity) for text, identity, _ in restored_models])
+    # Restoring identical input bytes must retain the current inclusion fact,
+    # despite the old raw-field invalidation trigger firing on representation.
+    db.executemany("update emails set class_included_in_model_id=? where id=?",
+                   [(included, identity) for _, identity, included in restored_models])
     columns = {kind: tuple(row[1] for row in metadata["source_tables"][kind]["columns"]
                            if row[6] == 0) for kind in KINDS}
     messages = _projection_snapshot(db, KINDS[1], columns=columns[KINDS[1]])

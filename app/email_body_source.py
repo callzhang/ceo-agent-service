@@ -25,6 +25,10 @@ def _provider_original(message, representation):
         return str(message.get("markdownBody") or message.get("textBody") or "")
     if representation == "scan_normalized_message":
         return _normalized_message_text(message)
+    from app.email_classifier_model import CpuTfidfLogisticClassifier, email_message_to_text
+
+    if representation == CpuTfidfLogisticClassifier.FEATURE_VERSION:
+        return email_message_to_text(message)
     raise ValueError("unknown Email original representation")
 
 
@@ -40,7 +44,16 @@ def original_from_message(message, reference):
     raise ValueError("unknown Email original source kind")
 
 
-def locate_original(body, *, attempts, read_message):
+def read_referenced_original(reference, *, read_message):
+    if reference["kind"] == "native":
+        return verify_original(native.read_native_source_body(reference["native_provenance"]), reference)
+    if reference["kind"] == "provider":
+        return verify_original(_provider_original(read_message(), reference["representation"]), reference)
+    raise ValueError("unknown Email original source kind")
+
+
+def locate_original(body, *, attempts, read_message,
+                    representations=("provider_body", "scan_normalized_message")):
     """Prove a complete native field first, then the accurate provider original."""
     if not body:
         return None
@@ -63,7 +76,7 @@ def locate_original(body, *, attempts, read_message):
         message = read_message()
     except (LookupError, OSError, ValueError, imaplib.IMAP4.error):
         return None
-    for representation in ("provider_body", "scan_normalized_message"):
+    for representation in representations:
         if _provider_original(message, representation) == body:
             return {**digest, "kind": "provider", "representation": representation,
                     "locator": {"folder": message["folder"], "uidvalidity": message["uidValidity"],
@@ -77,19 +90,38 @@ def prepare_recovery_originals(database, *, backup_path, read_message):
     An existing source backup supplies only matching original bytes. New or
     changed messages use their exact native/provider source, never old rows.
     """
+    return _prepare_recovery_inputs(database, backup_path=backup_path,
+                                    read_message=read_message, model_input=False)
+
+
+def prepare_recovery_model_inputs(database, *, backup_path, read_message):
+    """Read proven model inputs before the inverse transaction, never old labels."""
+    return _prepare_recovery_inputs(database, backup_path=backup_path,
+                                    read_message=read_message, model_input=True)
+
+
+def _prepare_recovery_inputs(database, *, backup_path, read_message, model_input):
     with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         if db.execute("select 1 from sqlite_schema where type='table' and name='emails'").fetchone() is None:
             return {}
         db.row_factory = sqlite3.Row
+        predicate = (" and class_model_text=''" if model_input
+                     else " and json_type(message_source_reference_json,'$.kind') is not null")
         rows = db.execute("select account_id,stable_message_identity,message_source_reference_json "
-                          "from emails where message_source_reference_json is not null").fetchall()
+                          "from emails where message_source_reference_json is not null" + predicate).fetchall()
     result = {}
     for row in rows:
         reference = json.loads(row["message_source_reference_json"])
+        if model_input:
+            reference = reference.get("model_input")
+            if reference is None:
+                continue
         body = None
         if backup_path is not None:
             with closing(sqlite3.connect(backup_path.resolve().as_uri() + "?mode=ro", uri=True)) as backup:
-                old = backup.execute("select normalized_text from email_messages "
+                source = ("select model_text from email_classifications " if model_input
+                          else "select normalized_text from email_messages ")
+                old = backup.execute(source +
                     "where account_id=? and stable_message_identity=?",
                     (row["account_id"], row["stable_message_identity"])).fetchone()
             if old is not None:
@@ -100,12 +132,7 @@ def prepare_recovery_originals(database, *, backup_path, read_message):
                     # cannot replace a post-migration original or business row.
                     pass
         if body is None:
-            if reference["kind"] == "native":
-                body = native.read_native_source_body(reference["native_provenance"])
-            elif reference["kind"] == "provider":
-                body = original_from_message(read_message(row["account_id"],
-                    row["stable_message_identity"]), reference)
-            else:
-                raise ValueError("unknown Email original source kind")
+            body = read_referenced_original(reference, read_message=lambda:
+                read_message(row["account_id"], row["stable_message_identity"]))
         result[(row["account_id"], row["stable_message_identity"])] = verify_original(body, reference)
     return result

@@ -3269,7 +3269,7 @@ def build_email_worker_dependencies(
     from app.email_source_reader import EmailSourceReader
 
     original_reader = EmailSourceReader(email_store, source_factory=low_priority_source_factory)
-    retire_original = partial(email_store.compact_email_message_body, source_reader=original_reader)
+    retire_original = partial(email_store.compact_email_inputs, source_reader=original_reader)
     model_root = Path(settings.db_path).parent / "email-models"
     registry = EmailModelRegistry(model_root)
     description_optimizer = DescriptionOptimizationOrchestrator(

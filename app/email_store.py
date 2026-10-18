@@ -13564,7 +13564,8 @@ class EmailStore:
                 "where classification_id is not null "
                 "and class_classification_source='user' and class_status='processed' "
                 "and class_confirmed_category is not null and class_confirmed_category<>'' "
-                "and trim(class_model_text)<>'' and class_included_in_model_id is null"
+                "and (trim(class_model_text)<>'' or json_type(message_source_reference_json,'$.model_input')='object') "
+                "and class_included_in_model_id is null"
             ).fetchone()[0])
 
     def owner_labelled_stamp(self) -> str:
@@ -13581,7 +13582,7 @@ class EmailStore:
             ).fetchone()
         return f"{count}:{latest}"
 
-    def owner_labelled_examples(self) -> tuple[list[dict[str, str]], str]:
+    def owner_labelled_examples(self, *, source_reader=None) -> tuple[list[dict[str, str]], str]:
         """Messages the owner has labelled, and the stamp they were read at.
 
         The Agent is shown the ones most like the message it is classifying, so
@@ -13591,22 +13592,29 @@ class EmailStore:
         stamp = self.owner_labelled_stamp()
         with self._connect() as db:
             rows = db.execute(
-                f"""
-                select stable_message_identity, sender, subject, model_text,
-                       confirmed_category
-                from ({EMAIL_CLASSIFICATION_SQL})
-                where classification_source='user'
-                  and coalesce(confirmed_category, '') != ''
-                order by id
+                """
+                select account_id, stable_message_identity, class_sender as sender,
+                       class_subject as subject, class_model_text as model_text,
+                       class_confirmed_category as confirmed_category,
+                       message_source_reference_json
+                from emails
+                where classification_id is not null and class_classification_source='user'
+                  and coalesce(class_confirmed_category, '') != ''
+                order by classification_id
                 """
             ).fetchall()
+        from app.email_model_input_reader import read_owner_model_inputs
+
+        inputs = read_owner_model_inputs(self, rows, source_reader=source_reader)
+        if self.owner_labelled_stamp() != stamp:
+            raise ValueError("Email owner labels changed during input read")
         return (
             [
                 {
                     "identity": str(row["stable_message_identity"]),
                     "sender": str(row["sender"]),
                     "subject": str(row["subject"]),
-                    "text": str(row["model_text"]),
+                    "text": inputs[(row["account_id"], row["stable_message_identity"])],
                     "category": str(row["confirmed_category"]),
                 }
                 for row in rows
@@ -15061,13 +15069,10 @@ class EmailStore:
             )
             return cursor.rowcount == 1
 
-    def compact_email_message_body(self, classification_id: int, *, source_reader) -> bool:
-        """Retire one completed original with an exact source and no unfinished dependency."""
-        from app.email_body_source import locate_original
-        from app.run_storage import RUNTIME_ATTEMPT_SQL
-
-        eligible = f"""class_status='processed' and message_source_reference_json is null
-            and typeof(message_normalized_text)='text' and message_normalized_text<>''
+    @staticmethod
+    def _completed_email_input_sql():
+        """Existing completion predicates shared by the two original inputs."""
+        return f"""class_status='processed'
             and not exists(select 1 from ({_EMAIL_CLASSIFICATION_SQL}) t
                 where t.stable_message_identity=emails.stable_message_identity and t.status<>'done')
             and not exists(select 1 from ({REPLY_TASK_CURRENT_SQL}) t where t.channel='email'
@@ -15077,9 +15082,17 @@ class EmailStore:
                 and ((a.record_type='email_actions' and a.email_status not in ('done','skipped'))
                   or (a.record_type in ('email_reply_dispatch_claims','email_unsubscribe_claims')
                       and a.email_status<>'done')))"""
+
+    def compact_email_message_body(self, classification_id: int, *, source_reader) -> bool:
+        """Retire one completed original with an exact source and no unfinished dependency."""
+        from app.email_body_source import locate_original
+        from app.run_storage import RUNTIME_ATTEMPT_SQL
+
+        eligible = self._completed_email_input_sql() + " and json_type(message_source_reference_json,'$.kind') is null " \
+            "and typeof(message_normalized_text)='text' and message_normalized_text<>''"
         with self._connect() as db:
             row = db.execute("select id,account_id,stable_message_identity,message_normalized_text,"
-                "message_updated_at,class_updated_at,class_current_action_plan_id from emails "
+                "message_updated_at,class_updated_at,class_current_action_plan_id,message_source_reference_json from emails "
                 "where classification_id=? and " + eligible, (classification_id,)).fetchone()
             if row is None:
                 return False
@@ -15093,13 +15106,75 @@ class EmailStore:
             read_message=lambda: source_reader.read(original["account_id"], original["stable_message_identity"]))
         if reference is None:
             return False
+        reference = json.loads(original['message_source_reference_json'] or '{}') | reference
         with self._connect() as db:
             cursor = db.execute("update emails set message_normalized_text='',message_source_reference_json=? "
-                "where id=? and message_normalized_text=? and message_updated_at is ? "
+                "where id=? and message_normalized_text=? and message_source_reference_json is ? and message_updated_at is ? "
                 "and class_updated_at is ? and class_current_action_plan_id is ? and " + eligible,
-                (_json_dump(reference), original["id"], original["message_normalized_text"],
+                (_json_dump(reference), original["id"], original["message_normalized_text"], original['message_source_reference_json'],
                  original["message_updated_at"], original["class_updated_at"], original["class_current_action_plan_id"]))
             return cursor.rowcount == 1
+
+    def compact_email_model_input(self, classification_id: int, *, source_reader) -> bool:
+        """Replace a completed exact model input with its native/provider proof."""
+        from app.email_body_source import locate_original
+        from app.email_classifier_model import CpuTfidfLogisticClassifier
+        from app.run_storage import RUNTIME_ATTEMPT_SQL
+
+        eligible = self._completed_email_input_sql() + " and typeof(class_model_text)='text' and class_model_text<>'' " \
+            "and json_type(message_source_reference_json,'$.model_input') is null"
+        with self._connect() as db:
+            row = db.execute("select id,account_id,stable_message_identity,class_model_text,"
+                "message_source_reference_json,message_updated_at,class_updated_at,"
+                "class_current_action_plan_id,class_included_in_model_id from emails "
+                "where classification_id=? and " + eligible, (classification_id,)).fetchone()
+            if row is None:
+                return False
+            original = dict(row)
+            attempts = db.execute(f"select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
+                f"from ({RUNTIME_ATTEMPT_SQL}) a join ({_EMAIL_CLASSIFICATION_SQL}) t "
+                "on a.workload_kind='email_classification' and a.workload_key=t.task_id "
+                "where t.stable_message_identity=? and a.status not in ('starting','running') order by a.id desc",
+                (original["stable_message_identity"],)).fetchall()
+        model_reference = locate_original(original['class_model_text'], attempts=attempts,
+            read_message=lambda: source_reader.read(original['account_id'], original['stable_message_identity']),
+            representations=(CpuTfidfLogisticClassifier.FEATURE_VERSION,))
+        if model_reference is None:
+            return False
+        reference = json.loads(original['message_source_reference_json'] or '{}')
+        reference['model_input'] = model_reference
+        with self._connect() as db:
+            cursor = db.execute("update emails set class_model_text='',message_source_reference_json=? "
+                "where id=? and class_model_text=? and message_source_reference_json is ? "
+                "and message_updated_at is ? and class_updated_at is ? "
+                "and class_current_action_plan_id is ? and class_included_in_model_id is ? and " + eligible,
+                (_json_dump(reference), original['id'], original['class_model_text'],
+                 original['message_source_reference_json'], original['message_updated_at'],
+                 original['class_updated_at'], original['class_current_action_plan_id'],
+                 original['class_included_in_model_id']))
+            if cursor.rowcount != 1:
+                return False
+            # The existing raw-field trigger invalidates inclusion on model_text
+            # changes. These are identical proven bytes, so preserve its prior
+            # inclusion in the same transaction, invisible to other readers.
+            db.execute("update emails set class_included_in_model_id=? where id=?",
+                (original['class_included_in_model_id'], original['id']))
+            return True
+
+    def compact_email_inputs(self, classification_id: int, *, source_reader) -> bool:
+        """Retire both completed inputs using one request-local source read."""
+        from types import SimpleNamespace
+
+        messages = {}
+        def read(account, identity):
+            key = (account, identity)
+            if key not in messages:
+                messages[key] = source_reader.read(account, identity)
+            return messages[key]
+        reader = SimpleNamespace(read=read)
+        body = self.compact_email_message_body(classification_id, source_reader=reader)
+        model = self.compact_email_model_input(classification_id, source_reader=reader)
+        return body or model
 
     def get_email_source_location(
         self, account_id: str, stable_message_identity: str,

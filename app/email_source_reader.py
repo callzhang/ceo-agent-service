@@ -92,7 +92,9 @@ class EmailSourceReader:
             for identity, message in messages.items():
                 reference = locations[(account_id, identity)].get("message_source_reference_json")
                 if reference is not None:
-                    original_from_message(message, json.loads(reference))
+                    reference = json.loads(reference)
+                    if reference.get('kind') is not None:
+                        original_from_message(message, reference)
         finally:
             source.logout()
         if self.store.get_email_source_locations(keys) != locations:

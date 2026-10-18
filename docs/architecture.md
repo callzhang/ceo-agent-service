@@ -3210,9 +3210,22 @@ plan, preserving model features, business results and receipts. Native original 
 structured execution context obtain real provider headers for recipient roles
 and validate the complete referenced version. A body-only native field never
 stands in for To/Cc metadata.
-No original cache or transcript copy is created. Completion callbacks now invoke the
-exact compactor through the shared account reader; historical body/model-input
-retirement and final release acceptance remain incomplete. This candidate is not deployed.
+No original cache or transcript copy is created. Completion callbacks invoke the
+shared exact input compactor. Body and model input proofs are independent optional
+components of the existing message_source_reference_json: the body proof uses the
+root fields, while model_input holds the exact native coordinates or the actual
+classifier feature serializer and provider locator, full SHA-256 and byte length.
+A body match alone cannot prove model features, which include headers. Unproved
+inputs retain their bytes. Retiring identical model bytes preserves current model
+inclusion in the same transaction; an actual later model input update removes
+only its old model proof, and an actual body update preserves an independent model
+proof. No-op input updates keep their proof. Owner-labelled similar examples read
+exact retired features from their native/provider source outside SQLite, retaining
+the existing ranking and snippets; missing or changed sources remain explicit.
+The schema inverse prepares both exact input components before opening its write
+lease and restores original bytes with current business facts and inclusion.
+Historical input retirement and final release acceptance remain incomplete.
+This candidate is not deployed.
 
 Email schema inverse prepares exact original bytes before its schema write lease.
 An explicitly supplied existing backup contributes only matching original bytes;

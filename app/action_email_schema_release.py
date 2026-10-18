@@ -691,7 +691,7 @@ class ActionEmailSchemaRelease:
 
     def rollback(self):
         original_deferral_source = self.source_schema["deferral_receipts"]
-        from app.email_body_source import prepare_recovery_originals
+        from app.email_body_source import prepare_recovery_originals, prepare_recovery_model_inputs
 
         source_reader = None
 
@@ -709,6 +709,8 @@ class ActionEmailSchemaRelease:
         # Originals are prepared before the inverse write lease. The backup
         # supplies bytes only; it never restores earlier business facts.
         email_originals = prepare_recovery_originals(self.database_path,
+            backup_path=self.recovery_source_path, read_message=read_message)
+        model_inputs = prepare_recovery_model_inputs(self.database_path,
             backup_path=self.recovery_source_path, read_message=read_message)
         with closing(sqlite3.connect(self.database_path, isolation_level=None)) as db:
             db.execute("pragma foreign_keys=off")
@@ -736,7 +738,8 @@ class ActionEmailSchemaRelease:
                     read_recovery_source_body(binding, backup_path=self.recovery_source_path, reader=reader))
                 restore_legacy_owner(db, self.source_schema["legacy_owner"])
                 restore_email_canonical_schema(db, self.source_schema["email_canonical"],
-                    read_body=lambda row, ref: email_originals[(row["account_id"], row["stable_message_identity"])])
+                    read_body=lambda row, ref: email_originals[(row["account_id"], row["stable_message_identity"])],
+                    read_model_input=lambda row, ref: model_inputs[(row["account_id"], row["stable_message_identity"])])
                 restore_email_history_schema(db, self.source_schema["email_history"])
                 restore_business_action_schema(db, self.source_schema["business_actions"])
                 restore_business_candidate_schema(db, self.source_schema["business_candidates"])

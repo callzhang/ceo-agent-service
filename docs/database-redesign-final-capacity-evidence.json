@@ -30316,5 +30316,417 @@
       "real_sends": 0,
       "production_writes": false
     }
+  },
+  "email_model_input_lifecycle": {
+    "status": "implemented; focused tests and real bounded pilot passed; expanded tests and full current-data inverse pending",
+    "schema_changed": false,
+    "new_columns": 0,
+    "new_tables": 0,
+    "actual_reader_inventory": [
+      "owner-labelled similar-case features",
+      "pending UI count only"
+    ],
+    "retention": "native-first exact model input reference nested inline in existing message_source_reference_json; raw active/unproved input retained",
+    "feature_policy": "preserve owner examples and future relabel; exact input reconstruction, no silent omitted examples",
+    "inclusion": "same-transaction preserve current inclusion after identical byte representation change; real input changes retain original invalidation behavior",
+    "source_components": "body reference and model_input reference independent; replacing one actual input preserves the other reference; no-op raw placeholder write retains proof",
+    "focused_model_tests_initial": {
+      "passed": 13,
+      "seconds": 12.69
+    },
+    "focused_existing_and_new": {
+      "passed": 87,
+      "seconds": 32.37
+    },
+    "owner_source_lifecycle": {
+      "passed": 52,
+      "seconds": 18.21
+    },
+    "review": "Luna found no-op placeholder reference loss; regression RED then fixed and rechecked; expanded independent-reference review pending",
+    "real_pilot": {
+      "scope": "bounded current final-schema copy after merged-code real CLI; native-first exact model input proof, read-only provider only",
+      "real_sends": 0,
+      "provider_mutations": 0,
+      "production_writes": false,
+      "before_vacuum_bytes": 473317376,
+      "accounts": [
+        {
+          "account_ordinal": 0,
+          "examined": 20,
+          "provider_reads": 20,
+          "cases": [
+            {
+              "classification_id": 5911920088906445883,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 387453220758599271,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 2345130809001166178,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 9203702176570757058,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 3815905301571492259,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 384569153484229123,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": "LookupError"
+            },
+            {
+              "classification_id": 4569601052153107592,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": "LookupError"
+            },
+            {
+              "classification_id": 5136371895890345905,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": "LookupError"
+            },
+            {
+              "classification_id": 7317754076786432715,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": false,
+              "error": null
+            },
+            {
+              "classification_id": 4863390932683990808,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": null
+            },
+            {
+              "classification_id": 2263293533562526977,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": "LookupError"
+            },
+            {
+              "classification_id": 3782132834546819230,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": "LookupError"
+            },
+            {
+              "classification_id": 9160775184021915299,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": "LookupError"
+            },
+            {
+              "classification_id": 7802280962959219910,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": false,
+              "error": null
+            },
+            {
+              "classification_id": 1730217314187936274,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": null
+            },
+            {
+              "classification_id": 8350970649539083709,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": "LookupError"
+            },
+            {
+              "classification_id": 1407471919155797799,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": "LookupError"
+            },
+            {
+              "classification_id": 6024443761865679437,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": null
+            },
+            {
+              "classification_id": 679168101456824361,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": null
+            },
+            {
+              "classification_id": 6761387484844205659,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "account_ordinal": 1,
+          "examined": 20,
+          "provider_reads": 20,
+          "cases": [
+            {
+              "classification_id": 6766327004262243441,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 7053494100183154909,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 1625925000189326623,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": false,
+              "error": null
+            },
+            {
+              "classification_id": 8382110368817418932,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 1790314723440173323,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 5296955234542200805,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 2329012365576936695,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 4876025033071816961,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 879631194452911732,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 6393471822344370504,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 3291481925591240506,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 6889403726005781346,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 404130614904365191,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 7794424062463112934,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 7122477621352360287,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 6695438222674677362,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 2652243161431922939,
+              "changed": false,
+              "body_retired": false,
+              "model_retired": false,
+              "error": null
+            },
+            {
+              "classification_id": 7978448920605357643,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 7175576021325613654,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            },
+            {
+              "classification_id": 6512809918320829569,
+              "changed": true,
+              "body_retired": true,
+              "model_retired": true,
+              "error": null
+            }
+          ]
+        }
+      ],
+      "seconds": 155.032,
+      "all_email_rows_checked": 9403,
+      "all_other_named_fields_unchanged": true,
+      "body_original_bytes_retired": 61336,
+      "model_input_bytes_retired": 36291,
+      "bodies_retired": 27,
+      "model_inputs_retired": 24,
+      "retained_fields_sha256": "3a6ab71a924b05afa039077b85e1c058e340fe5b98f5eee689f5947fd2174668",
+      "quick_check": "ok",
+      "fk_baseline_only": true,
+      "after_vacuum_bytes": 473260032,
+      "saved_bytes": 57344
+    },
+    "production_writes": false,
+    "real_sends": 0,
+    "expanded_focus_tests": {
+      "passed": 119,
+      "seconds": 78.29,
+      "scope": "canonical declarations, exact body/model sources, source reader, similarity, selected training and lifecycle; excludes the still-running broader release/learning/feedback batch"
+    },
+    "additional_inverse_cases": {
+      "passed": 2,
+      "seconds": 13.88,
+      "scope": "model-only proof inverse and current nonempty newer model is not rewound"
+    },
+    "bounded_read_review": {
+      "result": "no additional findings",
+      "scope": "current body/model independent optional proofs, current inclusion and actual/no-op update behavior; no tests or production activity"
+    },
+    "broader_batch": {
+      "passed": 71,
+      "failed": 5,
+      "seconds": 1139.78,
+      "stopped_on_failures": true,
+      "diagnosis": "Three stale test expectations: missing existing deferral receipt metadata, predecessor Actions options and predecessor trigger name; no runtime relaxation."
+    },
+    "corrected_release_cases": {
+      "passed": 6,
+      "seconds": 182.13,
+      "scope": "both source variants: exact readonly source metadata, repeated publication/current-data inverse/reforward, wrong canonical external trigger rejected without mutation"
+    },
+    "learning_feedback_tests": {
+      "passed": 24,
+      "seconds": 57.61
+    },
+    "final_model_lifecycle_tests": {
+      "passed": 20,
+      "seconds": 20.59
+    },
+    "current_data_roundtrip": {
+      "status": "repeat_running_after_verified_fixture_repair",
+      "initial_inverse": {
+        "emails": 9403,
+        "body_inputs": 46,
+        "model_inputs": 38,
+        "all_named_fields_exact": true,
+        "current_native_task_results_receipts_exact": true,
+        "old_code_cold_readback": true,
+        "seconds": 437.293
+      },
+      "initial_reforward": {
+        "status": "initial_reforward_child_failed_after_commit",
+        "cause": "Test cloned SQLite alone and omitted two existing external latest training files. AutoReplyStore, terminal meeting compaction and EmailStore reopen succeeded; selected baseline read correctly rejected missing file. No runtime change.",
+        "current_target_quick_check": "ok",
+        "corrected_fixture_files": [
+          {
+            "digest": "8aedf9c2cf2117f2509046d47e9f288718d82db5c438b95ffb88548ccdbfc076",
+            "bytes": 14327124,
+            "exact": true
+          },
+          {
+            "digest": "c3ee5b375f0cd6c1cd88b2de8a1426d69af80dc8560cb68e2b6a00a6b46eef72",
+            "bytes": 9649011,
+            "exact": true
+          }
+        ],
+        "production_writes": false,
+        "real_sends": 0
+      },
+      "repeat_progress": "/tmp/db-redesign-final-guard.3LeMgv/model-input-roundtrip-progress.json",
+      "production_writes": false,
+      "real_sends": 0
+    }
   }
 }
