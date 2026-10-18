@@ -1357,3 +1357,35 @@ Quality was still in progress at this checkpoint and is supplementary to the
 focused behavior validation. No natural post-release Consumer/Audit message
 read has yet established a production business judgment; the local replay and
 fixed cases establish the lossless output contract under their tested inputs.
+
+## Email Classifier category-table duplication: no-go, 2026-10-18
+
+**Observed input and proposed boundary.** The latest readable native Email
+Classifier turn submitted 15,937 service-prompt characters. Its managed Skill
+contained a fixed nine-category reference table, while the same submitted
+input also contained current `allowed_category_keys` and descriptions for 11
+categories, including `finance` and `invoice`. The current prompt assembly
+includes both by construction, so the duplication recurs across classifier
+turns. The candidate replaced only the fixed Skill table with a short pointer
+to the current category descriptions; no runtime or Skill file was changed.
+The finite gate required every fixed case to preserve the category, importance
+flag, and unsubscribe candidate index, as well as a valid wire result. A
+shorter prompt alone was insufficient.
+
+**Paired fixed cases and decision.** Eleven anonymous messages, one per current
+category, were run once through each arm using the same `gpt-5.6-luna` Codex
+OAuth model, category descriptions, message facts, read-only CLI settings and
+no business MCP. All 22 results passed `AgentClassificationWireResult`
+validation and made no tool calls. The candidate saved exactly 1,649 prompt
+characters per case; all categories and unsubscribe indices matched. The
+`external_billing` case changed `important` from `false` in the baseline to
+`true` in the candidate. This breaches the predeclared preservation gate, so
+the candidate is **not approved for implementation or deployment**. A single
+paired sample does not establish whether the shorter instruction caused the
+change or whether model variance contributed. The sanitized fixture, prompt
+hashes, and all 22 parsed outputs are in
+`evals/trajectory_optimization/email_classifier_category_table_pair.v1.json`.
+The next investigation must resolve the importance behavior with a repeated,
+fixed comparison or an explicit product-level importance criterion before
+reconsidering a Skill change. No real email classification or provider action
+was part of this evaluation.
