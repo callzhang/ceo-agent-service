@@ -1124,27 +1124,52 @@ constructed matching case saved 8,974 submitted characters and preserved that
 case's Project assessment; it does not establish repeated production benefit.
 
 Read-only production metadata yielded 8,921 completed Task Agent runs with a
-Codex session ID, 340 adjacent completed-run pairs sharing a session, and only
-eight of those pairs sharing both `summary_input_id` and source identity. This
-is a metadata proxy, not the count or an upper bound of exact fingerprint
-matches: different input IDs could still render identical content, while even
-the eight same-input pairs can differ in semantic context, runner lifetime, or
-native tail. In the most recent observed shared session, 19 completed runs had 19 distinct input
-IDs and source identities. The JSONL file was unavailable under the configured
-Codex home. A later read-only check found this session in Codex's paginated
-native history with 48 turns and 294 items. The original file-only lookup was
-therefore insufficient; this review has not yet compared exact rendered Task
-context fingerprints from that history, so repeated production benefit remains
-unproved. Reassess this draft only after the current scoped issue is delivered.
+session ID and 340 adjacent completed-run pairs sharing a session. Only eight
+of those pairs shared both `summary_input_id` and source identity. This was a
+metadata proxy, not an exact fingerprint count. The JSONL file for the most
+recent shared session was unavailable, but Codex's paginated native history
+retains its complete turns. A file-only lookup had missed that source.
+
+The exact native-input comparison is now complete for recent applicable
+Codex sessions (2026-10-10 through 2026-10-17): five sessions, 36 completed
+Task runs and all 31 adjacent completed-run pairs. Each saved user message was
+bound to its run time window, its `Current semantic Project/Task context` JSON
+was extracted without re-rendering current database state, and the exact
+submitted bytes were hashed. **No adjacent pair had the same full semantic
+context fingerprint.** The median extracted context was 337,713 characters
+(range 285,561–419,557). Three additional recent completed runs in one shared
+Claude CLI session were excluded because the draft applies only to Codex and
+that session is not in Codex native history. Older shared sessions were not
+used to extrapolate current benefit.
+
+The most recent Codex session does contain seven pairs of identical full
+semantic contexts among runtime attempts for the same source. Six pairs have
+native compaction between the full submissions; the sole pair without
+compaction follows a failed runtime attempt (`codex_oauth_model_unsupported`),
+which cannot seed the draft runner's successful prior-context state. These are
+not seven eligible, distinct completed Task decisions. In the 31 completed-run
+pairs, 13 had no compaction between turns and 18 did; none met the draft's
+exact-fingerprint gate. PR #125 therefore remains closed: its Task half has
+zero observed eligible production pairs in this bounded recent comparison.
+
+Different current Work Items still carry much overlapping historical data:
+across the 31 adjacent pairs, the median byte-identical row payload was
+101,574 characters of `source_documents`, 58,538 of `source_signals`, and
+11,210 of `project_contexts`. This is an overlap measurement, **not** safe
+prompt savings: a changed current source makes the full context differ, and
+compaction or missing model-visible history can make old rows unavailable.
+It identifies a separate row-level retrieval/projection question, not grounds
+to reactivate #125 or suppress prior source facts.
 
 Acceptance for this specific optimization would require a complete, repeated
 production trajectory showing byte-identical context across adjacent Tasks,
 measured input savings, and a fixed case preserving Task/Project decisions,
-source citations, and no cross-item omission. The current evidence does not
-meet the first condition. Do not merge or deploy the Task half of #125, or add
-fallback/prompt rules to make the draft fire more often. Revisit only after
-comparing the available native turns against exact context fingerprints and
-finding a real matching workload that justifies a new bounded change.
+source citations, and no cross-item omission. The current evidence disproves
+the first condition in the recent applicable sample. Do not merge or deploy
+the Task half of #125, or add fallback/prompt rules to make the draft fire
+more often. Any row-level alternative needs its own full-trajectory root
+cause, exact current-source and citation-preservation criteria, fixed
+business-decision comparison, and native visibility proof.
 
 ## Consumer stage-pair correction diagnostic, 2026-10-18
 
