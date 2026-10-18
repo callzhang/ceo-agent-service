@@ -592,9 +592,11 @@ sessions and the native CLI manages compaction. Current source authority takes p
 Current Work Item JSON:
 {work_item_json}
 {transcript_limitation}
-Source body: current_work_item.document_id in the semantic context below;
-read its visible_ranges. Offsets are character ranges in that exact version,
-not a claim that an omitted middle or another version was read.
+Source body: current_work_item.document_id and source_signals.document_id point
+to source_documents. If a document has duplicate_of_document_id, use that
+document's visible_ranges and decoded_excerpts; its source identity stays
+separate. Offsets are character ranges in that exact version, not a claim that
+an omitted middle or another version was read.
 Current semantic Project/Task context (rank is context, never authority):
 {candidate_prompt}
 
