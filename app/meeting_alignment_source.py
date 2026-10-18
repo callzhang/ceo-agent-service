@@ -1,9 +1,9 @@
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from collections.abc import Sequence
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.dws_client import DwsCalendarEvent, DwsClient, DwsError
 from app.meeting_alignment_models import (
@@ -40,6 +40,63 @@ class MinutesDiscoveryMetadata(BaseModel):
     status: str
     started_at: str
     ended_at: str
+
+
+class MeetingAsrSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    text: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("ASR segment end must follow its start")
+        return self
+
+
+class MeetingAsrTranscript(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    audio_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    audio_duration_seconds: float = Field(gt=0)
+    completed_chunks: int = Field(gt=0)
+    total_chunks: int = Field(gt=0)
+    segments: list[MeetingAsrSegment] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_complete_transcription(self):
+        if self.completed_chunks != self.total_chunks:
+            raise ValueError("ASR transcript has incomplete chunks")
+        previous_start = -1.0
+        for segment in self.segments:
+            if segment.end_seconds > self.audio_duration_seconds:
+                raise ValueError("ASR segment exceeds audio duration")
+            if segment.start_seconds < previous_start:
+                raise ValueError("ASR segments are not chronological")
+            previous_start = segment.start_seconds
+        return self
+
+
+def asr_transcript_paragraphs(
+    transcript: MeetingAsrTranscript | dict[str, Any],
+    *,
+    meeting_started_at: str,
+) -> list[dict[str, str]]:
+    evidence = MeetingAsrTranscript.model_validate(transcript)
+    started_at = datetime.fromisoformat(meeting_started_at.replace("Z", "+00:00"))
+    return [
+        {
+            "text": segment.text,
+            "timestamp": (
+                started_at + timedelta(seconds=segment.start_seconds)
+            ).isoformat(),
+        }
+        for segment in evidence.segments
+    ]
 
 
 def minutes_meeting_id(payload: dict[str, Any]) -> str:
@@ -117,6 +174,7 @@ def read_meeting_source(
     creator: MeetingParticipant | None = None,
     extra_segment_ids: Sequence[str] = (),
     resummary: bool = False,
+    transcription_override: list[dict[str, Any]] | None = None,
 ) -> MeetingSource:
     """The meeting as one source, however many recordings it was split across.
 
@@ -126,12 +184,19 @@ def read_meeting_source(
     """
     info = dws.get_minutes_info(meeting_id)
     summary = dws.get_minutes_summary(meeting_id)
-    try:
-        transcription = dws.get_all_minutes_transcription(meeting_id)
-    except DwsError as exc:
-        raise MeetingSourceIncomplete(
-            f"complete transcript is unavailable: {exc}"
-        ) from exc
+    if transcription_override is None:
+        try:
+            transcription = dws.get_all_minutes_transcription(meeting_id)
+        except DwsError as exc:
+            raise MeetingSourceIncomplete(
+                f"complete transcript is unavailable: {exc}"
+            ) from exc
+    else:
+        if calendar_evidence.source != "calendar":
+            raise MeetingSourceIncomplete(
+                "ASR transcript cannot establish meeting participants"
+            )
+        transcription = transcription_override
     current_user_id = dws.get_current_user_id()
     source = normalize_meeting_source(
         _merge_calendar_evidence(

@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -329,6 +330,39 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 SERVICE_HEALTH_STATE_PREFIX = "service_health:"
+TERMINAL_OA_SOURCE_SKIP_SQL = """
+    reply_attempts.send_status in ('uncertain','failed')
+    and reply_attempts.send_error='external_action_uncertain'
+    and reply_attempts.channel='dingtalk'
+    and trim(coalesce(reply_attempts.resolved_at, ''))<>''
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.source')
+        ='exact original DingTalk message and native OA detail/OpenAPI readback'
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.native_and_openapi_business_id_match')=1
+    and json_type(case when json_valid(reply_attempts.resolution)
+                       then reply_attempts.resolution else '{}' end, '$.external_write_count')='integer'
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.external_write_count')=0
+    and json_type(case when json_valid(reply_attempts.resolution)
+                       then reply_attempts.resolution else '{}' end, '$.current_principal_task_ids')='array'
+    and json_array_length(case when json_valid(reply_attempts.resolution)
+                               then reply_attempts.resolution else '{}' end, '$.current_principal_task_ids')=0
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.process_status') in ('COMPLETED','TERMINATED')
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.original_oa_task_status')
+        in ('COMPLETED','FINISHED','CANCELED','CANCELLED','TERMINATED')
+    and trim(coalesce(json_extract(case when json_valid(reply_attempts.resolution)
+                                     then reply_attempts.resolution else '{}' end, '$.process_instance_id'),''))<>''
+    and trim(coalesce(json_extract(case when json_valid(reply_attempts.resolution)
+                                     then reply_attempts.resolution else '{}' end, '$.original_oa_task_id'),''))<>''
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.original_message_id')
+        =reply_attempts.trigger_message_id
+    and json_extract(case when json_valid(reply_attempts.resolution)
+                          then reply_attempts.resolution else '{}' end, '$.historical_chat_delivery') like 'unverified%'
+"""
 WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 TERMINAL_NO_ACTION_RUN_FAILURE_CODES = frozenset(
     {
@@ -7916,7 +7950,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     (int(existing["id"]), str(existing["execution_generation"])),
                 ).fetchone()
                 if active_run is not None:
-                    raise ValueError(
+                    raise ManualRerunConflict(
                         "active agent run must finish before forced rerun"
                     )
             cls._supersede_running_agent_runs(
@@ -11200,8 +11234,39 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     or task["input_version"] != input_version
                     or hashlib.sha256(self._reply_task_from_row(task).trigger_message_json.encode("utf-8")).hexdigest() != input_digest):
                 raise AgentRunLeaseLostError("unsubscribe execution identity changed")
-            if db.execute(f"select 1 from ({state_projection('service_state')}) where key=?", (key,)).fetchone():
-                raise ValueError("unsubscribe execution requires reconciliation")
+            pending = db.execute(
+                f"select value from ({state_projection('service_state')}) where key=?", (key,)
+            ).fetchone()
+            retry_count = 0
+            if pending is not None:
+                try:
+                    previous = json.loads(pending["value"])
+                except (TypeError, json.JSONDecodeError):
+                    previous = None
+                from app.email_unsubscribe import (
+                    TRANSIENT_BROWSER_ERROR_CODES,
+                    TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES,
+                    UnsubscribeOutcomeUnresolvedError,
+                )
+
+                if (
+                    not isinstance(previous, dict)
+                    or previous.get("state") != "retryable"
+                    or previous.get("error_code") not in TRANSIENT_BROWSER_ERROR_CODES
+                    or previous.get("task_id") != task_id
+                    or previous.get("action_identity") != action_identity
+                    or previous.get("execution_generation") != execution_generation
+                    or previous.get("input_version") != input_version
+                    or previous.get("input_digest") != input_digest
+                ):
+                    raise UnsubscribeOutcomeUnresolvedError(
+                        "unsubscribe execution requires reconciliation"
+                    )
+                retry_count = int(previous.get("retry_count") or 0)
+                if retry_count >= TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
+                    raise UnsubscribeOutcomeUnresolvedError(
+                        "unsubscribe external retry budget exhausted; reconciliation required"
+                    )
             receipt = db.execute(f"select effect_digest,outcome from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=?", (action_identity,)).fetchone()
             if receipt is not None and (
                 receipt["effect_digest"] != previous_receipt_digest or receipt["outcome"] not in _RETRYABLE_SKIP_OUTCOMES
@@ -11215,10 +11280,49 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "task_id": task_id, "action_identity": action_identity,
                 "execution_generation": execution_generation, "input_version": input_version,
                 "input_digest": input_digest, "owner_pid": os.getpid(),
+                "state": "pending", "retry_count": retry_count,
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }, sort_keys=True)
-            insert_state(db, 'service_state', {'key': key, 'value': value})
+            upsert_state(db, "service_state", {"key": key, "value": value},
+                         {"value": state_json_field("value")})
             return value
+
+    def record_direct_email_unsubscribe_retryable_failure(
+        self, action_identity: str, execution_record: str, error_code: str
+    ) -> None:
+        """Authorize a bounded retry only after a typed transient browser error."""
+        from app.email_unsubscribe import TRANSIENT_BROWSER_ERROR_CODES
+
+        if error_code not in TRANSIENT_BROWSER_ERROR_CODES:
+            raise ValueError("unsubscribe failure is not an external transient")
+        key = f"email_unsubscribe_execution_pending:v1:{action_identity}"
+        with self._immediate_write_transaction() as db:
+            if db.execute(
+                f"select 1 from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=?",
+                (action_identity,),
+            ).fetchone() is not None:
+                raise ValueError("unsubscribe terminal receipt already exists")
+            row = db.execute(
+                f"select value from ({state_projection('service_state')}) where key=?", (key,)
+            ).fetchone()
+            if row is None or row["value"] != execution_record:
+                raise ValueError("unsubscribe execution marker changed")
+            try:
+                marker = json.loads(execution_record)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValueError("unsubscribe execution marker is invalid") from exc
+            if not isinstance(marker, dict) or marker.get("state") != "pending":
+                raise ValueError("unsubscribe execution marker is not pending")
+            marker.update(
+                state="retryable",
+                retry_count=int(marker.get("retry_count") or 0) + 1,
+                error_code=error_code,
+                failed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            update_state_rows(
+                db, "service_state", {"value": json.dumps(marker, sort_keys=True)},
+                where_sql="key=? and value=?", parameters=(key, execution_record),
+            )
 
     def settle_direct_email_unsubscribe_execution(self, action_identity: str, execution_record: str) -> None:
         """Clear only this attempt's fence after a real terminal receipt exists."""
@@ -11478,9 +11582,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         Older direct-unsubscribe failures can have no Agent run at all.  They
         are retryable only when the immutable action payload is intact and no
-        claim, receipt, effect, or browser step was persisted.  This keeps the
-        stable action identity as the idempotency boundary while avoiding a
-        blind status edit for arbitrary failed reply tasks.
+        claim, receipt, effect, browser step, or execution-pending marker was
+        persisted.  This keeps the stable action identity as the idempotency
+        boundary while avoiding a blind status edit for arbitrary failed reply
+        tasks.
         """
         retryable_errors = (
             "email_unsubscribe_browser_failed:%",
@@ -11508,6 +11613,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and not exists (select 1 from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=tasks.trigger_message_id)
                   and not exists (select 1 from ({email_action_projection('email_unsubscribe_effects')}) where action_identity=tasks.trigger_message_id)
                   and not exists (select 1 from ({email_action_projection('email_unsubscribe_steps')}) where action_identity=tasks.trigger_message_id)
+                  and not exists (
+                      select 1 from ({state_projection('service_state')})
+                      where key='email_unsubscribe_execution_pending:v1:' || tasks.trigger_message_id
+                  )
                 order by tasks.id
                 """,
                 (retryable_errors[0], retryable_errors[1], retryable_errors[2]),
@@ -12175,6 +12284,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 limit 1
                 """,
                 (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._reply_task_from_row(row)
+
+    def get_reply_task_by_trigger_message_id(
+        self, trigger_message_id: str, *, channel: str = "dingtalk"
+    ) -> ReplyTask | None:
+        """Find the current task for a globally unique synthetic trigger ID."""
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                select *
+                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                where channel=? and trigger_message_id=?
+                order by id desc
+                limit 1
+                """,
+                (channel, trigger_message_id),
             ).fetchone()
             if row is None:
                 return None
@@ -15132,6 +15260,99 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchall()
             return [int(row["id"]) for row in rows]
 
+    def attach_asr_transcript_and_rerun_meeting_job(
+        self, job_id: int, transcript: dict[str, Any]
+    ) -> int | None:
+        """Bind a complete, provenance-bearing ASR transcript to one failed job.
+
+        This is a same-identity source recovery, not a delivery retry. It applies
+        the ordinary meeting rerun effect guards and preserves prior runs.
+        """
+        from app.meeting_alignment_source import MeetingAsrTranscript
+
+        if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
+            return None
+        evidence = MeetingAsrTranscript.model_validate(transcript)
+        transcript_json = evidence.model_dump(mode="json")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"""select {task8_meeting_returning()}
+                   from tasks where record_type='meeting_alignment_jobs'
+                     and cast(legacy_key as integer)=?""",
+                (job_id,),
+            ).fetchone()
+            if row is None or row["status"] != "failed" or row["locked_at"]:
+                return None
+            try:
+                source = json.loads(row["source_json"] or "{}")
+            except (TypeError, ValueError):
+                return None
+            if (
+                not isinstance(source, dict)
+                or source.get("meeting_id") != row["meeting_id"]
+                or "asr_transcript" in source
+                or not isinstance(source.get("calendar_evidence"), dict)
+                or source["calendar_evidence"].get("source") != "calendar"
+                or row["send_result_json"] != "{}"
+            ):
+                return None
+            delivery_key = (
+                "meeting-alignment:" + str(row["legacy_key"]) + ":" + row["meeting_id"]
+            )
+            if db.execute(
+                f"""select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound
+                    where outbound.channel='dingtalk'
+                      and outbound.delivery_key in (?, ?)
+                    limit 1""",
+                (delivery_key, delivery_key + ":sensitive"),
+            ).fetchone():
+                return None
+            if db.execute(
+                f"select 1 from ({task_delivery_projection('meeting_alignment_delivery_claims')}) where job_id=? limit 1",
+                (job_id,),
+            ).fetchone():
+                return None
+            if db.execute(
+                f"""select 1 from ({state_projection('dispatcher_claim_leases')})
+                   where adapter_name='meeting' and source_id=?
+                     and coalesce(terminal_at,'')=''
+                     and julianday(lease_expires_at)>julianday('now') limit 1""",
+                (str(job_id),),
+            ).fetchone():
+                return None
+            if db.execute(
+                f"""select 1 from ({MEETING_RUN_SQL})
+                   where job_id=?
+                     and status='running' limit 1""",
+                (job_id,),
+            ).fetchone():
+                return None
+            if db.execute(
+                f"""select 1 from ({RUNTIME_ATTEMPT_SQL}) runtime
+                    join ({MEETING_RUN_SQL}) run on runtime.workload_key=cast(run.id as text)
+                    where runtime.workload_kind='meeting'
+                      and run.job_id=? and runtime.status in ('starting','running')
+                    limit 1""",
+                (job_id,),
+            ).fetchone():
+                return None
+
+            source["asr_transcript"] = transcript_json
+            source_json = json.dumps(source, ensure_ascii=False, sort_keys=True)
+            updated = db.execute(
+                f"""update tasks
+                   set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'source_json': '?', 'status': "'retry'", 'attempts': '0', 'locked_at': 'null', 'available_at': "''", 'error': "''", 'decision_json': "'{}'", 'target_kind': "''", 'target_id': "''", 'target_title': "''", 'mentions_json': "'[]'", 'final_message': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}
+                   where record_type='meeting_alignment_jobs' and id=?
+                     and {task20_column('meeting_alignment_jobs', 'status')}='failed'
+                     and coalesce({task20_column('meeting_alignment_jobs', 'locked_at')},'')=''
+                     and {task20_column('meeting_alignment_jobs', 'source_json')}=?
+                     and {task20_column('meeting_alignment_jobs', 'updated_at')}=?
+                     and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}'
+                   returning cast(legacy_key as integer)""",
+                (source_json, row["id"], row["source_json"], row["updated_at"]),
+            ).fetchone()
+            return int(updated[0]) if updated else None
+
     def baseline_meeting_alignment_jobs_before(
         self,
         activated_at: str,
@@ -17491,6 +17712,100 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 self._compact_settled_reply_task_input(db, task_id)
             return cursor.rowcount == 1
 
+    def skip_unresolved_reply_task(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+        reason: str,
+    ) -> bool:
+        """Stop an uncertain failed Reply task by an explicit operator decision.
+
+        This does not assert that the external action succeeded. The original
+        task error and immutable Agent run history remain intact; the separate
+        error row records why the operator chose not to continue the action.
+        """
+        evidence = reason.strip()
+        generation = expected_execution_generation.strip()
+        if not evidence:
+            raise ValueError("skip reason must be non-empty")
+        if not generation:
+            raise ValueError("execution generation is required")
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                f"select conversation_id, trigger_message_id, error "
+                f"from ({REPLY_TASK_SQL}) as reply_tasks "
+                "where id=? and status='failed' and execution_generation=?",
+                (task_id, generation),
+            ).fetchone()
+            if task is None or str(task["error"] or "") != "external_action_uncertain":
+                return False
+            cursor = db.execute(
+                f"update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'skipped'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql} "
+                "where reply_tasks.record_type='reply_tasks' and id=? "
+                f"and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' "
+                f"and {task20_column('reply_tasks', 'execution_generation')}=?",
+                (task_id, generation),
+            )
+            if cursor.rowcount != 1:
+                return False
+            insert_error_action(db, {
+                "conversation_id": task["conversation_id"],
+                "message_id": task["trigger_message_id"],
+                "kind": "reply_task_skipped_by_operator", "detail": evidence,
+                "resolution": evidence,
+            }, resolved_at_now=True)
+            self._compact_settled_reply_task_input(db, task_id)
+            return True
+
+    def skip_unresolved_reply_task_for_terminal_oa_source(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+        process_instance_id: str,
+        oa_task_id: str,
+        settled_evidence: str,
+    ) -> bool:
+        """Skip an uncertain OA follow-up once its exact source task is terminal.
+
+        This records that no action remains applicable. It does not claim the
+        earlier external action was delivered and does not rewrite its receipt.
+        """
+        generation = expected_execution_generation.strip()
+        process_id = process_instance_id.strip()
+        source_task_id = oa_task_id.strip()
+        evidence = settled_evidence.strip()
+        if not generation or not process_id or not source_task_id or not evidence:
+            raise ValueError("terminal OA skip requires generation, source identity and evidence")
+        business_object_key = f"oa:{process_id}:{source_task_id}"
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                f"select conversation_id, trigger_message_id from ({REPLY_TASK_SQL}) "
+                "where id=? and status='failed' and error='external_action_uncertain' "
+                "and execution_generation=? and business_object_key=?",
+                (task_id, generation, business_object_key),
+            ).fetchone()
+            if task is None:
+                return False
+            cursor = db.execute(
+                f"update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'skipped'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql} "
+                "where reply_tasks.record_type='reply_tasks' and id=? "
+                f"and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' "
+                f"and {task20_column('reply_tasks', 'execution_generation')}=? and {task20_column('reply_tasks', 'business_object_key')}=?",
+                (task_id, generation, business_object_key),
+            )
+            if cursor.rowcount != 1:
+                return False
+            insert_error_action(db, {
+                "conversation_id": task["conversation_id"],
+                "message_id": task["trigger_message_id"],
+                "kind": "reply_task_skipped_terminal_oa", "detail": evidence,
+                "resolution": evidence,
+            }, resolved_at_now=True)
+            self._compact_settled_reply_task_input(db, task_id)
+            return True
+
     def reconcile_unresolved_reply_tasks_with_settlement_evidence(self) -> int:
         """Close stale tasks with exact settlement evidence in bounded writes."""
         candidate_sql = f"""
@@ -17599,6 +17914,41 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if row is None:
                 return None
             return SentReply.model_validate(dict(row))
+
+    def is_verified_agent_authored_message(
+        self,
+        conversation_id: str,
+        message_id: str,
+        *,
+        channel: str = "dingtalk",
+    ) -> bool:
+        """Match a provider message ID to a successfully read-back agent send."""
+        conversation_id = conversation_id.strip()
+        message_id = message_id.strip()
+        channel = channel.strip()
+        if not conversation_id or not message_id or not channel:
+            return False
+        with self._connect() as db:
+            return db.execute(
+                f"""
+                select 1
+                from ({SENT_REPLY_SQL}) as sent
+                where sent.channel=?
+                  and sent.conversation_id=?
+                  and json_valid(sent.send_result_json)
+                  and json_extract(sent.send_result_json, '$.verification.state')='sent'
+                  and json_extract(
+                      sent.send_result_json,
+                      '$.verification.status_result.result.sendStatus'
+                  )='SUCCESS'
+                  and json_extract(
+                      sent.send_result_json,
+                      '$.verification.status_result.result.openMessageId'
+                  )=?
+                limit 1
+                """,
+                (channel, conversation_id, message_id),
+            ).fetchone() is not None
 
     def list_sent_replies_after(self, sent_reply_id: int) -> list[SentReply]:
         with self._connect() as db:
@@ -21014,13 +21364,99 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return reconciled
 
     def reconcile_invalid_needs_human_projections(self) -> int:
-        """Do not rewrite historical human-decision or terminal projections.
+        """Close current human projections whose approved candidate is invalid.
 
-        New questions are created only from a persisted approved candidate.
-        Legacy attempts remain readable, while the current projections and
-        decision endpoint separately decide whether they are actionable.
+        A legacy input-only question can remain readable as historical evidence,
+        but it is not a valid current needs-human result. Retain the candidate,
+        review and run unchanged; only close the current task/Attempt projection
+        so startup recovery cannot revive the question.
         """
-        return 0
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(f"""
+                select t.id as task_id, t.execution_generation,
+                       a.id as attempt_id, a.agent_run_id,
+                       c.id as candidate_id, c.candidate_json,
+                       r.audit_run_id
+                from ({REPLY_TASK_SQL}) t
+                join ({REVIEW_CANDIDATE_SQL}) c on c.task_id=t.id
+                  and c.execution_generation=t.execution_generation
+                  and c.invalidated_at=''
+                join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
+                  and r.decision='approve' and r.candidate_digest=c.candidate_digest
+                join ({REPLY_ATTEMPT_COMMON_SQL}) a on a.channel=t.channel
+                  and a.conversation_id=t.conversation_id
+                  and a.trigger_message_id=t.trigger_message_id
+                left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
+                where t.status='needs_human' and a.send_status='needs_human'
+                  and a.reviewed_at is null and trim(coalesce(a.resolved_at,''))=''
+                  and choice.id is null
+                  and a.agent_run_id=r.audit_run_id
+                  and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
+                      where newest.task_id=t.id and newest.execution_generation=t.execution_generation)
+                  and a.id=(select max(newest.id) from ({REPLY_ATTEMPT_COMMON_SQL}) newest
+                      where newest.channel=t.channel and newest.conversation_id=t.conversation_id
+                        and newest.trigger_message_id=t.trigger_message_id)
+                  and exists(select 1 from ({task12_projection('business_object_tasks')}) current_object
+                      where current_object.business_object_key=t.business_object_key
+                        and current_object.reply_task_id=t.id)
+                order by t.id
+            """).fetchall()
+            reconciled = 0
+            for row in rows:
+                if self._is_actionable_needs_human_candidate(row["candidate_json"]):
+                    continue
+
+                task_cursor = db.execute(
+                    f"""
+                    update tasks as reply_tasks
+                    set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'failed'", 'error': "'invalid_needs_human_projection'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}
+                    where reply_tasks.record_type='reply_tasks' and id=?
+                      and {task20_column('reply_tasks', 'status')}='needs_human'
+                      and {task20_column('reply_tasks', 'execution_generation')}=?
+                    """,
+                    (row["task_id"], row["execution_generation"]),
+                )
+                if task_cursor.rowcount != 1:
+                    continue
+                attempt_cursor = update_action(
+                    db,
+                    "reply_attempts",
+                    row["attempt_id"],
+                    {
+                        "send_status": "failed",
+                        "send_error": "invalid_needs_human_projection",
+                        "human_decision_options_json": "[]",
+                        "updated_at": db.execute(
+                            "select current_timestamp"
+                        ).fetchone()[0],
+                    },
+                    where_sql="agent_run_id=? and send_status='needs_human' "
+                    "and reviewed_at is null and trim(coalesce(resolved_at,''))=''",
+                    parameters=(row["audit_run_id"],),
+                )
+                reconciled += attempt_cursor.rowcount
+            return reconciled
+
+    @staticmethod
+    def _is_actionable_needs_human_candidate(candidate_json: object) -> bool:
+        """Recognize only a current reusable task-class rule question."""
+        from app.agent_contracts import ConsumerOutcome, parse_persisted_consumer_result
+
+        try:
+            candidate = parse_persisted_consumer_result(
+                str(candidate_json or "")
+            )
+        except ValueError:
+            return False
+        return (
+            candidate.outcome is ConsumerOutcome.NEEDS_HUMAN
+            and candidate.requested_input is None
+            and 2 <= len(candidate.decision_options) <= 4
+            and all(
+                option.applies_to == "task_class"
+                for option in candidate.decision_options
+            )
+        )
 
     def reconcile_valid_needs_human_projections(self) -> int:
         """Restore only a current, unselected, Audit-approved persisted question.
@@ -21063,7 +21499,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     candidate = json.loads(row["candidate_json"])
                 except (TypeError, json.JSONDecodeError):
                     continue
-                if candidate.get("outcome") != "needs_human":
+
+                if not self._is_actionable_needs_human_candidate(
+                    json.dumps(candidate, ensure_ascii=False)
+                ):
                     continue
                 # A completed Audit run identifies the exact reviewed question.
                 # Never bind a failed projection to a different run.
@@ -22535,6 +22974,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     end as output_text,
                     action,
                     case
+                        when {TERMINAL_OA_SOURCE_SKIP_SQL} then 'skipped'
                         when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
                         when channel = 'wechat' then coalesce((
                             select case deliveries.status
@@ -22934,6 +23374,133 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (process_id, max(1, limit)),
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def list_unbound_failed_oa_attempts(self, *, limit: int = 20) -> list[ReplyAttempt]:
+        """Return one oldest unresolved failed OA Attempt per process/task."""
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select attempts.*
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
+                where attempts.channel='dingtalk'
+                  and attempts.send_status='failed'
+                  and trim(coalesce(attempts.resolved_at, ''))=''
+                  and trim(coalesce(attempts.oa_process_instance_id, ''))<>''
+                  and trim(coalesce(attempts.oa_task_id, ''))<>''
+                  and attempts.id=(
+                      select max(latest.id)
+                      from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
+                      where latest.oa_process_instance_id=attempts.oa_process_instance_id
+                        and latest.oa_task_id=attempts.oa_task_id
+                        and latest.send_status='failed'
+                        and trim(coalesce(latest.resolved_at, ''))=''
+                  )
+                  and not exists (
+                      select 1
+                      from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                      where tasks.channel=attempts.channel
+                        and tasks.status in ('pending', 'processing', 'needs_human', 'failed')
+                        and ((tasks.conversation_id=attempts.conversation_id
+                              and tasks.trigger_message_id=attempts.trigger_message_id)
+                             or tasks.business_object_key='oa:' || attempts.oa_process_instance_id
+                                 || ':' || attempts.oa_task_id)
+                  )
+                order by case when exists (
+                    select 1
+                    from ({REPLY_TASK_CURRENT_SQL}) as terminal_tasks
+                    where terminal_tasks.channel=attempts.channel
+                      and terminal_tasks.business_object_key='oa:'
+                          || attempts.oa_process_instance_id || ':' || attempts.oa_task_id
+                      and terminal_tasks.status in ('done', 'skipped')
+                ) then 0 else 1 end, attempts.id asc
+                limit ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def skip_unbound_failed_oa_attempt(
+        self,
+        attempt_id: int,
+        *,
+        process_instance_id: str,
+        oa_task_id: str,
+        terminal_evidence: str,
+    ) -> bool:
+        """Close one orphaned failed Attempt after exact terminal source readback."""
+        process_id = process_instance_id.strip()
+        task_id = oa_task_id.strip()
+        evidence = terminal_evidence.strip()
+        if not process_id or not task_id or not evidence:
+            raise ValueError("exact OA identity and terminal evidence are required")
+        with self._immediate_write_transaction() as db:
+            current = db.execute(
+                f"select * from ({REPLY_ATTEMPT_COMMON_SQL}) where id=?",
+                (attempt_id,),
+            ).fetchone()
+            if (
+                current is None
+                or current["send_status"] != "failed"
+                or current["channel"] != "dingtalk"
+                or current["oa_process_instance_id"] != process_id
+                or current["oa_task_id"] != task_id
+                or str(current["resolved_at"] or "").strip()
+            ):
+                return False
+            latest = db.execute(
+                f"select max(id) from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                "where oa_process_instance_id=? and oa_task_id=? "
+                "and send_status='failed' and trim(coalesce(resolved_at, ''))=''",
+                (process_id, task_id),
+            ).fetchone()[0]
+            if int(latest or 0) != attempt_id:
+                return False
+            owner = db.execute(
+                f"""select 1 from ({REPLY_TASK_CURRENT_SQL}) tasks
+                    where tasks.channel=?
+                      and tasks.status in ('pending', 'processing', 'needs_human', 'failed')
+                      and ((tasks.conversation_id=? and tasks.trigger_message_id=?)
+                           or tasks.business_object_key=?)
+                    limit 1""",
+                (
+                    current["channel"],
+                    current["conversation_id"],
+                    current["trigger_message_id"],
+                    f"oa:{process_id}:{task_id}",
+                ),
+            ).fetchone()
+            if owner is not None:
+                return False
+            unresolved = db.execute(
+                f"""select id from ({REPLY_ATTEMPT_COMMON_SQL})
+                    where channel='dingtalk' and send_status='failed'
+                      and oa_process_instance_id=? and oa_task_id=?
+                      and trim(coalesce(resolved_at, ''))=''
+                    order by id desc""",
+                (process_id, task_id),
+            ).fetchall()
+            closed = 0
+            for row in unresolved:
+                now = db.execute("select current_timestamp").fetchone()[0]
+                cursor = update_action(
+                    db,
+                    "reply_attempts",
+                    int(row["id"]),
+                    {
+                        "send_status": "skipped",
+                        "resolved_at": now,
+                        "resolution": evidence,
+                        "updated_at": now,
+                    },
+                    where_sql=(
+                        "send_status='failed' and channel='dingtalk' "
+                        "and oa_process_instance_id=? and oa_task_id=? "
+                        "and trim(coalesce(resolved_at, ''))=''"
+                    ),
+                    parameters=(process_id, task_id),
+                )
+                closed += cursor.rowcount
+            return closed > 0
 
     def list_open_oa_needs_human_attempts(
         self, *, limit: int = 100
@@ -27486,6 +28053,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     'Reply' as category,
                     action as action,
                     case
+                        -- A source-terminal closure skips further handling while
+                        -- preserving the uncertain provider delivery as audit data.
+                        when {TERMINAL_OA_SOURCE_SKIP_SQL} then 'skipped'
                         -- Current unresolved System Execution uncertainty
                         -- outranks a terminal task status. Resolved attempts
                         -- keep their existing resolution projection.

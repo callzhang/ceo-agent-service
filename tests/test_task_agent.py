@@ -1111,7 +1111,7 @@ def test_task_agent_parser_message_never_echoes_field_values():
     assert "notes.md" not in message
 
 
-def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
+def test_task_result_validation_repair_prompt_targets_field_errors_without_rule_catalogue():
     raw = _agent_message_jsonl(json.dumps(_null_evidence_decision()))
 
     prompt = _task_result_validation_repair_prompt(raw)
@@ -1120,28 +1120,13 @@ def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
         "- task_decisions.0.untrusted_runtime_value: Extra inputs are not permitted"
         in prompt
     )
-    assert "task_decisions" in prompt
-    assert "apply_acceptance requires accepted polarity" in prompt
-    assert "verified reply-to source reference" in prompt
-    assert "Any non-empty owner_name or owner_user_id requires owner_evidence" in prompt
-    assert "memory_recall" in prompt
-    assert "live directory read" in prompt
-    assert "For project_assessments, use exactly one selector" in prompt
-    assert "including every separate Project row in a multi-Project report" in prompt
-    assert "Project registration.source_excerpt must itself quote the current passage" in prompt
-    assert "not by itself a material Project risk" in prompt
-    assert "Historical Project/context/Attention evidence must use the exact quote and source_ref" in prompt
-    assert "If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty" in prompt
-    assert "keep commitment_status unchanged unless the named owner explicitly accepts" in prompt
-    assert "Never include a skip decision in decision_indexes" in prompt
-    assert "status and business_relevance may only change through update_fields" in prompt
-    assert "New, record_candidate and skip decisions must leave status and business_relevance unset" in prompt
-    assert "When promoting a suggestion, omit the suggestion field" in prompt
-    assert "project_link_evidence requires a Project selector" in prompt
-    assert (
-        "A source path may appear only in an evidence field whose key is "
-        "exactly source or source_ref"
-    ) in prompt
+    assert "complete TaskAgentDecision JSON object" in prompt
+    assert "Preserve all valid decisions" in prompt
+    assert "exact source citations" in prompt
+    assert "Rules that must hold:" not in prompt
+    assert "apply_acceptance requires accepted polarity" not in prompt
+    assert "Do not include local filesystem paths" not in prompt
+    assert len(prompt) < 900
     assert "Confirm the vendor quote" not in prompt
     assert "Vendor quote still pending" not in prompt
 
@@ -1153,7 +1138,8 @@ def test_task_result_validation_repair_prompt_for_prose_only_output():
 
     assert "did not contain a TaskAgentDecision JSON object" in prompt
     assert "without prose or code fences" in prompt
-    assert "Do not include local filesystem paths" in prompt
+    assert "Rules that must hold:" not in prompt
+    assert len(prompt) < 900
 
 
 def test_task_result_validation_repair_prompt_after_runtime_path_leak():
@@ -1194,10 +1180,10 @@ def test_task_result_validation_repair_prompt_caps_problem_list():
 
     prompt = _task_result_validation_repair_prompt(json.dumps(decision))
 
-    problem_section = prompt.split("Rules that must hold:")[0]
-    assert problem_section.count("\n- ") == 12
-    assert "task_decisions.11.untrusted_field" in problem_section
-    assert "task_decisions.12.untrusted_field" not in problem_section
+    assert prompt.count("\n- ") == 12
+    assert "task_decisions.11.untrusted_field" in prompt
+    assert "task_decisions.12.untrusted_field" not in prompt
+    assert "Rules that must hold:" not in prompt
 
 
 class FakeCodex:
@@ -1346,7 +1332,8 @@ def test_attention_shape_omissions_use_existing_same_session_repair(fault, probl
                 kwargs["parser"](raw)
             correction = retry.correction_prompt(raw)
             assert problem in correction
-            assert "same Agent turn" in correction
+            assert "same Agent session" in correction
+            assert "Rules that must hold:" not in correction
             value = kwargs["parser"](_agent_message_jsonl(json.dumps(valid)))
             return SimpleNamespace(
                 value=value,
@@ -1434,16 +1421,12 @@ def test_project_assessment_envelope_uses_one_same_session_parser_correction(fau
             self.correction_calls += 1
             correction = retry.correction_prompt(raw)
             assert "project_assessments" in correction
-            assert "one outcome, concrete reason, and original evidence" in correction
-            assert (
-                "Every attention_proposal belongs to its needs_attention assessment"
-                in correction
+            expected = (
+                "Field required" if fault == "missing_assessment"
+                else "attention_proposal requires needs_attention outcome"
             )
-            assert (
-                "current source and current Tasks' confirmed Project links"
-                in correction
-            )
-            assert "not limited to structured selectors" in correction
+            assert expected in correction
+            assert "Rules that must hold:" not in correction
             self.parser_calls += 1
             value = kwargs["parser"](_agent_message_jsonl(json.dumps(valid)))
             return SimpleNamespace(

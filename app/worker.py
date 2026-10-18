@@ -2962,6 +2962,14 @@ class DingTalkAutoReplyWorker:
             messages=tuple(messages),
             materials=materials,
             prior_receipts=self._agent_prior_receipts(task),
+            trigger_quotes_agent_message=bool(
+                trigger.quoted_message_id
+                and self.store.is_verified_agent_authored_message(
+                    conversation.open_conversation_id,
+                    trigger.quoted_message_id,
+                    channel=task.channel,
+                )
+            ),
             manual_rerun=manual_rerun,
             trigger_raw_payload=trigger_raw_payload,
             image_paths=tuple(str(path.resolve()) for path in image_paths),
@@ -3967,6 +3975,10 @@ class DingTalkAutoReplyWorker:
     ) -> str:
         trigger = self._persisted_service_task_trigger(conversation, message_id)
         if trigger is None:
+            if message_id.startswith("oa-pending:"):
+                raise ValueError(
+                    f"OA pending service trigger is no longer persisted: {message_id}"
+                )
             context_messages = self._read_conversation_messages(
                 "read_recent_messages_rerun",
                 conversation,
@@ -3998,6 +4010,14 @@ class DingTalkAutoReplyWorker:
         if trigger is None:
             raise ValueError(
                 f"message not found in recent DingTalk context: {message_id}"
+            )
+        if self._is_service_task_trigger(trigger):
+            conversation = conversation.model_copy(
+                update={
+                    "open_conversation_id": trigger.open_conversation_id,
+                    "title": trigger.conversation_title or conversation.title,
+                    "single_chat": trigger.single_chat,
+                }
             )
         if trigger.is_recalled():
             self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
@@ -4059,6 +4079,10 @@ class DingTalkAutoReplyWorker:
             conversation.open_conversation_id,
             message_id,
         )
+        used_synthetic_identity = False
+        if task is None and message_id.startswith("oa-pending:"):
+            task = self.store.get_reply_task_by_trigger_message_id(message_id)
+            used_synthetic_identity = task is not None
         if task is None:
             return None
         try:
@@ -4067,7 +4091,10 @@ class DingTalkAutoReplyWorker:
             return None
         if (
             trigger.open_message_id != message_id
-            or trigger.open_conversation_id != conversation.open_conversation_id
+            or (
+                trigger.open_conversation_id != conversation.open_conversation_id
+                and not used_synthetic_identity
+            )
             or not self._is_service_task_trigger(trigger)
         ):
             return None

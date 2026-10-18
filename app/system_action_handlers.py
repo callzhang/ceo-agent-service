@@ -127,11 +127,35 @@ class DingTalkMessageHandler:
             if result.status == "verified":
                 self.store.record_outbound_postfix_receipt("dingtalk", prepared.delivery_key, receipt)
             return result
-        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
         conversation = DingTalkConversation(
             open_conversation_id=task.conversation_id, title=task.conversation_title,
             single_chat=task.single_chat, unread_point=0,
         )
+        try:
+            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        except ValueError:
+            # Settled reply tasks may have compacted their original input. The
+            # compacted marker means the JSON is a provenance envelope, not a
+            # DingTalkMessage. Rebuild only from an exact provider readback and
+            # metadata retained on the task; never infer a trigger from a body.
+            if (task.input_compacted is not True
+                    or not isinstance(task.trigger_message_id, str)
+                    or not task.trigger_message_id
+                    or not isinstance(task.trigger_sender, str)
+                    or not task.trigger_sender
+                    or not isinstance(task.trigger_create_time, str)
+                    or not task.trigger_create_time):
+                return ActionOutcome("uncertain", {"reason": "compacted_trigger_metadata_unavailable"})
+            trigger = self.dws.read_message_by_id(conversation, task.trigger_message_id)
+            trigger_sender_user_id = getattr(task, "trigger_sender_user_id", "")
+            if (trigger is None
+                    or trigger.open_message_id != task.trigger_message_id
+                    or trigger.open_conversation_id != task.conversation_id
+                    or trigger.sender_name != task.trigger_sender
+                    or trigger.create_time != task.trigger_create_time
+                    or (trigger_sender_user_id
+                        and trigger.sender_user_id != trigger_sender_user_id)):
+                return ActionOutcome("uncertain", {"reason": "compacted_trigger_readback_mismatch"})
         receipt = self.dws.reconcile_reply_to_trigger(conversation, trigger, prepared.final_body)
         if receipt is None:
             return None

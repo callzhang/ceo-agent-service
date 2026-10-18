@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandSkillMaterial,
@@ -39,8 +41,8 @@ class Options:
         )
 
 
-def test_new_oa_review_round_refreshes_selected_skills_without_rewriting_old_input():
-    old_context = ServiceCommandConsumerContext(
+def _prior_context_and_task():
+    prior = ServiceCommandConsumerContext(
         scheduled_task_id=3,
         scheduled_task_run_id=20,
         prompt="Review the new OA event.",
@@ -68,6 +70,11 @@ def test_new_oa_review_round_refreshes_selected_skills_without_rewriting_old_inp
             ),
         ),
     )
+    return prior, scheduled_task
+
+
+def test_new_oa_review_round_refreshes_selected_skills_without_rewriting_old_input():
+    old_context, scheduled_task = _prior_context_and_task()
 
     refreshed = ScheduledAgentContextBuilder(Options()).refresh_oa_review_context(
         old_context, scheduled_task
@@ -76,3 +83,64 @@ def test_new_oa_review_round_refreshes_selected_skills_without_rewriting_old_inp
     assert refreshed.scheduled_task_run_id == old_context.scheduled_task_run_id
     assert refreshed.skill_materials[0].content.endswith("project rules revision 12")
     assert old_context.skill_materials[0].content == "old project rules revision 11"
+
+
+def test_new_oa_review_round_uses_latest_revision_not_loaded_into_process_snapshot():
+    prior, scheduled_task = _prior_context_and_task()
+    options = Options()
+    options.list_managed_skill_options = lambda: (
+        SimpleNamespace(
+            skill_id=7,
+            name="stardust-oa-project-review",
+            revisions=(
+                SimpleNamespace(
+                    revision_id=11,
+                    revision_number=1,
+                    available=True,
+                    unavailable_reason=None,
+                ),
+                SimpleNamespace(
+                    revision_id=12,
+                    revision_number=2,
+                    available=False,
+                    unavailable_reason="managed_revision_not_loaded",
+                ),
+            ),
+        ),
+    )
+
+    refreshed = ScheduledAgentContextBuilder(options).refresh_oa_review_context(
+        prior, scheduled_task
+    )
+
+    assert refreshed.skill_materials[0].content.endswith("project rules revision 12")
+
+
+def test_new_oa_review_round_rejects_disabled_latest_skill_revision():
+    prior, scheduled_task = _prior_context_and_task()
+    options = Options()
+    options.list_managed_skill_options = lambda: (
+        SimpleNamespace(
+            skill_id=7,
+            name="stardust-oa-project-review",
+            revisions=(
+                SimpleNamespace(
+                    revision_id=11,
+                    revision_number=1,
+                    available=True,
+                    unavailable_reason=None,
+                ),
+                SimpleNamespace(
+                    revision_id=12,
+                    revision_number=2,
+                    available=False,
+                    unavailable_reason="managed_skill_disabled",
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="disabled"):
+        ScheduledAgentContextBuilder(options).refresh_oa_review_context(
+            prior, scheduled_task
+        )

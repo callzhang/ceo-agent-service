@@ -556,7 +556,8 @@ class ReviewedCandidateStoreMixin:
         with self._connect() as db:
             rows = db.execute(f"""select a.*, c.task_id, c.stage_index, c.id as candidate_id,
                 c.execution_generation, r.operation, r.action_identity,
-                r.target_identifiers_json, r.provider_result_json
+                r.target_identifiers_json, r.provider_result_json,
+                r.first_agent_run_id as receipt_first_agent_run_id
                 from ({CANDIDATE_ACTION_ATTEMPT_SQL}) a
                 join ({CANDIDATE_EXECUTION_SQL}) e on e.id=a.execution_id
                 join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id

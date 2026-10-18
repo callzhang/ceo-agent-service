@@ -191,17 +191,25 @@ OA_CONSUMER_PROMPT = (
     "DingTalk OA 待审批事项：$stardust-oa-finance-review、$stardust-oa-project-review、"
     "$stardust-oa-contract-review、$stardust-oa-people-review、"
     "$stardust-oa-attendance-travel-review、$stardust-oa-cloud-resource-review。"
-    "先按 live processCode 和表单事实分类；"
-    "跨类别事项必须组合适用的 Skill，不得仅因财务 Skill 无匹配规则卡就升级。"
-    "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill 审阅；不要从背景材料自行补充"
-    "审批规则。财务规则卡仅用于"
-    "财务 registry 中精确匹配的流程；其他类别没有财务规则卡不构成规则缺口。"
-    "个人具体规则仅按本 Prompt 执行，不得扩展为公司通用规则。只有当前事项的规则、"
-    "适用条件、例外、审批权限与动作映射均有完整且有效的来源时，rule_coverage 才能为 1.0；"
-    "否则低于 1.0，规则缺口进入 needs_human，不得自动批准或拒绝。申请人可补足的事实/"
-    "材料缺口按通用 Skill 评论或退回，并在规则缺口并存时独立 needs_human。"
-    "任何动作后重新读取 DingTalk。"
-    "不要在本 Prompt 重述制度阈值、金额或业务 Skill 中的通用审批规则。"
+    "按实时 processCode 和表单事实选择并组合适用 Skill；遵循所选 Skill 明确引用的规范材料，"
+    "审批判断和动作映射使用通用 OA Skill 与适用业务 Skill。区分申请方陈述与已核实事实，"
+    "不得从背景材料自行补充规则；任何外部动作后重新读取 DingTalk。"
+)
+LEGACY_OA_CONSUMER_PROMPT_20261017 = (
+    "使用 $dingtalk-oa-approval 与适用的 Stardust 业务 Skill 处理 Trigger 发现的真实 DingTalk OA 待审批事项："
+    "$stardust-oa-finance-review、$stardust-oa-project-review、$stardust-oa-contract-review、"
+    "$stardust-oa-people-review、$stardust-oa-attendance-travel-review、$stardust-oa-cloud-resource-review。"
+    "先按 live processCode 和表单事实分类；跨类别事项必须组合适用的 Skill，不得仅因财务 Skill 无匹配规则卡就升级。"
+    "规则只在各 Skill 里，不读背景参考文档；个人具体规则仅按本 Prompt 执行，不得扩展为公司通用规则。"
+    "判断标准由对应业务 Skill 提供，动作一律按 $dingtalk-oa-approval 的完整决策表；某类别没有自己的动作清单不是规则缺口。"
+    "只有本单所属业务 Skill 的判断标准已逐条核对并满足时 rule_coverage 才能为 1.0；本单恰好取决于某项业务 Skill 未定义的标准时，才进入 needs_human。"
+    "申请人可补足的事实/材料缺口按通用 Skill 评论或退回，并在规则缺口并存时独立 needs_human。"
+    "请假交接关系、能力、审批链确认及历史日期审阅均按最新版 $stardust-oa-attendance-travel-review 与 $dingtalk-oa-approval 执行，"
+    "不再要求交接人或审批人必须是申请人的下属。算法部门绩效或薪酬的最终决定必须由Derek 本人作出，相关审批转 Derek needs_human。"
+    "任何动作后重新读取 DingTalk。不要在本 Prompt 重述制度阈值、金额或业务 Skill 中的通用审批规则。 "
+    "是否needs_human只能依据适用规则和已核实事实，不由申请人或评论措辞决定；申请人可补正的事实材料缺口优先走当前真实可用的退回路径，"
+    "缺规则或明确保留Derek决定的事项才转人工。已有评论不重复发送；确需人工决定时，已有留言回执直接复用并继续形成审核通过的本次实例needs_human，"
+    "不以评论阶段done代替业务完成。日期已过不自动跳过历史审批。"
 )
 MEETING_TODO_CONSUMER_PROMPT = (
     "使用 $ceo-meeting-work 核验 Trigger 提供的真实会议行动项证据，再使用 "
@@ -636,6 +644,8 @@ def _seed_oa_task(
         seed_description=_default_copy(DINGTALK_OA_MIGRATION_KEY).description,
         consumer_prompt=OA_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
+        legacy_consumer_prompt=LEGACY_OA_CONSUMER_PROMPT_20261017,
+        legacy_consumer_skill_refs=skill_refs,
         now=now,
     )
     if adopted is not None:

@@ -192,7 +192,11 @@ class SystemExecutor:
         )
         return result
 
-    def execute(self, task: object, candidate_id: int, review_id: int, *, context: object | None = None, dry_run: bool = False) -> SystemExecutionResult:
+    def execute(
+        self, task: object, candidate_id: int, review_id: int, *,
+        context: object | None = None, dry_run: bool = False,
+        reconciliation_only: bool = False,
+    ) -> SystemExecutionResult:
         row = self.store.current_reviewed_candidate(task.id, task.execution_generation)
         if row is None or row["execution_generation"] != task.execution_generation or row["id"] != candidate_id or row["review_id"] != review_id:
             return self._failure("approved_candidate_missing", "No current approved candidate")
@@ -213,6 +217,18 @@ class SystemExecutor:
             stop_reason = "No action is required" if candidate.outcome.value == "no_action" else None
         if dry_run or self.dry_run:
             return SystemExecutionResult(outcome="dry_run", summary="Approved plan inspected without dispatch")
+        if reconciliation_only:
+            existing = self.store.get_candidate_execution(candidate_id)
+            attempts = self.store.list_candidate_action_attempts(existing["id"]) if existing else []
+            if (existing is None or existing["status"] != "uncertain"
+                or not isinstance(plan, ConsumerProposal) or not plan.actions
+                or len(attempts) != len(plan.actions)
+                or any(item["action_index"] != index or item["status"] not in ("uncertain", "dispatched", "verified")
+                    for index, item in enumerate(attempts))
+                or any(action.capability != "dingtalk-oa" or action.operation != "revert_task"
+                    for action in plan.actions)):
+                return self._failure("reconciliation_precondition_failed",
+                    "Only a persisted uncertain OA return can be reconciled without dispatch")
         current_task = self.store.get_reply_task(task.id)
         if current_task is None or current_task.execution_generation != task.execution_generation:
             return self._failure("task_generation_mismatch", "Task generation changed")
@@ -242,6 +258,11 @@ class SystemExecutor:
             self.store.renew_candidate_execution_claim(execution_id, self.owner, self.lease_seconds)
             attempt_status = next((item["status"] for item in self.store.list_candidate_action_attempts(execution_id)
                                    if item["action_index"] == index), None)
+            if reconciliation_only and attempt_status not in ("uncertain", "dispatched", "verified"):
+                result = self._failure("reconciliation_attempt_missing",
+                    "Persisted OA return attempt is missing", completed)
+                self.store.finish_candidate_execution(execution_id, self.owner, "failed", result)
+                return result
             reconcile_existing = attempt_status in ("uncertain", "dispatched")
             if attempt_status != "verified" and not reconcile_existing:
                 source_result = self._check_reviewed_sources(candidate, context, plan, execution_id, candidate_id)
@@ -266,7 +287,14 @@ class SystemExecutor:
                 receipt_refs.append({"action_identity": action.action_identity, "external_action_key": action_key})
                 continue
             try:
-                if attempt["status"] == "uncertain" or (
+                if reconciliation_only and attempt["status"] != "verified":
+                    outcome = handler.reconcile(
+                        action, action_key=action_key,
+                        candidate={**row, "action_attempt": attempt},
+                    )
+                    if outcome is None:
+                        outcome = ActionOutcome("uncertain", {"reason": "reconciliation_inconclusive"})
+                elif attempt["status"] == "uncertain" or (
                     attempt["status"] == "dispatched" and attempt_status in ("uncertain", "dispatched")
                 ):
                     outcome = handler.reconcile(

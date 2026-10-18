@@ -56,6 +56,12 @@ else:
 
 如果澄清后信息仍不完整，继续生成下一条最小澄清 proposal；不能把普通材料缺失直接升级成 Derek 的管理决策。
 
+如果当前 trigger 引用了一条可由本服务 provider 发送回执核验的 Agent 消息，则它属于
+Agent 发起的续接/恢复链。该来源事实由 `conversation_id + quoted_message_id` 与已成功
+readback 的 `sent_replies` 关联，不从正文签名猜测。此类 trigger 不得进入
+`needs_human`，即使一般分数满足升级条件；Agent 必须独立判断并生成有边界的普通 proposal，
+必要时向事实来源方 ask-back。Consumer 结果校验与 Audit 候选复核都执行此上下文门槛。
+
 ### `needs_human`
 
 信息已经足够时，以下任一条件成立即可进入 `needs_human`：
@@ -66,11 +72,13 @@ else:
 
 结果还必须提供 2 至 4 个互斥且可执行的决策选项。选项必须描述可复用的规则选择，例如：
 
+- 每个选项都带 `applies_to=task_class`，反馈针对这一类任务，而非要求用户替 Agent 决定当前事项；
+
 - 仅本次按某规则处理；
 - 将该规则沉淀到适用 Skill 后继续；
 - 暂停并要求补充一个明确的授权边界。
 
-选项不能只是让 Derek 代做当前具体业务动作。用户反馈可以同时标记为一次性反馈和 Skill 更新；反馈保存后产生新 revision，在同一 session 中继续执行。
+选项不能只是让 Derek 代做当前具体业务动作。当前事实或偏好问题必须由 Agent 形成安全、边界明确的普通 proposal，或向掌握事实的来源人询问；不能使用零选项 `requested_input` 产生 `needs_human`。用户反馈可以同时标记为一次性反馈和 Skill 更新；反馈保存后产生新 revision，在同一 session 中继续执行。
 
 ### `failed`
 

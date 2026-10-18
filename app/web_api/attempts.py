@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
+from app.attempt_projection import terminal_oa_source_closure_is_skipped
 from app.attempt_what_happened import build_what_happened, stopped_because
 from app.web_api.common import json_safe, normalize_display_value
 from app.run_storage import AGENT_RUN_SQL
@@ -38,6 +39,11 @@ def _status_message(
     attempt: Any, attention: Any, *, rerun_block_reason: str = ""
 ) -> tuple[str, bool]:
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
+    if terminal_oa_source_closure_is_skipped(attempt):
+        return (
+            "原 OA 流程已终止，此跟进已跳过；原消息送达情况仍未核实。",
+            False,
+        )
     if getattr(attempt, "resolved_at", "") and getattr(attempt, "resolution", ""):
         return str(attempt.resolution), False
     if status == "sent":
@@ -55,6 +61,15 @@ def _status_message(
     if attention is not None:
         return "系统正在处理这条事项。", False
     return f"当前状态：{status or '未提供'}。", False
+
+
+def _execution_status_message(
+    attempt: Any, execution_status: str, fallback: str
+) -> str:
+    """Keep a verified source-terminal skip distinct from delivery uncertainty."""
+    if terminal_oa_source_closure_is_skipped(attempt):
+        return _status_message(attempt, None)[0]
+    return fallback
 
 
 def _run_role(run: Any) -> str:
@@ -565,6 +580,7 @@ def _external_effect_sentence(what_happened: dict[str, Any]) -> str:
     """
 
     actions = what_happened.get("external_actions") or []
+    reused_actions = what_happened.get("reused_external_actions") or []
     commands = [
         action["what"] for action in actions if action.get("recorded_by") == "turn"
     ]
@@ -575,8 +591,18 @@ def _external_effect_sentence(what_happened: dict[str, Any]) -> str:
     if recorded:
         parts.append(f"服务记录了 {recorded} 项写操作回执")
     at = next((action.get("at") for action in actions if action.get("at")), "")
-    when = f"（{at}）" if at else ""
-    return "外部动作已完成" + when + ("：" + "；".join(parts) if parts else "")
+    when = f"（本轮操作时间：{at}）" if at else ""
+    sentences = []
+    if actions:
+        sentences.append("本轮外部动作已完成" + when + ("：" + "；".join(parts) if parts else ""))
+    if reused_actions:
+        reused_count = len([action for action in reused_actions if action.get("recorded_by") == "system"])
+        reused_times = list(dict.fromkeys(
+            action["at"] for action in reused_actions if action.get("at")
+        ))
+        original_time = f"（原始操作时间：{'、'.join(reused_times)}）" if reused_times else ""
+        sentences.append(f"已复用此前完成的 {reused_count} 项外部动作回执{original_time}")
+    return "；".join(sentences)
 
 
 def _consumer_result_with_deciding_scores(
@@ -642,6 +668,8 @@ def _system_execution_payload(
     plan = branch.get("plan") if branch else candidate.get("proposal")
     actions = plan.get("actions", []) if isinstance(plan, dict) else []
     execution = store.get_candidate_execution(reviewed["id"])
+    if not is_current and execution is None:
+        return None
     if candidate.get("outcome") == "no_action" and execution is None:
         return None
     attempts = {
@@ -903,7 +931,11 @@ def build_attempt_detail(
                 "done": "已审核方案的全部动作已核验完成。",
                 "skipped": "已按审核通过的停止方案结束，原因已记录。",
             }
-            status_message = execution_messages.get(system_execution["status"], status_message)
+            status_message = _execution_status_message(
+                attempt,
+                str(system_execution["status"]),
+                execution_messages.get(system_execution["status"], status_message),
+            )
     if rerun_block_reason:
         status_message = rerun_block_reason
     elif attempt.send_status == "failed" and rerun.explanation:
@@ -987,7 +1019,10 @@ def build_attempt_detail(
                 # what the page showed for a leave that was already approved.
                 "external_effect": (
                     _external_effect_sentence(what_happened)
-                    if what_happened["reached_the_outside_world"]
+                    if (
+                        what_happened["reached_the_outside_world"]
+                        or what_happened.get("reused_external_actions")
+                    )
                     else normalize_display_value(getattr(attention, "external_effect", "")) if attention else ""
                 ),
                 "retry_at": normalize_display_value(getattr(attention, "retry_at", "")) if attention else "",

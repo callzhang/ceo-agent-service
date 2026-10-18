@@ -102,6 +102,12 @@ def test_unrelated_identifier_is_not_delivery_evidence(noise):
     assert DwsClient().verify_message_send_result({"success": True, **noise})["state"] == "ambiguous"
 
 
+def test_outgoing_message_id_without_readback_proof_is_still_ambiguous():
+    assert DwsClient().verify_message_send_result({
+        "success": True, "result": {"openMessageId": "outgoing-id"},
+    })["state"] == "ambiguous"
+
+
 def test_nested_status_metadata_is_not_send_task_completion():
     client = SequenceRecordingDwsClient([{"success": True, "result": {
         "sendStatus": "PENDING", "metadata": {"status": "SUCCESS"}}}])
@@ -120,6 +126,14 @@ def test_duplicate_acceptance_without_delivery_receipt_is_unknown():
     verified = DwsClient().verify_message_send_result({"success": True, "idempotency": {
         "state": "duplicate_confirmed", "uuid": "original-uuid",
     }})
+    assert verified["state"] == "ambiguous"
+
+
+def test_message_identifier_without_provider_delivery_receipt_is_not_success():
+    verified = DwsClient().verify_message_send_result({
+        "success": True,
+        "result": {"openMessageId": "outgoing-without-receipt"},
+    })
     assert verified["state"] == "ambiguous"
 
 

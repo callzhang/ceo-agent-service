@@ -2,12 +2,51 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.wechat.models import principal_reply_supersession
 
 
 _TERMINAL_TASK_STATES = {"done", "skipped", "needs_human", "failed"}
+_TERMINAL_OA_PROCESS_STATES = {"COMPLETED", "TERMINATED"}
+_TERMINAL_OA_TASK_STATES = {"COMPLETED", "FINISHED", "CANCELED", "CANCELLED", "TERMINATED"}
+_TERMINAL_OA_CLOSURE_SOURCE = "exact original DingTalk message and native OA detail/OpenAPI readback"
+
+
+def terminal_oa_source_closure_is_skipped(attempt: Any) -> bool:
+    """Recognize a verified closure of an obsolete OA follow-up, not delivery.
+
+    The stored delivery outcome and error remain unchanged. Only the current
+    handling status becomes skipped after the exact OA source/task readback.
+    """
+    if (
+        str(getattr(attempt, "send_status", "") or "").strip()
+        not in {"uncertain", "failed", "skipped"}
+        or str(getattr(attempt, "send_error", "") or "").strip()
+        != "external_action_uncertain"
+        or str(getattr(attempt, "channel", "") or "").strip() != "dingtalk"
+        or not str(getattr(attempt, "resolved_at", "") or "").strip()
+    ):
+        return False
+    try:
+        evidence = json.loads(str(getattr(attempt, "resolution", "") or ""))
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(evidence, dict)
+        and evidence.get("source") == _TERMINAL_OA_CLOSURE_SOURCE
+        and evidence.get("native_and_openapi_business_id_match") is True
+        and evidence.get("external_write_count") == 0
+        and evidence.get("current_principal_task_ids") == []
+        and evidence.get("process_status") in _TERMINAL_OA_PROCESS_STATES
+        and evidence.get("original_oa_task_status") in _TERMINAL_OA_TASK_STATES
+        and bool(str(evidence.get("process_instance_id") or "").strip())
+        and bool(str(evidence.get("original_oa_task_id") or "").strip())
+        and str(evidence.get("original_message_id") or "")
+        == str(getattr(attempt, "trigger_message_id", "") or "")
+        and str(evidence.get("historical_chat_delivery") or "").startswith("unverified")
+    )
 
 
 def current_wechat_delivery_matches(attempt: Any, task: Any, delivery: Any) -> bool:
@@ -39,6 +78,8 @@ def project_attempt_status(
     """
     fallback = str(getattr(attempt, "send_status", "") or "").strip() or "failed"
     if fallback == "needs_human" and str(getattr(attempt, "resolved_at", "") or "").strip():
+        return "skipped"
+    if terminal_oa_source_closure_is_skipped(attempt):
         return "skipped"
     if (
         current_execution_status == "uncertain"

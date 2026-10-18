@@ -26903,7 +26903,7 @@
     "initial_full_copy_rejected_stale_target_pin": true,
     "stale_pin_regression_reproduced": true,
     "pin_updated_to_reviewed_exact_declaration": true,
-    "whole_copy_status": "guard-fixed actual child forward/capacity and real Codex execute/audit approve passed; current-data inverse with new real task is live",
+    "whole_copy_status": "guard-fixed actual child forward, same-input capacity, real CLI execute/audit, current-data inverse, published old-code cold readback and actual child reforward all passed; no production change",
     "whole_copy_root": "/tmp/db-redesign-final-guard.3LeMgv",
     "production_changed": false,
     "independent_review": "Luna readonly reviewed compiler coverage, historical builder exclusion and nullable public identity semantics; no scoped issue found; Root verified real regressions and final declaration predicates.",
@@ -30013,6 +30013,111 @@
       },
       "original_tables_unchanged": 11,
       "passed": true
+    },
+    "current_data_roundtrip": {
+      "real_native_calls": 2,
+      "fake_provider_calls": 1,
+      "real_sends": 0,
+      "production_writes": false,
+      "stages": [
+        {
+          "stage": "latest_real_cli_task_current_data_inverse_started",
+          "elapsed_seconds": 2.845,
+          "task_id": 6130645274975311,
+          "messages": 9403,
+          "classifications": 9403
+        },
+        {
+          "stage": "latest_current_data_inverse_and_published_old_code_readback_verified",
+          "elapsed_seconds": 280.728,
+          "new_task_execution_audit_receipt_unchanged": true,
+          "all_email_fields_exact": true,
+          "old_code_terminal_readback": "executed",
+          "old_code_real_sends": 0
+        },
+        {
+          "stage": "latest_actual_child_reforward_verified",
+          "elapsed_seconds": 673.713,
+          "new_real_cli_task_and_receipts_preserved": true
+        }
+      ],
+      "old_code_commit": "2246d5184de62a4f629967fc0effbdb2b6504d10",
+      "expected_email_messages": {
+        "count": 9403,
+        "sha256": "78616ad0ea0abe9bd7518c602cac0613d20ca0b3be84cad7ecbf5f8cde6a8df6"
+      },
+      "expected_email_classes": {
+        "count": 9403,
+        "sha256": "fd2869bb7bb6e023bb5711034d8f8019deade3be4f65c87a6c6e9d805796ca5e"
+      },
+      "native_business_snapshot": {
+        "business_attempts": 1,
+        "receipts": 1,
+        "runs": [
+          {
+            "attempts": [
+              {
+                "end": 36,
+                "id": 379573,
+                "session": "01a1506f-feaf-78a1-9c6b-9560fc3ce006",
+                "start": 0,
+                "status": "completed"
+              }
+            ],
+            "end": 36,
+            "id": 379572,
+            "parent_id": null,
+            "revision": 0,
+            "role": "consumer",
+            "session": "01a1506f-feaf-78a1-9c6b-9560fc3ce006",
+            "start": 0,
+            "status": "completed"
+          },
+          {
+            "attempts": [
+              {
+                "end": 29,
+                "id": 379575,
+                "session": "01a15070-3e2a-71a0-a51c-d568803914c1",
+                "start": 0,
+                "status": "completed"
+              }
+            ],
+            "end": 29,
+            "id": 379574,
+            "parent_id": 379572,
+            "revision": 0,
+            "role": "audit",
+            "session": "01a15070-3e2a-71a0-a51c-d568803914c1",
+            "start": 0,
+            "status": "completed"
+          }
+        ],
+        "sent_replies": 1,
+        "task": {
+          "business_object_key": "message:dingtalk:native-copy-acceptance:3ff6227b-e372-4be8-aa0c-8448dc35474c:native-copy-acceptance:3ff6227b-e372-4be8-aa0c-8448dc35474c:trigger",
+          "execution_generation": "initial",
+          "id": 6130645274975311,
+          "input_compacted": true,
+          "input_reference_sha256": "c7238f79258aa4df378951a580fb95530326f49a9615a70ae8289ee35b892e90",
+          "status": "done"
+        },
+        "terminal_status": "executed"
+      },
+      "published": {
+        "store": "2026-10-14.1",
+        "email": 52,
+        "action_types": 61,
+        "core_tables": 10,
+        "source_body_table_present": false
+      },
+      "all_email_fields_exact": true,
+      "new_real_cli_task_and_results_preserved": true,
+      "cold_old_code_terminal_readback": true,
+      "reforward_terminal_readback": true,
+      "no_reexecution": true,
+      "quick_check": "ok",
+      "fk_baseline_only": true
     }
   },
   "upstream_integration_inventory": {
@@ -30077,5 +30182,69 @@
     "storage_and_failed_history_unchanged": true,
     "whole_upstream_merge_complete": false,
     "production_changed": false
+  },
+  "upstream_merge_validation": {
+    "checkpoint": "7ecee0a6927e385143a70358acb41ee652a719e8",
+    "upstream": "b3f59f3ae56419d1bf397346a476382a363041e7",
+    "status": "merge conflict and targeted integration verification passed; local merge commit being recorded; not pushed or deployed",
+    "preserved_upstream_behaviors": [
+      "bounded direct unsubscribe retry and pending-marker exclusion",
+      "ASR same-identity recovery",
+      "explicit uncertain task skip and exact terminal OA skip",
+      "invalid needs-human current projection reconciliation",
+      "lossless repeated source projection sharing"
+    ],
+    "typed_adaptation": "existing Tasks/Actions/State projections and payload writes; no new fields or policy",
+    "focused_first_pass": {
+      "passed": 25,
+      "seconds": 35.13,
+      "scope": "source sharing/unavailability, unsubscribe retry/source failure, typed Attention"
+    },
+    "asr_pass": {
+      "passed": 3,
+      "seconds": 2.01
+    },
+    "readonly_luna_review": "no findings in unsubscribe, ASR, skip, needs-human, CLI and final Quality declaration mapping",
+    "real_sends": 0,
+    "production_writes": false,
+    "verification": {
+      "source_skip_needs_human_sharing": {
+        "passed": 30,
+        "seconds": 40.93
+      },
+      "meeting_reviewed_human_quality": {
+        "passed": 88,
+        "seconds": 29.44
+      },
+      "strict_current_action_schema": {
+        "passed": 1,
+        "seconds": 1.57
+      },
+      "asr_physical_public_identity": {
+        "passed": 1,
+        "seconds": 1.24
+      },
+      "new_store_methods": {
+        "passed": 3,
+        "seconds": 4.37
+      },
+      "attention_query_cost": {
+        "passed": 14,
+        "seconds": 14.3
+      },
+      "cross_flow_interrupted_run": {
+        "passed": 293,
+        "failed": 5,
+        "seconds": 55.5,
+        "failures": "old Attention fixture writes; all 14 Attention query cost cases subsequently passed",
+        "whole_run_passed": false
+      },
+      "ruff_changed_python_files": 120,
+      "consumer_release_skill_native_context_contracts": {
+        "passed": 33,
+        "seconds": 50.7
+      }
+    },
+    "quality_correction": "strict existing Memory Action check selects final declaration instead of retired intermediate shape; current schema accepted and unknown Action index rejected"
   }
 }

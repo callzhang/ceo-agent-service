@@ -57,6 +57,7 @@ from app.meeting_alignment_models import (
 from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
     MeetingSourceIncomplete,
+    asr_transcript_paragraphs,
     build_calendar_meeting_evidence,
     build_transcript_roster_evidence,
     minutes_creator_from_list_item,
@@ -136,6 +137,20 @@ def _is_deleted_minutes_error(exc: BaseException) -> bool:
     """A deleted transcript is a terminal source outcome, not a retryable outage."""
     text = str(exc).lower()
     return "minutes has been deleted" in text or "minutes_deleted" in text
+
+
+def _stored_asr_transcript_paragraphs(
+    source_payload: dict[str, Any], evidence: CalendarMeetingEvidence
+) -> list[dict[str, str]] | None:
+    transcript = source_payload.get("asr_transcript")
+    if transcript is None:
+        return None
+    try:
+        return asr_transcript_paragraphs(
+            transcript, meeting_started_at=evidence.started_at
+        )
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise MeetingSourceIncomplete("persisted ASR transcript is invalid") from exc
 
 
 class MeetingProducerDws(Protocol):
@@ -1098,6 +1113,9 @@ def _analyze_meeting_job(
             calendar_evidence=evidence,
             creator=minutes_creator_from_list_item(payload.get("minutes_list_item", {})),
             extra_segment_ids=extra_segment_ids,
+            transcription_override=_stored_asr_transcript_paragraphs(
+                payload, evidence
+            ),
             # Already followed up once: the people in this meeting have a message
             # covering only the earlier part of it, so say this one replaces it.
             resummary=bool(extra_segment_ids and (job.final_message or "").strip()),
@@ -1178,6 +1196,11 @@ def _analyze_meeting_job(
                 scheduled_consumer.materialized_skill_protocol()
                 if scheduled_consumer is not None
                 else ""
+            ),
+            skill_materials=(
+                scheduled_consumer.skill_materials
+                if scheduled_consumer is not None
+                else ()
             ),
         )
     except MeetingOrganizerIdentityError as exc:
@@ -1542,6 +1565,9 @@ def _deliver_meeting_job(
             job.meeting_id,
             calendar_evidence=evidence,
             creator=minutes_creator_from_list_item(source_payload.get("minutes_list_item", {})),
+            transcription_override=_stored_asr_transcript_paragraphs(
+                source_payload, evidence
+            ),
         )
         source = resolve_meeting_creator_identity(source, dws)
     except (MeetingSourceIncomplete, DwsError) as exc:

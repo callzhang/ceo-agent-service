@@ -17,10 +17,87 @@ from app.store import AutoReplyStore
 from app.task_scanners import (
     _pending_oa_task_ids_for_current_user,
     reconcile_failed_oa_reply_tasks,
+    reconcile_unbound_failed_oa_attempts,
     scan_ai_minutes,
     scan_meeting_todos,
     scan_pending_oa_approvals,
 )
+
+
+def test_unbound_failed_oa_attempt_is_skipped_only_after_exact_terminal_readback():
+    attempt = SimpleNamespace(
+        id=4594,
+        channel="dingtalk",
+        conversation_id="conversation-1",
+        trigger_message_id="message-1",
+        send_status="failed",
+        oa_process_instance_id="process-1",
+        oa_task_id="task-1",
+    )
+    older_attempt = SimpleNamespace(**{
+        **vars(attempt), "id": 4593, "trigger_message_id": "older-message"
+    })
+
+    class Store:
+        def list_unbound_failed_oa_attempts(self, *, limit):
+            assert limit == 20
+            return [attempt, older_attempt]
+
+        def skip_unbound_failed_oa_attempt(
+            self, attempt_id, *, process_instance_id, oa_task_id, terminal_evidence
+        ):
+            assert process_instance_id == "process-1"
+            assert oa_task_id == "task-1"
+            self.evidence = terminal_evidence
+            return attempt_id in {4593, 4594}
+
+    class Dws:
+        calls = 0
+
+        def read_oa_process_instance_openapi(self, process_id):
+            self.calls += 1
+            assert process_id == "process-1"
+            return {"result": {
+                "status": "COMPLETED",
+                "processInstanceResult": "agree",
+                "tasks": [{"taskId": "task-1", "status": "COMPLETED"}],
+            }}
+
+    store = Store()
+    dws = Dws()
+    assert reconcile_unbound_failed_oa_attempts(store, dws) == [4594, 4593]
+    assert dws.calls == 1
+    assert "process-1" in store.evidence
+    assert "task-1" in store.evidence
+    assert "COMPLETED" in store.evidence
+
+
+def test_unbound_failed_oa_attempt_stays_open_without_exact_terminal_evidence():
+    attempt = SimpleNamespace(
+        id=4595,
+        channel="dingtalk",
+        conversation_id="conversation-2",
+        trigger_message_id="message-2",
+        send_status="failed",
+        oa_process_instance_id="process-2",
+        oa_task_id="task-2",
+    )
+
+    class Store:
+        def list_unbound_failed_oa_attempts(self, *, limit):
+            return [attempt]
+
+        def skip_unbound_failed_oa_attempt(self, *args, **kwargs):
+            raise AssertionError("unverified OA state must not close the Attempt")
+
+    class Dws:
+        def read_oa_process_instance_openapi(self, process_id):
+            return {"result": {
+                "status": "RUNNING",
+                "tasks": [{"taskId": "other-task", "status": "COMPLETED"}],
+            }}
+
+    assert reconcile_unbound_failed_oa_attempts(Store(), Dws()) == []
 
 
 def test_failed_reply_task_closes_when_its_exact_oa_candidate_is_terminal():
@@ -79,6 +156,62 @@ def test_failed_reply_task_closes_when_its_exact_oa_candidate_is_terminal():
     assert "process-44" in store.evidence
     assert "node-44" in store.evidence
     assert "COMPLETED" in store.evidence
+
+
+def test_uncertain_reply_is_skipped_without_attention_when_exact_oa_task_is_terminal():
+    task = SimpleNamespace(
+        id=46, channel="dingtalk", error="external_action_uncertain",
+        execution_generation="gen-6", status="failed",
+        business_object_key="oa:process-46:node-46",
+    )
+    reviewed_run = SimpleNamespace(
+        id=93, role="consumer", status="completed", proposal_revision=1,
+        turn_attempt=0, adopted_result_json=json.dumps({
+            "outcome": "proposal",
+            "proposal": {"actions": [{
+                "capability": "dingtalk-oa", "operation": "approve",
+                "target": {"process_instance_id": "process-46", "task_id": "node-46"},
+            }]},
+        }),
+    )
+    latest_no_action = SimpleNamespace(
+        id=94, role="consumer", status="completed", proposal_revision=2,
+        turn_attempt=0, adopted_result_json=json.dumps({
+            "outcome": "no_action", "proposal": None,
+        }),
+    )
+
+    class Store:
+        def list_reply_tasks(self, *, statuses, limit):
+            return [task]
+
+        def list_agent_runs_for_task_generation(self, *args, **kwargs):
+            return [reviewed_run, latest_no_action]
+
+        def skip_unresolved_reply_task_for_terminal_oa_source(
+            self, task_id, *, expected_execution_generation,
+            process_instance_id, oa_task_id, settled_evidence,
+        ):
+            assert (task_id, expected_execution_generation) == (46, "gen-6")
+            assert (process_instance_id, oa_task_id) == ("process-46", "node-46")
+            self.evidence = settled_evidence
+            return True
+
+        def close_unresolved_reply_task_already_settled(self, *args, **kwargs):
+            raise AssertionError("uncertain delivery is skipped, not marked delivered")
+
+    class Dws:
+        def read_oa_process_instance_openapi(self, process_id):
+            return {"result": {
+                "status": "TERMINATED", "processInstanceResult": "agree",
+                "tasks": [{"taskId": "node-46", "status": "CANCELED"}],
+            }}
+
+    store = Store()
+    assert reconcile_failed_oa_reply_tasks(store, Dws()) == [46]
+    assert "process-46" in store.evidence
+    assert "node-46" in store.evidence
+    assert "TERMINATED" in store.evidence
 
 
 def test_failed_reply_task_does_not_close_for_nonterminal_or_mismatched_oa():

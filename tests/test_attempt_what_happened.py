@@ -110,6 +110,8 @@ def test_verified_system_receipt_proves_external_action() -> None:
                 "candidate_id": 7, "execution_generation": "initial",
                 "external_action_key": "action-key-7", "operation": "oa approval approve",
                 "updated_at": "2026-10-04 12:00:00",
+                "first_agent_run_id": 1,
+                "provider_result_json": json.dumps({"operation_record": {"date": 1792218649588}}),
             }]
 
         def get_review_candidate(self, candidate_id: int):
@@ -123,10 +125,43 @@ def test_verified_system_receipt_proves_external_action() -> None:
     assert answer["reached_the_outside_world"] is True
     assert answer["external_actions"] == [{
         "what": "oa approval approve (action-key-7)",
-        "at": "2026-10-04 12:00:00", "recorded_by": "system",
+        "at": "2026-10-17T06:30:49.588Z", "recorded_by": "system",
     }]
     assert answer["acted_in_run_id"] == 1
     assert answer["deciding_scores"]["from_run_id"] == 1
+
+
+def test_reused_verified_receipt_keeps_original_time_without_current_effect_attribution() -> None:
+    class Store:
+        def list_verified_candidate_actions(self, _task_id: int):
+            return [{
+                "candidate_id": 70, "execution_generation": "current",
+                "external_action_key": "action-key-old", "operation": "oa approval comment",
+                "updated_at": "2026-10-17 08:03:38",
+                "first_agent_run_id": 369739,
+                "provider_result_json": json.dumps({"operation_record": {"date": 1792218649588}}),
+            }]
+
+        def get_review_candidate(self, candidate_id: int):
+            assert candidate_id == 70
+            return {"consumer_run_id": 370080}
+
+    answer = build_what_happened([
+        Run(370080, "consumer", "completed", adopted_result_json=_scores(), reply_task_id=11,
+            execution_generation="current"),
+        Run(370085, "audit", "completed", reply_task_id=11, execution_generation="current"),
+        Run(370090, "consumer", "completed", adopted_result_json=_scores(), reply_task_id=11,
+            execution_generation="current"),
+        Run(370093, "audit", "completed", reply_task_id=11, execution_generation="current"),
+    ], store=Store())
+
+    assert answer["reached_the_outside_world"] is False
+    assert answer["external_actions"] == []
+    assert answer["reused_external_actions"] == [{
+        "what": "oa approval comment (action-key-old)",
+        "at": "2026-10-17T06:30:49.588Z", "recorded_by": "system",
+    }]
+    assert answer["acted_in_run_id"] is None
 
 
 def test_system_receipt_from_another_generation_is_not_current_evidence() -> None:
@@ -246,6 +281,23 @@ def test_the_page_stops_reciting_identifiers_at_a_person() -> None:
     assert "chat +messages-send" in sentence
     assert "2 项" in sentence
     assert "13f96b5ce650" not in sentence
+
+
+def test_the_page_distinguishes_a_reused_receipt_from_a_current_operation() -> None:
+    from app.web_api.attempts import _external_effect_sentence
+
+    sentence = _external_effect_sentence({
+        "external_actions": [],
+        "reused_external_actions": [{
+            "what": "oa approval comment (action-key-old)",
+            "at": "2026-10-17T06:30:49.588Z", "recorded_by": "system",
+        }],
+        "reached_the_outside_world": False,
+    })
+
+    assert "已复用此前完成的 1 项外部动作回执" in sentence
+    assert "原始操作时间：2026-10-17T06:30:49.588Z" in sentence
+    assert "本轮外部动作已完成" not in sentence
 
 
 def test_the_shown_scores_are_the_ones_the_action_was_taken_on() -> None:

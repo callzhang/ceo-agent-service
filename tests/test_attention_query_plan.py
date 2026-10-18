@@ -1,12 +1,26 @@
 from pathlib import Path
+import json
 import sqlite3
 
 import pytest
 
 from app.audit_web import _queue_attention_rows, _reply_task_queue_snapshot, _work_summary_input_queue_snapshot
 from app.store import AutoReplyStore
-from app.task_storage import insert_task
+from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.task20_definitions import task20_column, task20_projection
 from app.work_summary_payload import decode_work_summary_payload
+
+
+
+def insert_task(db, kind, values):
+    parts = task8_insert_parts(kind, values)
+    return db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
+
+
+def _update_task(db, kind, values, where="1", parameters=()):
+    parts = task8_set_parts(kind, values)
+    return db.execute(f"update tasks set {parts.sql} where record_type=? and {where}",
+                      (*parts.parameters, kind, *parameters))
 
 
 def _failed_task(store: AutoReplyStore, status: str):
@@ -20,10 +34,7 @@ def _failed_task(store: AutoReplyStore, status: str):
         trigger_create_time="2026-10-06T00:00:00Z",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status=?, error='service failure' where record_type='reply_tasks' and id=?",
-            (status, task.id),
-        )
+        _update_task(db, "reply_tasks", {"status": status, "error": "service failure"}, "id=?", (task.id,))
     return task
 
 
@@ -68,9 +79,9 @@ def test_attention_selects_failed_ids_without_scanning_task_payloads(
     )
     with store._connect() as db:
         plan = [row[3] for row in db.execute("explain query plan " + query)]
-    assert any("SEARCH t USING INDEX idx_tasks_public_id" in step for step in plan), plan
-    assert any("SEARCH i USING INTEGER PRIMARY KEY" in step for step in plan), plan
-    assert any("SCAN tasks USING INDEX idx_reply_tasks_status" in step for step in plan), plan
+    assert any("SEARCH tasks USING INDEX idx_task20_numeric_identity" in step for step in plan), plan
+    assert any("SEARCH p USING INTEGER PRIMARY KEY" in step for step in plan), plan
+    assert any("SCAN tasks USING INDEX idx_task20_published_1" in step for step in plan), plan
     assert not any(
         step.startswith(("SCAN tasks", "SCAN t"))
         and "USING INDEX" not in step
@@ -98,10 +109,10 @@ def test_attention_selects_failed_ids_without_scanning_task_payloads(
 
         db.set_authorizer(capture_selector_reads)
         db.execute("select cast(legacy_key as integer) from tasks indexed by "
-                   "idx_reply_tasks_status where record_type='reply_tasks' "
-                   "and lower(status)='failed'").fetchall()
+                   "idx_task20_published_1 where record_type='reply_tasks' "
+                   f"and lower({task20_column('reply_tasks', 'status')})='failed'").fetchall()
     assert {column for table, column in selector_reads if table == "tasks"} <= {
-        "legacy_key", "record_type", "status",
+        "legacy_key", "record_type", task20_column("reply_tasks", "status").strip('"'),
     }
 
 
@@ -116,7 +127,7 @@ def test_indexed_attention_keeps_case_insensitive_matching_and_fresh_reads(
     assert [(row["id"], row["status"]) for row in rows] == [(str(task.id), status)]
 
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task.id,))
+        _update_task(db, "reply_tasks", {"status": "done"}, "id=?", (task.id,))
     with store.read_snapshot():
         assert _queue_attention_rows(store, limit=1) == []
 
@@ -125,12 +136,39 @@ def test_indexed_attention_applies_order_and_limit_after_failed_selection(tmp_pa
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     tasks = [_failed_task(store, status) for status in ("failed", "FAILED", "FaIlEd")]
     with store._connect() as db:
-        db.execute("update tasks set updated_at='2026-10-06T00:00:00Z' where record_type='reply_tasks'")
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (tasks[1].id,))
+        _update_task(db, "reply_tasks", {"updated_at": "2026-10-06T00:00:00Z"})
+        _update_task(db, "reply_tasks", {"status": "done"}, "id=?", (tasks[1].id,))
     for limit, expected in ((None, [tasks[2], tasks[0]]), (1, [tasks[2]])):
         with store.read_snapshot():
             rows = _queue_attention_rows(store, limit=limit)
         assert [row["id"] for row in rows] == [str(task.id) for task in expected]
+
+
+def test_attention_excludes_typed_unsubscribe_failures_but_keeps_failed_history(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    unsubscribe = _failed_task(store, "failed")
+    ordinary_email = _failed_task(store, "FAILED")
+    with store._connect() as db:
+        for task, action_type in ((unsubscribe, "unsubscribe"), (ordinary_email, "reply")):
+            values = {"channel": "email", "conversation_title": "Email action",
+                      "trigger_message_id": f"email-action:{task.id}"}
+            _update_task(db, "reply_tasks", values, "id=?", (task.id,))
+            _update_task(db, "reply_task_inputs", values | {
+                "trigger_message_json": json.dumps({"schema": "email_agent_action.v1", "action_type": action_type}),
+            }, "parent_id=?", (task.id,))
+        _update_task(db, "reply_tasks", {"error": "unsubscribe_operation_rejected:ValueError"}, "id=?", (unsubscribe.id,))
+
+    rows = _queue_attention_rows(store)
+
+    assert {row["id"] for row in rows if row["category"] == "Reply task"} == {
+        str(ordinary_email.id)
+    }
+    with store._connect() as db:
+        row = db.execute(
+            f"select status,error from ({task20_projection('reply_tasks')}) where id=?",
+            (unsubscribe.id,),
+        ).fetchone()
+        assert tuple(row) == ("failed", "unsubscribe_operation_rejected:ValueError")
 
 
 @pytest.mark.parametrize("surface", ["work_attention", "work_error", "reply_error"])
@@ -165,7 +203,7 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
             with store._connect() as db:
                 if surface == "work_error":
                     assert _work_summary_input_queue_snapshot(db)["latest_error"] == ""
-                    needle = "select error from tasks where record_type='work_summary_inputs'"
+                    needle = "select " + task20_column("work_summary_inputs", "error") + " as error from tasks"
                     table = "tasks"
                 else:
                     assert _reply_task_queue_snapshot(db)["latest_error"] == "service failure"
@@ -182,15 +220,14 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
     if surface == 'reply_error':
         # Main evaluates the current-business projection once. Its table scan
         # reads scalar metadata, and never joins canonical input bodies.
-        assert ('tasks', 'error') in read_columns
+        assert ('tasks', task20_column('reply_tasks', 'error').strip('"')) in read_columns
         assert not {'payload_json', 'trigger_text', 'trigger_message_json'} & {
             column for name, column in read_columns if name == 'tasks'
         }
         assert any('MATERIALIZE current' in step for step in plan), plan
         return
     if surface == 'work_attention':
-        assert any("SEARCH t USING INDEX idx_tasks_public_id" in step for step in plan), plan
-        assert any("SCAN tasks USING INDEX idx_work_summary_inputs_updated" in step for step in plan), plan
+        assert any("SCAN tasks USING INDEX idx_task20_published_8" in step for step in plan), plan
         with store._connect() as db:
             selector_reads = set()
 
@@ -202,14 +239,14 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
             db.set_authorizer(capture_selector)
             db.execute("select cast(legacy_key as integer) from tasks "
                        "where record_type='work_summary_inputs' "
-                       "and lower(status)='failed'").fetchall()
+                       f"and lower({task20_column('work_summary_inputs', 'status')})='failed'").fetchall()
         assert {column for name, column in selector_reads if name == 'tasks'} <= {
-            "legacy_key", "record_type", "status",
+            "legacy_key", "record_type", task20_column("work_summary_inputs", "status").strip('"'),
         }
     else:
-        assert ('tasks', 'error') in read_columns
+        assert ('tasks', task20_column('work_summary_inputs', 'error').strip('"')) in read_columns
         assert ('tasks', 'payload_json') not in read_columns
-        assert any("SCAN tasks USING INDEX idx_work_summary_inputs_updated" in step for step in plan), plan
+        assert any("SCAN tasks USING INDEX idx_task20_published_8" in step for step in plan), plan
     assert not any(step.startswith(f"SCAN {table}") and "USING INDEX" not in step for step in plan), plan
 
 
@@ -223,7 +260,7 @@ def test_work_failure_reads_keep_nonblank_error_order_and_fresh_recovery(
     store.mark_work_summary_input_failed(failed, "work failure")
     store.mark_work_summary_input_failed(blank, "  ")
     with store._connect() as db:
-        db.execute("update tasks set status=?, updated_at='2026-10-06T00:00:00Z' where record_type='work_summary_inputs'", (status,))
+        _update_task(db, "work_summary_inputs", {"status": status, "updated_at": "2026-10-06T00:00:00Z"})
     with store.read_snapshot():
         rows = _queue_attention_rows(store, limit=1)
         assert [row["id"] for row in rows] == [str(blank)]
@@ -273,9 +310,12 @@ def test_reply_queue_snapshot_reads_metadata_in_one_source_pass(
         plan = [row[3] for row in db.execute("explain query plan " + query)]
     assert sum(step.startswith("SCAN tasks") for step in plan) == 1, plan
 
-    assert ("tasks", "error") in read_columns
+    assert ("tasks", task20_column("reply_tasks", "error").strip('"')) in read_columns
     assert {column for name, column in read_columns if name == "tasks"} <= {
-        "id", "status", "updated_at", "error", "business_object_key", "record_type",
+        "id", "legacy_key", "record_type", "parent_id",
+        *(task20_column("reply_tasks", name).strip('"') for name in ("status", "updated_at", "error", "business_object_key")),
+        *(task20_column("business_object_tasks", name).strip('"')
+          for name in ("business_object_key", "reply_task_id", "created_at", "updated_at")),
     }
     assert not any(name == "reply_task_inputs" for name, column in read_columns)
     assert any("MATERIALIZE current" in step for step in plan), plan

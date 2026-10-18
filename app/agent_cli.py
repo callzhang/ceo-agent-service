@@ -3,6 +3,7 @@ from app.task20_definitions import task20_projection
 
 import asyncio
 import atexit
+import base64
 import argparse
 import hashlib
 import errno
@@ -42,6 +43,8 @@ from app.bounded_process import (
 )
 from app.channel_gate import classify_cli_read_failure, classify_cli_write_failure
 from app.config import feedback_spike_vercel_base_url
+from app.dingtalk_message_payload_sharing import share_message_raw_payload
+from app.dingtalk_sheet_style_sharing import share_sheet_cell_styles
 from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import contains_credential, is_sensitive_field_name
 from app.native_cli_metadata import (
@@ -65,11 +68,12 @@ MAX_MCP_MATERIAL_RESPONSE_BYTES = 1024 * 1024 - 1024
 MAX_SKILL_BYTES = 256 * 1024
 MAX_TEXT_MATERIAL_BYTES = 512 * 1024
 MAX_SPREADSHEET_BYTES = 20 * 1024 * 1024
+MAX_PDF_BYTES = 64 * 1024 * 1024
 MAX_SPREADSHEET_ROWS = 200
 MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 MAX_PDF_PAGES = 100
-PDF_OCR_TIMEOUT_SECONDS = 300
+MAX_OCR_AGENT_INPUT_BYTES = 700 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
@@ -423,15 +427,18 @@ def read_text_file(path: str) -> dict[str, object]:
         file_stat = os.fstat(material_file.fileno())
         if not stat.S_ISREG(file_stat.st_mode):
             raise AgentReadOnlyViolationError("text_material_file_not_regular")
-        if file_stat.st_size > MAX_TEXT_MATERIAL_BYTES:
-            if file_stat.st_size > MAX_SPREADSHEET_BYTES:
-                raise AgentReadOnlyViolationError("material_file_too_large")
         material_file.seek(0)
         is_pdf = (
             material_path.suffix.casefold() == ".pdf"
             or material_file.read(5) == b"%PDF-"
         )
         material_file.seek(0)
+        if is_pdf:
+            if file_stat.st_size > MAX_PDF_BYTES:
+                raise AgentReadOnlyViolationError("material_file_too_large")
+        elif file_stat.st_size > MAX_TEXT_MATERIAL_BYTES:
+            if file_stat.st_size > MAX_SPREADSHEET_BYTES:
+                raise AgentReadOnlyViolationError("material_file_too_large")
         if is_pdf:
             return _read_pdf_material(material_file, material_path)
         material_file.seek(0)
@@ -472,48 +479,7 @@ def read_text_file(path: str) -> dict[str, object]:
 
 
 def _read_image_material(material_file, material_path: Path) -> dict[str, object]:
-    try:
-        completed = run_bounded_process(
-            [
-                sys.executable,
-                str(Path.home() / ".agents/skills/ocr/scripts/ocr.py"),
-                str(material_path),
-                "--format",
-                "json",
-            ],
-            timeout=PDF_OCR_TIMEOUT_SECONDS,
-        )
-        if completed.returncode:
-            raise ValueError("OCR process failed")
-        response = json.loads(completed.stdout)
-        items = response["data"]
-        if not isinstance(items, list) or len(items) != 1:
-            raise ValueError("OCR returned an unexpected number of sources")
-        item = items[0]
-        if not isinstance(item, dict):
-            raise ValueError("OCR returned a malformed source")
-        if item.get("source_id") != f"input-1:{material_path.name}":
-            raise ValueError("OCR source does not match the requested file")
-        content = item.get("text")
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("OCR returned empty image text")
-        material_file.seek(0)
-        result: dict[str, object] = {
-            "format": "image",
-            "content": content,
-            "path": str(material_path),
-            "sha256": hashlib.file_digest(material_file, "sha256").hexdigest(),
-        }
-        confidence = item.get("confidence")
-        if confidence is not None:
-            result["confidence"] = confidence
-        warnings = item.get("warnings") or []
-        if warnings:
-            result["warnings"] = warnings
-        return result
-    except (OSError, subprocess.TimeoutExpired, ProcessOutputLimitError,
-            ValueError, KeyError, TypeError) as exc:
-        raise AgentReadOnlyViolationError("image_material_ocr_unavailable") from exc
+    return _ocr_input_for_agent(material_file, material_path, file_format="image")
 
 
 def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
@@ -540,10 +506,25 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
             ocr_page_numbers.append(index)
 
     if ocr_page_numbers:
-        recognized = _ocr_pdf_pages(material_path, ocr_page_numbers)
-        for page in extracted_pages:
-            if page["index"] in recognized:
-                page.update(recognized[page["index"]])
+        material_file.seek(0)
+        digest = hashlib.file_digest(material_file, "sha256").hexdigest()
+        material_file.seek(0)
+        binary = material_file.read(MAX_OCR_AGENT_INPUT_BYTES + 1)
+        result = {
+            "format": "pdf",
+            "page_count": len(reader.pages),
+            "pages": extracted_pages,
+            "ocr_required": True,
+            "ocr_page_numbers": ocr_page_numbers,
+            "path": str(material_path),
+            "sha256": digest,
+        }
+        if len(binary) <= MAX_OCR_AGENT_INPUT_BYTES:
+            result["ocr_input_base64"] = base64.b64encode(binary).decode("ascii")
+            result["ocr_mime_type"] = "application/pdf"
+        else:
+            result["ocr_page_image_required"] = True
+        return result
 
     previews: list[dict[str, object]] = []
     remaining_chars = MAX_TEXT_MATERIAL_BYTES
@@ -571,47 +552,66 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
     }
 
 
-def _ocr_pdf_pages(material_path: Path, page_numbers: list[int]) -> dict[int, dict[str, object]]:
-    script = Path.home() / ".agents/skills/ocr/scripts/ocr.py"
-    command = [
-        sys.executable, str(script), str(material_path),
-        "--format", "json", "--pages", ",".join(map(str, page_numbers)),
-    ]
+def _ocr_input_for_agent(material_file, material_path: Path, *, file_format: str):
+    material_file.seek(0)
+    binary = material_file.read(MAX_OCR_AGENT_INPUT_BYTES + 1)
+    if len(binary) > MAX_OCR_AGENT_INPUT_BYTES:
+        raise AgentReadOnlyViolationError("image_material_ocr_input_too_large")
+    return {
+        "format": file_format,
+        "ocr_required": True,
+        "ocr_input_base64": base64.b64encode(binary).decode("ascii"),
+        "ocr_mime_type": mimetypes.guess_type(material_path.name)[0]
+        or "application/octet-stream",
+        "path": str(material_path),
+        "sha256": hashlib.sha256(binary).hexdigest(),
+    }
+
+
+def _pdf_page_ocr_input(
+    material_path: Path, *, page_number: int, source_sha256: str,
+) -> dict[str, object]:
+    """Render one original PDF page as a bounded image for the OCR MCP."""
+    if type(page_number) is not int or page_number < 1:
+        raise AgentReadOnlyViolationError("pdf_ocr_page_number_invalid")
+    document = None
+    page = None
     try:
-        completed = run_bounded_process(command, timeout=PDF_OCR_TIMEOUT_SECONDS)
-        if completed.returncode:
-            raise AgentReadOnlyViolationError("pdf_material_ocr_unavailable")
-        response = json.loads(completed.stdout)
-        items = response["data"]
-        if len(items) != 1:
-            raise ValueError("OCR returned an unexpected number of sources")
-        item = items[0]
-        if item.get("source_id") != f"input-1:{material_path.name}":
-            raise ValueError("OCR source does not match the requested file")
-        requested = set(page_numbers)
-        recognized: dict[int, dict[str, object]] = {}
-        for ocr_page in item["pages"]:
-            index = ocr_page["page_number"]
-            text = ocr_page["text"]
-            if type(index) is not int or index not in requested or index in recognized:
-                raise ValueError("OCR page numbers do not match the request")
-            if not isinstance(text, str) or not text.strip():
-                raise ValueError("OCR returned an empty scanned page")
-            page: dict[str, object] = {"text": text, "source": "ocr"}
-            confidence = ocr_page.get("confidence", item.get("confidence"))
-            if confidence is not None:
-                page["confidence"] = confidence
-            warnings = [*(item.get("warnings") or []),
-                        *(ocr_page.get("warnings") or [])]
-            if warnings:
-                page["warnings"] = warnings
-            recognized[index] = page
-        if set(recognized) != requested:
-            raise ValueError("OCR omitted a requested page")
-        return recognized
-    except (OSError, subprocess.TimeoutExpired, ProcessOutputLimitError,
-            ValueError, KeyError, TypeError) as exc:
-        raise AgentReadOnlyViolationError("pdf_material_ocr_unavailable") from exc
+        import pypdfium2 as pdfium
+        document = pdfium.PdfDocument(str(material_path))
+        if page_number > len(document):
+            raise AgentReadOnlyViolationError("pdf_ocr_page_number_invalid")
+        page = document[page_number - 1]
+        page_width, page_height = page.get_size()
+        scale = min(1.5, 2200 / max(page_width, page_height))
+        image = page.render(scale=scale).to_pil().convert("RGB")
+        for scale in (1.0, 0.85, 0.7):
+            current = image.copy()
+            if scale < 1.0:
+                current.thumbnail((int(image.width * scale), int(image.height * scale)))
+            for quality in (85, 75, 65):
+                encoded = BytesIO()
+                current.save(encoded, format="JPEG", quality=quality, optimize=True)
+                payload = encoded.getvalue()
+                if len(payload) <= MAX_OCR_AGENT_INPUT_BYTES:
+                    return {
+                        "format": "image",
+                        "ocr_required": True,
+                        "ocr_input_base64": base64.b64encode(payload).decode("ascii"),
+                        "ocr_mime_type": "image/jpeg",
+                        "ocr_original_page_number": page_number,
+                        "ocr_source_sha256": source_sha256,
+                    }
+        raise AgentReadOnlyViolationError("pdf_ocr_page_image_too_large")
+    except AgentReadOnlyViolationError:
+        raise
+    except Exception as exc:
+        raise AgentReadOnlyViolationError("pdf_ocr_page_render_failed") from exc
+    finally:
+        if page is not None:
+            page.close()
+        if document is not None:
+            document.close()
 
 
 def _download_dingtalk_drive_file(
@@ -628,11 +628,13 @@ def _download_dingtalk_drive_file(
     if not _task_file_component(file_name) or len(file_name) > 255:
         raise AgentReadOnlyViolationError("drive_file_name_invalid")
     material_root.mkdir(parents=True, exist_ok=True)
+    is_pdf = Path(file_name).suffix.casefold() == ".pdf"
+    max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
     contents = dws.download_drive_file(
         node_id, file_name=file_name, space_id=space_id,
-        max_bytes=MAX_SPREADSHEET_BYTES,
+        max_bytes=max_bytes,
     )
-    if len(contents) > MAX_SPREADSHEET_BYTES:
+    if len(contents) > max_bytes:
         raise AgentReadOnlyViolationError("drive_file_too_large")
     package_source = BytesIO(contents)
     if zipfile.is_zipfile(package_source):
@@ -1272,7 +1274,7 @@ def _weekly_skill_module(name: str):
 
 def _write_bound_report_document(
     *, db_path: Path | None, task_id: int | None, content: str,
-    expected_revision: int | None,
+    expected_revision: int | None, expected_target_exists: bool | None = None,
 ) -> dict[str, object]:
     """Write only the report document resolved from this scheduled run."""
     from app.config import workspace_path
@@ -1365,7 +1367,15 @@ def _write_bound_report_document(
          if node.get("name") == title],
         "current report document",
     )
+    if (
+        kind == "weekly"
+        and expected_target_exists is not None
+        and (found is not None) != expected_target_exists
+    ):
+        raise ValueError("weekly report target existence changed after rendering")
     if found is None:
+        if kind == "weekly" and expected_revision is not None:
+            raise ValueError("weekly report target disappeared after rendering")
         result = dws.create_report_document(
             name=title, content=content, doc_format=doc_format,
             folder_id=folder_id,
@@ -1401,6 +1411,56 @@ def _write_bound_report_document(
     return receipt
 
 
+def _weekly_report_render_source(
+    run, dws, materials: dict[str, object] | None = None,
+):
+    """Fetch the full, service-resolved JSONML base for one weekly render."""
+    from app.weekly_report_materials import resolve_meeting_documents, weekly_window
+
+    documents = (
+        materials["documents"]
+        if materials is not None
+        else resolve_meeting_documents(dws, weekly_window(run.scheduled_for))
+    )
+    target = documents["target"]
+    if type(target.get("exists")) is not bool:
+        raise ValueError("weekly report target existence is unavailable")
+    target_exists = target["exists"]
+    source = target if target_exists else documents["previous"]
+    source_node_id = source.get("node_id")
+    if not source.get("exists") or not isinstance(source_node_id, str) or not source_node_id:
+        raise ValueError("weekly report render source document is unavailable")
+
+    payload = dws.fetch_report_document_full(source_node_id)
+    if payload.get("complete") is not True:
+        raise ValueError("weekly report render source document is incomplete")
+    content = payload.get("content")
+    if (
+        not isinstance(content, dict)
+        or content.get("success") is not True
+        or content.get("nodeId") != source_node_id
+    ):
+        raise ValueError("weekly report render source identity changed")
+    raw_jsonml = content.get("jsonml")
+    try:
+        before = json.loads(raw_jsonml) if isinstance(raw_jsonml, str) else raw_jsonml
+    except json.JSONDecodeError as exc:
+        raise ValueError("weekly report render source JSONML is invalid") from exc
+    if not isinstance(before, list) or len(before) < 3 or before[0] != "root":
+        raise ValueError("weekly report render source must be a complete JSONML document")
+
+    revision = None
+    if target_exists:
+        raw_revision = content.get("revision")
+        try:
+            revision = int(raw_revision)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("weekly report target revision is unavailable") from exc
+        if revision < 0 or str(revision) != str(raw_revision):
+            raise ValueError("weekly report target revision is invalid")
+    return before, target_exists, revision, target["title"]
+
+
 def build_role_server(
     role: str, *, task_id: int | None = None, db_path: Path | None = None,
     execution_generation: str | None = None,
@@ -1423,16 +1483,21 @@ def build_role_server(
     bound.add_tool(read_text_file_tool, name="read_text_file", annotations=read)
     bound.add_tool(read_spreadsheet_tool, name="read_spreadsheet", annotations=read)
     drive_material_directory: tempfile.TemporaryDirectory[str] | None = None
+    drive_material_paths: dict[tuple[str, str, str], Path] = {}
 
     def read_dingtalk_drive_file(
-        node_id: str, space_id: str, file_name: str
+        node_id: str, space_id: str, file_name: str,
+        page_number: int | None = None,
     ) -> dict[str, object]:
         """Read the body of one exact DingTalk Drive attachment for OA review.
 
         Use after drive metadata identifies an accessible attachment node. Returns
-        bounded image, PDF, workbook, presentation, or text contents. Images
-        and scanned PDF pages use the configured Stardust OCR client. OCR failure is a
-        technical read failure, not missing applicant material.
+        bounded image, PDF, workbook, presentation, or text contents. For a
+        scanned PDF above the inline OCR input limit, first read it normally,
+        then pass each listed one-based ocr_page_numbers value as page_number to
+        receive a bounded JPEG for ai_services.ocr_document. Map its OCR text
+        back to ocr_original_page_number. The exact PDF is retained only for
+        this MCP process lifetime. OCR failures are technical read failures.
         """
         nonlocal drive_material_directory
         from app.dws_client import DwsClient
@@ -1441,13 +1506,34 @@ def build_role_server(
                 prefix="oa-review-"
             )
             atexit.register(drive_material_directory.cleanup)
-        return _download_dingtalk_drive_file(
+        key = (node_id, space_id, file_name)
+        if page_number is not None:
+            material_path = drive_material_paths.get(key)
+            if material_path is None or not material_path.is_file():
+                result = _download_dingtalk_drive_file(
+                    dws=DwsClient(), node_id=node_id, space_id=space_id,
+                    file_name=file_name,
+                    material_root=Path(drive_material_directory.name),
+                )
+                material_path = Path(str(result["path"]))
+                drive_material_paths[key] = material_path
+            if material_path.suffix.casefold() != ".pdf":
+                raise ValueError("page_number is supported only for PDF attachments")
+            with material_path.open("rb") as source:
+                source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+            return _pdf_page_ocr_input(
+                material_path, page_number=page_number,
+                source_sha256=source_sha256,
+            )
+        result = _download_dingtalk_drive_file(
             dws=DwsClient(),
             node_id=node_id,
             space_id=space_id,
             file_name=file_name,
             material_root=Path(drive_material_directory.name),
         )
+        drive_material_paths[key] = Path(str(result["path"]))
+        return result
 
     bound.add_tool(
         read_dingtalk_drive_file,
@@ -1574,15 +1660,15 @@ def build_role_server(
     def read_dingtalk_sheet_range(
         node_id: str, sheet_id: str, cell_range: str,
     ) -> dict[str, object]:
-        """Read an explicit A1 workbook range, bounded by the DWS read API."""
+        """Read a DWS-bounded A1 range. cellStyleRef indexes sharedCellStyles."""
         from app.dws_client import DwsClient
         if not node_id.strip() or not sheet_id.strip() or not cell_range.strip():
             raise ValueError("sheet node, ID, and range are required")
         dws = DwsClient()
-        return dws.run_json([
+        return share_sheet_cell_styles(dws.run_json([
             dws.dws_bin, "sheet", "range", "read", "--node", node_id,
             "--sheet-id", sheet_id, "--range", cell_range, "--format", "json",
-        ])
+        ]))
 
     def read_dingtalk_oa(process_instance_id: str) -> dict[str, object]:
         """Read the live DingTalk OA process and its current facts."""
@@ -1702,7 +1788,12 @@ def build_role_server(
         conversation_id: str, title: str = "", single_chat: bool = False,
         limit: int = 50,
     ) -> dict[str, object]:
-        """Read recent messages of an identified DingTalk conversation."""
+        """Read recent messages of an identified DingTalk conversation.
+
+        For repeated raw strings, raw_payload_field_refs maps each null raw
+        field to the same message's top-level field holding its exact value.
+        Unreferenced raw fields retain their original values.
+        """
         from app.dingtalk_models import DingTalkConversation
         from app.dws_client import DwsClient
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -1712,7 +1803,9 @@ def build_role_server(
             single_chat=single_chat, unread_point=0,
         )
         messages = DwsClient().read_recent_messages(conversation, limit=limit)
-        return {"messages": [item.model_dump(mode="json") for item in messages]}
+        return {"messages": [
+            share_message_raw_payload(item.model_dump(mode="json")) for item in messages
+        ]}
 
     def search_dingtalk_messages(
         query: str, start: str, end: str, limit: int = 100,
@@ -1802,6 +1895,9 @@ def build_role_server(
             "--page-limit", "50", "--max-items", "1000", "--format", "json",
         ])
 
+    weekly_materials_snapshot: dict[str, object] | None = None
+    weekly_render_binding: dict[str, object] | None = None
+
     def daily_report_facts() -> dict[str, object]:
         """Read the fixed service facts for this scheduled daily report."""
         from app.daily_report_facts import collect_daily_report_facts, report_window_for_run
@@ -1817,6 +1913,7 @@ def build_role_server(
 
     def weekly_report_materials() -> dict[str, object]:
         """Read the fixed inputs for this scheduled CEO weekly report."""
+        nonlocal weekly_materials_snapshot
         from app.config import workspace_path
         from app.dws_client import DwsClient
         from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
@@ -1824,10 +1921,11 @@ def build_role_server(
         store, run, kind = _bound_report(db_path, task_id)
         if kind != "weekly":
             raise AgentReadOnlyViolationError("weekly_report_task_required")
-        return collect_weekly_report_materials(
+        weekly_materials_snapshot = collect_weekly_report_materials(
             store, DwsClient(), workspace_path() / MINUTES_ARCHIVE_DIRECTORY,
             run.scheduled_for,
         )
+        return weekly_materials_snapshot
 
     def read_weekly_report_archive(path: str) -> dict[str, object]:
         """Read one transcript named in this run's meeting archive index."""
@@ -1924,42 +2022,73 @@ def build_role_server(
                 manifest, report, previous_issues
             )
 
-        def render_weekly_report(
-            report: WeeklyReport, before: list,
-        ) -> dict[str, object]:
-            """Render and validate weekly report JSONML and its full draft."""
+        def render_weekly_report(report: WeeklyReport) -> dict[str, object]:
+            """Render against the service-resolved current or previous meeting document."""
+            nonlocal weekly_render_binding
             from app.dws_client import DwsClient
             _store, _run, kind = _bound_report(db_path, task_id)
             if kind != "weekly":
                 raise AgentReadOnlyViolationError("weekly_report_task_required")
             renderer = _weekly_skill_module("render_dingtalk_jsonml")
             checker = _weekly_skill_module("jsonml_check")
+            dws = DwsClient()
+            before, target_exists, expected_revision, target_title = (
+                _weekly_report_render_source(
+                    _run, dws,
+                    weekly_materials_snapshot,
+                )
+            )
+            source_errors = checker.check_document(before)
+            if source_errors:
+                raise ValueError(
+                    "weekly report render source JSONML invalid: "
+                    + "; ".join(source_errors)
+                )
             target_after = renderer.render_meeting_document(before, report)
             draft = renderer.render_draft(report)
             errors = checker.check_document(target_after) + checker.check_document(draft)
             if errors:
                 raise ValueError("weekly report JSONML invalid: " + "; ".join(errors))
-            native_parse = DwsClient().validate_report_jsonml(
-                json.dumps(target_after, ensure_ascii=False)
-            )
+            target_content = json.dumps(target_after, ensure_ascii=False)
+            native_parse = dws.validate_report_jsonml(target_content)
+            if target_exists and expected_revision is None:
+                raise ValueError("weekly report target revision is unavailable")
+            weekly_render_binding = {
+                "expected_revision": expected_revision,
+                "target_exists": target_exists,
+            }
             return {
                 "target_after": target_after,
                 "draft": draft,
                 "native_parse": native_parse,
+                "target_exists": target_exists,
+                "target_title": target_title,
+                "expected_revision": expected_revision,
             }
 
-        def consumer_document_write(
-            content: str, expected_revision: int | None = None,
-        ) -> dict[str, object]:
+        def consumer_document_write(content: str) -> dict[str, object]:
             """Publish this scheduled CEO report to its service-resolved document."""
+            nonlocal weekly_render_binding
             if artifact_generation is None:
                 raise ValueError("task file binding is missing")
             if _current_task_generation(db_path, task_id) != artifact_generation:
                 raise ValueError("task file generation changed")
-            return _write_bound_report_document(
+            store, _run, kind = _bound_report(db_path, task_id)
+            expected_revision = None
+            if kind == "weekly":
+                if weekly_render_binding is None:
+                    raise ValueError("weekly report must be rendered before write")
+                expected_revision = weekly_render_binding["expected_revision"]
+            receipt = _write_bound_report_document(
                 db_path=db_path, task_id=task_id, content=content,
                 expected_revision=expected_revision,
+                expected_target_exists=(
+                    weekly_render_binding["target_exists"] if kind == "weekly" else None
+                ),
             )
+            if kind == "weekly":
+                weekly_render_binding = None
+            return receipt
 
         bound.add_tool(validate_weekly_report, name="validate_weekly_report", annotations=read)
         bound.add_tool(render_weekly_report, name="render_weekly_report", annotations=read)

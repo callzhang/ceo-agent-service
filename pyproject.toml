@@ -16,6 +16,7 @@ dependencies = [
   "numpy>=2,<3",
   "Pillow>=11",
   "pypdf>=5.0",
+  "pypdfium2>=4.30,<6",
   "pydantic>=2.10,<2.13",
   "pydantic-settings>=2.5.2,<2.14",
   "PyYAML>=6,<7",

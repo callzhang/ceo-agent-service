@@ -6826,6 +6826,50 @@ def test_direct_unsubscribe_browser_timeout_retries_after_recovery_error():
     assert calls[1][1][0:2] == (92, "email_unsubscribe_browser_timeout:1")
 
 
+def test_direct_unsubscribe_backoff_uses_persisted_external_failure_count(monkeypatch):
+    module = _module()
+    task = SimpleNamespace(
+        id=99,
+        execution_generation="generation-99",
+        attempts=1,
+        error="email_unsubscribe_browser_timeout:1",
+        conversation_id="email-thread:99",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:timeout-99",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["send_status"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args, kwargs))
+
+    monkeypatch.setattr(
+        module,
+        "_email_task_retry_available_at",
+        lambda failures: f"backoff-{failures}",
+    )
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "outcome": "failed_browser",
+            "error": {"code": "email_unsubscribe_browser_timeout", "retryable": True},
+        },
+    )
+
+    assert calls[1][0] == "defer"
+    assert calls[1][2]["available_at"] == "backoff-2"
+
+
 def test_direct_unsubscribe_browser_timeout_stops_after_retry_limit():
     module = _module()
     task = SimpleNamespace(

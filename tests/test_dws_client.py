@@ -2241,6 +2241,18 @@ def test_list_pending_oa_approvals_command_and_parser():
     ]
 
 
+def test_list_pending_oa_approvals_normalizes_host_timezone_to_dingtalk_date():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_list_pending_oa_approvals_command(
+        start="2025-10-16T23:07:51-07:00",
+        end="2026-10-16T23:07:51-07:00",
+    )
+
+    assert command[command.index("--start") + 1] == "2025-10-17T14:07:51+08:00"
+    assert command[command.index("--end") + 1] == "2026-10-17T14:07:51+08:00"
+
+
 def test_parse_pending_oa_approvals_reads_the_values_key_dws_returns():
     """`oa approval list-pending` returns its rows under `result.values`.
 
@@ -6904,7 +6916,8 @@ def test_parse_current_typed_message_ledger_preserves_exact_original_object(stab
     from app.dws_client import DwsUserProfile
     row = {'conversationId':'original-cid','messageId':'original-message',
            'sender':'Principal','senderId':stable_sender,
-           'createTime':'2026-10-06 09:43:12','text':'Exact approved test body'}
+           'createTime':'2026-10-06 09:43:12','text':'Exact approved test body',
+           'quotedMessage': {'messageId':'original-trigger','text':'Original trigger'}}
     payload = {'contractVersion':'im.message-list.v1','messages':[row],
                'count':1,'complete':True,'hasMore':False,'failures':[]}
     messages = DwsClient.parse_messages(payload, conversation_title='Self', single_chat=True)
@@ -6913,6 +6926,8 @@ def test_parse_current_typed_message_ledger_preserves_exact_original_object(stab
     assert message.open_conversation_id == 'original-cid'
     assert message.open_message_id == 'original-message'
     assert message.content == row['text']
+    assert message.quoted_message_id == 'original-trigger'
+    assert message.quoted_content == 'Original trigger'
     assert message.raw_payload == row
     client = DwsClient()
     client.get_current_user_id = lambda: 'principal'

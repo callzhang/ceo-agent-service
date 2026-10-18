@@ -21,7 +21,11 @@ from app.agent_result import ResultParseError
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
-from app.audit_agent import AuditAgentRunner, validate_audit_candidate_fields
+from app.audit_agent import (
+    AuditAgentRunner,
+    validate_audit_candidate_decision_quality,
+    validate_audit_candidate_fields,
+)
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult
 from app.reviewed_candidates import candidate_digest
@@ -51,8 +55,15 @@ def _candidate() -> ConsumerAgentResult:
 def test_audit_rechecks_needs_human_candidate_against_quality_scores():
     candidate = ConsumerAgentResult.model_validate({
         "outcome": "needs_human", "summary": "Choose a policy",
-        "proposal": None, "decision_options": [],
-        "requested_input": "Which policy should apply?",
+        "proposal": None, "decision_options": [
+            {"key": "A", "label": "Adopt rule A", "instruction": "Use rule A for this task class.",
+             "consequence": "Future matching tasks use rule A.", "applies_to": "task_class",
+             "plan": _candidate().proposal.model_dump(mode="json")},
+            {"key": "B", "label": "Adopt rule B", "instruction": "Use rule B for this task class.",
+             "consequence": "Future matching tasks use rule B.", "applies_to": "task_class",
+             "terminal_outcome": "skipped", "reason": "Do not proceed without a rule choice."},
+        ],
+        "requested_input": None,
         "needs_human_reason": "The rule coverage is incomplete",
         "decision_basis": {
             "verified_facts": [{
@@ -87,8 +98,38 @@ def test_audit_rechecks_needs_human_candidate_against_quality_scores():
         "information_completeness": 1.0,
     })
 
+    with pytest.raises(ResultParseError, match="trigger quotes a verified agent-authored message"):
+        from app.audit_agent import validate_audit_candidate_decision_quality
+
+        validate_audit_candidate_decision_quality(
+            candidate, trigger_quotes_agent_message=True,
+        )
+
     with pytest.raises(ResultParseError, match="does not satisfy decision quality gate"):
         validate_audit_candidate_fields(audit_result, candidate)
+
+
+def test_audit_rejects_legacy_current_instance_question_as_needs_human():
+    from app.agent_contracts import parse_persisted_consumer_result
+
+    candidate = parse_persisted_consumer_result({
+        "outcome": "needs_human", "summary": "Need a current salary boundary",
+        "proposal": None, "decision_options": [],
+        "requested_input": "What salary ceiling should I use for this candidate?",
+        "needs_human_reason": "This current business choice is consequential",
+        "decision_basis": {
+            "verified_facts": [{"assertion": "Known current facts were reviewed.", "references": ["source:1"]}],
+            "rule_evidence": [{"assertion": "No missing reusable rule was identified.", "references": ["skill:1"]}],
+            "quality_explanation": "A current-instance answer is being requested.",
+            "no_external_action_evidence": [{"assertion": "No action has been taken.", "references": ["audit:1"]}],
+            "conclusion": "This is a fact or business question, not a reusable rule decision.",
+        },
+        "risk": "high", "confidence": 0.42, "rule_coverage": 1.0,
+        "information_completeness": 0.62,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    with pytest.raises(ResultParseError, match="current-instance questions must be ordinary proposals"):
+        validate_audit_candidate_decision_quality(candidate)
 
 
 def _wire(*, outcome: str = "approve") -> str:
@@ -250,39 +291,41 @@ def test_audit_context_contains_exact_candidate_and_all_review_checks(setup):
     assert "Exact prepared notice" in rendered
     assert "Check exact audience and content" in rendered
     for phrase in ("business Skill", "applicant or source owner", "technical/provider",
-                   "meaningfully different", "directly executable option"):
+                   "mutually exclusive reusable rule choices", "directly executable option"):
         assert phrase in rendered
 
 
-def test_human_question_renders_every_bound_branch_and_open_fact_request(setup):
+def test_human_question_renders_only_reusable_task_class_rule_choices(setup):
     _store, _task, _parent, context, _config, _router = setup
     fact = {"assertion": "Applicant confirmed the current status", "references": ["source:1"]}
     basis = {"verified_facts": [fact], "rule_evidence": [fact],
-             "quality_explanation": "The current instance needs a choice",
-             "no_external_action_evidence": [fact], "conclusion": "Ask Derek"}
+             "quality_explanation": "No supported reusable rule covers this task class",
+             "no_external_action_evidence": [fact], "conclusion": "Ask for a reusable rule"}
     action_plan = context.candidate.proposal.model_dump(mode="json")
     question = ConsumerAgentResult.model_validate({
         **context.candidate.model_dump(mode="json"),
         "outcome": "needs_human", "proposal": None,
-        "needs_human_reason": "Choose the current applicant response",
+        "needs_human_reason": "No current rule covers this class of applicant response",
         "decision_basis": basis,
         "risk": "high", "confidence": 0.49, "rule_coverage": 1.0,
         "information_completeness": 1.0,
         "decision_options": [
             {"key": "send", "label": "Send", "instruction": "Send notice",
-             "consequence": "Applicant gets the notice", "plan": action_plan},
+             "consequence": "Matching future cases use the reviewed notice", "applies_to": "task_class",
+             "plan": action_plan},
             {"key": "stop", "label": "Stop", "instruction": "Do nothing",
-             "consequence": "No notice is sent", "terminal_outcome": "skipped",
+             "consequence": "Matching future cases are held for facts", "applies_to": "task_class",
+             "terminal_outcome": "skipped",
              "reason": "Applicant already has the information"},
         ],
     })
     rendered = replace(context, candidate=question, candidate_digest=candidate_digest(question)).render()
     document, _ = json.JSONDecoder().raw_decode(rendered.split("Candidate revision\n", 1)[1])
     assert [option["key"] for option in document["candidate"]["decision_options"]] == ["send", "stop"]
+    assert all(option["applies_to"] == "task_class" for option in document["candidate"]["decision_options"])
     assert "Exact prepared notice" in rendered
     assert "Applicant already has the information" in rendered
-    open_input = question.model_copy(update={"decision_options": (), "requested_input": "Provide the missing date"})
-    assert "Provide the missing date" in replace(context, candidate=open_input).render()
+    assert question.requested_input is None
 
 
 def test_audit_route_requires_role_boundary_and_image_capability(setup):
@@ -501,11 +544,12 @@ def test_audit_parent_must_be_completed_exact_consumer_candidate(setup):
         _runner(setup, CapturingExecutor("")).run(task, context, turn_attempt=0, parent_agent_run_id=other.id)
 
 
-def test_actual_audit_runner_uses_production_review_instructions(setup):
+def test_actual_audit_runner_uses_production_review_instructions(setup, monkeypatch):
     from app.agent_context import _AUDIT_AGENT_RULES
-    from app.audit_rules import render_audit_rules
+    from app.audit_rules import SEED_AUDIT_RULES_TEMPLATE, render_audit_rules
     from app.consumer_agent import audit_developer_instructions
 
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(SEED_AUDIT_RULES_TEMPLATE))
     _store, task, parent, _context, _config, _router = setup
     context = replace(_context, audit_rules="")
     executor = CapturingExecutor(_wire())
@@ -520,6 +564,10 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     assert actual == snapshot["developer_instructions"]
     assert (actual + executor.prompts[0]).count(_AUDIT_AGENT_RULES) == 1
     assert f"## Audit Rules\n{rendered_rules}" in actual
+    assert "reusable rule should govern this task class" in rendered_rules
+    assert "not ask " in rendered_rules
+    assert "to choose the outcome or action for this individual OA" in rendered_rules
+    assert "current-instance `needs_human` question" not in rendered_rules
     task_rules = executor.prompts[0].partition("## Audit Rules\n")[2].partition(
         "\n\n## Context Facts"
     )[0]

@@ -18,6 +18,7 @@ from app.task_source_documents import source_bundle, source_contains_quote
 from app.business_source_reader import (
     AvailableSource, BusinessTaskSignalFact, PreparedSources, RequestSourceReader,
 )
+from app.task_source_projection_sharing import share_source_document_projections
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -407,8 +408,14 @@ def render_task_semantic_context(context: TaskSemanticContext, *, work_item: Wor
         "existing_formal_tasks": [_model_payload(value) for value in context.formal_tasks],
         "unverified_formal_tasks": [_model_payload(value) for value in context.unverified_formal_tasks],
         "task_evidence": [_model_payload(value) for value in context.task_evidence],
-        **source_bundle(context.evidence_signals, prepared_sources=context.prepared_sources,
-                        current_work_item=work_item, citations=citations),
+        **share_source_document_projections(
+            source_bundle(
+                context.evidence_signals,
+                prepared_sources=context.prepared_sources,
+                current_work_item=work_item,
+                citations=citations,
+            )
+        ),
         "task_relations": [_model_payload(value) for value in context.task_relations],
         "task_anchor_links": [_model_payload(value) for value in context.task_anchor_links],
         "work_clusters": [_model_payload(value) for value in context.clusters],

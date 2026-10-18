@@ -92,6 +92,8 @@ class ReportDocumentIdentity(ReportObject, total=False):
     title: Any
     node_id: Any
     revision: Any
+    exists: bool
+    year_page_id: str | None
 
 
 class MinutesCoverage(ReportObject, total=False):

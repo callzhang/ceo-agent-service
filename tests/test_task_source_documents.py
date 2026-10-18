@@ -28,10 +28,16 @@ SOURCE = {
 }
 
 
-def _bundle(store, signals, **kwargs):
+def _bundle(store, signals, *, bodies=None, **kwargs):
+    prepared = PreparedSources.load(store, (signal.id for signal in signals))
+    # Body availability is an explicit request-local test input; the database
+    # contains only the exact version binding, never the original text.
+    for signal in signals:
+        if bodies is not None and signal.id in bodies:
+            prepared.add_current(signal, bodies[signal.id])
     return task_source_documents.source_bundle(
         signals,
-        prepared_sources=PreparedSources.load(store, (signal.id for signal in signals)),
+        prepared_sources=prepared,
         **kwargs,
     )
 
@@ -138,7 +144,7 @@ def test_shared_source_bundle_keeps_every_signal_and_one_body_per_exact_version(
         for i in range(80)
     ]
     signals = tuple(store.get_business_task_signal(id) for id in ids)
-    result = _bundle(store, signals)
+    result = _bundle(store, signals, bodies={signal.id: SOURCE["evidence_text"] for signal in signals})
     assert len(result["source_documents"]) == 1
     assert len(result["source_signals"]) == 80
     doc = result["source_documents"][0]
@@ -188,7 +194,7 @@ def test_agent_source_projection_preserves_provenance_without_storage_dedupe_key
     dedupe_key = "message:m:1:task-item:" + "a" * 64
     signal_id = store.create_business_task_signal(**SOURCE, dedupe_key=dedupe_key)
     signal = store.get_business_task_signal(signal_id)
-    result = _bundle(store, (signal,))
+    result = _bundle(store, (signal,), bodies={signal.id: SOURCE["evidence_text"]})
     reference = result["source_signals"][0]
     assert "dedupe_key" not in reference
     assert reference["document_id"] == signal.source.identity_key
@@ -271,7 +277,7 @@ def test_shared_source_bundle_reports_real_ranges_and_pins_middle_citation(tmp_p
     quote = SourceCitation(
         signal_id=id, source_ref="m:long", source_excerpt="王五负责商务和回款。"
     )
-    bundle = _bundle(store, (signal,), citations=(quote,))
+    bundle = _bundle(store, (signal,), bodies={signal.id: body}, citations=(quote,))
     doc = bundle["source_documents"][0]
     assert doc["full_length"] == len(body)
     assert doc["truncated"] is True
@@ -301,7 +307,7 @@ def test_shared_source_bundle_locates_decoded_quote_without_joining_json_fields(
         signal_id=id, source_ref="json:1", source_excerpt="张三负责\n交付"
     )
     doc = _bundle(store,
-        (store.get_business_task_signal(id),), citations=(citation,)
+        (store.get_business_task_signal(id),), bodies={id: raw}, citations=(citation,)
     )["source_documents"][0]
     assert doc["decoded_excerpts"] == [
         {"path": ["report", "line"], "start": 0, "end": 7, "text": "张三负责\n交付"}

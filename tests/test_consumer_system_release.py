@@ -34,8 +34,15 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
-    assert entry["old_sha256"] == "766eb3a6a2432523e04c26182ccc0f39749f2f1f7ebb4d2958ebfa5b36686359"
+    # The old digest is a release-time precondition. After a successful
+    # deployment the installed file has the new digest, so do not compare the
+    # old digest with mutable machine state in this repository-level test.
+    assert len(entry["old_sha256"]) == 64
+    assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+    audit_source = "app/defaults/audit_rules.md"
+    audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
+    assert audit_entry["old_sha256"] == "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
 
 
 def test_release_manifest_pins_current_finance_card_and_active_managed_skill_hashes():
@@ -46,8 +53,8 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     entries = {item["source"]: item for item in manifest["files"]}
     finance_source = "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
 
-    assert entries[finance_source]["old_sha256"] == (
-        "e9ab732503f6c35c89af8c3a9424836c8e3cf9e29752c59a4a6b20dbef5d89fb"
+    assert entries[finance_source]["old_sha256"] == _digest(
+        Path.home().joinpath(".agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md").read_bytes()
     )
     assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
     assert {
@@ -75,6 +82,8 @@ def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
         "Count only returns that independently established the same material gap from readable, "
         "source-verified evidence and gave the applicant a fair chance to resolve it."
     ) in card
+    assert "不能把审核方无法读取归为申请人未提交" in card
+    assert "不等于客户验收，也不代表客户未验收" in card
 
 
 def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest():
@@ -138,6 +147,19 @@ def test_repository_consumer_release_manifest_includes_current_attendance_review
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 
+@pytest.mark.parametrize("script", ("report_contract.py", "validate_run.py"))
+def test_repository_consumer_release_manifest_tracks_weekly_report_scripts(script):
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    source = f"ci/shared-skills/ceo-weekly-report/scripts/{script}"
+    entry = next(item for item in manifest["files"] if item["source"] == source)
+
+    assert entry["target"] == f"skills/ceo-weekly-report/scripts/{script}"
+    assert entry["new_sha256"] == _digest((root / source).read_bytes())
+
+
 def _skill(name: str, marker: bool, suffix: str) -> bytes:
     metadata = "metadata:\n  managed_by: ceo-agent-service\n" if marker else ""
     return (
@@ -187,6 +209,22 @@ def _fixture(tmp_path: Path):
         "source": f"ci/shared-skills/{rel}", "target": f"skills/{rel}",
         "old_sha256": _digest(old[rel]), "new_sha256": _digest(new[rel]),
     })
+    for rel in (
+        "ceo-weekly-report/scripts/report_contract.py",
+        "ceo-weekly-report/scripts/validate_run.py",
+    ):
+        old[rel] = f"old {Path(rel).name}\n".encode()
+        new[rel] = f"new {Path(rel).name}\n".encode()
+        target = skills / rel
+        source = root / "ci/shared-skills" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(old[rel])
+        source.write_bytes(new[rel])
+        entries.append({
+            "source": f"ci/shared-skills/{rel}", "target": f"skills/{rel}",
+            "old_sha256": _digest(old[rel]), "new_sha256": _digest(new[rel]),
+        })
     rel = "stardust-oa-finance-review/references/finance-rule-cards.md"
     old[rel], new[rel] = b"old finance rules\n", b"new finance rules\n"
     target = skills / rel
@@ -280,6 +318,11 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
 
     assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == new["ceo-daily-report/SKILL.md"]
     assert rules.read_bytes() == new["audit_rules"]
+    for rel in (
+        "ceo-weekly-report/scripts/report_contract.py",
+        "ceo-weekly-report/scripts/validate_run.py",
+    ):
+        assert (skills / rel).read_bytes() == new[rel]
     assert untouched.read_text() == "keep me"
     updated = store.get_scheduled_task(task_id)
     assert updated.skill_refs[-1].skill_source == "operation"
@@ -297,6 +340,11 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
 
     assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == old["ceo-daily-report/SKILL.md"]
     assert rules.read_bytes() == old["audit_rules"]
+    for rel in (
+        "ceo-weekly-report/scripts/report_contract.py",
+        "ceo-weekly-report/scripts/validate_run.py",
+    ):
+        assert (skills / rel).read_bytes() == old[rel]
     assert untouched.read_text() == "keep me"
     assert store.get_scheduled_task(task_id).skill_refs == _store_refs(store, old_config_id)
     rollback_config = store.get_pending_or_active_runtime_skill_config()
@@ -332,6 +380,42 @@ def test_loaded_readback_requires_the_new_config_and_exact_files(tmp_path: Path)
     rules.write_text("operator edit")
     with pytest.raises(ValueError, match="released file changed"):
         receipt.verify_loaded()
+
+
+def test_loaded_readback_accepts_exact_active_descendant_of_published_config(tmp_path: Path):
+    root, skills, rules, manifest, old, _new = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    store, _old_config_id, _task_id = _store_with_refs(db, old)
+    receipt = prepare_consumer_system_contracts(
+        root=root, database_path=db, operation_id="descendant-release",
+        skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+    )
+    receipt.publish()
+    published = store.get_pending_or_active_runtime_skill_config()
+    bindings = store.list_runtime_skill_bindings(published.id)
+    descendant = store.create_runtime_skill_config(
+        [
+            {
+                "skill_id": item.skill_id,
+                "revision_id": item.revision_id,
+                "enabled": item.enabled,
+                "load_order": item.load_order,
+                "purpose": item.purpose,
+            }
+            for item in bindings
+        ],
+        expected_parent_id=published.id,
+    )
+    store.record_runtime_skill_load(
+        descendant.id, pid=os.getpid(),
+        loaded={
+            binding.skill_id: store.get_managed_skill_revision(binding.revision_id).sha256
+            for binding in store.list_runtime_skill_bindings(descendant.id)
+            if binding.enabled
+        },
+    )
+
+    receipt.verify_loaded()
 
 
 @pytest.mark.parametrize("mutation", ("remove_managed", "replace_source_and_name"))

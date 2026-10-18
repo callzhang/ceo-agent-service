@@ -63,6 +63,10 @@ _AUDIT_SESSION_FIELDS = frozenset(
 )
 
 
+class UnsubscribeOutcomeUnresolvedError(RuntimeError):
+    """A previous unsubscribe may have acted but has no terminal receipt."""
+
+
 def normalize_unsubscribe_result_text(value: str) -> tuple[str, str]:
     """Normalize and redact terminal page text before it crosses the boundary.
 
@@ -412,6 +416,9 @@ TRANSIENT_BROWSER_ERROR_CODES = frozenset(
         "email_unsubscribe_browser_failed",
     }
 )
+# A transient browser failure receives this many exact-action retries; the
+# worker applies its existing exponential backoff between attempts.
+TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES = 4
 _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
 _STABLE_TEXT_MS = 1_000
@@ -2588,31 +2595,32 @@ class PlaywrightUnsubscribeBrowser:
             return UnsubscribePageState.ALREADY_UNSUBSCRIBED
         if "resubscribe" in normalized and "unsubscribed" in normalized:
             return UnsubscribePageState.ALREADY_UNSUBSCRIBED
-        if any(
+        terminal_completion_markers = (
+            "successfully unsubscribed",
+            "you are unsubscribed",
+            "you have been unsubscribed",
+            "you've been unsubscribed",
+            # The confirmation LinkedIn and others actually print.
+            "you've unsubscribed",
+            "you have unsubscribed",
+            "you have been removed from",
+            "unsubscribe complete",
+            "unsubscribe confirmation complete",
+            "subscription cancelled",
+            "list-unsubscribe post returned http 2",
+            "退订成功",
+            "不会再收到",
+        )
+        if any(marker in normalized for marker in terminal_completion_markers):
+            return UnsubscribePageState.DONE
+        conditional_future_consequence = re.search(
+            r"\b(?:by|if|when|once)\s+(?:you\s+)?unsubscrib(?:e|ing)\b"
+            r".{0,120}\byou(?:'ll| will)\s+no longer receive\b",
+            normalized,
+        )
+        if not conditional_future_consequence and any(
             marker in normalized
-            for marker in (
-                "successfully unsubscribed",
-                "you are unsubscribed",
-                "you have been unsubscribed",
-                "you've been unsubscribed",
-                # The confirmation LinkedIn and others actually print.
-                "you've unsubscribed",
-                "you have unsubscribed",
-                # What the tracker hosts print instead of the word
-                # "unsubscribed": a statement about what will now happen.
-                # Three live receipts recorded this page as
-                # skipped_no_reliable_entry while the unsubscribe had in fact
-                # completed.
-                "you will no longer receive",
-                "you'll no longer receive",
-                "you have been removed from",
-                "unsubscribe complete",
-                "unsubscribe confirmation complete",
-                "subscription cancelled",
-                "list-unsubscribe post returned http 2",
-                "退订成功",
-                "不会再收到",
-            )
+            for marker in ("you will no longer receive", "you'll no longer receive")
         ):
             return UnsubscribePageState.DONE
         # After the statements the page makes about this address: a page that
@@ -2740,11 +2748,10 @@ class PlaywrightUnsubscribeBrowser:
             else:
                 state = judgement.state
                 judged_evidence = judgement.evidence
-            # The page's own terminal wording is stronger evidence than a
-            # conservative action_required judgement. Providers such as
-            # beehiiv render the confirmation sentence together with the
-            # subscription-management shell, and the page judge can otherwise
-            # send an already-completed unsubscribe back into control discovery.
+            # Explicit completion wording is stronger evidence than a
+            # conservative action_required judgement. Conditional consequence
+            # copy is excluded by _state_from_text because it describes what
+            # will happen after the user acts, not a completed unsubscribe.
             if textual_state in {
                 UnsubscribePageState.DONE,
                 UnsubscribePageState.ALREADY_UNSUBSCRIBED,
@@ -3451,33 +3458,24 @@ class PlaywrightUnsubscribeBrowser:
                     )
                 except Exception as exc:
                     self._raise_if_blocked()
-                    # Some unsubscribe endpoints abort the provisional
-                    # navigation while replacing it with their redirect or
-                    # client-rendered page.
-                    if "ERR_ABORTED" not in str(exc):
-                        raise
-                    # A GET unsubscribe endpoint may be treated as a download
-                    # or abort its provisional document during a redirect.
-                    # Re-read it through the same browser context without
-                    # issuing any write, then let the normal page observer
-                    # decide whether a control or terminal receipt exists.
-                    response = self._context.request.get(
-                        self._validate_navigation_target(private_url),
-                        max_redirects=10,
-                        timeout=self.timeout_ms,
+                    retryable_navigation_stop = (
+                        "timeout" in type(exc).__name__.casefold()
+                        or "ERR_ABORTED" in str(exc)
                     )
-                    response_url = self._validate_navigation_target(response.url)
-                    if response.status < 200 or response.status >= 300:
+                    current_url = str(getattr(self.page, "url", ""))
+                    if (
+                        not retryable_navigation_stop
+                        or not current_url
+                        or current_url == "about:blank"
+                    ):
                         raise
-                    body = response.body()
-                    if len(body) > 1_048_576:
-                        raise
-                    self.page.set_content(
-                        response.text(),
-                        wait_until="domcontentloaded",
-                        timeout=self.timeout_ms,
+                    # The provider page may have committed before the browser
+                    # reported a timeout or aborted provisional document. Read
+                    # that page in this call; requesting the unsubscribe URL
+                    # again could perform the external action twice.
+                    self._document_url = self._validate_navigation_target(
+                        current_url
                     )
-                    self._document_url = response_url
                 self._raise_if_blocked()
                 if not self._document_url:
                     self._document_url = self._validate_navigation_target(

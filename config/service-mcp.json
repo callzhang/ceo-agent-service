@@ -1,5 +1,10 @@
 {
   "servers": {
+    "ai_services": {
+      "url": "https://ai-services.preseen.ai/mcp",
+      "startup_timeout_sec": 120,
+      "tool_timeout_sec": 300
+    },
     "exa": {
       "url": "https://mcp.exa.ai/mcp"
     },

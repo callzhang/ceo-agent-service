@@ -1,5 +1,7 @@
 import json
 import sqlite3
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from app.run_storage import insert_run
@@ -1534,3 +1536,14 @@ def test_no_activation_file_is_not_a_finding(tmp_path):
     assert not any(
         issue.source == "email_model_activation" for issue in report.violations
     )
+
+
+def test_quality_delivery_requires_exact_current_actions_declaration(tmp_path):
+    from app.quality_gate import _check_external_delivery_queues
+
+    store = AutoReplyStore(tmp_path / "quality-final-action-declaration.sqlite3")
+    with store._connect() as db:
+        _check_external_delivery_queues(db, NOW, [], [])
+        db.execute("create index unexpected_quality_action_index on actions(id)")
+        with pytest.raises(sqlite3.IntegrityError, match="unsupported or mixed Attempt/Memory action schema"):
+            _check_external_delivery_queues(db, NOW, [], [])

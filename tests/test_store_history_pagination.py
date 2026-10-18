@@ -826,6 +826,119 @@ def test_history_projects_attempt_without_run_from_current_message_task(
     assert legacy_rows == []
 
 
+def test_history_projects_terminal_oa_closure_as_skipped_while_preserving_uncertainty(tmp_path):
+    import json
+
+    store = AutoReplyStore(tmp_path / "history-terminal-oa-skipped.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="terminal-oa-source",
+        conversation_title="张玲玲",
+        single_chat=False,
+        trigger_message_id="terminal-trigger",
+        trigger_create_time="2026-10-15 00:00:00",
+        trigger_sender="张玲玲",
+        trigger_text="催办已过期",
+        execution_generation="generation-1",
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
+            ("terminal-trigger",),
+        ).fetchone()[0]
+        consumer = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "consumer",
+            "status": "completed",
+        })
+        audit = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "audit",
+            "parent_id": consumer.lastrowid,
+            "status": "completed",
+        })
+        candidate = insert_action(db, "review_candidates", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "consumer_run_id": consumer.lastrowid,
+            "stage_index": 0,
+            "proposal_revision": 0,
+            "candidate_digest": "candidate-digest",
+            "candidate_json": '{"outcome":"proposal","proposal":{"actions":[]}}',
+        })
+        review = insert_action(db, "candidate_reviews", {
+            "candidate_id": candidate.lastrowid,
+            "audit_run_id": audit.lastrowid,
+            "decision": "approve",
+            "candidate_digest": "candidate-digest",
+            "result_json": '{"outcome":"approve"}',
+        })
+        execution = insert_action(db, "candidate_executions", {
+            "candidate_id": candidate.lastrowid,
+            "review_id": review.lastrowid,
+            "status": "uncertain",
+            "result_json": '{"reason":"receipt pending"}',
+        })
+        attempt_id = insert_action(db, "reply_attempts", {
+            "conversation_id": "terminal-oa-source",
+            "conversation_title": "张玲玲",
+            "trigger_message_id": "terminal-trigger",
+            "trigger_sender": "张玲玲",
+            "trigger_text": "催办已过期",
+            "action": "agent_run",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+            "send_error": "external_action_uncertain",
+            "agent_run_id": audit.lastrowid,
+        }).lastrowid
+        db.execute(
+            "update tasks set status='done' where record_type='reply_tasks' and id=?",
+            (task_id,),
+        )
+        resolution = json.dumps({
+            "business_id": "business-1",
+            "checked_at": "2026-10-15T10:37:10+00:00",
+            "closure_reason": "source process terminated; follow-up is no longer actionable",
+            "current_principal_task_ids": [],
+            "external_write_count": 0,
+            "historical_chat_delivery": "unverified; original uncertain delivery remains unchanged",
+            "native_and_openapi_business_id_match": True,
+            "original_message_id": "terminal-trigger",
+            "original_oa_task_id": "task-1",
+            "original_oa_task_status": "CANCELED",
+            "process_finished_at": "2026-10-14 17:44:07",
+            "process_instance_id": "process-1",
+            "process_status": "TERMINATED",
+            "source": "exact original DingTalk message and native OA detail/OpenAPI readback",
+        })
+        update_action(db, "reply_attempts", attempt_id, {
+            "resolved_at": "2026-10-15T10:37:10+00:00",
+            "resolution": resolution,
+        })
+
+    skipped_total, skipped_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("skipped",), source_tables=("reply_attempts",)
+    )
+    uncertain_total, uncertain_rows = store.list_operation_logs_with_count(
+        limit=20, statuses=("uncertain",), source_tables=("reply_attempts",)
+    )
+
+    assert execution.lastrowid
+    assert skipped_total == 1
+    assert [(row.source_id, row.status) for row in skipped_rows] == [(attempt_id, "skipped")]
+    assert uncertain_total == 0
+    assert uncertain_rows == []
+    history = store.list_history_items(
+        send_statuses=("skipped",), kinds=("reply",), limit=20
+    )
+    assert [(item.source_id, item.status) for item in history] == [(attempt_id, "skipped")]
+    stored = store.get_reply_attempt(attempt_id)
+    assert stored is not None
+    assert stored.send_status == "failed"
+    assert stored.send_error == "external_action_uncertain"
+
+
 def test_history_keeps_unbound_oa_external_uncertainty_uncertain(tmp_path):
     store = AutoReplyStore(tmp_path / "history-unbound-oa-uncertain.sqlite3")
     store.enqueue_reply_task(
@@ -919,6 +1032,168 @@ def test_history_does_not_call_unbound_oa_failure_recovered_without_a_task(tmp_p
     ]
     assert recovered_total == 0
     assert recovered_rows == []
+
+
+def test_unbound_failed_oa_attempts_close_only_for_exact_orphan_source(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-unbound-oa-terminal.sqlite3")
+    with store._connect() as db:
+        failed_attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "orphan-oa",
+            "conversation_title": "Completed OA task",
+            "trigger_message_id": "trigger-oa",
+            "trigger_sender": "sender",
+            "trigger_text": "approval action",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-oa",
+            "oa_task_id": "task-oa",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+            "send_error": "codex_process_failed",
+            "codex_reason": "runtime failed before a Consumer result",
+        })
+        older_attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "orphan-oa",
+            "conversation_title": "Completed OA task",
+            "trigger_message_id": "message-older",
+            "trigger_sender": "sender",
+            "trigger_text": "approval action retry",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-oa",
+            "oa_task_id": "task-oa",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+            "send_error": "codex_process_failed",
+        })
+        later_completed_attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "oa_pending_scan:process-oa",
+            "conversation_title": "Completed OA task",
+            "trigger_message_id": "later-business-result",
+            "trigger_sender": "sender",
+            "trigger_text": "terminal source result",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-oa",
+            "oa_task_id": "task-oa",
+            "sensitivity_kind": "general",
+            "send_status": "completed",
+        })
+
+    candidates = store.list_unbound_failed_oa_attempts()
+    assert [attempt.id for attempt in candidates] == [older_attempt.lastrowid]
+    evidence = '{"process_status":"COMPLETED","oa_task_status":"COMPLETED"}'
+    assert store.skip_unbound_failed_oa_attempt(
+        candidates[0].id,
+        process_instance_id="process-oa",
+        oa_task_id="task-oa",
+        terminal_evidence=evidence,
+    )
+    rows = store.list_operation_logs_with_count(
+        limit=10,
+        statuses=("skipped",),
+        history_types=(history_types.APPROVAL,),
+        source_tables=("reply_attempts",),
+    )[1]
+    assert {(row.source_id, row.status) for row in rows} == {
+        (failed_attempt.lastrowid, "skipped"),
+        (older_attempt.lastrowid, "skipped"),
+    }
+    attempt = store.get_reply_attempt(failed_attempt.lastrowid)
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "codex_process_failed"
+    assert attempt.codex_reason == "runtime failed before a Consumer result"
+    assert attempt.resolution == evidence
+    older = store.get_reply_attempt(older_attempt.lastrowid)
+    assert older.send_status == "skipped"
+    assert older.send_error == "codex_process_failed"
+    assert older.resolution == evidence
+    later = store.get_reply_attempt(later_completed_attempt.lastrowid)
+    assert later.send_status == "completed"
+    assert store.list_unbound_failed_oa_attempts() == []
+
+
+def test_unbound_failed_oa_attempt_closure_cannot_skip_when_local_task_exists(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-bound-oa-terminal.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="bound-oa",
+        conversation_title="Local task exists",
+        single_chat=False,
+        trigger_message_id="trigger-oa",
+        trigger_create_time="2026-10-17T00:00:00Z",
+        trigger_sender="sender",
+        trigger_text="approval action",
+        business_object_key="oa:process-oa:task-oa",
+    )
+    with store._connect() as db:
+        failed_attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "bound-oa",
+            "conversation_title": "Local task exists",
+            "trigger_message_id": "trigger-oa",
+            "trigger_sender": "sender",
+            "trigger_text": "approval action",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-oa",
+            "oa_task_id": "task-oa",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+        })
+
+    assert store.list_unbound_failed_oa_attempts() == []
+    assert not store.skip_unbound_failed_oa_attempt(
+        failed_attempt.lastrowid,
+        process_instance_id="process-oa",
+        oa_task_id="task-oa",
+        terminal_evidence='{"process_status":"COMPLETED"}',
+    )
+
+
+def test_terminal_local_task_does_not_block_orphan_attempt_closure(tmp_path):
+    store = AutoReplyStore(tmp_path / "history-terminal-owner-oa.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="terminal-owner-oa",
+        conversation_title="Terminal local task",
+        single_chat=False,
+        trigger_message_id="task-trigger",
+        trigger_create_time="2026-10-17T00:00:00Z",
+        trigger_sender="sender",
+        trigger_text="approval action",
+        business_object_key="oa:process-oa:task-oa",
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            "select id from tasks where record_type='reply_tasks' "
+            "and conversation_id='terminal-owner-oa'"
+        ).fetchone()[0]
+        db.execute(
+            "update tasks set status='failed' where record_type='reply_tasks' and id=?",
+            (task_id,),
+        )
+    assert store.close_unresolved_reply_task_already_settled(
+        task_id,
+        expected_execution_generation="initial",
+        settled_evidence="previously settled",
+    )
+    with store._connect() as db:
+        attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": "terminal-owner-oa",
+            "conversation_title": "Terminal local task",
+            "trigger_message_id": "old-attempt-trigger",
+            "trigger_sender": "sender",
+            "trigger_text": "old approval run",
+            "action": "agent_run",
+            "oa_process_instance_id": "process-oa",
+            "oa_task_id": "task-oa",
+            "sensitivity_kind": "general",
+            "send_status": "failed",
+        })
+
+    assert [row.id for row in store.list_unbound_failed_oa_attempts()] == [
+        attempt.lastrowid
+    ]
+    assert store.skip_unbound_failed_oa_attempt(
+        attempt.lastrowid,
+        process_instance_id="process-oa",
+        oa_task_id="task-oa",
+        terminal_evidence='{"process_status":"COMPLETED","oa_task_status":"COMPLETED"}',
+    )
 
 
 def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(tmp_path):

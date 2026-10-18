@@ -142,7 +142,7 @@
     },
     "DecisionOption": {
       "additionalProperties": false,
-      "description": "One bound choice for the current business instance.",
+      "description": "One reusable rule choice for a class of business tasks.",
       "oneOf": [
         {
           "properties": {
@@ -200,6 +200,11 @@
           "title": "Consequence",
           "type": "string"
         },
+        "applies_to": {
+          "const": "task_class",
+          "description": "Human feedback chooses a reusable rule for this task class, not this instance's action.",
+          "type": "string"
+        },
         "plan": {
           "anyOf": [
             {
@@ -241,7 +246,8 @@
         "key",
         "label",
         "instruction",
-        "consequence"
+        "consequence",
+        "applies_to"
       ],
       "title": "DecisionOption",
       "type": "object"
@@ -723,39 +729,6 @@
       "type": "object"
     },
     {
-      "oneOf": [
-        {
-          "properties": {
-            "decision_options": {
-              "maxItems": 4,
-              "minItems": 2,
-              "type": "array"
-            },
-            "requested_input": {
-              "type": "null"
-            }
-          },
-          "required": [
-            "decision_options"
-          ]
-        },
-        {
-          "properties": {
-            "decision_options": {
-              "maxItems": 0,
-              "type": "array"
-            },
-            "requested_input": {
-              "minLength": 1,
-              "type": "string"
-            }
-          },
-          "required": [
-            "decision_options",
-            "requested_input"
-          ]
-        }
-      ],
       "properties": {
         "outcome": {
           "const": "needs_human"
@@ -765,7 +738,11 @@
         },
         "decision_options": {
           "maxItems": 4,
+          "minItems": 2,
           "type": "array"
+        },
+        "requested_input": {
+          "type": "null"
         },
         "needs_human_reason": {
           "minLength": 1,
@@ -779,6 +756,7 @@
         "outcome",
         "proposal",
         "decision_options",
+        "requested_input",
         "needs_human_reason",
         "decision_basis"
       ],

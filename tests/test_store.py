@@ -1,3 +1,4 @@
+from app.task8_storage import task8_set_parts
 from tests.test_email_legacy_schema import published_source as published_source
 import errno
 import hashlib
@@ -70,6 +71,55 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_pat
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
+
+
+def test_agent_authored_message_requires_verified_provider_readback(tmp_path):
+    store = AutoReplyStore(tmp_path / "agent-message-origin.sqlite3")
+    with store._connect() as db:
+        insert_action(db, "sent_replies", {
+            "conversation_id": "conversation",
+            "trigger_message_id": "incoming-trigger",
+            "reply_text": "AI-generated body",
+            "send_result_json": json.dumps({
+                "verification": {
+                    "state": "sent",
+                    "status_result": {
+                        "result": {
+                            "openMessageId": "verified-outgoing-id",
+                            "sendStatus": "SUCCESS",
+                        },
+                    },
+                },
+            }),
+            "channel": "dingtalk",
+        })
+        insert_action(db, "sent_replies", {
+            "conversation_id": "conversation",
+            "trigger_message_id": "other-trigger",
+            "reply_text": "Unverified body",
+            "send_result_json": json.dumps({
+                "verification": {
+                    "state": "unknown",
+                    "status_result": {
+                        "result": {
+                            "openMessageId": "unverified-outgoing-id",
+                            "sendStatus": "SUCCESS",
+                        },
+                    },
+                },
+            }),
+            "channel": "dingtalk",
+        })
+
+    assert store.is_verified_agent_authored_message(
+        "conversation", "verified-outgoing-id", channel="dingtalk"
+    )
+    assert not store.is_verified_agent_authored_message(
+        "conversation", "unverified-outgoing-id", channel="dingtalk"
+    )
+    assert not store.is_verified_agent_authored_message(
+        "another-conversation", "verified-outgoing-id", channel="dingtalk"
+    )
 
 
 def _sqlite_failure(
@@ -3549,6 +3599,119 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
     assert "accepted event-1" in error[1]
 
 
+def test_expired_reply_task_can_be_skipped_with_generation_bound_evidence(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-calendar-expired",
+        conversation_title="Calendar invite",
+        single_chat=True,
+        trigger_message_id="msg-calendar-expired",
+        trigger_create_time="2026-10-15 09:00:00",
+        trigger_sender="Casey",
+        trigger_text="Calendar invite",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    with store._connect() as db:
+        db.execute(
+            f"update tasks set {task8_set_parts('reply_tasks', {'status': 'failed', 'error': 'external_action_uncertain'}).sql} "
+            "where record_type='reply_tasks' and id=?",
+            (*task8_set_parts('reply_tasks', {'status': 'failed', 'error': 'external_action_uncertain'}).parameters, task.id,),
+        )
+
+    assert not store.skip_unresolved_reply_task(
+        task.id,
+        expected_execution_generation="stale-generation",
+        reason="Calendar event has ended; no further response action is required.",
+    )
+    assert store.skip_unresolved_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        reason="Calendar event has ended; no further response action is required.",
+    )
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "skipped"
+    assert updated.error == "external_action_uncertain"
+    with store._connect() as db:
+        error = db.execute(
+            f"select kind, detail, resolved_at, resolution from ({store_module.ERROR_SQL}) "
+            "where conversation_id=? and message_id=? order by id desc limit 1",
+            (task.conversation_id, task.trigger_message_id),
+        ).fetchone()
+    assert error is not None
+    assert error[0] == "reply_task_skipped_by_operator"
+    assert error[1] == error[3]
+    assert error[2]
+    assert "event has ended" in error[3]
+
+
+def test_uncertain_oa_reply_can_only_be_skipped_for_its_exact_terminal_source(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-oa-terminal",
+        conversation_title="OA follow-up",
+        single_chat=False,
+        trigger_message_id="msg-oa-terminal",
+        trigger_create_time="2026-10-16 09:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="Follow up",
+        business_object_key="oa:process-1:task-1",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    with store._connect() as db:
+        db.execute(
+            f"update tasks set {task8_set_parts('reply_tasks', {'status': 'failed', 'error': 'external_action_uncertain'}).sql} "
+            "where record_type='reply_tasks' and id=?",
+            (*task8_set_parts('reply_tasks', {'status': 'failed', 'error': 'external_action_uncertain'}).parameters, task.id,),
+        )
+
+    evidence = (
+        "Verified live DingTalk OA terminal state for exact reviewed candidate: "
+        "process_instance_id=process-1; task_id=task-1; process_status=TERMINATED; "
+        "task_status=CANCELED"
+    )
+    assert not store.skip_unresolved_reply_task_for_terminal_oa_source(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        process_instance_id="process-2",
+        oa_task_id="task-1",
+        settled_evidence=evidence,
+    )
+    assert not store.skip_unresolved_reply_task_for_terminal_oa_source(
+        task.id,
+        expected_execution_generation="stale-generation",
+        process_instance_id="process-1",
+        oa_task_id="task-1",
+        settled_evidence=evidence,
+    )
+    assert store.skip_unresolved_reply_task_for_terminal_oa_source(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        process_instance_id="process-1",
+        oa_task_id="task-1",
+        settled_evidence=evidence,
+    )
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "skipped"
+    assert updated.error == "external_action_uncertain"
+    assert store.count_current_unresolved_problem_attempts() == 0
+    with store._connect() as db:
+        error = db.execute(
+            f"select kind, detail, resolved_at, resolution from ({store_module.ERROR_SQL}) "
+            "where conversation_id=? and message_id=? order by id desc limit 1",
+            (task.conversation_id, task.trigger_message_id),
+        ).fetchone()
+    assert error is not None
+    assert error[0] == "reply_task_skipped_terminal_oa"
+    assert error[1] == evidence == error[3]
+    assert error[2]
+
+
 def test_settlement_evidence_reconcile_commits_between_bounded_batches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4906,7 +5069,17 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
         db.execute(
             "update tasks set status='failed', error='email_unsubscribe_browser_timeout' where record_type='reply_tasks' and id=1"
         )
-    assert store.retry_failed_effect_free_email_unsubscribe_tasks() == [1]
+        db.execute(
+            "insert into service_state(key,value) values (?,?)",
+            (
+                f"email_unsubscribe_execution_pending:v1:{action_identity}",
+                json.dumps({"action_identity": action_identity}),
+            ),
+        )
+    assert store.retry_failed_effect_free_email_unsubscribe_tasks() == []
+    task = store.list_reply_tasks(limit=1)[0]
+    assert task.status == "failed"
+    assert task.error == "email_unsubscribe_browser_timeout"
 
 
 def test_reply_task_execution_generation_defaults_and_survives_requeue(

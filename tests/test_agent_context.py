@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -86,7 +87,9 @@ def test_audit_core_prompt_contains_only_runtime_invariants():
     assert "## Dynamic Skill" in text
     assert "candidate_digest" in text
     assert "without executing actions" in text
-    assert "current-instance-bound" in text
+    assert "reusable rule choices" in text
+    assert "current-instance decision" in text
+    assert "applies_to=task_class" in text
 
 
 def test_audit_field_feedback_is_grounded_in_current_candidate_json():
@@ -315,6 +318,14 @@ def _context(
             ),
         ),
     )
+
+
+def test_context_carries_verified_agent_quote_as_structured_provenance():
+    context = replace(_context(), trigger_quotes_agent_message=True)
+
+    rendered = context.render_business_context()
+
+    assert '"quoted_agent_authored_message":true' in rendered
 
 
 def test_context_renders_reference_and_command_without_resolved_body():
@@ -775,9 +786,36 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert "Audit reads and judges it without executing actions" in audit_developer_instructions("Only publish supported facts.")
     assert _has_json_field(rendered, "candidate_digest", "b" * 64)
     assert "Candidate revision" in rendered
+    assert "Service-recorded scheduled work receipts" not in rendered
+    assert "report body" not in rendered
     assert "group-send candidate" not in rendered
     assert "OA factual gap" not in rendered
     assert "exact OA comment and applicant notification" not in rendered
     assert "Effective Audit Rules" not in rendered
     assert "Only publish supported facts." in rendered
     _assert_no_service_oa_resolution_fields(rendered)
+
+
+def test_scheduled_audit_context_shows_empty_receipt_boundary():
+    proposal = ConsumerProposal.model_validate({
+        "objective": "Review report",
+        "actions": [{
+            "description": "Send report", "action_identity": "send-report",
+            "capability": "dingtalk-chat", "operation": "send_message",
+            "target": {"conversation_id": "cid"},
+            "payload": {"text": "Report ready"},
+        }],
+        "sourced_facts": [], "authored_judgment": "Review report",
+    })
+    context = AuditTurnContext(
+        task=replace(_context(), channel="scheduled"),
+        proposal_revision=0, operation_id="scheduled-op",
+        candidate=_candidate(proposal), candidate_digest="a" * 64,
+        audit_rules="Review facts",
+    )
+
+    rendered = context.render()
+
+    assert "Service-recorded scheduled work receipts" in rendered
+    assert "[]" in rendered
+    assert "No matching Consumer document readback was captured" in rendered

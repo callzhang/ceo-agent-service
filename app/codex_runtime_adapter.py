@@ -83,7 +83,12 @@ _CREDENTIAL_NAME_MARKERS = (
 )
 
 
-def _insert_service_mcp_options(command: list[str], *, session_id: str | None) -> None:
+def _insert_service_mcp_options(
+    command: list[str],
+    *,
+    session_id: str | None,
+    tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None,
+) -> None:
     """Every routed Codex invocation carries the service MCP manifest.
 
     The manifest adds the service-owned transports and disables the personal
@@ -93,7 +98,9 @@ def _insert_service_mcp_options(command: list[str], *, session_id: str | None) -
     prompt_index = len(command) - 1  # the trailing "-" prompt marker
     if session_id:
         prompt_index -= 1  # `exec resume` keeps the session id before "-"
-    command[prompt_index:prompt_index] = service_mcp_config_options()
+    command[prompt_index:prompt_index] = service_mcp_config_options(
+        tool_approval_modes_by_server=tool_approval_modes_by_server
+    )
 
 
 class CodexRuntimeAdapter:
@@ -124,6 +131,7 @@ class CodexRuntimeAdapter:
         reasoning_effort: str | None = None,
         skill_names: tuple[str, ...] | None = None,
         inlined_skill_names: tuple[str, ...] = (),
+        tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None,
     ) -> list[str]:
         configured_route = self._configured_route(route)
         command = self.runner.build_command(
@@ -154,7 +162,11 @@ class CodexRuntimeAdapter:
             if skill_names is not None
             else codex_inlined_skill_config_override(inlined_skill_names),
         )
-        _insert_service_mcp_options(command, session_id=session_id)
+        _insert_service_mcp_options(
+            command,
+            session_id=session_id,
+            tool_approval_modes_by_server=tool_approval_modes_by_server,
+        )
         return command
 
     def build_env(

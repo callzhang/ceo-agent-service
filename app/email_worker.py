@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from app.email_category_config import VerifiedEmailFolderBinding
 from app.email_provider_folders import FolderRole, ProviderFolder
+from app.email_unsubscribe import TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
 
 
 SCAN_INTERVAL_SECONDS = 60
@@ -45,7 +46,6 @@ UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR = "email_unsubscribe_candidate_unresolved
 # open - is retried across this many fresh generations. The per-generation
 # role budget is an orchestration detail: spending it says nothing about
 # whether the page will answer next time.
-TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES = 4
 DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
 DIRECT_ACTION_DRAIN_MAX_SECONDS = 120.0
 CLASSIFICATION_DRAIN_MAX_ACTIONS = 25
@@ -1960,7 +1960,7 @@ def _finalize_direct_email_unsubscribe_task(
             task.id,
             task_error,
             expected_execution_generation=task.execution_generation,
-            available_at=_email_task_retry_available_at(task.attempts),
+            available_at=_email_task_retry_available_at(spent),
         )
     else:
         store.fail_reply_task(

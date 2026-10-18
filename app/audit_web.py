@@ -9857,6 +9857,7 @@ def handle_rerun_attempt_post(
     *,
     return_to: str = "",
     worker_factory: Callable[[object], object] | None = None,
+    skill_options_factory: Callable[[], object] | None = None,
 ) -> tuple[int, dict[str, str], str]:
     del worker_factory
     attempt = store.get_reply_attempt(attempt_id)
@@ -9926,7 +9927,33 @@ def handle_rerun_attempt_post(
                 "<p>Original execution payload is unavailable; rerun was not queued.</p>",
             ),
         )
+    if attempt.oa_process_instance_id:
+        if skill_options_factory is None:
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>OA Skill snapshot could not be refreshed; rerun was not queued.</p>",
+            )
+        try:
+            trigger_message_json = refresh_oa_rerun_skill_snapshot(
+                trigger_message_json,
+                store=store,
+                skill_options=skill_options_factory(),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>OA Skill snapshot could not be refreshed; rerun was not queued.</p>",
+            )
     try:
+        force_rotation = False
+        if attempt.oa_process_instance_id:
+            prior_payload = json.loads(existing_task.trigger_message_json)
+            refreshed_payload = json.loads(trigger_message_json)
+            force_rotation = json.dumps(
+                prior_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ) != json.dumps(
+                refreshed_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
         store.enqueue_manual_rerun_reply_task(
             conversation_id=attempt.conversation_id,
             conversation_title=conversation_title,
@@ -9939,11 +9966,52 @@ def handle_rerun_attempt_post(
             oa_url=attempt.oa_url,
             attempt_id=attempt.id,
             channel=channel,
+            force_rotation=force_rotation,
             expected_execution_generation=existing_task.execution_generation,
         )
     except ManualRerunConflict as exc:
         return 409, {}, render_page("Rerun unavailable", f"<p>{escape(str(exc))}</p>")
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
+
+
+def refresh_oa_rerun_skill_snapshot(
+    trigger_message_json: str,
+    *,
+    store: AutoReplyStore,
+    skill_options: object | None,
+) -> str:
+    """Copy an OA trigger while rebinding only its new generation's selected Skills."""
+    from app.agent_cron.commands import (
+        SERVICE_COMMAND_CONSUMER_CONTEXT_KEY,
+        ServiceCommandConsumerContext,
+    )
+    from app.agent_cron.context import ScheduledAgentContextBuilder
+
+    try:
+        payload = json.loads(trigger_message_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("OA rerun Skill snapshot is invalid") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("OA rerun Skill snapshot is invalid")
+    raw_payload = payload.get("raw_payload")
+    scheduled_payload = (
+        raw_payload.get(SERVICE_COMMAND_CONSUMER_CONTEXT_KEY)
+        if isinstance(raw_payload, dict)
+        else None
+    )
+    prior = ServiceCommandConsumerContext.from_payload(scheduled_payload)
+    if prior is None or skill_options is None:
+        raise ValueError("OA rerun Skill snapshot is unavailable")
+    scheduled_task = store.get_scheduled_task(prior.scheduled_task_id)
+    if scheduled_task is None or scheduled_task.command != "scan-oa-approvals":
+        raise ValueError("OA rerun Skill snapshot task is unavailable")
+    refreshed = ScheduledAgentContextBuilder(skill_options).refresh_oa_review_context(
+        prior, scheduled_task
+    )
+    raw_payload = dict(raw_payload)
+    raw_payload[SERVICE_COMMAND_CONSUMER_CONTEXT_KEY] = refreshed.to_payload()
+    payload["raw_payload"] = raw_payload
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def handle_needs_human_decision_post(
@@ -11223,6 +11291,22 @@ def create_audit_app(
             return HTMLResponse("missing or invalid oa url", status_code=400)
         return HTMLResponse(render_dingtalk_open_oa_popup(cleaned_url))
 
+    @app.post("/api/console/history/{attempt_id}/reconcile-oa-return")
+    def reconcile_oa_return(attempt_id: int, candidate_id: int, review_id: int) -> JSONResponse:
+        """Reconcile an existing uncertain OA return; this endpoint cannot dispatch actions."""
+        from app.dws_client import DwsClient
+        from app.oa_reconciliation import reconcile_oa_return_attempt
+
+        try:
+            result = reconcile_oa_return_attempt(
+                AutoReplyStore(db_path), DwsClient(), attempt_id=attempt_id,
+                candidate_id=candidate_id, review_id=review_id,
+            )
+        except (KeyError, ValueError) as exc:
+            return JSONResponse({"outcome": "failed", "error": {"code": "oa_reconciliation_invalid", "detail": str(exc)}}, status_code=409)
+        status_code = 200 if result.outcome == "executed" else 409
+        return JSONResponse(jsonable_encoder(result.model_dump(mode="json")), status_code=status_code)
+
     @app.post("/open-attempt")
     def open_attempt(request: Request, attempt_id: int) -> JSONResponse:
         if attempt_id <= 0:
@@ -11412,6 +11496,7 @@ def create_audit_app(
             AutoReplyStore(db_path),
             attempt_id,
             return_to=request.query_params.get("return_to", ""),
+            skill_options_factory=scheduled_task_option_service,
         )
         return _fastapi_post_response(status, headers, html)
 

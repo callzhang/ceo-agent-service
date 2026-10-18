@@ -37,6 +37,30 @@ EXTERNAL_TASK_ERRORS = (
 )
 
 
+def is_external_task_error(error: str) -> bool:
+    """Return whether a persisted task error has a known external cause.
+
+    The ``failed_browser`` form predates the current
+    ``email_unsubscribe_browser_failed`` code but still appears on historical
+    Attempts. Keep it aligned with the fixed external-category allowlist.
+    """
+    value = str(error or "").strip()
+    if value in EXTERNAL_TASK_ERRORS:
+        return True
+    if any(value.startswith(prefix) for prefix in EXTERNAL_TASK_ERROR_PREFIXES):
+        return True
+    for category in EXTERNAL_UNSUBSCRIBE_CATEGORIES:
+        prefix = f"failed_browser: category={category.value}"
+        if value == prefix or value.startswith(prefix + ";"):
+            return True
+    operation_marker = ";operation="
+    if operation_marker in value:
+        base, _, _operation = value.partition(operation_marker)
+        if base in EXTERNAL_TASK_ERRORS:
+            return True
+    return False
+
+
 # Error texts that start with one of these: the Dingteam OKR session expired or
 # needs a login. Only a person can log in again, and a rerun reads the same
 # expired session (Derek 2026-09-25).
@@ -57,4 +81,16 @@ def external_task_error_sql(column: str = "reply_tasks.error") -> str:
         f"{column} like '{prefix.replace(chr(39), chr(39) * 2)}%'"
         for prefix in EXTERNAL_TASK_ERROR_PREFIXES
     )
-    return f"({column} in ({quoted}) or {operation_context} or {prefixes})"
+    legacy_categories = " or ".join(
+        (
+            f"(substr({column}, 1, {len(prefix)}) = '{prefix}' and "
+            f"(length({column}) = {len(prefix)} or "
+            f"substr({column}, {len(prefix) + 1}, 1) = ';'))"
+        )
+        for category in EXTERNAL_UNSUBSCRIBE_CATEGORIES
+        for prefix in (f"failed_browser: category={category.value}",)
+    )
+    return (
+        f"({column} in ({quoted}) or {operation_context} or {prefixes} "
+        f"or {legacy_categories})"
+    )

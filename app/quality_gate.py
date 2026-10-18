@@ -36,9 +36,11 @@ from app.action_storage import (
     REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL,
     reply_action_projection,
     task_delivery_projection,
-    validated_reply_variant,
+    _reply_variant_for,
+    action_schema_is_current,
 )
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+from app.current_database_schema import FINAL_ACTION_OPTIONS
 
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 OKR_REQUEST_SQL = task20_projection('okr_review_requests')
@@ -876,7 +878,10 @@ def _check_external_delivery_queues(
         ),
     ):
         if source == "memory_write_events":
-            source_sql = f"({reply_action_projection('memory_write_events', validated_reply_variant(db, include_email=True, include_followup_sync=True, include_business_sync=True, include_skill_config_receipts=True, include_task_delivery=True, include_errors=True, include_feedback=True))})"
+            variant = _reply_variant_for(db)
+            if not action_schema_is_current(db, reply_variant=variant, **FINAL_ACTION_OPTIONS):
+                raise sqlite3.IntegrityError("unsupported or mixed Attempt/Memory action schema")
+            source_sql = f"({reply_action_projection('memory_write_events', variant)})"
         elif source in SYNC_ACTION_PROJECTIONS:
             source_sql = f"({SYNC_ACTION_PROJECTIONS[source]})"
         elif source in ("wechat_deliveries", "meeting_memory_write_events"):

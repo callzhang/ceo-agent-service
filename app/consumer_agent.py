@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -23,6 +24,7 @@ from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
+from app.decision_quality import require_needs_human_context_eligible
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import (
     AgentTurnProcess,
@@ -48,6 +50,7 @@ from app.business_skills import (
 from app.managed_skills import RuntimeSkillSnapshot
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
+from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
@@ -61,6 +64,8 @@ from app.prompt_composition import (
     render_prompt_sections,
 )
 from app.runtime_prompt_context import explicit_participant_timezones
+from app.native_trajectory import codex_session_has_final_user_marker_without_compaction
+from app.codex_history import count_codex_session_lines
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
@@ -76,6 +81,159 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # editor's intermediate state into an outage.
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_UNREVIEWED_EFFECT = "consumer_unreviewed_provider_effect"
+_CONSUMER_FINGERPRINT_TIME = "2000-01-01T00:00:00+00:00"
+
+
+def _consumer_source_context_fingerprint(
+    *,
+    task_id: int,
+    execution_generation: str,
+    contract_hash: str,
+    developer_instructions: str,
+    stable_task_prompt: str,
+    image_sources: tuple[str, ...],
+) -> str:
+    encoded = json.dumps(
+        {
+            "task_id": task_id,
+            "execution_generation": execution_generation,
+            "contract_hash": contract_hash,
+            "developer_instructions": developer_instructions,
+            "stable_task_prompt": stable_task_prompt,
+            "image_sources": image_sources,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _consumer_revision_prompt(
+    feedback: AuditFeedback,
+    *,
+    proposal_revision: int,
+    continuation: str,
+    context_marker: str,
+    current_time: str,
+) -> str:
+    feedback_json = json.dumps(
+        feedback.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    sections = [
+        "Use the original task, source context, and immediately preceding proposal "
+        "already present in this same Consumer session. Apply all Audit feedback "
+        f"for proposal revision {proposal_revision}, then return a complete "
+        "replacement Consumer candidate. Preserve supported facts, uncertainty, "
+        "and valid source references.",
+        "## Current turn execution time\n" + current_time.strip(),
+        "## Audit Feedback\n" + feedback_json,
+    ]
+    if continuation.strip():
+        sections.append("## Current Runtime Correction\n" + continuation.strip())
+    sections.append("<!-- " + context_marker + " -->")
+    return "\n\n".join(sections)
+
+
+def _consumer_revision_context_reusable(
+    store: AutoReplyStore,
+    task: ReplyTask,
+    *,
+    proposal_revision: int,
+    session_id: str | None,
+    fingerprint: str,
+    parent_agent_run_id: int | None,
+    feedback: AuditFeedback,
+) -> bool:
+    if proposal_revision <= 0 or not session_id or not fingerprint or not parent_agent_run_id:
+        return False
+    audit_run = store.get_agent_run(parent_agent_run_id, load_events=False)
+    if (
+        audit_run is None
+        or audit_run.role is not AgentRole.AUDIT
+        or audit_run.status != "completed"
+        or audit_run.reply_task_id != task.id
+        or audit_run.execution_generation != task.execution_generation
+        or audit_run.proposal_revision != proposal_revision - 1
+        or audit_run.parent_agent_run_id is None
+    ):
+        return False
+    prior_run = store.get_agent_run(audit_run.parent_agent_run_id, load_events=False)
+    if (
+        prior_run is None
+        or prior_run.role is not AgentRole.CONSUMER
+        or prior_run.status != "completed"
+        or prior_run.reply_task_id != task.id
+        or prior_run.execution_generation != task.execution_generation
+        or prior_run.proposal_revision != proposal_revision - 1
+        or prior_run.codex_session_id != session_id
+    ):
+        return False
+    try:
+        adopted_audit = AuditAgentResult.model_validate_json(
+            audit_run.adopted_result_json
+        )
+    except (TypeError, ValueError):
+        return False
+    if adopted_audit.outcome not in {"return", "reject"} or adopted_audit.feedback != feedback:
+        return False
+
+    def completed_codex_attempt(run_id: int):
+        return next(
+            (
+                attempt
+                for attempt in reversed(store.list_agent_runtime_attempts(run_id))
+                if attempt.status == "completed"
+                and attempt.runtime_kind == RuntimeKind.CODEX_CLI.value
+                and attempt.session_id == session_id
+                and attempt.transcript_end > attempt.transcript_start
+            ),
+            None,
+        )
+
+    prior_attempt = completed_codex_attempt(prior_run.id)
+    if prior_attempt is None:
+        return False
+    codex_home = _codex_home()
+    try:
+        if count_codex_session_lines(
+            session_id, codex_home=codex_home
+        ) != prior_attempt.transcript_end:
+            return False
+    except (OSError, UnicodeError):
+        return False
+
+    initial_run = next(
+        (
+            run
+            for run in store.list_agent_runs_for_task_generation(
+                task.id, task.execution_generation, load_events=False
+            )
+            if run.role is AgentRole.CONSUMER
+            and run.status == "completed"
+            and run.proposal_revision == 0
+            and run.codex_session_id == session_id
+        ),
+        None,
+    )
+    if initial_run is None:
+        return False
+    initial_attempt = completed_codex_attempt(initial_run.id)
+    if initial_attempt is None:
+        return False
+    marker = "consumer-source-context-sha256:" + fingerprint
+    return codex_session_has_final_user_marker_without_compaction(
+        session_id,
+        marker,
+        codex_home=codex_home,
+        context_start_line=initial_attempt.transcript_start,
+        attempt_start_line=prior_attempt.transcript_start,
+        attempt_end_line=prior_attempt.transcript_end,
+        session_end_line=prior_attempt.transcript_end,
+    )
 
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
     "Consumer Agent A independently selects and applies every applicable business and operation Skill before forming the candidate. Provider command names, MCP tools, receipts, and readback procedures belong to the Agent/runtime capability and are not application review conditions."
@@ -92,9 +250,12 @@ DECISION_QUALITY_GATE_INSTRUCTIONS = """
 Include risk, confidence, rule_coverage and information_completeness as truthful
 facts about the current decision, and apply this outcome gate in order:
 information_completeness < 0.5 means ask one focused factual question in a
-normal proposal; otherwise, needs_human is allowed only when (risk is high and
-confidence < 0.5) or rule_coverage < 0.5; otherwise do not return needs_human
-and complete the supported work under the applicable rules. Audit must
+normal proposal; it is never a needs_human result. Otherwise, needs_human is
+allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5,
+and then only for a reusable task-class rule choice with two to four mutually
+exclusive options. A missing fact or a request that Derek decide this one
+business case is not a policy gap; otherwise do not return needs_human and
+complete the supported work under the applicable rules. Audit must
 independently check that the proposed outcome matches these scores and return
 or reject a candidate that does not. Use the applicable application behavior,
 business Skills, available source material, memory and session context to
@@ -110,10 +271,16 @@ own summary of the known facts, gaps, and available rule coverage.
 Ask the applicant or source owner for material they can supply. Missing facts,
 even facts only Derek can provide, call for one focused factual question to
 the person who can supply them; they are not by themselves a needs_human
-policy choice. A current-instance choice is a needs_human candidate only when
-the applicable authorization rules make it non-delegable, not merely because
-it is consequential or someone requested it. Every such candidate is reviewed
-by Audit before it becomes visible. Technical/provider,
+policy choice. Do not transfer a current-instance business decision to Derek
+merely because it is consequential or a requester asks for it. Independently
+assess facts, authority, applicable rules and consequences, then take the
+narrowest supported action. When facts are missing, ask the source owner one
+focused factual question in a normal proposal. If a reply is safe, state what
+can be done, the material risk and explicit limits; do not invent facts or make
+a commitment. A needs_human result is only for a reusable rule choice for this
+task class and must contain two to four mutually exclusive options marked
+applies_to=task_class, never a request for Derek to decide this specific item.
+Every such candidate is reviewed by Audit before it becomes visible. Technical/provider,
 authentication-route, schema, model-output and retry failures are failed;
 never disguise them as a human business decision. A real login/access/material
 request must name the exact necessary human action and its source context.
@@ -134,9 +301,18 @@ the exact boundary and required evidence or authorization instead of offering
 the user a plan to perform the deletion. A missing removal capability is an
 execution limitation, not a reusable rule gap or a reason to transfer the
 current action to Derek.
-Executable options contain complete current-instance plans; stop options state
-skipped with a reason. Open-ended input uses requested_input with zero options.
-This flow never creates a reusable policy or edits a Skill.
+When the task context marks `quoted_agent_authored_message` true, the trigger
+is a reply to a message this service sent and verified through the provider.
+Treat it as an Agent-owned continuation/recovery: independently assess the new
+facts, correct or complete the supported work, and never return needs_human
+for that trigger. If facts remain missing, ask the source owner in an ordinary
+proposal.
+Executable options contain complete plans for continuing this item under the
+selected reusable rule; stop options state skipped with a reason. A request for
+current-instance facts or judgment is never represented as a zero-option
+requested_input needs_human result. This flow never writes a reusable policy or
+edits a Skill itself; user feedback may independently select one-time
+application and Skill update.
 """.strip()
 AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION = """
 Use the current work profile, complete conversation context, and inspected
@@ -250,6 +426,49 @@ def consumer_wire_contract_hash(
     encoded = json.dumps(contract, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
 
+
+def consumer_selected_skill_source_fingerprints(
+    selected_names: tuple[str, ...], frozen_materials: tuple[object, ...]
+) -> tuple[dict[str, str], ...]:
+    """Fingerprint the exact selected Skill bodies visible to this Consumer turn."""
+    frozen_by_name: dict[str, list[str]] = {}
+    for material in frozen_materials:
+        frozen_by_name.setdefault(str(material.name), []).append(
+            sha256(str(material.content).encode("utf-8")).hexdigest()
+        )
+    fingerprints: list[dict[str, str]] = []
+    for name in sorted(set(selected_names)):
+        frozen_digests = sorted(frozen_by_name.get(name, ()))
+        if frozen_digests:
+            fingerprints.extend(
+                {"name": name, "source": "frozen_task_input", "sha256": digest}
+                for digest in frozen_digests
+            )
+            continue
+        sources = installed_runtime_skills(names=(name,))
+        if not sources:
+            fingerprints.append(
+                {"name": name, "source": "selected_source_unavailable", "sha256": ""}
+            )
+            continue
+        for source in sorted(sources, key=lambda entry: str(entry.skill_path)):
+            fingerprints.append({
+                "name": name,
+                "source": str(source.skill_path.resolve()),
+                "sha256": sha256(source.skill_path.read_bytes()).hexdigest(),
+            })
+    return tuple(fingerprints)
+
+
+def consumer_selected_skill_session_contract_hash(
+    fingerprints: tuple[dict[str, str], ...],
+) -> str:
+    """Build the narrow session key for selected Skill bodies, independent of other contract edits."""
+    if not fingerprints:
+        return ""
+    encoded = json.dumps(fingerprints, sort_keys=True, separators=(",", ":"))
+    return "selected-skills:" + sha256(encoded.encode("utf-8")).hexdigest()
+
 CONSUMER_ROLE_BOUNDARY = """
 You are Consumer Agent A. Complete the business preparation using the task's
 applicable Skills and permitted tools, including report and document work.
@@ -260,12 +479,14 @@ Every action has a stable action_identity for the same intended external
 outcome. Change it only when the intended outcome, target or purpose changes.
 Supply canonical typed capability/operation, exact target and payload; no shell
 argv. Preserve all accepted service-prepared message text in later stages.
-Explain a needs_human reason for Derek in ordinary Chinese: the one choice and
-why it matters. Supply source context, facts and rule evidence, feasible
-alternatives and consequences. Every executable option includes a complete
-current-instance plan; a stop choice has terminal_outcome skipped and reason.
-Use requested_input without options when an open-ended fact is needed.
-Do not propose long-term rule choices, applies_to, or Skill updates.
+Explain a needs_human reason in ordinary Chinese: identify the reusable task
+class rule that is missing and why it matters. Supply source context, facts and
+rule evidence, and two to four mutually exclusive policy choices, each marked
+applies_to=task_class. Every executable option includes a complete plan for
+continuing this item under that selected rule; a stop choice has
+terminal_outcome skipped and reason. Ask for missing current-instance facts in
+a normal proposal, never with requested_input as a zero-option needs_human.
+Feedback may separately select one-time application and Skill update.
 For proposal, no_action, and failed, decision_options must be empty and
 requested_input, needs_human_reason, and decision_basis must be null. Use
 those fields only for a needs_human result.
@@ -374,18 +595,20 @@ class ConsumerAgentRunner:
             return True
         return self.codex_session_exists(session_id)
 
-    def _consumer_route_sessions(self, conversation_id: str) -> dict[str, str]:
+    def _consumer_route_sessions(
+        self, conversation_id: str, session_contract_hash: str = ""
+    ) -> dict[str, str]:
         """Return live route sessions for one continuous business conversation.
 
-        The current Skill/contract revision is recorded on the next completed
-        turn, but it is not an identity boundary for the conversation.  A
-        revision must receive the facts already verified in this session.
+        Selected Skill turns reuse only the exact Skill-compatible session. Other
+        Consumer contract edits retain the existing continuous-conversation behavior.
         """
         sessions: dict[str, str] = {}
         for route_name in self._configured_route_names():
             session_id = self.store.get_conversation_runtime_session(
                 conversation_id,
                 route_name,
+                required_contract_hash=session_contract_hash or None,
             )
             if session_id:
                 sessions[route_name] = session_id
@@ -468,6 +691,14 @@ class ConsumerAgentRunner:
             context_skill_protocol_source == "explicit_custom"
         )
         configuration = load_prompt_configuration()
+        frozen_skill_materials = frozen_task_skill_binding(
+            task.trigger_message_json
+        ).materials
+        selected_skill_source_fingerprints = (
+            consumer_selected_skill_source_fingerprints(
+                context.skill_names, frozen_skill_materials
+            )
+        )
         contract_hash = consumer_wire_contract_hash(
             self.runtime_skill_snapshot,
             skill_protocol_override=(
@@ -475,7 +706,14 @@ class ConsumerAgentRunner:
             ),
             prompt_configuration=configuration,
         )
-        route_sessions = self._consumer_route_sessions(task.conversation_id)
+        skill_session_contract_hash = (
+            consumer_selected_skill_session_contract_hash(
+                selected_skill_source_fingerprints
+            )
+        )
+        route_sessions = self._consumer_route_sessions(
+            task.conversation_id, skill_session_contract_hash
+        )
         # A forced rerun changes the execution generation and prompt, but it
         # must keep the compatible conversation session so the agent sees the
         # original context plus the new feedback.  Route-specific session
@@ -609,42 +847,140 @@ class ConsumerAgentRunner:
                 if skill_protocol_is_custom and context_skill_protocol is not None
                 else "runtime_catalog"
             )
+        current_context_time = datetime.now().astimezone().strftime(
+            "%Y-%m-%d %H:%M:%S %z"
+        )
+        developer_instructions = render_prompt_sections(
+            developer_sections,
+            placement="developer",
+        )
+        assembly_options = {
+            "scheduled_prompt": context.consumer_prompt,
+            "skill_names": context.skill_names,
+            "frozen_skill_names": frozen_skill_names_for_task,
+            "frozen_skill_materials": frozen_skill_materials,
+            "skill_protocol": context_skill_protocol or "",
+            "skill_protocol_is_custom": skill_protocol_is_custom,
+            "skill_catalog": default_task_skill_catalog(context.skill_names),
+        }
         task_assembly = compose_consumer_task_assembly(
             configuration,
             task_context=context.render(
                 proposal_revision=proposal_revision,
                 feedback=feedback,
+                current_time=current_context_time,
             ),
-            scheduled_prompt=context.consumer_prompt,
             continuation=continuation_prompt,
-            skill_names=context.skill_names,
-            frozen_skill_names=frozen_skill_names_for_task,
-            frozen_skill_materials=frozen_task_skill_binding(task.trigger_message_json).materials,
-            skill_protocol=context_skill_protocol or "",
-            skill_protocol_is_custom=skill_protocol_is_custom,
-            skill_catalog=default_task_skill_catalog(context.skill_names),
+            **assembly_options,
         )
+        stable_task_assembly = compose_consumer_task_assembly(
+            configuration,
+            task_context=context.render(
+                proposal_revision=0,
+                feedback=None,
+                current_time=_CONSUMER_FINGERPRINT_TIME,
+            ),
+            continuation=continuation_prompt,
+            **assembly_options,
+        )
+        image_sources = tuple(
+            f"{index}:{path}:{context.image_sha256s[index] if index < len(context.image_sha256s) else ''}"
+            for index, path in enumerate(context.image_paths)
+        )
+        source_context_fingerprint = _consumer_source_context_fingerprint(
+            task_id=task.id,
+            execution_generation=task.execution_generation,
+            contract_hash=contract_hash,
+            developer_instructions=developer_instructions,
+            stable_task_prompt=stable_task_assembly.text,
+            image_sources=image_sources,
+        )
+        context_marker = (
+            "consumer-source-context-sha256:" + source_context_fingerprint
+        )
+        context_marker_section = PromptSection(
+            "Consumer source context fingerprint",
+            "service-generated binding to the complete original task input",
+            "task",
+            "<!-- " + context_marker + " -->",
+        )
+        full_task_prompt = task_assembly.text + "\n\n" + context_marker_section.text
+        full_task_sections = task_assembly.sections + (context_marker_section,)
+        full_invocation_facts = {
+            "stage_index": context.stage_index,
+            "skill_names": list(context.skill_names),
+            "skill_protocol": skill_protocol_fact,
+            "skill_protocol_source": skill_protocol_source,
+            "participant_timezones": explicit_participant_timezones(
+                context.trigger_raw_payload
+            ),
+            "prompt_configuration": configuration.fingerprints(),
+            "prompt_sections": prompt_section_facts(
+                developer_sections, full_task_sections
+            ),
+        }
+        session_scoped_prompt = None
+        matching_routes = [
+            name for name, persisted_id in route_sessions.items()
+            if persisted_id == session_id
+        ]
+        runtime_config = self.runtime_config or (
+            self.codex_adapter.config if self.codex_adapter is not None else None
+        )
+        matching_codex_routes = [
+            route.name
+            for route in (runtime_config.routes if runtime_config else ())
+            if route.name in matching_routes
+            and route.runtime_kind is RuntimeKind.CODEX_CLI
+        ]
+        if (
+            feedback is not None
+            and not force_new_session
+            and len(matching_routes) == 1
+            and len(matching_codex_routes) == 1
+            and _consumer_revision_context_reusable(
+                self.store,
+                task,
+                proposal_revision=proposal_revision,
+                session_id=session_id,
+                fingerprint=source_context_fingerprint,
+                parent_agent_run_id=parent_agent_run_id,
+                feedback=feedback,
+            )
+        ):
+            compact_prompt = _consumer_revision_prompt(
+                feedback,
+                proposal_revision=proposal_revision,
+                continuation=continuation_prompt,
+                context_marker=context_marker,
+                current_time=current_context_time,
+            )
+            compact_sections = (
+                PromptSection(
+                    "Consumer Audit-feedback revision",
+                    "complete feedback with unchanged source context bound to this exact session",
+                    "task",
+                    compact_prompt,
+                ),
+            )
+            compact_invocation_facts = {
+                **full_invocation_facts,
+                "prompt_sections": prompt_section_facts(
+                    developer_sections, compact_sections
+                ),
+            }
+            session_scoped_prompt = {
+                "route_name": matching_codex_routes[0],
+                "session_id": session_id,
+                "prompt": compact_prompt,
+                "invocation_facts": compact_invocation_facts,
+            }
         result = process.execute(
                 run=claim.run,
-                invocation_facts={
-                    "stage_index": context.stage_index,
-                    "skill_names": list(context.skill_names),
-                    "skill_protocol": skill_protocol_fact,
-                    "skill_protocol_source": skill_protocol_source,
-                    "participant_timezones": explicit_participant_timezones(
-                        context.trigger_raw_payload
-                    ),
-                    "prompt_configuration": configuration.fingerprints(),
-                    "prompt_sections": prompt_section_facts(
-                        developer_sections, task_assembly.sections
-                    ),
-                },
-                prompt=task_assembly.text,
+                invocation_facts=full_invocation_facts,
+                prompt=full_task_prompt,
                 session_id=session_id,
-                developer_instructions=render_prompt_sections(
-                    developer_sections,
-                    placement="developer",
-                ),
+                developer_instructions=developer_instructions,
                 configure_command=configure_consumer_command,
                 parse_result=_parse_consumer_result,
                 prepare_result=lambda parsed: _prepare_reviewable_candidate(
@@ -659,14 +995,22 @@ class ConsumerAgentRunner:
                 on_progress=renew_session_lock,
                 image_paths=[Path(path) for path in context.image_paths],
                 required_capabilities=self._required_capabilities(context),
-                conversation_contract_hash=contract_hash,
+                conversation_contract_hash=skill_session_contract_hash or contract_hash,
                 force_new_session=force_new_session,
+                session_scoped_prompt=session_scoped_prompt,
         )
         return result
 
 
 def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revision, source_client):
     from app.reviewed_sources import capture_candidate_sources
+    try:
+        require_needs_human_context_eligible(
+            outcome=parsed.outcome.value,
+            trigger_quotes_agent_message=context.trigger_quotes_agent_message,
+        )
+    except ValueError as exc:
+        raise ResultParseError(str(exc)) from exc
     prepared = _prepare_outgoing_dingtalk_messages(parsed, store=store, task=task,
         context=context, proposal_revision=proposal_revision)
     if prepared.outcome is ConsumerOutcome.FAILED:

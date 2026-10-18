@@ -7,9 +7,11 @@ from app.dws_client import DwsCalendarAttendee, DwsCalendarEvent, DwsClient, Dws
 from app.meeting_alignment_models import MeetingSource
 from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
+    MeetingAsrTranscript,
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
     build_transcript_roster_evidence,
+    asr_transcript_paragraphs,
     minutes_creator_from_list_item,
     minutes_meeting_id,
     normalize_minutes_discovery_metadata,
@@ -382,6 +384,82 @@ def test_read_meeting_source_keeps_calendar_creator_over_weak_minutes_creator():
     assert source.creator.open_dingtalk_id == "open-a"
 
 
+def test_read_meeting_source_uses_persisted_asr_transcript_when_dws_transcript_fails():
+    dws = FakeDws(transcript_error=DwsError("paragraph API unavailable"))
+    transcript = [
+        {"text": "MCP transcription segment", "timestamp": "2026-07-14T12:00:00+00:00"}
+    ]
+
+    source = read_meeting_source(
+        dws,
+        "minutes-1",
+        calendar_evidence=calendar_evidence(),
+        transcription_override=transcript,
+    )
+
+    assert [line.text for line in source.transcript] == [
+        "MCP transcription segment"
+    ]
+    assert source.transcript[0].speaker_name == ""
+    assert source.transcript[0].speaker_user_id == ""
+    assert dws.calls == [
+        ("info", "minutes-1"),
+        ("summary", "minutes-1"),
+        ("current_user", ""),
+    ]
+
+
+def test_asr_transcript_offsets_segments_without_inventing_speaker_identity():
+    paragraphs = asr_transcript_paragraphs(
+        {
+            "provider": "ai_services",
+            "model": "qwen3-asr",
+            "audio_sha256": "a" * 64,
+            "audio_duration_seconds": 120,
+            "completed_chunks": 1,
+            "total_chunks": 1,
+            "segments": [
+                {"start_seconds": 22.3, "end_seconds": 26.6, "text": "开场讨论。"}
+            ],
+        },
+        meeting_started_at="2026-10-15T03:32:58+00:00",
+    )
+
+    assert paragraphs == [
+        {"text": "开场讨论。", "timestamp": "2026-10-15T03:33:20.300000+00:00"}
+    ]
+    parsed = MeetingAsrTranscript.model_validate(
+        {
+            "provider": "ai_services",
+            "model": "qwen3-asr",
+            "audio_sha256": "a" * 64,
+            "audio_duration_seconds": 120,
+            "completed_chunks": 1,
+            "total_chunks": 1,
+            "segments": [
+                {"start_seconds": 22.3, "end_seconds": 26.6, "text": "开场讨论。"}
+            ],
+        }
+    )
+    assert parsed.segments[0].text == "开场讨论。"
+
+
+def test_asr_transcript_rejects_incomplete_chunk_ledger():
+    with pytest.raises(ValueError, match="incomplete chunks"):
+        asr_transcript_paragraphs(
+            {
+                "provider": "ai_services",
+                "model": "qwen3-asr",
+                "audio_sha256": "a" * 64,
+                "audio_duration_seconds": 120,
+                "completed_chunks": 1,
+                "total_chunks": 2,
+                "segments": [
+                    {"start_seconds": 22.3, "end_seconds": 26.6, "text": "开场讨论。"}
+                ],
+            },
+            meeting_started_at="2026-10-15T03:32:58+00:00",
+        )
 def test_read_meeting_source_marks_calendar_roster_complete():
     source = read_meeting_source(
         FakeDws(),

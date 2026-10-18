@@ -93,6 +93,55 @@ native model failure or a reason for a compatibility branch. This fixture proves
 Task context survives native Claude resume; it does not validate all configured
 API routes, business scenarios or production release.
 
+## Consumer Audit-feedback revision input, 2026-10-17
+
+Production trajectory inspection found a repeated-input case in Consumer
+feedback revisions: Task 405336 used one Codex session for three Consumer
+revisions and repeated 41,385 of the original 41,394 characters in each of two
+revisions. This candidate narrows only the repeated Consumer input. It retains
+the original full source in the exact native session and submits the new Audit
+feedback, current turn time, any runtime correction and the complete replacement
+result requirement. Audit's independent context is unchanged.
+
+Compaction is allowed only when the persisted Audit return/reject points to the
+exact preceding completed Consumer run, task and generation, the selected
+Codex route/session is unique and unchanged, the latest completed transcript is
+still at its persisted line end, and native trajectory inspection proves the
+initial full-input fingerprint remains in that session with no intervening
+compaction. Missing, malformed, grown or compacted history and all other routes
+fall back to the full current Consumer input. The prompt snapshot records the
+input actually submitted.
+
+Local verification on the isolated worktree: 203 passed and 4 skipped across
+`tests/test_native_trajectory_context_guard.py`, `tests/test_agent_turn_runner.py`
+and `tests/test_consumer_agent.py`; Ruff and `git diff --check` pass. Synthetic
+integration tests assert that the verified path is shorter, includes the full
+Audit feedback and is reflected in the saved prompt snapshot; a failed guard
+keeps the original task facts in the full prompt. Native model comparison,
+production release and live readback are separate gates.
+
+### Native Codex cold/resume comparison
+
+Two tool-free native Codex sessions were cold-started with the same 628-character
+fictional meeting source, then resumed with either the full source plus Audit
+feedback or the compact feedback-only prompt. The type-only output schema did
+not encode expected values. Both native resumes returned valid structured
+results without tool calls. Each kept the prior slot `withdrawn`, retained the
+current local time and `America/Los_Angeles`, described the DST occurrence as
+unresolved, and reported a draft card with no invitation sent. The full arm said
+the new slot was `proposed`; the compact arm explicitly said
+`proposed_not_accepted`. The correction prompts were 1,041 and 519 characters,
+respectively (50.1% fewer in the compact arm). Session IDs, source digest and
+outputs are recorded in `evals/trajectory_optimization/consumer_revision_context.native.v1.json`.
+
+An earlier attempted comparison used output-schema `const` values that exposed
+the expected answer. Those two resumes are excluded. Its corrected runs used
+independent cold sessions and a schema that constrained field types only. This
+small synthetic comparison shows the tested model retained the source facts in
+these two sessions; it does not establish a general quality or latency gain,
+validate the service's trajectory reader against every native format, or cover
+other models, providers, tasks or production behavior.
+
 ## Consumer model-facing evidence correction
 
 Full CodeMode inspection of daily-report run 25643 supersedes the earlier raw
@@ -981,3 +1030,477 @@ and uncertain retries did not dispatch again. This independent external-action
 confirmation issue remains unresolved; it is not evidence that the input fix failed,
 and uncertain is not proof that the external comment was never written. No replay
 or incidental effect-reconciliation policy change was made.
+
+### Weekly Report validator and runtime publication alignment (2026-10-17)
+
+The synthetic new-target native trace exposed a validator/render contract
+mismatch: the installed validator returned `publishable=true`, followed by nine
+failed render calls for fields the renderer reads. The candidate validator
+reports the missing metric, issue, owner and business-line fields before
+rendering; after correction, rendering and the in-memory fake-sink readback
+passed. A matched prompt-only reuse hint did not remove a second identical
+successful render call, so no new Skill instruction was added.
+
+The current `consumer-system-contract-release` manifest also omitted both
+validator scripts and had a stale Weekly Report Skill digest. The candidate
+release now includes `report_contract.py` and `validate_run.py` with the Skill;
+focused publication tests cover exact copy and rollback. Skill tests: 57 passed;
+release, materials and CLI tests: 97 passed. At that local checkpoint,
+production HEAD `1fcbddda` still had the old `validate_run.py` digest and no
+manifest entry. No real report was written in this validation.
+Receipt: `evals/trajectory_optimization/weekly_report_missing_target_render.native.v1.json`.
+
+Acceptance for this release is bounded to the missing-target mechanism: a
+missing current document must use the complete previous meeting document as
+the render base and must not require a nonexistent target ID or revision;
+validator success must imply that every field read by the renderer is present.
+An existing target must retain its revision-guarded overwrite and readback,
+and the daily-report write path must continue to accept its existing content.
+The fixed anonymous new-target case and affected local tests verify those
+behaviors without writing a real document. Production acceptance additionally
+requires the published Skill and both validator scripts, the exact scheduled
+Skill binding and worker load receipt, a healthy new process, and queue,
+Attention and History readback. A real post-release document publication is
+not claimed without its own provider receipt.
+
+After merging `origin/main` at `3039eb159`, the prior PR Quality run's 48
+failed test IDs were compared with the same-base main run's 48. One new failure
+was the generation-fence test's lightweight database fixture: it stubbed the
+writer but not the caller's task-type lookup. The production writer already
+opened the full Store. Completing that fixture preserved its old/new generation
+assertions; the focused test passed. Before review, the merged branch passed 86 CLI/release
+tests, 53 materials/receipt/boundary/artifact tests, and 34 Skill contract tests;
+Ruff and diff checks passed. Read-only publication preflight passed all 16
+manifest entries and found only the Weekly Report Skill plus its two validator
+scripts changing. The People OA Skill was already identical to the current
+repository source; only its stale manifest `old_sha256` was refreshed.
+
+PR review found that an exact rendered-content digest check would add a new
+publication gate beyond the missing-target repair, so it was removed. The
+service binds target existence and revision from rendering; the existing
+document content and JSONML validation remains in the writer. Review also
+found that business-line metrics were being required to carry `previous` and
+`change`, fields read only by the company-metric renderer. A separate field
+set now matches the business-line renderer. A valid synthetic Friday metric
+without those two fields passes validation and renders 32 managed nodes;
+the 58 Skill tests and 97 affected CLI/release tests pass after
+these corrections. The publication preflight still changes only the same
+three Weekly Report files.
+
+### Production readback (2026-10-18)
+
+PR #130 merged as `f9ea9b0c`. Formal deployment with
+`--publish-consumer-system-contracts` advanced the production checkout from
+`0376f4d4` to that commit. Release receipt
+`deploy-c4bbe4ce-634d-4ed0-8fd2-7293c1aea384` is `verified` and records
+only the Weekly Report Skill plus `report_contract.py` and `validate_run.py`
+as changed files. The installed SHA-256 values are respectively
+`6c510f3af2aa955008bcbbacc076c93956d7f6d5ee641c99fff09800159adb0c`,
+`bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a`,
+and `4c81e3de54a191655da8c899e2c50464108828a4be769014743f837b976bd6b5`.
+Active runtime config 343 binds the Weekly Report Skill to revision 196 and
+both new service PID 35611 and email-worker PID 35613 reported that exact
+Skill digest without an error. Scheduled task 13 remains enabled at version
+23, references revision 196, and has no pending old trigger.
+
+The new supervisor PID is 35601; `healthz` returned OK. Console scheduled
+queue had zero pending/running items; Attention remained at seven and History
+returned recent items. The existing overall `degraded` indicator is from a
+Work item last updated on 2026-10-17 with no terminal handling, not from this
+deployment. No post-release Weekly Report turn or real document write occurred
+at this checkpoint, so the production readback proves code, Skill and runtime
+binding, while actual publication awaits the next natural run and provider
+readback.
+
+## Task semantic-context reuse draft: no-go, 2026-10-18
+
+Draft PR #125 combines two changes. Its Consumer feedback-revision mechanism
+was delivered separately in PR #134. Its remaining Task mechanism omits
+semantic context only when the immediately preceding Task input has an exact
+semantic-context fingerprint in the same native session and runner lifetime.
+The fingerprint includes `current_work_item`, so a new source or Work Item is
+unlikely to match. The anonymous native comparison in #125 proves one
+constructed matching case saved 8,974 submitted characters and preserved that
+case's Project assessment; it does not establish repeated production benefit.
+
+Read-only production metadata yielded 8,921 completed Task Agent runs with a
+session ID and 340 adjacent completed-run pairs sharing a session. Only eight
+of those pairs shared both `summary_input_id` and source identity. This was a
+metadata proxy, not an exact fingerprint count. The JSONL file for the most
+recent shared session was unavailable, but Codex's paginated native history
+retains its complete turns. A file-only lookup had missed that source.
+
+The exact native-input comparison is now complete for recent applicable
+Codex sessions (2026-10-10 through 2026-10-17): five sessions, 36 completed
+Task runs and all 31 adjacent completed-run pairs. Each saved user message was
+bound to its run time window, its `Current semantic Project/Task context` JSON
+was extracted without re-rendering current database state, and the exact
+submitted bytes were hashed. **No adjacent pair had the same full semantic
+context fingerprint.** The median extracted context was 337,713 characters
+(range 285,561–419,557). Three additional recent completed runs in one shared
+Claude CLI session were excluded because the draft applies only to Codex and
+that session is not in Codex native history. Older shared sessions were not
+used to extrapolate current benefit.
+
+The most recent Codex session does contain seven pairs of identical full
+semantic contexts among runtime attempts for the same source. Six pairs have
+native compaction between the full submissions; the sole pair without
+compaction follows a failed runtime attempt (`codex_oauth_model_unsupported`),
+which cannot seed the draft runner's successful prior-context state. These are
+not seven eligible, distinct completed Task decisions. In the 31 completed-run
+pairs, 13 had no compaction between turns and 18 did; none met the draft's
+exact-fingerprint gate. PR #125 therefore remains closed: its Task half has
+zero observed eligible production pairs in this bounded recent comparison.
+
+Different current Work Items still carry much overlapping historical data:
+across the 31 adjacent pairs, the median byte-identical row payload was
+101,574 characters of `source_documents`, 58,538 of `source_signals`, and
+11,210 of `project_contexts`. This is an overlap measurement, **not** safe
+prompt savings: a changed current source makes the full context differ, and
+compaction or missing model-visible history can make old rows unavailable.
+It identifies a separate row-level retrieval/projection question, not grounds
+to reactivate #125 or suppress prior source facts.
+These native turns predate PR #128's within-one-input sharing of exact duplicate
+`visible_ranges` and `decoded_excerpts`, which is already deployed. The row
+overlap above measures identical rows **between** different inputs; it must
+not be counted again as the within-input saving from #128 or presented as a
+post-#128 production input length. No natural Task run after that release was
+available in this readback.
+
+Acceptance for this specific optimization would require a complete, repeated
+production trajectory showing byte-identical context across adjacent Tasks,
+measured input savings, and a fixed case preserving Task/Project decisions,
+source citations, and no cross-item omission. The current evidence disproves
+the first condition in the recent applicable sample. Do not merge or deploy
+the Task half of #125, or add fallback/prompt rules to make the draft fire
+more often. Any row-level alternative needs its own full-trajectory root
+cause, exact current-source and citation-preservation criteria, fixed
+business-decision comparison, and native visibility proof.
+
+## Consumer stage-pair correction diagnostic, 2026-10-18
+
+Read-only production records show nine Consumer result failures across three
+reply tasks with the same `later stage requires predecessor_review_id` detail.
+The latest task had six failed revision attempts after one completed Consumer
+candidate and one Audit return. Its complete native trajectory is available in
+Codex's paginated thread history even though the JSONL files are absent: the
+original Consumer session has 34 projected items across four turns, the Audit
+session 16 items, and two fresh retry sessions nine and ten items. The stored
+inputs, tool calls and returns, model outputs, and terminal run records were
+compared. All 18 business MCP reads in these four sessions report completed.
+
+The service input told the revision to echo
+`{"stage_index":0,"predecessor_review_id":null}`. Each failed output instead
+returned stage 0 with predecessor ID 1. The result validator rejected this
+invalid pair but described it as a *missing* predecessor for a later stage;
+the correction prompt repeated that misleading detail. Subsequent same-session
+and fresh-session attempts repeated the same invalid pair. The binding itself,
+Audit feedback, stage budget, and business decision are not changed here.
+
+Acceptance for this one defect: stage 0 with any predecessor ID must still
+fail with a diagnostic saying that stage 0 requires a null predecessor; a later
+stage without an ID must still fail with the opposite diagnostic; valid pairs
+must still parse; and an anonymous same-session correction must remove only
+the extra ID while preserving the other JSON fields. The new wire-boundary
+regression failed against the old message and passed after the change. The
+affected Agent contract and turn-runner tests pass (144). One read-only native
+Codex OAuth fixture with the configured `gpt-5.6-luna` model returned the
+deliberately invalid pair on its first turn, then returned a Pydantic-valid
+stage-0/null pair on resume with every other JSON field identical and no tool
+calls; the receipt is
+`evals/trajectory_optimization/consumer_stage_diagnostic_native.v1.json`.
+This is controlled correction evidence, not a real post-release business turn.
+
+### Release readback
+
+PR #135 merged as `3ab4f2fe` after independent review found no issues.
+The affected contract, turn-runner, Consumer, and orchestrator tests passed
+(352 passed, 4 skipped); Ruff and whitespace checks passed. Formal
+`python -m app.deploy` waited for the four items that were in flight at the
+preflight check and advanced the production checkout from `8b480c30` to
+`3ab4f2fe`. The new launchd supervisor PID was 74487 and `/healthz` returned
+HTTP 200. The subsequent in-flight count and dispatcher running counts were
+zero. Status, Attention, and History APIs returned HTTP 200; Attention still
+contained seven existing items. The newest failed History item occurred at
+10:19:39 UTC, before the 11:29 UTC deployment, while newer History items were
+completed. The existing system-health `degraded` violation remains and is not
+evidence of a new stage-binding failure. GitHub Quality was still running at
+readback and is supplementary to the local and fixed-case evidence.
+
+This release verifies that the new diagnostic is installed and the service
+restarted cleanly. No natural post-release Consumer correction turn has yet
+confirmed a business outcome.
+
+## Recent Audit native-input inventory: no change, 2026-10-18
+
+The complete saved native turns for 96 production Audit runs created from
+2026-10-16 through the 2026-10-18 07:15 UTC run are available in paginated
+Codex history. The run ledger has 95 completed role runs and one failed role
+run; completion alone does not prove the business judgment. The failed run
+returned extra fields outside the Audit result contract and its same-task
+retry completed. These runs contain 470 MCP calls, of which 14 report tool
+failure. Seven thread-reply reads report that the message detail has no
+conversation/thread identity; four document reads report a spreadsheet or
+AI table rather than an online document (three are retries on one task).
+The remaining three are a forbidden text path, a Drive byte limit, and a
+forbidden Skill path. All runs with those tool failures nevertheless reached a
+completed Audit result. This is a tool-selection inventory, not proof that the
+result was correct or that treating a tool error as an empty source is safe.
+
+The saved Audit task inputs range from 12,701 to 53,300 characters, median
+27,096. All 96 include candidate source bindings. In 93 inputs, the exact
+Task source matches the captured candidate binding and the original trigger
+uses a source reference instead of copying its text a second time. The three
+nonmatching inputs retain the complete original source and candidate binding,
+as the released equality gate requires. Candidate source bindings themselves
+have median serialized length 8,621 characters; current scalar-field evidence
+has median 3,205 characters. Those evidence sections were introduced for
+specific Audit correctness failures. Their size and overlap with the full
+candidate are not sufficient grounds to remove them or alter an audit rule.
+
+No repeated, high-impact Audit failure mechanism is established by this
+bounded inventory. The seven thread-reply errors and four wrong-type reads
+are concrete candidates for later trajectory review, but this sample does
+not show a wrong decision caused by either tool error. The three scheduled
+Audit turns predate PR #133's production release, so they cannot validate its
+new Consumer document-return handoff; its fixed anonymous case and deployment
+receipt remain the current evidence. No prompt, Skill, tool, result contract,
+audit policy or provider behavior changes in this inventory. The next Task
+input investigation must start with a natural post-PR #128 native input and
+measure row-level overlap without counting PR #128's already-shipped
+within-input source sharing a second time. Any removal needs fixed cases
+preserving current-source facts, Project/Task decisions and exact citations.
+
+## Next selection gate: Task historical-row scope, 2026-10-18
+
+Read-only current-run lookup still finds no Task Agent run created on
+2026-10-18 after PR #128. To separate its shipped within-input sharing from
+the remaining inter-turn overlap, 47 complete native Task inputs from six
+pre-release sessions were passed through the current pure
+`share_source_document_projections` function, without invoking an Agent or
+rebuilding a source from today's database. All 47 simulated inputs became
+smaller, by a median 20,917 characters. Across 34 adjacent turn pairs with
+different current source IDs, the simulated payloads still share median
+83,099 characters of exact `source_documents` rows, 59,089 of
+`source_signals`, and 11,210 of `project_contexts`. These 47 turns include
+runtime attempts and are not 47 independent business decisions. The numbers
+are a deterministic counterfactual on old inputs, **not** measured production
+input savings or evidence that the shared rows may be omitted.
+
+This candidate meets the repeated-size screen but not the safe-removal gate.
+Before changing retrieval, inspect a natural post-#128 Task input and its
+complete trajectory to identify which historical rows were needed for its
+current-source assessment, prior Task matching, owner evidence and citations.
+Then freeze paired cases that preserve those decisions and exact cited source
+IDs while testing a narrower row selection under the same model and facts.
+The change should be limited to Task retrieval/projection and its necessary
+documentation; report submitted-length reduction and any lost or changed
+business result. If the fixed cases cannot prove those invariants, keep the
+present complete historical rows. Do not reuse an earlier turn's rows merely
+because their bytes match: native compaction may have removed them from the
+model-visible session.
+
+## DingTalk recent-message raw-payload sharing: isolated candidate, 2026-10-18
+
+**Selected mechanism and finite acceptance.** Complete saved native Consumer
+and Audit trajectories show that `agent_cli.read_dingtalk_messages` commonly
+returns the same message body in top-level `content` and the same message's
+`raw_payload.content` / `raw_payload.text`. Among 120 successful saved MCP
+reads from 142 recent role sessions, there were 3,553 messages. Their native
+model-visible tool-result text totaled 9,610,958 characters; serialized
+`raw_payload` values contributed about 5,176,572 characters and exact repeated
+raw string values about 2,708,270. In 105 of 120 calls, exact repeated raw
+strings alone exceeded 5,000 characters. This is a repeated tool-result
+assembly issue, not evidence that the underlying message content should be
+truncated. The fixed gate is to reduce duplicate bytes while preserving exact
+reconstruction of every raw payload, all message fields and order, the current
+Consumer/Audit judgments and reply targets, and unchanged DWS query, failure,
+Prompt, route and audit-policy behavior. A changed business judgment or a
+nonreconstructable raw field fails the gate.
+
+**Local checks.** Deterministic read-only replay of all 120 saved successful
+tool results reconstructed each of the 3,553 original `raw_payload` objects
+from the projected form, including key order, and preserved every original
+top-level field. Of those messages, 3,031 had a shorter projected form.
+In the initial compact-JSON replay, length fell from 8,317,652 to 5,820,948
+characters across the 120 result objects, saving 2,496,704 characters
+(median 15,436 per call, maximum 98,908). Independent review found that a
+compact-JSON size gate could let short duplicates enlarge FastMCP's actual
+indented tool text. The gate now measures the message inside the `messages`
+array with FastMCP's real JSON formatting. The pre-correction compact savings
+are a size baseline, **not** a final model-visible saving claim; the corrected
+gate may retain more short raw values. A regression invokes `FastMCP.call_tool`
+at the short-value boundary and confirms the original result is retained;
+additional lengths and Unicode confirm non-growth and lossless expansion under
+the actual format. The focused tool/projection tests passed (91 tests), as did
+Ruff. Four anonymous, no-tool, read-only Codex OAuth
+comparisons checked the original and projected forms of two Consumer message
+cases and two Audit candidate cases. Both Consumer forms returned `no_action`
+for a previously handled confirmation, and targeted the same unanswered
+question without inventing a backend action. Both Audit forms approved the
+grounded `no_action` candidate and returned a reply containing unsupported
+backend claims. These small cases check interpretation of this representation;
+they do not prove the full production role workflow or a new business outcome.
+
+**Production readback.** Independent review found no remaining Critical or
+Important issue after the FastMCP size-gate correction. PR #136 merged as
+`808f5579`; `python -m app.deploy` advanced the production checkout from
+`3ab4f2fe` to that commit after its normal quiet wait and backup. At the
+2026-10-18 12:22 UTC readback, launchd supervisor PID 819 was running from
+the new checkout and `/healthz` returned HTTP 200 with `status=ok`. Console
+Status, Attention and History returned HTTP 200. The queue view had no
+processing items; its six pending items were Email provider actions. The
+scheduled dispatcher showed two running scans, while other dispatchers showed
+zero running; Attention totaled seven, and the five latest History items were
+`done`. The existing overall health `degraded` indicator remained. GitHub
+Quality was still in progress at this checkpoint and is supplementary to the
+focused behavior validation. No natural post-release Consumer/Audit message
+read has yet established a production business judgment; the local replay and
+fixed cases establish the lossless output contract under their tested inputs.
+
+## Email Classifier category-table duplication: no-go, 2026-10-18
+
+**Observed input and proposed boundary.** The latest readable native Email
+Classifier turn submitted 15,937 service-prompt characters. Its managed Skill
+contained a fixed nine-category reference table, while the same submitted
+input also contained current `allowed_category_keys` and descriptions for 11
+categories, including `finance` and `invoice`. The current prompt assembly
+includes both by construction, so the duplication recurs across classifier
+turns. The candidate replaced only the fixed Skill table with a short pointer
+to the current category descriptions; no runtime or Skill file was changed.
+The finite gate required every fixed case to preserve the category, importance
+flag, and unsubscribe candidate index, as well as a valid wire result. A
+shorter prompt alone was insufficient.
+
+**Paired fixed cases and decision.** Eleven anonymous messages, one per current
+category, were run once through each arm using the same `gpt-5.6-luna` Codex
+OAuth model, synthetic category descriptions, message facts, read-only CLI
+settings and no business MCP. All 22 results passed `AgentClassificationWireResult`
+validation and made no tool calls. The candidate saved exactly 1,649 prompt
+characters per case; all categories and unsubscribe indices matched. The
+`external_billing` case changed `important` from `false` in the baseline to
+`true` in the candidate. This breaches the predeclared preservation gate, so
+the candidate is **not approved for implementation or deployment**. A single
+paired sample does not establish whether the shorter instruction caused the
+change or whether model variance contributed. The sanitized fixture, prompt
+hashes, and all 22 parsed outputs are in
+`evals/trajectory_optimization/email_classifier_category_table_pair.v1.json`.
+The next investigation must resolve the importance behavior with a repeated,
+fixed comparison or an explicit product-level importance criterion before
+reconsidering a Skill change. No real email classification or provider action
+was part of this evaluation.
+
+**Exact-input repeat, 2026-10-18.** The saved anonymous case and the original
+evaluation script were used to reconstruct both prompts byte for byte; their
+SHA-256 hashes match the v1 receipt. Two new calls per arm, interleaved under
+the same `gpt-5.6-luna` read-only invocation, returned valid wire results and
+made no tool calls. Together with the original pair, all three baseline calls
+classified the subscription receipt as `external_billing` with
+`important=false`, while all three shorter-Skill calls classified it as
+`external_billing` with `important=true`. A preliminary two-per-arm probe had
+used a simplified sender shape and produced a different prompt hash; it is
+recorded separately and is not counted as a reproduction of the original
+comparison. The exact-input result strengthens the no-go: removing the table
+reliably changes an importance decision in this fixed case. No Skill or runtime
+change follows. The compact, sanitized repeat receipt is
+`evals/trajectory_optimization/email_classifier_category_table_repeat.v2.json`.
+
+### DingTalk Sheet range style sharing, 2026-10-18
+
+**Observed failure boundary.** Four production tasks' native trajectories had
+28 `read_dingtalk_sheet_range` calls; ten in one task produced about 3.69 million
+characters of tool output. Its `A1:BV66` return reached the native 1 MiB text
+boundary twice, leaving saved MCP text unparsable, while a separate read-only
+DWS command for the same range returned valid JSON. A 534,380-character saved
+partial-range result had 1,970 styled cells but only 28 distinct style objects;
+styles occupied 253,873 compact JSON characters. This supports a tool-output
+transport/representation issue, not a DWS JSON defect. The saved native result
+does not by itself prove exactly what the model retained after truncation.
+
+**Finite gate and edit.** Preserve every row, column, value, style, order,
+provider status and failure; a small response must not grow. A large anonymous
+range must remain parseable at the native tool boundary, and fixed value/style
+judgments must match the original format. Only the range tool's returned
+representation changed: exact repeated `cellStyles` objects use
+`cellStyleRef` plus a top-level `sharedCellStyles` array when the actual
+FastMCP serialization shrinks. No query, budget, prompt, role, route, session
+or policy change was made.
+
+The focused regression started with two failing Consumer/Audit tool-boundary
+cases, then passed after the edit. The failure-receipt preservation case also
+failed before the explicit success check and passed after it. Independent
+review found that missing, null and nonboolean success fields also needed to
+remain unchanged; four new cases failed before the strict `success is True`
+check, then passed. All 111 affected local tests and Ruff pass. A synthetic
+66-by-74 range exceeds 1 MiB in the old representation, falls below 1 MiB
+after sharing, and reconstructs to identical ordered JSON serialization. In the fixed
+anonymous Codex OAuth comparison, original and shared outputs both identified
+the same three red-font cells, their 161 sum, and D12's value/color; the MCP
+text fell from 22,491 to 7,036 bytes. A separate large candidate run delivered
+all 66 rows and 74 columns as valid 346,039-byte JSON; the model read the
+bottom-right value 4,884 and style color `#000003`. A 352,640-character native
+transport probe also retained its final marker. Compact results and hashes are
+in `evals/trajectory_optimization/sheet_style_sharing.native.v1.json`.
+
+A read-only repeat of the real 66-by-74 DWS range through the implemented
+helper returned `success=true` and 79 unique styles. Its FastMCP-formatted
+result fell from 1,327,319 to 367,854 bytes; expanding every reference
+restored identical ordered JSON, and the projected JSON parsed. This probe did
+not submit business cells to a model or change the source workbook.
+
+These anonymous runs verify representation and model visibility in the fixed
+cases. They do not establish a real post-release business outcome.
+
+**Release readback, 2026-10-18.** Independent review closed its one material
+finding before PR #146 merged as `2246d5184de62a4f629967fc0effbdb2b6504d10`.
+The official `python -m app.deploy` path waited for a quiet window, backed up
+the database and advanced the production checkout from `91da74b8` to that
+merge commit. The production checkout was clean; launchd reported a running
+new PID, `63135` (previously `77471`), and `/healthz` returned `ok=true` and
+`status=ok`. Console readback showed 13 queues, six pending items, zero
+processing items, 12 failed items, zero retryable items and seven Attention
+items. The failed and pending queue counts and seven Attention items were
+already present before deployment; no new failed or stuck work was observed.
+History reported 36,080 total records. A real business Sheet run after this
+release has not yet been observed, so no production judgment outcome is claimed.
+GitHub Quality remained in progress at the time of this readback; it is a
+supplemental check, not the basis for the behavior acceptance above.
+
+## Next trajectory selection gate, 2026-10-18 14:46 UTC
+
+The current production database has 91 Consumer and 63 Audit role runs created
+since 2026-10-17. Their exact native attempt ranges were checked against the
+Codex session files, not rebuilt from today's configuration. Only the three
+Consumer and three Audit runs for tasks 405419 and 405421 still have readable
+complete native records; their ranges include terminal `task_complete`
+markers. Older session files referenced by the run records are currently
+absent. The latest Task Agent run remains on 2026-10-17, before PR #128, and
+the latest Meeting planner native session is also no longer available. These
+are availability facts at this checkpoint, not a conclusion that older runs
+failed or that their decisions were wrong.
+
+The six available role trajectories cover a scheduled Daily Report and a
+message-triage task. Their service-submitted Developer sections are about
+36–37 thousand characters each; Task sections range from 1,196 to 20,930.
+No exact paragraph of at least 120 characters was repeated between Developer
+and Task in these inputs, and the exact Skill bodies read through
+`read_task_skill` were not already embedded in either submitted section. This
+does not rule out semantic overlap or CLI-injected material. In the scheduled
+Consumer turn, all five selected Skills were read before the 22,288-byte
+compact service-facts result, including the optional Minutes Skill; this is
+one observed run, not repeated evidence of a generic scheduled-task defect.
+The Audit turns reread their selected Skills and facts for separate proposal
+revisions; their independent source verification is part of the current
+review behavior and cannot be removed based on byte overlap alone.
+
+No new runtime change passes the next selection gate today. The Task
+historical-row candidate above has repeated byte overlap but still lacks a
+natural post-#128 full trajectory and fixed cases proving that current-source
+facts, Project/Task decisions and exact citations survive narrower retrieval.
+Draft PR #127's speaker-index arm failed its fixed sensitive-audience case;
+the separate native Skill duplication it also addresses has not been shown to
+remain after PR #132. PR #129 changes only one Daily Report seed and its two
+synthetic comparisons show mixed token totals, so it does not establish a
+general scheduled-task improvement. Keep both candidates unreleased; do not
+add a prompt rule, remove historical rows, or broaden a task-specific edit to
+scheduled tasks without the missing trajectory and behavior evidence.

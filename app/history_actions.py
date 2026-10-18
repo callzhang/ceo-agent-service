@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 
 from app.agent_contracts import DecisionOption
+from app.external_failures import is_external_task_error
 from app.history import HistoryItem
 from app.meeting_alignment import DEFAULT_MEETING_MAX_ATTEMPTS
 from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
@@ -77,6 +78,19 @@ def reply_history_attention(
             external_effect=external_effect, retry_attempt=task.attempts,
             retry_limit=MAX_REPLY_TASK_ATTEMPTS, retry_at=task.available_at,
             actions=(HistoryAction("details", "技术详情"),))
+    if (
+        status == "failed"
+        and attempt.action.strip().lower() == "direct_unsubscribe"
+        and is_external_task_error(
+            attempt.audit_summary.strip()
+            or attempt.send_error.strip()
+            or attempt.codex_reason
+        )
+    ):
+        # External page/network failures stay failed in History, but are not
+        # internal manager work. A current task in its backoff window has
+        # already returned through the automatic_recovery branch above.
+        return None
     if status == "needs_human":
         choices = tuple(HistoryAction(o.key, o.label, o.instruction, o.consequence) for o in decision_options)
         return HistoryAttention(kind="needs_manager", reason=reason, external_effect=external_effect,

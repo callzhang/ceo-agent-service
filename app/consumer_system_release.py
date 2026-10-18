@@ -24,6 +24,8 @@ MANAGED_NAMES = (
 SKILL_PATHS = tuple(f"ci/shared-skills/{name}/SKILL.md" for name in MANAGED_NAMES)
 EXPECTED_SOURCES = frozenset((
     *SKILL_PATHS,
+    "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",
+    "ci/shared-skills/ceo-weekly-report/scripts/validate_run.py",
     "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md",
     "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
     "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
@@ -210,7 +212,13 @@ class ConsumerSystemPublication:
         if self.new_config_id is None:
             raise ValueError("Consumer system release has no new runtime configuration")
         active = self.store.get_active_runtime_skill_config()
-        if active is None or active.id != self.new_config_id:
+        current = active
+        while current is not None and current.id != self.new_config_id:
+            if current.parent_id is None:
+                current = None
+                break
+            current = self.store.get_runtime_skill_config(current.parent_id)
+        if active is None or current is None:
             raise ValueError("Consumer system runtime configuration did not activate")
         bindings = self.store.list_runtime_skill_bindings(active.id)
         expected_loaded = {

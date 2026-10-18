@@ -1,3 +1,4 @@
+from app.task8_storage import task8_set_parts
 import json
 from pathlib import Path
 from urllib.parse import urlencode
@@ -27,9 +28,10 @@ def _question():
         "outcome": "needs_human", "summary": "Choose a current response", "proposal": None,
         "decision_options": [
             {"key": "send", "label": "Send reply", "instruction": "Send the exact reply",
-             "consequence": "Applicant receives it", "plan": plan},
+             "consequence": "Applicant receives it", "applies_to": "task_class", "plan": plan},
             {"key": "stop", "label": "Stop", "instruction": "Do not reply",
-             "consequence": "No message", "terminal_outcome": "skipped", "reason": "Already resolved"},
+             "consequence": "No message", "applies_to": "task_class",
+             "terminal_outcome": "skipped", "reason": "Already resolved"},
         ],
         "error": {"code": "", "retryable": False, "authorization_required": False},
         "risk": "medium", "confidence": 0.8, "rule_coverage": 0.4,
@@ -90,7 +92,7 @@ def _approved_question(path: Path, *, historical_scores=False):
     )
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
-        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
+        db.execute(f"update tasks set {task8_set_parts('reply_tasks', {'status': 'needs_human'}).sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*task8_set_parts('reply_tasks', {'status': 'needs_human'}).parameters, task.id))
     return store, task, candidate, review, attempt_id
 
 
@@ -184,7 +186,7 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
     )
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id})
-        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
+        db.execute(f"update tasks set {task8_set_parts('reply_tasks', {'status': 'needs_human'}).sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*task8_set_parts('reply_tasks', {'status': 'needs_human'}).parameters, task.id))
     reopened = AutoReplyStore(path)
     assert reopened.reconcile_invalid_needs_human_projections() == 0
     assert reopened.reconcile_valid_needs_human_projections() == 0
@@ -258,7 +260,8 @@ def test_pre_gate_unqualified_current_human_result_is_not_actionable(tmp_path):
 def test_supplement_missing_execution_source_does_not_change_choice(tmp_path):
     store, task, candidate, review, attempt_id = _approved_question(tmp_path / "missing.sqlite3")
     with store._connect() as db:
-        db.execute("update tasks set trigger_message_json='{}' where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)", (task.id,))
+        parts = task8_set_parts("reply_task_inputs", {"trigger_message_json": "{}"})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)", (*parts.parameters, task.id))
     fields = dict(kind="supplement", candidate_id=candidate["id"],
                   review_id=review["id"], instruction="One new fact")
     assert _submit(store, attempt_id, **fields)[0] == 409
@@ -306,9 +309,10 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
         "workspace": str(tmp_path), "reasoning_effort": "medium", "skill_protocol": "test",
     }
     with store._connect() as db:
-        db.execute("update tasks set channel='scheduled' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
-        db.execute("update tasks set channel='scheduled', trigger_message_json=? where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-                   (json.dumps(saved_execution), task.id))
+        parts = task8_set_parts("reply_tasks", {"channel": "scheduled"})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, task.id))
+        parts = task8_set_parts("reply_task_inputs", {"channel": "scheduled", "trigger_message_json": json.dumps(saved_execution)})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)", (*parts.parameters, task.id))
         update_action(db, "reply_attempts", attempt_id, {"channel": "scheduled"})
     scheduled_task = store.get_reply_task_for_message(task.conversation_id, task.trigger_message_id, channel="scheduled")
     assert scheduled_task is not None
@@ -320,7 +324,8 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
 
     second, _task, candidate, review, attempt_id = _approved_question(tmp_path / "scheduled-choice.sqlite3")
     with second._connect() as db:
-        db.execute("update tasks set channel='scheduled' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (_task.id,))
+        parts = task8_set_parts("reply_tasks", {"channel": "scheduled"})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, _task.id))
         update_action(db, "reply_attempts", attempt_id, {"channel": "scheduled"})
     assert _submit(second, attempt_id, kind="select", candidate_id=candidate["id"],
                    review_id=review["id"], option_key="stop")[0] == 303
@@ -338,7 +343,8 @@ def test_selected_execution_refusal_keeps_block_reason_in_status(tmp_path):
     store.record_candidate_action_outcome(execution["id"], "executor", 0, "failed", error)
     store.finish_candidate_execution(execution["id"], "executor", "failed", {"error": error})
     with store._connect() as db:
-        db.execute("update tasks set status='failed',error=? where record_type='reply_tasks' and cast(legacy_key as integer)=?", (error["code"], task.id))
+        parts = task8_set_parts("reply_tasks", {"status": "failed", "error": error["code"]})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, task.id))
         update_action(db, "reply_attempts", attempt_id,
                       {"send_status": "failed", "send_error": error["code"]})
     original_task = store.get_reply_task(task.id)

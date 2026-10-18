@@ -72,3 +72,40 @@ def test_preapproval_hiring_requisition_uses_business_line_decision_and_allows_n
         assert "the absence of a Xiaoqing record before approval is not contrary evidence" in text
         assert "The business-line owner's approval of the stated number is sufficient business approval" in text
         assert "project/budget evidence is consistent" in text
+
+
+def test_org_structure_material_gap_is_asked_of_responsible_party_before_human_escalation() -> None:
+    for path in [Path("ci/shared-skills/stardust-oa-people-review/SKILL.md")]:
+        text = path.read_text(encoding="utf-8")
+        assert "No basis: request the missing business rationale from the submitter" in text
+        assert "Do not escalate solely because the agent cannot independently verify" in text
+        assert "business need, affected work and people, receiving arrangement, and reporting line" in text
+        assert "Keep the approval pending and independently verify the response" in text
+        assert "Use `needs_human` only for a genuine policy or authority gap" in text
+        assert "If the given basis cannot be proven by evidence, `needs_human`" not in text
+
+
+def test_ordinary_approval_is_not_a_reserved_personal_decision_and_wrong_recipient_comment_is_not_askback() -> None:
+    for path in SKILL_PATHS:
+        text = path.read_text(encoding="utf-8")
+        assert "An ordinary final approval decision at Derek's assigned node is not, by itself, a personal decision reserved for `needs_human`" in text
+        assert "A previous comment asking Derek to decide does not replace asking the verified submitter or responsible party for missing case facts" in text
+        assert "Only an explicit discretionary choice outside the normal approval decision" in text
+
+
+def test_org_change_does_not_repeat_a_verified_return_after_the_same_approver_reapproves_without_new_facts() -> None:
+    path = Path("ci/shared-skills/stardust-oa-people-review/SKILL.md")
+    text = path.read_text(encoding="utf-8")
+    assert "prior verified return for the same unresolved facts" in text
+    assert "the responsible approver again approves without supplying new evidence" in text
+    assert "do not repeat the return or send a duplicate comment" in text
+    assert "Keep the current OA task pending with `no_action`" in text
+    assert "until new material or an explicit instruction changes the facts" in text
+    assert "takes precedence over the generic rule to return an unresolved issue again" in text
+    assert "A second action requires new submitted evidence" in text
+
+
+def test_algorithm_department_compensation_authority_is_documented_in_the_people_skill() -> None:
+    for path in SKILL_PATHS:
+        text = path.read_text(encoding="utf-8")
+        assert "For performance or compensation decisions in the algorithm department, Derek personally makes the final decision" in text

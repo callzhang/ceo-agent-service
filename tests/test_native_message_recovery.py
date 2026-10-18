@@ -33,6 +33,23 @@ class InterruptedNativeClient(DwsClient):
                 'content': command[command.index('--markdown') + 1],
             })
             raise RuntimeError('simulated interruption after provider acceptance')
+        if command[1:3] == ['chat', '+chat-messages']:
+            rows = self.messages if self.visible else []
+            start = command[command.index('--start') + 1]
+            end = command[command.index('--end') + 1]
+            return {
+                'contractVersion': 'im.message-list.v1',
+                'queryRange': {'startTime': start, 'endTime': end, 'order': 'asc'},
+                'messages': rows,
+                'count': len(rows),
+                'complete': True,
+                'partial': False,
+                'hasMore': False,
+                'truncated': False,
+                'failedCount': 0,
+                'failures': [],
+                'pagesFetched': 1,
+            }
         assert command[1:3] == ['chat', 'message']
         assert command[3] in ('list', 'list-direct')
         if self.typed_ledger:
@@ -54,7 +71,7 @@ class InterruptedNativeClient(DwsClient):
     ('send_direct_message', {'open_dingtalk_id': 'exact-open'},
      ['--open-dingtalk-id', 'exact-open']),
 ])
-def test_native_missing_receipt_reads_exact_target_after_restart_without_resend(
+def test_native_missing_receipt_never_resends_and_respects_readback_completeness(
     tmp_path, operation, target, read_target, legacy_timestamp, typed_ledger,
 ):
     path = tmp_path / 'native-recovery.sqlite3'
@@ -113,23 +130,23 @@ def test_native_missing_receipt_reads_exact_target_after_restart_without_resend(
         task, candidate['id'], review['id'])
     assert still_unknown.outcome == 'failed'
     assert client.sends == 1
-    reads = [command for command in client.commands if command[1:3] == ['chat', 'message']]
-    if not legacy_timestamp:
-        assert reads, 'uncertain native send must inspect its original provider target'
-        assert reads[-1][reads[-1].index(read_target[0]):][:2] == read_target
+    if operation == 'send_group_message' and not legacy_timestamp:
+        complete_reads = [command for command in client.commands
+                          if command[1:3] == ['chat', '+chat-messages']]
+        assert complete_reads, 'group send recovery must inspect the complete original window'
+        assert complete_reads[-1][complete_reads[-1].index(read_target[0]):][:2] == read_target
     client.visible = True
     recovered = SystemExecutor(reopened, dws=client).execute(
         task, candidate['id'], review['id'])
-    if legacy_timestamp:
+    if legacy_timestamp or operation == 'send_group_message':
         assert recovered.outcome == 'failed'
         assert reopened.get_outbound_postfix_receipt('dingtalk', key) is None
         assert client.sends == 1
         return
-    assert recovered.outcome == 'executed'
-    assert client.sends == 1
-    assert reopened.get_outbound_postfix_receipt('dingtalk', key)['result']['openMessageId'] == 'accepted-message'
-    assert SystemExecutor(AutoReplyStore(path), dws=client).execute(
-        task, candidate['id'], review['id']).outcome == 'executed'
+    # Direct-message history is not a complete window; absence remains
+    # uncertain, and the old candidate must not dispatch again.
+    assert recovered.outcome == 'failed'
+    assert recovered.error.code == 'external_action_uncertain'
     assert client.sends == 1
 
 
@@ -159,11 +176,48 @@ def test_positive_readback_cannot_use_wrong_or_ambiguous_message(monkeypatch, fa
     if fault == 'duplicate':
         messages.append(message.model_copy(update={'open_message_id': 'another-message'}))
     client = InterruptedNativeClient()
-    monkeypatch.setattr(client, 'read_recent_messages', lambda conversation: messages)
+    monkeypatch.setattr(client, 'read_complete_group_messages_in_window', lambda *args: messages)
     conversation = DingTalkConversation(open_conversation_id='exact-cid', title='Group',
                                         single_chat=False, unread_point=0)
-    assert client.reconcile_message_send(conversation, 'Exact body', not_before=boundary) is None
+    receipt = client.reconcile_message_send(conversation, 'Exact body', not_before=boundary)
+    if fault == 'duplicate':
+        assert receipt is None
+    else:
+        assert receipt['errorCode'] == 'complete_readback_no_exact_match'
+        assert client.verify_message_send_result(receipt)['state'] == 'failed'
     assert client.sends == 0
+
+
+def test_complete_negative_group_send_readback_is_a_failure(monkeypatch):
+    from app.dingtalk_models import DingTalkConversation
+
+    client = DwsClient()
+    conversation = DingTalkConversation(open_conversation_id='cid', title='Group', single_chat=False, unread_point=0)
+    monkeypatch.setattr(client, 'read_complete_group_messages_in_window', lambda *args: [])
+    boundary = datetime(2026, 10, 5, 11, 0, 0, 123000, tzinfo=UTC)
+
+    receipt = client.reconcile_message_send(conversation, 'Exact body', not_before=boundary)
+
+    assert receipt['errorCode'] == 'complete_readback_no_exact_match'
+    verification = client.verify_message_send_result(receipt)
+    assert verification['state'] == 'failed'
+    assert verification['reason'] == 'complete_readback_no_exact_match'
+
+
+def test_incomplete_group_send_readback_does_not_confirm_absence(monkeypatch):
+    from app.dingtalk_models import DingTalkConversation
+    from app.dws_client import DwsError
+
+    client = DwsClient()
+    conversation = DingTalkConversation(open_conversation_id='cid', title='Group', single_chat=False, unread_point=0)
+    monkeypatch.setattr(client, 'read_complete_group_messages_in_window',
+                        lambda *args: (_ for _ in ()).throw(DwsError('incomplete')))
+
+    with pytest.raises(DwsError, match='incomplete'):
+        client.reconcile_message_send(
+            conversation, 'Exact body',
+            not_before=datetime(2026, 10, 5, 11, 0, 0, 123000, tzinfo=UTC),
+        )
 
 
 @pytest.mark.parametrize('capability,operation,target,expected_path', [
@@ -208,12 +262,12 @@ def test_comment_uncertainty_reads_original_object_without_inferred_identity(
         }
 
 
-@pytest.mark.parametrize('wire_time,verified', [
-    ('2026-10-05 19:00:00', False),
-    ('2026-10-05 19:00:01', True),
+@pytest.mark.parametrize('wire_time,expected_state', [
+    ('2026-10-05 19:00:00', 'failed'),
+    ('2026-10-05 19:00:01', 'sent'),
 ])
 def test_native_second_precision_message_time_keeps_ambiguous_same_second_unknown(
-    monkeypatch, wire_time, verified,
+    monkeypatch, wire_time, expected_state,
 ):
     from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 
@@ -223,12 +277,15 @@ def test_native_second_precision_message_time_keeps_ambiguous_same_second_unknow
         conversation_title='Group', single_chat=False, sender_name='Principal',
         sender_user_id='principal', create_time=wire_time, content='Exact body',
     )
-    monkeypatch.setattr(client, 'read_recent_messages', lambda conversation: [message])
+    monkeypatch.setattr(client, 'read_complete_group_messages_in_window', lambda *args: [message])
     conversation = DingTalkConversation(open_conversation_id='exact-cid', title='Group',
                                         single_chat=False, unread_point=0)
     receipt = client.reconcile_message_send(
         conversation, 'Exact body',
         not_before=datetime(2026, 10, 5, 11, 0, 0, 123000, tzinfo=UTC),
     )
-    assert (receipt is not None) is verified
+    if expected_state == 'failed':
+        assert receipt['errorCode'] == 'complete_readback_no_exact_match'
+    else:
+        assert receipt['readback']['open_message_id'] == 'message'
     assert client.sends == 0

@@ -6,6 +6,7 @@ from app.decision_quality import (
     StoredNeedsHumanProjection,
     classify_decision_quality,
     classify_stored_needs_human_projection,
+    require_needs_human_context_eligible,
 )
 
 
@@ -74,6 +75,20 @@ def test_low_rule_coverage_needs_human():
     )
 
     assert result.classification is DecisionQuality.NEEDS_HUMAN
+
+
+def test_verified_agent_quoted_trigger_cannot_be_escalated_to_needs_human():
+    with pytest.raises(ValueError, match="trigger quotes a verified agent-authored message"):
+        require_needs_human_context_eligible(
+            outcome="needs_human", trigger_quotes_agent_message=True,
+        )
+
+    require_needs_human_context_eligible(
+        outcome="proposal", trigger_quotes_agent_message=True,
+    )
+    require_needs_human_context_eligible(
+        outcome="needs_human", trigger_quotes_agent_message=False,
+    )
 
 
 @pytest.mark.parametrize(
