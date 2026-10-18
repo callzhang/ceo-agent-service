@@ -1299,3 +1299,45 @@ business result. If the fixed cases cannot prove those invariants, keep the
 present complete historical rows. Do not reuse an earlier turn's rows merely
 because their bytes match: native compaction may have removed them from the
 model-visible session.
+
+## DingTalk recent-message raw-payload sharing: isolated candidate, 2026-10-18
+
+**Selected mechanism and finite acceptance.** Complete saved native Consumer
+and Audit trajectories show that `agent_cli.read_dingtalk_messages` commonly
+returns the same message body in top-level `content` and the same message's
+`raw_payload.content` / `raw_payload.text`. Among 120 successful saved MCP
+reads from 142 recent role sessions, there were 3,553 messages. Their native
+model-visible tool-result text totaled 9,610,958 characters; serialized
+`raw_payload` values contributed about 5,176,572 characters and exact repeated
+raw string values about 2,708,270. In 105 of 120 calls, exact repeated raw
+strings alone exceeded 5,000 characters. This is a repeated tool-result
+assembly issue, not evidence that the underlying message content should be
+truncated. The fixed gate is to reduce duplicate bytes while preserving exact
+reconstruction of every raw payload, all message fields and order, the current
+Consumer/Audit judgments and reply targets, and unchanged DWS query, failure,
+Prompt, route and audit-policy behavior. A changed business judgment or a
+nonreconstructable raw field fails the gate.
+
+**Local checks.** Deterministic read-only replay of all 120 saved successful
+tool results reconstructed each of the 3,553 original `raw_payload` objects
+from the projected form, including key order, and preserved every original
+top-level field. Of those messages, 3,031 had a shorter projected form.
+Compact UTF-8 JSON length fell from 8,317,652 to 5,820,948 characters across
+the 120 result objects, saving 2,496,704 characters (median 15,436 per call,
+maximum 98,908). These are replay measurements, not post-deployment live
+token or latency measurements. The focused tool/projection tests passed
+(83 tests), as did Ruff. Four anonymous, no-tool, read-only Codex OAuth
+comparisons checked the original and projected forms of two Consumer message
+cases and two Audit candidate cases. Both Consumer forms returned `no_action`
+for a previously handled confirmation, and targeted the same unanswered
+question without inventing a backend action. Both Audit forms approved the
+grounded `no_action` candidate and returned a reply containing unsupported
+backend claims. These small cases check interpretation of this representation;
+they do not prove the full production role workflow or a new business outcome.
+
+**Release gate.** Review the isolated diff, merge after review and checks,
+deploy through `python -m app.deploy`, then read back the new PID, health,
+queues, Attention and History. This candidate has not yet been merged or
+deployed. Natural post-release Consumer/Audit reads will be further evidence
+of operational behavior; the local replay establishes the lossless output
+contract under the saved sample.

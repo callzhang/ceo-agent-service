@@ -43,6 +43,7 @@ from app.bounded_process import (
 )
 from app.channel_gate import classify_cli_read_failure, classify_cli_write_failure
 from app.config import feedback_spike_vercel_base_url
+from app.dingtalk_message_payload_sharing import share_message_raw_payload
 from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import contains_credential, is_sensitive_field_name
 from app.native_cli_metadata import (
@@ -1783,7 +1784,12 @@ def build_role_server(
         conversation_id: str, title: str = "", single_chat: bool = False,
         limit: int = 50,
     ) -> dict[str, object]:
-        """Read recent messages of an identified DingTalk conversation."""
+        """Read recent messages of an identified DingTalk conversation.
+
+        For repeated raw strings, raw_payload_field_refs maps each null raw
+        field to the same message's top-level field holding its exact value.
+        Unreferenced raw fields retain their original values.
+        """
         from app.dingtalk_models import DingTalkConversation
         from app.dws_client import DwsClient
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -1793,7 +1799,9 @@ def build_role_server(
             single_chat=single_chat, unread_point=0,
         )
         messages = DwsClient().read_recent_messages(conversation, limit=limit)
-        return {"messages": [item.model_dump(mode="json") for item in messages]}
+        return {"messages": [
+            share_message_raw_payload(item.model_dump(mode="json")) for item in messages
+        ]}
 
     def search_dingtalk_messages(
         query: str, start: str, end: str, limit: int = 100,
